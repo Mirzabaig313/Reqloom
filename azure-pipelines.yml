@@ -1,0 +1,176 @@
+# ChainAPI — macOS CI on Azure DevOps Pipelines.
+#
+# Linux + Windows live on AppVeyor (see appveyor.yml). GitHub Actions is no
+# longer used for ChainAPI builds.
+#
+# Branch routing:
+#   * push to dev  → static checks + macos-debug   (ASan + UBSan + tests)
+#   * push to main → static checks + macos-release (-O2, build only)
+#
+# Until the public-project parallel grant is approved, this org has 1 free
+# Microsoft-hosted slot and 1800 free minutes/month. The first cold-cache
+# build will spend ~25-30 min in `cmake --preset` building qtbase from source
+# via vcpkg; warm-cache builds drop to ~3-5 min.
+
+trigger:
+  branches:
+    include:
+      - main
+      - dev
+  # Don't auto-trigger on tags; manual releases only.
+  tags:
+    exclude:
+      - '*'
+
+# Disable PR builds — pushes to dev/main are what matter.
+pr: none
+
+variables:
+  # Cache vcpkg's compiled package outputs ($VCPKG_ROOT/installed) and the
+  # binary cache used by `x-files` so subsequent runs reuse builds.
+  VCPKG_DEFAULT_BINARY_CACHE: $(Pipeline.Workspace)/vcpkg-bincache
+  VCPKG_BINARY_SOURCES: 'clear;files,$(Pipeline.Workspace)/vcpkg-bincache,readwrite'
+  # Pin the same vcpkg baseline used elsewhere in the repo.
+  VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
+
+stages:
+  # ==========================================================================
+  # Static checks — gates the macOS build. Cheap (≤ 1 min on Linux agent).
+  # Runs the architectural boundary check and clang-format dry-run.
+  # ==========================================================================
+  - stage: static_checks
+    displayName: Static Checks
+    jobs:
+      - job: lint
+        displayName: Boundary + clang-format
+        pool:
+          vmImage: ubuntu-24.04
+        steps:
+          - checkout: self
+            fetchDepth: 1
+
+          - script: ./tools/ci/boundary-check.sh
+            displayName: Architectural boundary check
+
+          - script: |
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends clang-format-18
+              sudo update-alternatives --install /usr/bin/clang-format clang-format \
+                /usr/bin/clang-format-18 100
+            displayName: Install clang-format-18
+
+          - script: |
+              set -euo pipefail
+              mapfile -t files < <(
+                find engine cli desktop ipc \
+                  \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cc' \) \
+                  -not -path '*/build/*' \
+                  2>/dev/null
+              )
+              if [[ ${#files[@]} -eq 0 ]]; then
+                echo "No C++ files found — nothing to check."
+                exit 0
+              fi
+              clang-format --dry-run --Werror "${files[@]}"
+            displayName: clang-format dry-run
+
+  # ==========================================================================
+  # macOS build — debug on dev, release on main.
+  # ==========================================================================
+  - stage: macos_build
+    displayName: macOS Build
+    dependsOn: static_checks
+    condition: succeeded()
+    jobs:
+      - job: build
+        displayName: macos-14
+        pool:
+          vmImage: macOS-14
+        timeoutInMinutes: 90
+        variables:
+          # Branch-conditional preset. dev → macos-debug, main → macos-release.
+          ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+            preset: macos-release
+          ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/dev') }}:
+            preset: macos-debug
+          # vcpkg root used by the toolchain file pulled in by CMakePresets.
+          VCPKG_ROOT: $(Build.SourcesDirectory)/vcpkg
+
+        steps:
+          - checkout: self
+            fetchDepth: 1
+
+          # ------------------------------------------------------------------
+          # Build prerequisites. macos-14 ships with autoconf, automake,
+          # libtool, pkg-config, and ninja preinstalled. Only autoconf-archive
+          # (used by libb2's autoreconf step) is missing.
+          # ------------------------------------------------------------------
+          - script: |
+              set -euo pipefail
+              export HOMEBREW_NO_AUTO_UPDATE=1
+              export HOMEBREW_NO_INSTALL_CLEANUP=1
+              export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
+              export HOMEBREW_NO_ENV_HINTS=1
+              brew install --quiet autoconf-archive
+            displayName: Install macOS build prerequisites
+
+          # ------------------------------------------------------------------
+          # CMake 4.x — macos-14 ships with 3.x. Install via pip's published
+          # wheels which is fastest for this version range.
+          # ------------------------------------------------------------------
+          - script: |
+              set -euo pipefail
+              python3 -m pip install --upgrade --quiet 'cmake~=4.0'
+              cmake --version
+            displayName: Install CMake 4.x
+
+          # ------------------------------------------------------------------
+          # vcpkg — clone at the pinned commit. Cached between runs to skip
+          # the clone on warm runs.
+          # ------------------------------------------------------------------
+          - task: Cache@2
+            displayName: Cache vcpkg tool
+            inputs:
+              key: '"vcpkg-tool" | "$(Agent.OS)" | "$(VCPKG_COMMIT)"'
+              path: $(VCPKG_ROOT)
+
+          - script: |
+              set -euo pipefail
+              if [[ ! -x "$(VCPKG_ROOT)/vcpkg" ]]; then
+                git clone https://github.com/microsoft/vcpkg.git "$(VCPKG_ROOT)"
+                git -C "$(VCPKG_ROOT)" checkout "$(VCPKG_COMMIT)"
+                "$(VCPKG_ROOT)/bootstrap-vcpkg.sh" -disableMetrics
+              else
+                echo "vcpkg already present from cache."
+              fi
+            displayName: Bootstrap vcpkg
+
+          # ------------------------------------------------------------------
+          # vcpkg binary cache — keyed on the manifest hash. A change to
+          # vcpkg.json invalidates the cache; baseline bumps trigger a
+          # rebuild. The cache stores compiled qtbase/curl/etc, which is
+          # the dominant cost.
+          # ------------------------------------------------------------------
+          - task: Cache@2
+            displayName: Cache vcpkg binary archives
+            inputs:
+              key: '"vcpkg-bin" | "$(Agent.OS)" | "$(preset)" | vcpkg.json'
+              path: $(VCPKG_DEFAULT_BINARY_CACHE)
+              restoreKeys: |
+                "vcpkg-bin" | "$(Agent.OS)" | "$(preset)"
+
+          - script: mkdir -p "$(VCPKG_DEFAULT_BINARY_CACHE)"
+            displayName: Ensure binary cache dir
+
+          # ------------------------------------------------------------------
+          # Configure / Build / Test
+          # ------------------------------------------------------------------
+          - script: cmake --preset $(preset)
+            displayName: Configure ($(preset))
+
+          - script: cmake --build --preset $(preset)
+            displayName: Build ($(preset))
+
+          - script: ctest --preset $(preset)
+            displayName: Test ($(preset))
+            condition: and(succeeded(), eq(variables['preset'], 'macos-debug'))

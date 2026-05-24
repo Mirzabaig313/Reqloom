@@ -24,7 +24,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CHAINAPI_ENABLE_ASAN": "ON",
-        "CHAINAPI_ENABLE_UBSAN": "ON"
+        "CHAINAPI_ENABLE_UBSAN": "ON",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew/opt/qt@6"
       },
       "condition": {
         "type": "equals",
@@ -37,7 +38,8 @@
       "inherits": "base",
       "displayName": "macOS Release",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew/opt/qt@6"
       },
       "condition": {
         "type": "equals",

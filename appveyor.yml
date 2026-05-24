@@ -1,0 +1,171 @@
+# ChainAPI — Linux + Windows CI on AppVeyor.
+#
+# macOS lives on Azure DevOps (see azure-pipelines.yml). GitHub Actions is no
+# longer used for ChainAPI builds.
+#
+# Branch routing:
+#   * push to dev  → linux-debug   + windows-debug   (ASan + UBSan + tests on Linux,
+#                                                     plain Debug build+test on Windows)
+#   * push to main → linux-release + windows-release (-O2, build only)
+#
+# AppVeyor's free OSS plan gives unlimited minutes but only 1 concurrent job.
+# The first cold-cache build on each (OS, preset) pair will spend ~25-30 min
+# in `cmake --preset` building qtbase from source via vcpkg; warm-cache builds
+# drop to ~3-5 min.
+
+version: '0.1.0+{build}'
+
+# Trigger only on dev and main pushes; ignore PRs and tags.
+branches:
+  only:
+    - main
+    - dev
+
+skip_tags: true
+skip_branch_with_pr: true
+
+# Repository hygiene.
+clone_depth: 1
+shallow_clone: true
+
+# vcpkg pin shared with the rest of the repo.
+environment:
+  VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
+  VCPKG_DEFAULT_BINARY_CACHE: C:\vcpkg-bincache  # overridden per-job for Linux
+
+# --------------------------------------------------------------------------
+# Cache strategy: store the bootstrapped vcpkg tree and the binary cache
+# between runs. AppVeyor invalidates a cache when its YAML hash changes;
+# clear the cache via the AppVeyor UI if vcpkg.json drifts mid-debug.
+# --------------------------------------------------------------------------
+cache:
+  - vcpkg -> vcpkg.json, appveyor.yml
+  - C:\vcpkg-bincache -> vcpkg.json, appveyor.yml
+  - /home/appveyor/vcpkg-bincache -> vcpkg.json, appveyor.yml
+
+# --------------------------------------------------------------------------
+# Build matrix: Linux + Windows × (debug | release). The preset chosen at
+# build time depends on the branch (see install: scripts).
+# --------------------------------------------------------------------------
+image:
+  - Ubuntu2404
+  - Visual Studio 2022
+
+# Avoid AppVeyor's default MSBuild-only flow.
+build: off
+
+# --------------------------------------------------------------------------
+# Per-OS prereqs + CMake 4.x + vcpkg bootstrap. Runs once per job.
+# --------------------------------------------------------------------------
+install:
+  # ----- Linux -----------------------------------------------------------
+  - sh: |
+      set -euo pipefail
+      sudo apt-get update
+      sudo apt-get install -y --no-install-recommends \
+        autoconf autoconf-archive automake libtool pkg-config \
+        ninja-build bison flex python3 python3-jinja2 \
+        libx11-dev libxext-dev libxrender-dev \
+        libxkbcommon-dev libxkbcommon-x11-dev \
+        libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
+        libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev \
+        libxcb-render-util0-dev libxcb-shape0-dev libxcb-shm0-dev \
+        libxcb-sync-dev libxcb-util-dev libxcb-xfixes0-dev \
+        libxcb-xinerama0-dev libxcb-xkb-dev libxi-dev \
+        libgl1-mesa-dev libegl1-mesa-dev \
+        libfontconfig1-dev libfreetype6-dev libdbus-1-dev
+
+      # CMake 4.x via pip — AppVeyor Ubuntu ships 3.x.
+      python3 -m pip install --upgrade --quiet --user 'cmake~=4.0'
+      echo "$HOME/.local/bin" >> $APPVEYOR_PATH
+
+      export VCPKG_DEFAULT_BINARY_CACHE=/home/appveyor/vcpkg-bincache
+      mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+      echo "VCPKG_DEFAULT_BINARY_CACHE=$VCPKG_DEFAULT_BINARY_CACHE" >> $APPVEYOR_ENV
+
+      # Pick preset by branch.
+      if [[ "$APPVEYOR_REPO_BRANCH" == "main" ]]; then
+        echo "PRESET=linux-release" >> $APPVEYOR_ENV
+      else
+        echo "PRESET=linux-debug" >> $APPVEYOR_ENV
+      fi
+
+  # ----- Windows ---------------------------------------------------------
+  - cmd: |
+      :: AppVeyor's VS2022 image ships CMake 3.x. Force a 4.x via Chocolatey.
+      choco upgrade cmake --version=4.0.2 --installargs 'ADD_CMAKE_TO_PATH=System' --no-progress -y
+      :: Refresh PATH so the new cmake is visible in subsequent commands.
+      refreshenv
+
+      set VCPKG_DEFAULT_BINARY_CACHE=C:\vcpkg-bincache
+      if not exist "%VCPKG_DEFAULT_BINARY_CACHE%" mkdir "%VCPKG_DEFAULT_BINARY_CACHE%"
+      echo VCPKG_DEFAULT_BINARY_CACHE=C:\vcpkg-bincache >> %APPVEYOR_ENV%
+
+      :: Pick preset by branch.
+      if "%APPVEYOR_REPO_BRANCH%" == "main" (
+        echo PRESET=windows-release >> %APPVEYOR_ENV%
+      ) else (
+        echo PRESET=windows-debug >> %APPVEYOR_ENV%
+      )
+
+# --------------------------------------------------------------------------
+# Bootstrap vcpkg (cached between runs) and run configure + build + test.
+# --------------------------------------------------------------------------
+before_build:
+  - sh: |
+      set -euo pipefail
+      export VCPKG_ROOT="$APPVEYOR_BUILD_FOLDER/vcpkg"
+      echo "VCPKG_ROOT=$VCPKG_ROOT" >> $APPVEYOR_ENV
+      export VCPKG_BINARY_SOURCES="clear;files,$VCPKG_DEFAULT_BINARY_CACHE,readwrite"
+      echo "VCPKG_BINARY_SOURCES=$VCPKG_BINARY_SOURCES" >> $APPVEYOR_ENV
+      if [[ ! -x "$VCPKG_ROOT/vcpkg" ]]; then
+        git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+        git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
+        "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+      else
+        echo "vcpkg already present from cache."
+      fi
+
+  - cmd: |
+      set VCPKG_ROOT=%APPVEYOR_BUILD_FOLDER%\vcpkg
+      echo VCPKG_ROOT=%VCPKG_ROOT% >> %APPVEYOR_ENV%
+      set VCPKG_BINARY_SOURCES=clear;files,%VCPKG_DEFAULT_BINARY_CACHE%,readwrite
+      echo VCPKG_BINARY_SOURCES=%VCPKG_BINARY_SOURCES% >> %APPVEYOR_ENV%
+      if not exist "%VCPKG_ROOT%\vcpkg.exe" (
+        git clone https://github.com/microsoft/vcpkg.git "%VCPKG_ROOT%"
+        git -C "%VCPKG_ROOT%" checkout "%VCPKG_COMMIT%"
+        call "%VCPKG_ROOT%\bootstrap-vcpkg.bat" -disableMetrics
+      ) else (
+        echo vcpkg already present from cache.
+      )
+
+# --------------------------------------------------------------------------
+# Configure / Build / Test.
+# --------------------------------------------------------------------------
+build_script:
+  - sh: |
+      set -euo pipefail
+      cmake --preset "$PRESET"
+      cmake --build --preset "$PRESET"
+
+  - cmd: |
+      cmake --preset %PRESET% || exit /b
+      cmake --build --preset %PRESET% || exit /b
+
+test_script:
+  - sh: |
+      set -euo pipefail
+      # Tests only run on debug presets (release presets don't define a
+      # testPreset entry in CMakePresets.json).
+      if [[ "$PRESET" == *"-debug" ]]; then
+        ctest --preset "$PRESET"
+      else
+        echo "Skipping tests on release preset."
+      fi
+
+  - cmd: |
+      if "%PRESET:~-6%" == "-debug" (
+        ctest --preset %PRESET% || exit /b
+      ) else (
+        echo Skipping tests on release preset.
+      )

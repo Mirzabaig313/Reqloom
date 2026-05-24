@@ -62,7 +62,32 @@ than a rewrite. See PRD §8.6 / ADR-002.
 - **CMake** 4.0+
 - **C++23** compiler (Apple Clang 16+ / Clang 18+ / GCC 14+ / MSVC 19.40+)
 - **Qt 6.8 LTS+**
-- **vcpkg** (recommended — set `$VCPKG_ROOT`)
+- **vcpkg** (CI uses full vcpkg; local macOS uses Homebrew Qt — see below)
+
+### macOS first-time setup (recommended path)
+
+CI builds Qt from source via vcpkg for reproducibility. Locally on macOS,
+that takes ~2 hours and ~15 GB of disk on the first run. The supported
+local workflow uses **Homebrew's Qt** instead, with vcpkg only for the
+small non-Qt deps:
+
+```bash
+# 1. Build prerequisites
+brew install ninja autoconf autoconf-archive automake libtool pkg-config qt@6
+
+# 2. vcpkg (one-time)
+git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
+~/vcpkg/bootstrap-vcpkg.sh
+echo 'export VCPKG_ROOT="$HOME/vcpkg"' >> ~/.zshrc
+exec zsh
+
+# 3. Enable the project's git hooks
+git config core.hooksPath tools/git-hooks
+```
+
+The macOS presets (`macos-debug`, `macos-release`) point `CMAKE_PREFIX_PATH` at
+`/opt/homebrew/opt/qt@6` and tell vcpkg to skip `qtbase`. Linux and Windows
+presets continue to use vcpkg-built Qt — that's how CI runs.
 
 ### Configure & build
 
@@ -83,6 +108,20 @@ ctest --preset macos-debug
 
 Other presets: `macos-release`, `linux-debug`, `linux-release`,
 `windows-debug`, `windows-release` — all defined in `CMakePresets.json`.
+
+### Before pushing
+
+```bash
+./tools/pre-push-check.sh
+```
+
+Runs clang-format check, configure, build, tests, and the boundary check
+in order. Stops at the first failure. Skip individual steps with
+`SKIP_CONFIGURE=1` / `SKIP_TESTS=1` / `SKIP_BOUNDARY=1` while iterating.
+
+If you ran `git config core.hooksPath tools/git-hooks` (above), this also
+runs automatically on `git push`. Bypass when justified with
+`git push --no-verify`.
 
 ### Build options
 
