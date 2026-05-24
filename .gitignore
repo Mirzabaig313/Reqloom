@@ -50,6 +50,16 @@ coverage/
 # Logs
 *.log
 
+# Validation — raw results and per-API working notes
+validation/llm-feasibility/runs/
+validation/design-partners/results-template.md
+validation/testreuslt.md
+validation/github/findings.md
+validation/stripe/findings.md
+validation/discourse/findings.md
+
+
 # local 
 .kiro/hooks
 doc/local
+chainapi/

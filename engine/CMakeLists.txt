@@ -78,7 +78,9 @@ target_include_directories(chainapi-engine-application
 )
 target_link_libraries(chainapi-engine-application
     PUBLIC  chainapi-engine-domain
-    PRIVATE chainapi-engine-infrastructure
+    PRIVATE
+        chainapi-engine-infrastructure
+        nlohmann_json::nlohmann_json
 )
 chainapi_set_warnings(chainapi-engine-application)
 chainapi_apply_sanitizers(chainapi-engine-application)

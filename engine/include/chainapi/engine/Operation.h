@@ -49,7 +49,7 @@ struct RetryPolicy {
     std::chrono::milliseconds maxBackoff{30'000};
 };
 
-/// One declared operation. Mirrors PRD §5.6 schema.
+/// One declared operation. 
 struct Operation {
     OperationId id;
     ResourceId resource;
@@ -59,15 +59,16 @@ struct Operation {
     std::string pathTemplate;  ///< e.g. /api/v1/orders/{{order.order_id}}
     std::map<std::string, std::string> headers;
     std::map<std::string, std::string> queryParams;
-    std::optional<std::string> bodyTemplate;  ///< Raw template, may contain {{X.y}}.
+    std::optional<std::string> bodyTemplate;  ///< Raw JSON body template, may contain {{X.y}}.
+    std::optional<std::map<std::string, std::string>> bodyForm;  ///< x-www-form-urlencoded
 
     std::optional<int> expectStatus;
     std::vector<Extraction> extractions;
 
-    /// Explicit dependencies declared by the user (PRD §5.7 / §4.3).
+    /// Explicit dependencies declared by the user 
     std::vector<OperationId> explicitDependencies;
 
-    /// Optional inline JS hook scripts (engine spec §3.12).
+    /// Optional inline JS hook scripts 
     std::optional<std::string> preRequestScript;
     std::optional<std::string> postResponseScript;
 
