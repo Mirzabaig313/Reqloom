@@ -13,12 +13,56 @@ env:
 
 jobs:
   # --------------------------------------------------------------------------
-  # Debug matrix — runs on push to `dev` only.
-  # ASan + UBSan + tests. Highest-signal CI we have.
+  # Static checks — gates the heavy matrix builds.
+  #
+  #   * Architectural boundary check (engine/CLI must not pull in Qt UI).
+  #   * clang-format dry-run (every C++ file matches .clang-format).
+  #
+  # Cheap (≤ 1 min on Ubuntu). If this fails, debug/release are skipped and
+  # the whole workflow fails — no point burning a Qt rebuild on a tree that
+  # already violated a hard rule.
+  # --------------------------------------------------------------------------
+  static-checks:
+    name: Static Checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Architectural boundary check
+        run: ./tools/ci/boundary-check.sh
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format-18
+          sudo update-alternatives --install /usr/bin/clang-format clang-format \
+            /usr/bin/clang-format-18 100
+
+      - name: clang-format check
+        run: |
+          # Fail if any tracked C++ source under our four layers is not
+          # already formatted to .clang-format.
+          mapfile -t files < <(
+            find engine cli desktop ipc \
+              \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cc' \) \
+              -not -path '*/build/*' \
+              2>/dev/null
+          )
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No C++ files found — nothing to check."
+            exit 0
+          fi
+          clang-format --dry-run --Werror "${files[@]}"
+
+  # --------------------------------------------------------------------------
+  # Debug matrix — runs on push to `dev`. ASan + UBSan + tests.
+  # Skipped if static-checks fails.
   # --------------------------------------------------------------------------
   debug:
     name: ${{ matrix.os }} / ${{ matrix.preset }}
     if: github.ref == 'refs/heads/dev'
+    needs: static-checks
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -120,13 +164,15 @@ jobs:
         run: ctest --preset ${{ matrix.preset }}
 
   # --------------------------------------------------------------------------
-  # Release matrix — runs on push to `main` only.
+  # Release matrix — runs on push to `main`.
   # Catches bugs that surface under -O2 / NDEBUG (UB the optimizer exploits,
   # stripped assertions, dead-code elimination of side-effecting code).
+  # Skipped if static-checks fails.
   # --------------------------------------------------------------------------
   release:
     name: ${{ matrix.os }} / ${{ matrix.preset }}
     if: github.ref == 'refs/heads/main'
+    needs: static-checks
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
