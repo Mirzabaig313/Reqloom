@@ -1,0 +1,40 @@
+name: review
+
+operations:
+  create:
+    method: POST
+    path: /api/v1/products/{{product.product_id}}/reviews
+    actor: customer
+    depends_on: [order.pay]            # only buyers can review
+    body:
+      rating: 5
+      title: "Great product"
+      body: "Posted by ChainAPI sample"
+    expect_status: 201
+    extract:
+      review_id: $.data.id
+
+  list_for_product:
+    method: GET
+    path: /api/v1/products/{{product.product_id}}/reviews
+    actor: customer
+    depends_on: [product.publish]
+    query_params:
+      limit: "10"
+    expect_status: 200
+
+  flag:
+    method: POST
+    path: /api/v1/reviews/{{review.review_id}}/flag
+    actor: vendor
+    depends_on: [review.create]
+    body:
+      reason: "Inappropriate"
+    expect_status: 200
+
+  remove:
+    method: DELETE
+    path: /api/v1/admin/reviews/{{review.review_id}}
+    actor: admin
+    depends_on: [review.flag]
+    expect_status: 204

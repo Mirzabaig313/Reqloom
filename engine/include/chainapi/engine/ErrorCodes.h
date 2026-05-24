@@ -2,6 +2,7 @@
 // render them; QA asserts on them.
 #pragma once
 
+#include <string>
 #include <string_view>
 
 namespace chainapi::engine {
