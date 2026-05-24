@@ -2,9 +2,7 @@ name: Build & Test
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 env:
   # Cache built vcpkg packages in the GitHub Actions cache.
@@ -14,8 +12,13 @@ env:
   X_VCPKG_ASSET_SOURCES: "x-gha,readwrite"
 
 jobs:
-  build:
+  # --------------------------------------------------------------------------
+  # Debug matrix — runs on push to `dev` only.
+  # ASan + UBSan + tests. Highest-signal CI we have.
+  # --------------------------------------------------------------------------
+  debug:
     name: ${{ matrix.os }} / ${{ matrix.preset }}
+    if: github.ref == 'refs/heads/dev'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -32,9 +35,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------------
-      # Per-OS build prerequisites for vcpkg ports (libb2, qtbase, curl, ...)
-      # ------------------------------------------------------------------
       - name: Install macOS build prerequisites
         if: runner.os == 'macOS'
         run: |
@@ -95,9 +95,6 @@ jobs:
         with:
           arch: x64
 
-      # ------------------------------------------------------------------
-      # Toolchain
-      # ------------------------------------------------------------------
       - name: Set up CMake 4.x
         uses: lukka/get-cmake@latest
         with:
@@ -108,9 +105,6 @@ jobs:
         with:
           vcpkgGitCommitId: aa40adda5352e87655b8583cfb2451d5e9e276fd
 
-      # ------------------------------------------------------------------
-      # Configure / Build / Test
-      # ------------------------------------------------------------------
       - name: Configure
         uses: nick-fields/retry@v3
         with:
@@ -123,5 +117,109 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Test
-        if: contains(matrix.preset, 'debug')
         run: ctest --preset ${{ matrix.preset }}
+
+  # --------------------------------------------------------------------------
+  # Release matrix — runs on push to `main` only.
+  # Catches bugs that surface under -O2 / NDEBUG (UB the optimizer exploits,
+  # stripped assertions, dead-code elimination of side-effecting code).
+  # --------------------------------------------------------------------------
+  release:
+    name: ${{ matrix.os }} / ${{ matrix.preset }}
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            preset: macos-release
+          - os: ubuntu-24.04
+            preset: linux-release
+          - os: windows-2022
+            preset: windows-release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install macOS build prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install \
+            autoconf \
+            autoconf-archive \
+            automake \
+            libtool \
+            pkg-config \
+            ninja
+
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf \
+            autoconf-archive \
+            automake \
+            libtool \
+            pkg-config \
+            ninja-build \
+            bison \
+            flex \
+            python3 \
+            python3-jinja2 \
+            libx11-dev \
+            libxext-dev \
+            libxrender-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxcb1-dev \
+            libxcb-cursor-dev \
+            libxcb-glx0-dev \
+            libxcb-icccm4-dev \
+            libxcb-image0-dev \
+            libxcb-keysyms1-dev \
+            libxcb-randr0-dev \
+            libxcb-render-util0-dev \
+            libxcb-shape0-dev \
+            libxcb-shm0-dev \
+            libxcb-sync-dev \
+            libxcb-util-dev \
+            libxcb-xfixes0-dev \
+            libxcb-xinerama0-dev \
+            libxcb-xkb-dev \
+            libxi-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libdbus-1-dev
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Set up CMake 4.x
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~4.0.0"
+
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: aa40adda5352e87655b8583cfb2451d5e9e276fd
+
+      - name: Configure
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 90
+          max_attempts: 3
+          retry_on: error
+          command: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
