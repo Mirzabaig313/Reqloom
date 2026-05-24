@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 4.0)
 
 project(chainapi
     VERSION 0.1.0
@@ -7,7 +7,7 @@ project(chainapi
 )
 
 # ─── Standards ────────────────────────────────────────────────────────────────
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -32,7 +32,7 @@ include(ChainApiSanitizers)
 include(ChainApiBoundaryGuards)
 
 # ─── Dependencies (used by every target) ──────────────────────────────────────
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 find_package(SQLite3 REQUIRED)
@@ -42,7 +42,7 @@ find_package(Qt6Keychain CONFIG QUIET)
 
 # UI-only deps
 if(CHAINAPI_BUILD_DESKTOP)
-    find_package(Qt6 REQUIRED COMPONENTS Widgets Gui Quick QuickWidgets)
+    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Gui Quick QuickWidgets)
     # QScintilla is added later when the desktop module starts using it.
 endif()
 

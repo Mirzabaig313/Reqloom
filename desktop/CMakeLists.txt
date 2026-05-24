@@ -1,4 +1,4 @@
-qt_standard_project_setup()
+qt_standard_project_setup(REQUIRES 6.8)
 
 qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
     src/main.cpp

@@ -59,9 +59,9 @@ than a rewrite. See PRD §8.6 / ADR-002.
 
 ### Prerequisites
 
-- **CMake** 3.24+
-- **C++20** compiler (Clang 16+ / GCC 13+ / MSVC 19.36+)
-- **Qt 6.6+**
+- **CMake** 4.0+
+- **C++23** compiler (Apple Clang 16+ / Clang 18+ / GCC 14+ / MSVC 19.40+)
+- **Qt 6.8 LTS+**
 - **vcpkg** (recommended — set `$VCPKG_ROOT`)
 
 ### Configure & build
