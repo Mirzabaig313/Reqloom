@@ -43,7 +43,7 @@ function(_chainapi_collect_link_deps target out_var)
         return()
     endif()
 
-    get_target_property(_visited GLOBAL CHAINAPI_VISITED_${target})
+    get_property(_visited GLOBAL PROPERTY CHAINAPI_VISITED_${target})
     if(_visited)
         return()
     endif()

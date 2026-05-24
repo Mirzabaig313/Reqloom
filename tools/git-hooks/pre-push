@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#
+# Git pre-push hook — runs the project's smoke check before any push reaches
+# the remote. To enable this hook for your clone, run once:
+#
+#   git config core.hooksPath tools/git-hooks
+#
+# Override behaviour with env vars (see tools/pre-push-check.sh):
+#   SKIP_CONFIGURE=1 / SKIP_TESTS=1 / SKIP_BOUNDARY=1
+#
+# Bypass the hook entirely (rare, justified):
+#   git push --no-verify
+
+set -e
+
+repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
+exec "$repo_root/tools/pre-push-check.sh"

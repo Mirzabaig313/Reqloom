@@ -53,7 +53,7 @@ target_link_libraries(chainapi-engine-infrastructure
         Qt6::Core
         CURL::libcurl
         yaml-cpp::yaml-cpp
-        SQLite::SQLite3
+        SQLite3::SQLite3
         nlohmann_json::nlohmann_json
 )
 if(TARGET Qt6Keychain::Qt6Keychain)

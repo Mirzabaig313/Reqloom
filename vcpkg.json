@@ -8,13 +8,17 @@
     {
       "name": "qtbase",
       "default-features": false,
-      "features": ["concurrent", "network", "sql"]
+      "features": ["concurrent", "network", "sql"],
+      "platform": "!osx"
     },
     "yaml-cpp",
     "curl",
     "sqlite3",
     "nlohmann-json",
-    "qtkeychain",
+    {
+      "name": "qtkeychain",
+      "platform": "!osx"
+    },
     {
       "name": "gtest",
       "version>=": "1.14.0"
@@ -27,11 +31,13 @@
         {
           "name": "qtbase",
           "default-features": false,
-          "features": ["gui", "widgets"]
+          "features": ["gui", "widgets"],
+          "platform": "!osx"
         },
         {
           "name": "qtdeclarative",
-          "default-features": false
+          "default-features": false,
+          "platform": "!osx"
         }
       ]
     }
