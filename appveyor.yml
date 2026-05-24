@@ -64,7 +64,7 @@ install:
       sudo apt-get update
       sudo apt-get install -y --no-install-recommends \
         autoconf autoconf-archive automake libtool pkg-config \
-        ninja-build bison flex python3 python3-jinja2 \
+        ninja-build bison flex python3 python3-jinja2 python3-pip \
         libx11-dev libxext-dev libxrender-dev \
         libxkbcommon-dev libxkbcommon-x11-dev \
         libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
@@ -76,36 +76,40 @@ install:
         libfontconfig1-dev libfreetype6-dev libdbus-1-dev
 
       # CMake 4.x via pip — AppVeyor Ubuntu ships 3.x.
-      python3 -m pip install --upgrade --quiet --user 'cmake~=4.0'
-      echo "$HOME/.local/bin" >> $APPVEYOR_PATH
+      python3 -m pip install --upgrade --quiet --break-system-packages 'cmake~=4.0'
+      export PATH="$HOME/.local/bin:$PATH"
+      cmake --version
 
       export VCPKG_DEFAULT_BINARY_CACHE=/home/appveyor/vcpkg-bincache
       mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-      echo "VCPKG_DEFAULT_BINARY_CACHE=$VCPKG_DEFAULT_BINARY_CACHE" >> $APPVEYOR_ENV
 
       # Pick preset by branch.
       if [[ "$APPVEYOR_REPO_BRANCH" == "main" ]]; then
-        echo "PRESET=linux-release" >> $APPVEYOR_ENV
+        PRESET=linux-release
       else
-        echo "PRESET=linux-debug" >> $APPVEYOR_ENV
+        PRESET=linux-debug
       fi
+
+      # Persist variables for subsequent steps.
+      appveyor SetVariable -Name VCPKG_DEFAULT_BINARY_CACHE -Value "$VCPKG_DEFAULT_BINARY_CACHE"
+      appveyor SetVariable -Name PRESET -Value "$PRESET"
+      appveyor SetVariable -Name PATH -Value "$HOME/.local/bin:$PATH"
 
   # ----- Windows ---------------------------------------------------------
   - cmd: |
-      :: AppVeyor's VS2022 image ships CMake 3.x. Force a 4.x via Chocolatey.
-      choco upgrade cmake --version=4.0.2 --installargs 'ADD_CMAKE_TO_PATH=System' --no-progress -y
-      :: Refresh PATH so the new cmake is visible in subsequent commands.
+      REM AppVeyor VS2022 image ships CMake 3.x. Force 4.x via Chocolatey.
+      choco upgrade cmake --version=4.0.2 --installargs "ADD_CMAKE_TO_PATH=System" --no-progress -y
+      REM Refresh PATH so the new cmake is visible in subsequent commands.
       refreshenv
 
-      set VCPKG_DEFAULT_BINARY_CACHE=C:\vcpkg-bincache
-      if not exist "%VCPKG_DEFAULT_BINARY_CACHE%" mkdir "%VCPKG_DEFAULT_BINARY_CACHE%"
-      echo VCPKG_DEFAULT_BINARY_CACHE=C:\vcpkg-bincache >> %APPVEYOR_ENV%
+      if not exist "C:\vcpkg-bincache" mkdir "C:\vcpkg-bincache"
+      appveyor SetVariable -Name VCPKG_DEFAULT_BINARY_CACHE -Value "C:\vcpkg-bincache"
 
-      :: Pick preset by branch.
+      REM Pick preset by branch.
       if "%APPVEYOR_REPO_BRANCH%" == "main" (
-        echo PRESET=windows-release >> %APPVEYOR_ENV%
+        appveyor SetVariable -Name PRESET -Value "windows-release"
       ) else (
-        echo PRESET=windows-debug >> %APPVEYOR_ENV%
+        appveyor SetVariable -Name PRESET -Value "windows-debug"
       )
 
 # --------------------------------------------------------------------------
@@ -114,10 +118,11 @@ install:
 before_build:
   - sh: |
       set -euo pipefail
+      export PATH="$HOME/.local/bin:$PATH"
       export VCPKG_ROOT="$APPVEYOR_BUILD_FOLDER/vcpkg"
-      echo "VCPKG_ROOT=$VCPKG_ROOT" >> $APPVEYOR_ENV
       export VCPKG_BINARY_SOURCES="clear;files,$VCPKG_DEFAULT_BINARY_CACHE,readwrite"
-      echo "VCPKG_BINARY_SOURCES=$VCPKG_BINARY_SOURCES" >> $APPVEYOR_ENV
+      appveyor SetVariable -Name VCPKG_ROOT -Value "$VCPKG_ROOT"
+      appveyor SetVariable -Name VCPKG_BINARY_SOURCES -Value "$VCPKG_BINARY_SOURCES"
       if [[ ! -x "$VCPKG_ROOT/vcpkg" ]]; then
         git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
         git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
@@ -128,9 +133,9 @@ before_build:
 
   - cmd: |
       set VCPKG_ROOT=%APPVEYOR_BUILD_FOLDER%\vcpkg
-      echo VCPKG_ROOT=%VCPKG_ROOT% >> %APPVEYOR_ENV%
       set VCPKG_BINARY_SOURCES=clear;files,%VCPKG_DEFAULT_BINARY_CACHE%,readwrite
-      echo VCPKG_BINARY_SOURCES=%VCPKG_BINARY_SOURCES% >> %APPVEYOR_ENV%
+      appveyor SetVariable -Name VCPKG_ROOT -Value "%VCPKG_ROOT%"
+      appveyor SetVariable -Name VCPKG_BINARY_SOURCES -Value "%VCPKG_BINARY_SOURCES%"
       if not exist "%VCPKG_ROOT%\vcpkg.exe" (
         git clone https://github.com/microsoft/vcpkg.git "%VCPKG_ROOT%"
         git -C "%VCPKG_ROOT%" checkout "%VCPKG_COMMIT%"
@@ -145,6 +150,7 @@ before_build:
 build_script:
   - sh: |
       set -euo pipefail
+      export PATH="$HOME/.local/bin:$PATH"
       cmake --preset "$PRESET"
       cmake --build --preset "$PRESET"
 
@@ -155,6 +161,7 @@ build_script:
 test_script:
   - sh: |
       set -euo pipefail
+      export PATH="$HOME/.local/bin:$PATH"
       # Tests only run on debug presets (release presets don't define a
       # testPreset entry in CMakePresets.json).
       if [[ "$PRESET" == *"-debug" ]]; then

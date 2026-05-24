@@ -1,10 +1,12 @@
-// ExecutionEngine — public façade. Project Layout §3.1.
+// ExecutionEngine — the run loop. Engine Requirement §3.2.
 //
-// Skeleton implementation. The real run loop, session lifecycle, retry
-// policy, and event emission land in Phase 1 per Engine Requirement §3.x.
+// Resolves the dependency chain, authenticates actors as needed, executes
+// each step with variable substitution, extracts response values, and
+// caches sessions/extractions for reuse.
 #include <chainapi/engine/ExecutionEngine.h>
 
 #include "../domain/DependencyResolver.h"
+#include "../domain/VariableResolver.h"
 #include "../infrastructure/hooks/HookRunner.h"
 #include "../infrastructure/http/HttpClient.h"
 #include "../infrastructure/schema/SchemaParser.h"
@@ -12,29 +14,357 @@
 #include "../infrastructure/storage/HistoryStore.h"
 
 #include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <ctime>
 #include <mutex>
+#include <sstream>
+#include <thread>
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace chainapi::engine {
+
+using json = nlohmann::json;
+
+namespace {
+
+/// RFC 3986 unreserved characters pass through; everything else is %-encoded.
+std::string urlEncode(std::string_view in) {
+    std::string out;
+    out.reserve(in.size());
+    for (unsigned char c : in) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9')
+            || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            char buf[4];
+            std::snprintf(buf, sizeof(buf), "%%%02X", c);
+            out.append(buf, 3);
+        }
+    }
+    return out;
+}
+
+/// Apply extractions to a parsed JSON body. Returns mapped values on success
+/// or a ChainApiError if parsing failed or a required path was missing.
+/// Engine Requirement §5: ResponseParse for malformed JSON, ExtractionFailed
+/// for missing JSONPath.
+std::expected<std::map<std::string, std::string>, ChainApiError>
+extractFromJson(const std::string& body,
+                const std::vector<Extraction>& extractions) {
+    if (extractions.empty()) return std::map<std::string, std::string>{};
+
+    json doc;
+    try {
+        doc = json::parse(body);
+    } catch (const json::parse_error& e) {
+        return std::unexpected(ChainApiError{
+            ErrorCode::ResponseParse,
+            ErrorClass::Extraction,
+            std::string("response is not valid JSON: ") + e.what()});
+    }
+
+    std::map<std::string, std::string> values;
+    for (const auto& ext : extractions) {
+        // Walk dotted path. Use `at`/`find` to avoid implicit insertion.
+        auto path = ext.sourcePath;
+        if (path.starts_with("$.")) path = path.substr(2);
+
+        const json* current = &doc;
+        bool found = true;
+        std::istringstream ss(path);
+        std::string segment;
+        while (std::getline(ss, segment, '.')) {
+            if (current->is_object()) {
+                auto it = current->find(segment);
+                if (it == current->end()) { found = false; break; }
+                current = &(*it);
+            } else {
+                found = false;
+                break;
+            }
+        }
+        if (!found) {
+            return std::unexpected(ChainApiError{
+                ErrorCode::ExtractionFailed,
+                ErrorClass::Extraction,
+                "extract path '" + ext.sourcePath +
+                "' not found in response (variable: " + ext.variableName + ")"});
+        }
+
+        std::string value = current->is_string()
+            ? current->get<std::string>()
+            : current->dump();
+        values[ext.variableName] = std::move(value);
+    }
+    return values;
+}
+
+}  // namespace
 
 struct ExecutionEngine::Impl {
     Dependencies deps;
     DependencyResolver resolver;
+    VariableResolver varResolver;
     std::vector<EventCallback> subscribers;
     std::mutex subscriberMutex;
     std::atomic<std::uint64_t> nextRunId{1};
-    std::atomic<bool> cancelRequested{false};
+    /// 0 = nothing cancelled. Any other value = the run with that id is being cancelled.
+    /// Set via cancel(RunId), read by the executing run loop.
+    std::atomic<std::uint64_t> cancelledRunId{0};
 
     explicit Impl(Dependencies d) : deps(std::move(d)) {}
 
+    [[nodiscard]] bool isCancelled(RunId runId) const noexcept {
+        const auto cancelled = cancelledRunId.load(std::memory_order_acquire);
+        return cancelled != 0 && cancelled == runId.value;
+    }
+
     void emit(const RunEvent& e) {
-        const std::lock_guard lock(subscriberMutex);
-        for (auto& cb : subscribers) {
-            cb(e);
+        // Snapshot subscribers, then invoke without holding the lock — avoids
+        // re-entrant deadlock if a callback calls subscribe(), and avoids
+        // exception propagation through the engine's control flow.
+        std::vector<EventCallback> snapshot;
+        {
+            const std::lock_guard lock(subscriberMutex);
+            snapshot = subscribers;
+        }
+        for (auto& cb : snapshot) {
+            try { cb(e); } catch (...) { /* never let a subscriber break the engine */ }
         }
     }
+
+    /// Authenticate an actor if session is not live. Returns true on success.
+    bool ensureSession(const Actor& actor, RunContext& ctx,
+                       const ResolveContext& rctx, RunId runId) {
+        auto existing = ctx.session(actor.id);
+        if (existing && existing->state == ActorSession::State::Live) {
+            auto now = std::chrono::steady_clock::now();
+            if (now < existing->expiresAt) {
+                return true;  // Cache hit — AC-3.3.1.
+            }
+        }
+
+        // Execute auth steps.
+        ActorSession session;
+        session.state = ActorSession::State::Authenticating;
+
+        for (const auto& step : actor.authSteps) {
+            // Resolve templates.
+            auto resolvedPath = varResolver.resolve(step.pathTemplate, ctx, rctx);
+            if (!resolvedPath.unresolved.empty()) return false;
+
+            HttpRequest req;
+            req.method = step.method;
+            // Build URL from env baseUrl + path.
+            auto baseUrlIt = rctx.envVars.find("baseUrl");
+            std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
+            req.url = baseUrl + resolvedPath.output;
+
+            // Headers
+            for (const auto& [k, v] : step.headers) {
+                auto resolved = varResolver.resolve(v, ctx, rctx);
+                req.headers[k] = resolved.output;
+            }
+
+            // Body
+            if (step.bodyTemplate) {
+                auto resolved = varResolver.resolve(*step.bodyTemplate, ctx, rctx);
+                req.body = resolved.output;
+                if (!req.headers.contains("Content-Type")) {
+                    req.headers["Content-Type"] = "application/json";
+                }
+            }
+
+            auto response = deps.http->send(req);
+            if (!response) return false;
+
+            // Check status.
+            if (step.expectStatus && response->status != *step.expectStatus) {
+                return false;
+            }
+
+            // Extract variables.
+            if (!response->body.empty() && !step.extractions.empty()) {
+                auto values = extractFromJson(response->body, step.extractions);
+                if (!values) {
+                    // Auth-time extraction failure is fatal — fail the session.
+                    return false;
+                }
+                for (auto& [k, v] : *values) {
+                    session.variables[k] = std::move(v);
+                }
+            }
+        }
+
+        session.state = ActorSession::State::Live;
+        session.expiresAt = std::chrono::steady_clock::now() + actor.sessionTtl;
+        ctx.putSession(actor.id, std::move(session));
+        return true;
+    }
+
+    /// Execute a single operation step. Returns the StepResult.
+    StepResult executeStep(const Operation& op, const Project& project,
+                           RunContext& ctx, const ResolveContext& rctx,
+                           RunId runId, std::size_t /*stepIndex*/) {
+        StepResult result;
+        result.op = op.id;
+        result.attempts = 1;
+        auto startTime = std::chrono::steady_clock::now();
+
+        // Ensure actor session if needed.
+        if (!op.actor.value.empty()) {
+            auto actorIt = project.actors.find(op.actor);
+            if (actorIt != project.actors.end()) {
+                // Apply actor inject headers later.
+                if (!ensureSession(actorIt->second, ctx, rctx, runId)) {
+                    result.status = StepResult::Status::Failed;
+                    result.error = ErrorCode::SessionRefreshFailed;
+                    return result;
+                }
+            }
+        }
+
+        // Resolve the request.
+        auto resolvedPath = varResolver.resolve(op.pathTemplate, ctx, rctx);
+        if (!resolvedPath.unresolved.empty()) {
+            result.status = StepResult::Status::Failed;
+            result.error = ErrorCode::VarUnresolved;
+            return result;
+        }
+
+        HttpRequest req;
+        req.method = op.method;
+        auto baseUrlIt = rctx.envVars.find("baseUrl");
+        std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
+        req.url = baseUrl + resolvedPath.output;
+
+        // Operation headers.
+        for (const auto& [k, v] : op.headers) {
+            auto resolved = varResolver.resolve(v, ctx, rctx);
+            req.headers[k] = resolved.output;
+        }
+
+        // Actor inject headers.
+        if (!op.actor.value.empty()) {
+            auto actorIt = project.actors.find(op.actor);
+            if (actorIt != project.actors.end()) {
+                for (const auto& [k, v] : actorIt->second.inject.headers) {
+                    auto resolved = varResolver.resolve(v, ctx, rctx);
+                    req.headers[k] = resolved.output;
+                }
+            }
+        }
+
+        // Query params → append to URL.
+        if (!op.queryParams.empty()) {
+            std::string qs;
+            for (const auto& [k, v] : op.queryParams) {
+                auto resolved = varResolver.resolve(v, ctx, rctx);
+                if (!qs.empty()) qs += "&";
+                qs += urlEncode(k) + "=" + urlEncode(resolved.output);
+            }
+            req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
+        }
+
+        // Body.
+        if (op.bodyTemplate) {
+            auto resolved = varResolver.resolve(*op.bodyTemplate, ctx, rctx);
+            req.body = resolved.output;
+            if (!req.headers.contains("Content-Type")) {
+                req.headers["Content-Type"] = "application/json";
+            }
+        } else if (op.bodyForm) {
+            std::string formBody;
+            for (const auto& [k, v] : *op.bodyForm) {
+                auto resolved = varResolver.resolve(v, ctx, rctx);
+                if (!formBody.empty()) formBody += "&";
+                formBody += urlEncode(k) + "=" + urlEncode(resolved.output);
+            }
+            req.body = formBody;
+            req.headers["Content-Type"] = "application/x-www-form-urlencoded";
+        }
+
+        if (op.timeout) {
+            req.timeout = *op.timeout;
+        }
+
+        // Send with retry. Track real attempt count for the result.
+        const int maxAttempts = op.retry.maxAttempts;
+        std::optional<HttpResponse> httpResp;
+        ChainApiError lastError{};
+        int attemptCount = 0;
+
+        for (int attempt = 0; attempt <= maxAttempts; ++attempt) {
+            ++attemptCount;
+            if (isCancelled(runId)) {
+                result.status = StepResult::Status::Cancelled;
+                result.error = ErrorCode::Cancelled;
+                result.attempts = attemptCount;
+                return result;
+            }
+
+            auto resp = deps.http->send(req);
+            if (resp) {
+                httpResp = std::move(*resp);
+                break;
+            }
+            lastError = resp.error();
+            if (!isRetryable(lastError.code) || attempt >= maxAttempts) {
+                result.status = StepResult::Status::Failed;
+                result.error = lastError.code;
+                result.attempts = attemptCount;
+                return result;
+            }
+            // Exponential backoff with bounded shift to avoid signed-overflow UB
+            // on large maxAttempts values. Cap the shift at 20 (≈ 1M ms multiplier).
+            const auto shift = std::min(attempt, 20);
+            auto delay = op.retry.baseBackoff * (std::uint32_t{1} << shift);
+            if (delay > op.retry.maxBackoff) delay = op.retry.maxBackoff;
+            std::this_thread::sleep_for(delay);
+        }
+
+        result.attempts = attemptCount;
+
+        // Check status.
+        if (op.expectStatus && httpResp && httpResp->status != *op.expectStatus) {
+            result.status = StepResult::Status::Failed;
+            result.error = (httpResp->status >= 500) ? ErrorCode::Http5xx : ErrorCode::Http4xx;
+            auto elapsed = std::chrono::steady_clock::now() - startTime;
+            result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+            return result;
+        }
+
+        // Extract variables — surfaces ResponseParse / ExtractionFailed
+        // properly per Engine Req §5.
+        if (httpResp && !op.extractions.empty()) {
+            auto values = extractFromJson(httpResp->body, op.extractions);
+            if (!values) {
+                result.status = StepResult::Status::Failed;
+                result.error = values.error().code;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+            if (!values->empty()) {
+                ResourceInstance instance;
+                instance.variables = std::move(*values);
+                ctx.appendInstance(op.resource, std::move(instance));
+            }
+        }
+
+        result.status = StepResult::Status::Succeeded;
+        auto elapsed = std::chrono::steady_clock::now() - startTime;
+        result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+        return result;
+    }
 };
+
+// ─── Public API ──────────────────────────────────────────────────────────────
 
 ExecutionEngine::ExecutionEngine(Dependencies deps)
     : impl_(std::make_unique<Impl>(std::move(deps))) {}
@@ -43,26 +373,156 @@ ExecutionEngine::~ExecutionEngine() = default;
 ExecutionEngine::ExecutionEngine(ExecutionEngine&&) noexcept = default;
 ExecutionEngine& ExecutionEngine::operator=(ExecutionEngine&&) noexcept = default;
 
-std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& project,
-                                                             const OperationId& target,
-                                                             RunContext& /*ctx*/,
-                                                             const RunOptions& /*options*/) {
-    // Phase 1 will:
-    //   1. Resolve chain via impl_->resolver.resolve(project, target).
-    //   2. Emit RunStarted.
-    //   3. For each step: prepare request, send (with retries), extract,
-    //      record. Honor session cache (§3.3) and extraction cache (§3.4).
-    //   4. Halt on first terminal failure (§3.6).
-    //   5. Emit RunEnded.
-    auto chain = impl_->resolver.resolve(project, target);
+std::expected<RunResult, ChainApiError> ExecutionEngine::run(
+    const Project& project,
+    const OperationId& target,
+    RunContext& ctx,
+    const RunOptions& options) {
+
+    impl_->cancelledRunId.store(0, std::memory_order_release);
+
+    // Handle reset options.
+    if (options.resetExtractions) {
+        ctx.clearExtractions();
+    }
+    if (options.resetSessions) {
+        // "Send Cleanly" — clear sessions only. Extractions are independent
+        // (Engine Req AC-3.4.2 vs AC-3.4.3).
+        for (const auto& [actorId, _] : project.actors) {
+            ctx.invalidateSession(actorId);
+        }
+    }
+
+    // Resolve the chain.
+    auto chainResult = impl_->resolver.resolve(project, target);
+    if (!chainResult) {
+        return std::unexpected(chainResult.error());
+    }
+
+    const auto& chain = *chainResult;
+    auto runId = RunId{impl_->nextRunId.fetch_add(1)};
+
+    // Build resolve context from environment.
+    ResolveContext rctx;
+    auto envName = options.environment.empty() ? project.defaultEnvironment : options.environment;
+    if (project.environments.contains(envName)) {
+        rctx.envVars = project.environments.at(envName);
+    }
+
+    // Emit RunStarted.
+    impl_->emit(RunStarted{runId, target, chain.size(), envName,
+                           std::chrono::system_clock::now()});
+
     RunResult result;
-    result.runId = RunId{impl_->nextRunId.fetch_add(1)};
+    result.runId = runId;
     result.outcome = RunOutcome::Succeeded;
+
+    // Execute each step.
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        const auto& opId = chain[i];
+
+        // Find the operation.
+        auto dotPos = opId.value.find('.');
+        auto resName = opId.value.substr(0, dotPos);
+        auto opName = opId.value.substr(dotPos + 1);
+
+        auto resIt = project.resources.find(ResourceId{resName});
+        if (resIt == project.resources.end()) {
+            result.outcome = RunOutcome::Failed;
+            break;
+        }
+        auto opIt = resIt->second.operations.find(opName);
+        if (opIt == resIt->second.operations.end()) {
+            result.outcome = RunOutcome::Failed;
+            break;
+        }
+
+        const auto& op = opIt->second;
+        const bool isTarget = (opId.value == target.value);
+
+        // Skip if extraction already cached (AC-3.4.1) and not force.
+        // The user's explicit target is never skipped — caching applies
+        // only to prerequisite dependencies.
+        if (!isTarget && !op.force && !op.extractions.empty()) {
+            const auto& instances = ctx.instances(op.resource);
+            if (!instances.empty()) {
+                // Check if all required extractions are already present.
+                bool allPresent = true;
+                for (const auto& ext : op.extractions) {
+                    bool found = false;
+                    for (const auto& inst : instances) {
+                        if (inst.variables.contains(ext.variableName)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) { allPresent = false; break; }
+                }
+                if (allPresent) {
+                    StepResult skipResult;
+                    skipResult.op = opId;
+                    skipResult.status = StepResult::Status::Skipped;
+                    result.steps.push_back(skipResult);
+                    impl_->emit(StepSkipped{runId, i, opId,
+                                            SkipReason::ExtractionCached,
+                                            std::chrono::system_clock::now()});
+                    continue;
+                }
+            }
+        }
+
+        // Dry run: don't execute.
+        if (options.dryRun) {
+            StepResult dryResult;
+            dryResult.op = opId;
+            dryResult.status = StepResult::Status::Succeeded;
+            result.steps.push_back(dryResult);
+            continue;
+        }
+
+        impl_->emit(StepStarted{runId, i, opId, 1,
+                                std::chrono::system_clock::now()});
+
+        auto stepResult = impl_->executeStep(op, project, ctx, rctx, runId, i);
+        result.steps.push_back(stepResult);
+        ctx.record(stepResult);
+
+        if (stepResult.status == StepResult::Status::Failed) {
+            impl_->emit(StepFailed{runId, i, opId,
+                                   stepResult.error.value_or(ErrorCode::Http4xx),
+                                   classify(stepResult.error.value_or(ErrorCode::Http4xx)),
+                                   stepResult.attempts, "",
+                                   std::chrono::system_clock::now()});
+            result.outcome = RunOutcome::Failed;
+            // Mark remaining as blocked.
+            for (std::size_t j = i + 1; j < chain.size(); ++j) {
+                StepResult blocked;
+                blocked.op = chain[j];
+                blocked.status = StepResult::Status::Blocked;
+                result.steps.push_back(blocked);
+            }
+            break;
+        }
+
+        if (stepResult.status == StepResult::Status::Cancelled) {
+            result.outcome = RunOutcome::Cancelled;
+            for (std::size_t j = i + 1; j < chain.size(); ++j) {
+                StepResult cancelled;
+                cancelled.op = chain[j];
+                cancelled.status = StepResult::Status::Cancelled;
+                result.steps.push_back(cancelled);
+            }
+            break;
+        }
+    }
+
+    impl_->emit(RunEnded{runId, result.outcome, std::chrono::milliseconds{0},
+                         std::chrono::system_clock::now()});
     return result;
 }
 
-void ExecutionEngine::cancel(RunId /*run*/) {
-    impl_->cancelRequested.store(true);
+void ExecutionEngine::cancel(RunId run) {
+    impl_->cancelledRunId.store(run.value, std::memory_order_release);
 }
 
 void ExecutionEngine::subscribe(EventCallback callback) {
