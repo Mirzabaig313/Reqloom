@@ -16,8 +16,7 @@ public:
         std::string warnings;
     };
 
-    std::expected<Outcome, ChainApiError> run(
-        const std::filesystem::path& spec) const;
+    std::expected<Outcome, ChainApiError> run(const std::filesystem::path& spec) const;
 };
 
 }  // namespace chainapi::engine

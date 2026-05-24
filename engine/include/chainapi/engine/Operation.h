@@ -31,16 +31,14 @@ struct ActorId {
     auto operator<=>(const ActorId&) const = default;
 };
 
-enum class HttpMethod {
-    Get, Post, Put, Patch, Delete, Head, Options
-};
+enum class HttpMethod { Get, Post, Put, Patch, Delete, Head, Options };
 
 /// Where to pull a value out of a response.
 struct Extraction {
     enum class Source { JsonPath, XPath, Header, StatusCode, Regex, Cookie };
 
-    std::string variableName;       ///< Stored as <resource>.<variableName>.
-    std::string sourcePath;         ///< JSONPath / XPath / header name / regex.
+    std::string variableName;  ///< Stored as <resource>.<variableName>.
+    std::string sourcePath;    ///< JSONPath / XPath / header name / regex.
     Source source{Source::JsonPath};
 };
 
@@ -54,14 +52,14 @@ struct RetryPolicy {
 /// One declared operation. Mirrors PRD §5.6 schema.
 struct Operation {
     OperationId id;
-    ResourceId  resource;
-    ActorId     actor;
+    ResourceId resource;
+    ActorId actor;
 
-    HttpMethod  method{HttpMethod::Get};
-    std::string pathTemplate;                          ///< e.g. /api/v1/orders/{{order.order_id}}
+    HttpMethod method{HttpMethod::Get};
+    std::string pathTemplate;  ///< e.g. /api/v1/orders/{{order.order_id}}
     std::map<std::string, std::string> headers;
     std::map<std::string, std::string> queryParams;
-    std::optional<std::string> bodyTemplate;           ///< Raw template, may contain {{X.y}}.
+    std::optional<std::string> bodyTemplate;  ///< Raw template, may contain {{X.y}}.
 
     std::optional<int> expectStatus;
     std::vector<Extraction> extractions;
@@ -75,7 +73,7 @@ struct Operation {
 
     RetryPolicy retry;
     std::optional<std::chrono::milliseconds> timeout;
-    bool force{false};                                 ///< Per-op force re-run flag.
+    bool force{false};  ///< Per-op force re-run flag.
 };
 
 }  // namespace chainapi::engine

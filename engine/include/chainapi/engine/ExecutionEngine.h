@@ -37,9 +37,7 @@ struct RunResult {
     RunOutcome outcome{RunOutcome::Succeeded};
     std::vector<StepResult> steps;
 
-    [[nodiscard]] bool succeeded() const noexcept {
-        return outcome == RunOutcome::Succeeded;
-    }
+    [[nodiscard]] bool succeeded() const noexcept { return outcome == RunOutcome::Succeeded; }
 };
 
 /// A loaded, validated project. The schema parser produces this; the
@@ -56,9 +54,9 @@ struct Project {
 /// Per-run options.
 struct RunOptions {
     bool dryRun{false};
-    bool resetExtractions{false};       ///< "Reset Cache" — Engine Req AC-3.4.2.
-    bool resetSessions{false};          ///< "Send Cleanly" — AC-3.4.3.
-    std::string environment;            ///< Empty → use project default.
+    bool resetExtractions{false};  ///< "Reset Cache" — Engine Req AC-3.4.2.
+    bool resetSessions{false};     ///< "Send Cleanly" — AC-3.4.3.
+    std::string environment;       ///< Empty → use project default.
 };
 
 class ExecutionEngine {
@@ -67,11 +65,11 @@ public:
     /// production wiring lives in `Bootstrapper.cpp` (desktop) or
     /// `main.cpp` (cli).
     struct Dependencies {
-        std::unique_ptr<HttpClient>   http;
+        std::unique_ptr<HttpClient> http;
         std::unique_ptr<SchemaParser> schema;
         std::unique_ptr<HistoryStore> history;
-        std::unique_ptr<SecretStore>  secrets;
-        std::unique_ptr<HookRunner>   hooks;
+        std::unique_ptr<SecretStore> secrets;
+        std::unique_ptr<HookRunner> hooks;
     };
 
     explicit ExecutionEngine(Dependencies deps);
@@ -88,11 +86,10 @@ public:
     /// chain whose target step fails at runtime returns a `RunResult`
     /// with `outcome == Failed`, not an error — the caller inspects
     /// `steps` to discover which step failed.
-    std::expected<RunResult, ChainApiError> run(
-        const Project& project,
-        const OperationId& target,
-        RunContext& ctx,
-        const RunOptions& options = {});
+    std::expected<RunResult, ChainApiError> run(const Project& project,
+                                                const OperationId& target,
+                                                RunContext& ctx,
+                                                const RunOptions& options = {});
 
     /// Cancel an in-flight run. Engine Req §3.8.
     void cancel(RunId run);

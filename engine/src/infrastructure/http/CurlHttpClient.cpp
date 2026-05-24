@@ -8,13 +8,10 @@ namespace chainapi::engine {
 CurlHttpClient::CurlHttpClient() = default;
 CurlHttpClient::~CurlHttpClient() = default;
 
-std::expected<HttpResponse, ChainApiError>
-CurlHttpClient::send(const HttpRequest& /*request*/) {
-    return std::unexpected(ChainApiError{
-        ErrorCode::NetworkTimeout,
-        ErrorClass::Network,
-        "CurlHttpClient::send not yet implemented (Phase 1)."
-    });
+std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpRequest& /*request*/) {
+    return std::unexpected(ChainApiError{ErrorCode::NetworkTimeout,
+                                         ErrorClass::Network,
+                                         "CurlHttpClient::send not yet implemented (Phase 1)."});
 }
 
 }  // namespace chainapi::engine

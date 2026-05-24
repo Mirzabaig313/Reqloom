@@ -20,7 +20,7 @@ struct ActorSession {
     enum class State { None, Authenticating, Live, Refreshing };
 
     State state{State::None};
-    std::map<std::string, std::string> variables;          ///< token, user_id, etc.
+    std::map<std::string, std::string> variables;  ///< token, user_id, etc.
     std::chrono::steady_clock::time_point expiresAt{};
 };
 
@@ -31,9 +31,7 @@ struct ResourceInstance {
 
 /// Status of a single step in a chain. Engine Req §4.1.
 struct StepResult {
-    enum class Status {
-        Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked
-    };
+    enum class Status { Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked };
 
     OperationId op;
     Status status{Status::Pending};
@@ -58,8 +56,8 @@ public:
     void invalidateSession(const ActorId& actor);
 
     // Extraction cache — list of instances per resource (for `{{R[k].x}}`).
-    [[nodiscard]] const std::vector<ResourceInstance>&
-        instances(const ResourceId& resource) const noexcept;
+    [[nodiscard]] const std::vector<ResourceInstance>& instances(
+        const ResourceId& resource) const noexcept;
     void appendInstance(const ResourceId& resource, ResourceInstance instance);
     void clearExtractions();
 

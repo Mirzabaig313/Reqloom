@@ -1,7 +1,7 @@
 #include "App.h"
 
-#include "Bootstrapper.h"
 #include "../views/MainWindow.h"
+#include "Bootstrapper.h"
 
 namespace chainapi::desktop {
 

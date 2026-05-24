@@ -51,7 +51,7 @@ struct RequestPrepared {
     RunId runId;
     std::size_t stepIndex{};
     HttpMethod method{};
-    std::string url;                                                    ///< Fully-resolved.
+    std::string url;  ///< Fully-resolved.
     std::vector<std::pair<std::string, std::string>> maskedHeaders;
     std::size_t bodySize{};
     TimePoint at;
@@ -71,7 +71,7 @@ struct ExtractionApplied {
     RunId runId;
     std::size_t stepIndex{};
     ResourceId resource;
-    std::vector<std::string> variableNames;        ///< Names only; auth values masked.
+    std::vector<std::string> variableNames;  ///< Names only; auth values masked.
     TimePoint at;
 };
 
@@ -111,17 +111,15 @@ struct RunEnded {
     TimePoint at;
 };
 
-using RunEvent = std::variant<
-    RunStarted,
-    StepStarted,
-    StepSkipped,
-    RequestPrepared,
-    ResponseReceived,
-    ExtractionApplied,
-    StepFailed,
-    StepCancelled,
-    SessionRefreshed,
-    RunEnded
->;
+using RunEvent = std::variant<RunStarted,
+                              StepStarted,
+                              StepSkipped,
+                              RequestPrepared,
+                              ResponseReceived,
+                              ExtractionApplied,
+                              StepFailed,
+                              StepCancelled,
+                              SessionRefreshed,
+                              RunEnded>;
 
 }  // namespace chainapi::engine

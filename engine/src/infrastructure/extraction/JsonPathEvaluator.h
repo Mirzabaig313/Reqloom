@@ -15,8 +15,7 @@ public:
     /// Returns `ChainApiError{ResponseParse, ...}` if the JSON itself is
     /// malformed.
     std::expected<std::optional<std::string>, ChainApiError> evaluate(
-        std::string_view json,
-        std::string_view jsonpath) const;
+        std::string_view json, std::string_view jsonpath) const;
 };
 
 }  // namespace chainapi::engine

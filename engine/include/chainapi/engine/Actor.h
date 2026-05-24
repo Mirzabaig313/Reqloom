@@ -16,7 +16,7 @@ enum class AuthStrategy { Simple, Chain };
 
 /// One step in an actor's auth chain.
 struct AuthStep {
-    std::string id;                                ///< Stable id within the actor.
+    std::string id;  ///< Stable id within the actor.
     HttpMethod method{HttpMethod::Post};
     std::string pathTemplate;
     std::map<std::string, std::string> headers;
@@ -45,7 +45,7 @@ struct Actor {
     std::string description;
 
     AuthStrategy strategy{AuthStrategy::Simple};
-    std::vector<AuthStep> authSteps;               ///< For `simple`, exactly one step.
+    std::vector<AuthStep> authSteps;  ///< For `simple`, exactly one step.
 
     std::chrono::seconds sessionTtl{15 * 60};
     std::optional<SessionRefresh> refresh;

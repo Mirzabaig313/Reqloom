@@ -13,11 +13,10 @@ class RunOperationUseCase {
 public:
     explicit RunOperationUseCase(ExecutionEngine& engine);
 
-    std::expected<RunResult, ChainApiError> execute(
-        const Project& project,
-        const OperationId& target,
-        RunContext& ctx,
-        const RunOptions& options = {});
+    std::expected<RunResult, ChainApiError> execute(const Project& project,
+                                                    const OperationId& target,
+                                                    RunContext& ctx,
+                                                    const RunOptions& options = {});
 
 private:
     ExecutionEngine& engine_;

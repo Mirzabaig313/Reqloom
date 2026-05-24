@@ -43,11 +43,10 @@ ExecutionEngine::~ExecutionEngine() = default;
 ExecutionEngine::ExecutionEngine(ExecutionEngine&&) noexcept = default;
 ExecutionEngine& ExecutionEngine::operator=(ExecutionEngine&&) noexcept = default;
 
-std::expected<RunResult, ChainApiError> ExecutionEngine::run(
-    const Project& project,
-    const OperationId& target,
-    RunContext& /*ctx*/,
-    const RunOptions& /*options*/) {
+std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& project,
+                                                             const OperationId& target,
+                                                             RunContext& /*ctx*/,
+                                                             const RunOptions& /*options*/) {
     // Phase 1 will:
     //   1. Resolve chain via impl_->resolver.resolve(project, target).
     //   2. Emit RunStarted.

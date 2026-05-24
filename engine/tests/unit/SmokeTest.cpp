@@ -15,8 +15,7 @@ namespace ce = chainapi::engine;
 
 TEST(EngineSmoke, ErrorCodeStringsAreStable) {
     EXPECT_EQ(ce::toCodeString(ce::ErrorCode::Cycle), "E_CYCLE");
-    EXPECT_EQ(ce::toCodeString(ce::ErrorCode::SessionRefreshFailed),
-              "E_SESSION_REFRESH_FAILED");
+    EXPECT_EQ(ce::toCodeString(ce::ErrorCode::SessionRefreshFailed), "E_SESSION_REFRESH_FAILED");
     EXPECT_EQ(ce::toCodeString(ce::ErrorCode::Http5xx), "E_HTTP_5XX");
 }
 
@@ -70,10 +69,9 @@ TEST(EngineSmoke, ChainApiErrorIsCarriedThroughExpected) {
     // Construct a ChainApiError and round-trip it through std::expected
     // to confirm the error-channel idiom compiles end-to-end.
     auto failingOperation = []() -> std::expected<int, ce::ChainApiError> {
-        return std::unexpected(ce::ChainApiError{
-            ce::ErrorCode::VarUnresolved,
-            ce::ErrorClass::Resolution,
-            "missing: order.order_id; last set by: never"});
+        return std::unexpected(ce::ChainApiError{ce::ErrorCode::VarUnresolved,
+                                                 ce::ErrorClass::Resolution,
+                                                 "missing: order.order_id; last set by: never"});
     };
 
     auto result = failingOperation();

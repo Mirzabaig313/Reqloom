@@ -38,8 +38,7 @@ public:
     /// Engine Req §3.8. Network failures are surfaced as `ChainApiError`
     /// (NetworkTimeout / NetworkDns / NetworkTls); HTTP status codes are
     /// not — those are the caller's concern.
-    virtual std::expected<HttpResponse, ChainApiError> send(
-        const HttpRequest& request) = 0;
+    virtual std::expected<HttpResponse, ChainApiError> send(const HttpRequest& request) = 0;
 };
 
 }  // namespace chainapi::engine

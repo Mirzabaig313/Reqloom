@@ -30,8 +30,8 @@ void RunContext::invalidateSession(const ActorId& actor) {
     impl_->sessions.erase(actor);
 }
 
-const std::vector<ResourceInstance>&
-RunContext::instances(const ResourceId& resource) const noexcept {
+const std::vector<ResourceInstance>& RunContext::instances(
+    const ResourceId& resource) const noexcept {
     const auto it = impl_->instances.find(resource);
     return it == impl_->instances.end() ? impl_->emptyInstances : it->second;
 }

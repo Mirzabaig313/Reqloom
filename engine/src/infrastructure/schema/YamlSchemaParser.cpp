@@ -13,8 +13,7 @@ namespace chainapi::engine {
 YamlSchemaParser::YamlSchemaParser() = default;
 YamlSchemaParser::~YamlSchemaParser() = default;
 
-SchemaParseResult YamlSchemaParser::parse(
-    const std::filesystem::path& /*rootYaml*/) {
+SchemaParseResult YamlSchemaParser::parse(const std::filesystem::path& /*rootYaml*/) {
     return Project{};
 }
 

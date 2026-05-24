@@ -19,9 +19,8 @@ public:
     /// Returns the chain in topological order, terminating with `target`.
     /// Returns `ChainApiError{Cycle | RefUndefined | ...}` on schema
     /// problems detected during resolution.
-    std::expected<std::vector<OperationId>, ChainApiError> resolve(
-        const Project& project,
-        const OperationId& target) const;
+    std::expected<std::vector<OperationId>, ChainApiError> resolve(const Project& project,
+                                                                   const OperationId& target) const;
 };
 
 }  // namespace chainapi::engine

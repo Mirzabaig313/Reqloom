@@ -22,8 +22,7 @@ class SchemaParser {
 public:
     virtual ~SchemaParser() = default;
 
-    virtual SchemaParseResult parse(
-        const std::filesystem::path& rootYaml) = 0;
+    virtual SchemaParseResult parse(const std::filesystem::path& rootYaml) = 0;
 };
 
 }  // namespace chainapi::engine

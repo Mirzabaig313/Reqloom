@@ -33,27 +33,25 @@ struct HookResponseView {
 
 struct HookContext {
     HookRequestView request;
-    std::optional<HookResponseView> response;       ///< Set only for post_response.
+    std::optional<HookResponseView> response;  ///< Set only for post_response.
     std::map<std::string, std::map<std::string, std::string>> variables;
     std::map<std::string, std::string> env;
 };
 
 struct HookOutcome {
-    HookRequestView mutatedRequest;                  ///< pre_request hooks may mutate.
-    std::optional<HookResponseView> mutatedResponse; ///< post_response hooks may mutate.
+    HookRequestView mutatedRequest;                   ///< pre_request hooks may mutate.
+    std::optional<HookResponseView> mutatedResponse;  ///< post_response hooks may mutate.
 };
 
 class HookRunner {
 public:
     virtual ~HookRunner() = default;
 
-    virtual std::expected<HookOutcome, ChainApiError> runPreRequest(
-        const std::string& script,
-        HookContext context) = 0;
+    virtual std::expected<HookOutcome, ChainApiError> runPreRequest(const std::string& script,
+                                                                    HookContext context) = 0;
 
-    virtual std::expected<HookOutcome, ChainApiError> runPostResponse(
-        const std::string& script,
-        HookContext context) = 0;
+    virtual std::expected<HookOutcome, ChainApiError> runPostResponse(const std::string& script,
+                                                                      HookContext context) = 0;
 };
 
 }  // namespace chainapi::engine

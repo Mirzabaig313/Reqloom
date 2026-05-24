@@ -11,11 +11,10 @@
 
 namespace chainapi::engine {
 
-VariableResolver::Result VariableResolver::resolve(
-    std::string_view /*templateStr*/,
-    const RunContext& /*ctx*/) const {
+VariableResolver::Result VariableResolver::resolve(std::string_view /*templateStr*/,
+                                                   const RunContext& /*ctx*/) const {
     // Phase 1: real templating engine. Skeleton returns empty success.
-    return Result{ "", {} };
+    return Result{"", {}};
 }
 
 }  // namespace chainapi::engine

@@ -6,25 +6,44 @@ namespace chainapi::engine {
 
 std::string_view toCodeString(ErrorCode code) noexcept {
     switch (code) {
-        case ErrorCode::SchemaInvalid:        return "E_SCHEMA_INVALID";
-        case ErrorCode::YamlParse:            return "E_YAML_PARSE";
-        case ErrorCode::Cycle:                return "E_CYCLE";
-        case ErrorCode::RefUndefined:         return "E_REF_UNDEFINED";
-        case ErrorCode::SchemaVersion:        return "E_SCHEMA_VERSION";
-        case ErrorCode::VarUnresolved:        return "E_VAR_UNRESOLVED";
-        case ErrorCode::IndexedRefOutOfRange: return "E_INDEXED_REF_OUT_OF_RANGE";
-        case ErrorCode::NetworkTimeout:       return "E_NETWORK_TIMEOUT";
-        case ErrorCode::NetworkDns:           return "E_NETWORK_DNS";
-        case ErrorCode::NetworkTls:           return "E_NETWORK_TLS";
-        case ErrorCode::Http5xx:              return "E_HTTP_5XX";
-        case ErrorCode::Http4xx:              return "E_HTTP_4XX";
-        case ErrorCode::StatusMismatch:       return "E_STATUS_MISMATCH";
-        case ErrorCode::SessionRefreshFailed: return "E_SESSION_REFRESH_FAILED";
-        case ErrorCode::HookFailure:          return "E_HOOK_FAILURE";
-        case ErrorCode::HookTimeout:          return "E_HOOK_TIMEOUT";
-        case ErrorCode::ExtractionFailed:     return "E_EXTRACTION_FAILED";
-        case ErrorCode::ResponseParse:        return "E_RESPONSE_PARSE";
-        case ErrorCode::Cancelled:            return "E_CANCELLED";
+        case ErrorCode::SchemaInvalid:
+            return "E_SCHEMA_INVALID";
+        case ErrorCode::YamlParse:
+            return "E_YAML_PARSE";
+        case ErrorCode::Cycle:
+            return "E_CYCLE";
+        case ErrorCode::RefUndefined:
+            return "E_REF_UNDEFINED";
+        case ErrorCode::SchemaVersion:
+            return "E_SCHEMA_VERSION";
+        case ErrorCode::VarUnresolved:
+            return "E_VAR_UNRESOLVED";
+        case ErrorCode::IndexedRefOutOfRange:
+            return "E_INDEXED_REF_OUT_OF_RANGE";
+        case ErrorCode::NetworkTimeout:
+            return "E_NETWORK_TIMEOUT";
+        case ErrorCode::NetworkDns:
+            return "E_NETWORK_DNS";
+        case ErrorCode::NetworkTls:
+            return "E_NETWORK_TLS";
+        case ErrorCode::Http5xx:
+            return "E_HTTP_5XX";
+        case ErrorCode::Http4xx:
+            return "E_HTTP_4XX";
+        case ErrorCode::StatusMismatch:
+            return "E_STATUS_MISMATCH";
+        case ErrorCode::SessionRefreshFailed:
+            return "E_SESSION_REFRESH_FAILED";
+        case ErrorCode::HookFailure:
+            return "E_HOOK_FAILURE";
+        case ErrorCode::HookTimeout:
+            return "E_HOOK_TIMEOUT";
+        case ErrorCode::ExtractionFailed:
+            return "E_EXTRACTION_FAILED";
+        case ErrorCode::ResponseParse:
+            return "E_RESPONSE_PARSE";
+        case ErrorCode::Cancelled:
+            return "E_CANCELLED";
     }
     return "E_UNKNOWN";
 }
