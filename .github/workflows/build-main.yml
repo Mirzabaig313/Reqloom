@@ -7,8 +7,6 @@ on:
 env:
   # Cache built vcpkg packages in the GitHub Actions cache.
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  # Cache source tarballs vcpkg downloads (zlib, libb2, qtbase, ...).
-  X_VCPKG_ASSET_SOURCES: "x-gha,readwrite"
 
 jobs:
   # --------------------------------------------------------------------------
