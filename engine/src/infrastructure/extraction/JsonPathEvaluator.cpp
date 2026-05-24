@@ -4,11 +4,11 @@
 
 namespace chainapi::engine {
 
-std::optional<std::string>
+std::expected<std::optional<std::string>, ChainApiError>
 JsonPathEvaluator::evaluate(std::string_view /*json*/,
-                             std::string_view /*jsonpath*/) const {
+                            std::string_view /*jsonpath*/) const {
     // Phase 1 implementation backed by nlohmann/json + a JSONPath helper.
-    return std::nullopt;
+    return std::optional<std::string>{};
 }
 
 }  // namespace chainapi::engine

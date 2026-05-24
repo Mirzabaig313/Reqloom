@@ -54,14 +54,24 @@ enum class ErrorClass {
     Run,
 };
 
-/// Human-readable, stable code string (e.g. "E_CYCLE"). Safe to use in logs
-/// and asserted on by integration tests.
-std::string_view to_code_string(ErrorCode code) noexcept;
+/// Stable, human-readable code string (e.g. "E_CYCLE"). Safe in logs and
+/// asserted on by integration tests.
+std::string_view toCodeString(ErrorCode code) noexcept;
 
 /// Whether a step that fails with this code should be retried per the
-/// per-operation RetryPolicy.
-bool is_retryable(ErrorCode code) noexcept;
+/// per-operation RetryPolicy. Engine spec §3.5.
+bool isRetryable(ErrorCode code) noexcept;
 
 ErrorClass classify(ErrorCode code) noexcept;
+
+/// Application-layer error type. The infrastructure and application layers
+/// return `std::expected<T, ChainApiError>` rather than throwing. Engine
+/// spec §5 treats `ErrorCode` as the stable identifier; `detail` carries
+/// human-readable context (file:line, response excerpt, etc.).
+struct ChainApiError {
+    ErrorCode code{ErrorCode::SchemaInvalid};
+    ErrorClass cls{ErrorClass::Schema};
+    std::string detail;
+};
 
 }  // namespace chainapi::engine

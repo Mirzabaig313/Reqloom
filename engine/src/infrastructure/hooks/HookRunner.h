@@ -8,7 +8,10 @@
 //   - Read-only access to other actors' variables
 #pragma once
 
+#include <chainapi/engine/ErrorCodes.h>
 #include <chainapi/engine/Operation.h>
+
+#include <expected>
 #include <map>
 #include <optional>
 #include <string>
@@ -30,26 +33,27 @@ struct HookResponseView {
 
 struct HookContext {
     HookRequestView request;
-    std::optional<HookResponseView> response;       ///< Only set for post_response.
+    std::optional<HookResponseView> response;       ///< Set only for post_response.
     std::map<std::string, std::map<std::string, std::string>> variables;
     std::map<std::string, std::string> env;
 };
 
 struct HookOutcome {
-    bool ok{true};
-    std::string error_message;
-    HookRequestView mutated_request;                 ///< Pre-request hooks may mutate.
-    std::optional<HookResponseView> mutated_response;
+    HookRequestView mutatedRequest;                  ///< pre_request hooks may mutate.
+    std::optional<HookResponseView> mutatedResponse; ///< post_response hooks may mutate.
 };
 
 class HookRunner {
 public:
     virtual ~HookRunner() = default;
 
-    virtual HookOutcome run_pre_request(const std::string& script,
-                                        HookContext context) = 0;
-    virtual HookOutcome run_post_response(const std::string& script,
-                                          HookContext context) = 0;
+    virtual std::expected<HookOutcome, ChainApiError> runPreRequest(
+        const std::string& script,
+        HookContext context) = 0;
+
+    virtual std::expected<HookOutcome, ChainApiError> runPostResponse(
+        const std::string& script,
+        HookContext context) = 0;
 };
 
 }  // namespace chainapi::engine

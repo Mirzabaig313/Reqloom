@@ -1,13 +1,13 @@
 #include "LintCommand.h"
 
-#include <iostream>
+#include <print>
 
 namespace chainapi::cli {
 
-int lint_command(const QStringList& /*args*/) {
+int lintCommand(const QStringList& /*args*/) {
     // Phase 1: parse project, run schema validation, report cycles /
     // undefined references with file:line.
-    std::cout << "[stub] lint not yet implemented\n";
+    std::println("[stub] lint not yet implemented");
     return 0;
 }
 

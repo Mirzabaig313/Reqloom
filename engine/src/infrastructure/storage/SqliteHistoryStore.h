@@ -9,9 +9,11 @@ public:
     SqliteHistoryStore();
     ~SqliteHistoryStore() override;
 
-    void open(const std::filesystem::path& db_path) override;
-    void append(const RunEvent& event) override;
-    std::vector<RunEvent> events_for(RunId run) const override;
+    std::expected<void, ChainApiError> open(
+        const std::filesystem::path& dbPath) override;
+    std::expected<void, ChainApiError> append(const RunEvent& event) override;
+    std::expected<std::vector<RunEvent>, ChainApiError>
+        eventsFor(RunId run) const override;
     void close() override;
 };
 

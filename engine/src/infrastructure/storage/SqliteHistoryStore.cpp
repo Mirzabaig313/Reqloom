@@ -7,17 +7,21 @@ namespace chainapi::engine {
 SqliteHistoryStore::SqliteHistoryStore() = default;
 SqliteHistoryStore::~SqliteHistoryStore() = default;
 
-void SqliteHistoryStore::open(const std::filesystem::path& /*db_path*/) {
+std::expected<void, ChainApiError>
+SqliteHistoryStore::open(const std::filesystem::path& /*dbPath*/) {
     // Phase 2: open + create schema if missing.
-}
-
-void SqliteHistoryStore::append(const RunEvent& /*event*/) {
-    // Phase 2: serialise to the runs/events tables.
-}
-
-std::vector<RunEvent>
-SqliteHistoryStore::events_for(RunId /*run*/) const {
     return {};
+}
+
+std::expected<void, ChainApiError>
+SqliteHistoryStore::append(const RunEvent& /*event*/) {
+    // Phase 2: serialise to the runs/events tables.
+    return {};
+}
+
+std::expected<std::vector<RunEvent>, ChainApiError>
+SqliteHistoryStore::eventsFor(RunId /*run*/) const {
+    return std::vector<RunEvent>{};
 }
 
 void SqliteHistoryStore::close() {

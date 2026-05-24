@@ -8,7 +8,7 @@ namespace chainapi::engine {
 struct RunContext::Impl {
     std::map<ActorId, ActorSession> sessions;
     std::map<ResourceId, std::vector<ResourceInstance>> instances;
-    std::vector<ResourceInstance> empty_instances;
+    std::vector<ResourceInstance> emptyInstances;
     std::vector<StepResult> steps;
 };
 
@@ -17,30 +17,30 @@ RunContext::~RunContext() = default;
 RunContext::RunContext(RunContext&&) noexcept = default;
 RunContext& RunContext::operator=(RunContext&&) noexcept = default;
 
-const ActorSession* RunContext::session(const ActorId& id) const noexcept {
-    auto it = impl_->sessions.find(id);
+const ActorSession* RunContext::session(const ActorId& actor) const noexcept {
+    const auto it = impl_->sessions.find(actor);
     return it == impl_->sessions.end() ? nullptr : &it->second;
 }
 
-void RunContext::put_session(const ActorId& id, ActorSession s) {
-    impl_->sessions[id] = std::move(s);
+void RunContext::putSession(const ActorId& actor, ActorSession session) {
+    impl_->sessions[actor] = std::move(session);
 }
 
-void RunContext::invalidate_session(const ActorId& id) {
-    impl_->sessions.erase(id);
+void RunContext::invalidateSession(const ActorId& actor) {
+    impl_->sessions.erase(actor);
 }
 
 const std::vector<ResourceInstance>&
-RunContext::instances(const ResourceId& id) const noexcept {
-    auto it = impl_->instances.find(id);
-    return it == impl_->instances.end() ? impl_->empty_instances : it->second;
+RunContext::instances(const ResourceId& resource) const noexcept {
+    const auto it = impl_->instances.find(resource);
+    return it == impl_->instances.end() ? impl_->emptyInstances : it->second;
 }
 
-void RunContext::append_instance(const ResourceId& id, ResourceInstance inst) {
-    impl_->instances[id].push_back(std::move(inst));
+void RunContext::appendInstance(const ResourceId& resource, ResourceInstance instance) {
+    impl_->instances[resource].push_back(std::move(instance));
 }
 
-void RunContext::clear_extractions() {
+void RunContext::clearExtractions() {
     impl_->instances.clear();
 }
 

@@ -22,14 +22,14 @@ struct ExecutionEngine::Impl {
     Dependencies deps;
     DependencyResolver resolver;
     std::vector<EventCallback> subscribers;
-    std::mutex subscriber_mutex;
-    std::atomic<std::uint64_t> next_run_id{1};
-    std::atomic<bool> cancel_requested{false};
+    std::mutex subscriberMutex;
+    std::atomic<std::uint64_t> nextRunId{1};
+    std::atomic<bool> cancelRequested{false};
 
     explicit Impl(Dependencies d) : deps(std::move(d)) {}
 
     void emit(const RunEvent& e) {
-        std::lock_guard lock(subscriber_mutex);
+        const std::lock_guard lock(subscriberMutex);
         for (auto& cb : subscribers) {
             cb(e);
         }
@@ -43,10 +43,11 @@ ExecutionEngine::~ExecutionEngine() = default;
 ExecutionEngine::ExecutionEngine(ExecutionEngine&&) noexcept = default;
 ExecutionEngine& ExecutionEngine::operator=(ExecutionEngine&&) noexcept = default;
 
-RunResult ExecutionEngine::run(const Project& project,
-                               const OperationId& target,
-                               RunContext& /*ctx*/,
-                               const RunOptions& /*options*/) {
+std::expected<RunResult, ChainApiError> ExecutionEngine::run(
+    const Project& project,
+    const OperationId& target,
+    RunContext& /*ctx*/,
+    const RunOptions& /*options*/) {
     // Phase 1 will:
     //   1. Resolve chain via impl_->resolver.resolve(project, target).
     //   2. Emit RunStarted.
@@ -56,17 +57,17 @@ RunResult ExecutionEngine::run(const Project& project,
     //   5. Emit RunEnded.
     auto chain = impl_->resolver.resolve(project, target);
     RunResult result;
-    result.run_id = RunId{impl_->next_run_id.fetch_add(1)};
+    result.runId = RunId{impl_->nextRunId.fetch_add(1)};
     result.outcome = RunOutcome::Succeeded;
     return result;
 }
 
 void ExecutionEngine::cancel(RunId /*run*/) {
-    impl_->cancel_requested.store(true);
+    impl_->cancelRequested.store(true);
 }
 
 void ExecutionEngine::subscribe(EventCallback callback) {
-    std::lock_guard lock(impl_->subscriber_mutex);
+    const std::lock_guard lock(impl_->subscriberMutex);
     impl_->subscribers.push_back(std::move(callback));
 }
 

@@ -4,7 +4,7 @@
 
 namespace chainapi::engine {
 
-std::string_view to_code_string(ErrorCode code) noexcept {
+std::string_view toCodeString(ErrorCode code) noexcept {
     switch (code) {
         case ErrorCode::SchemaInvalid:        return "E_SCHEMA_INVALID";
         case ErrorCode::YamlParse:            return "E_YAML_PARSE";
@@ -29,7 +29,7 @@ std::string_view to_code_string(ErrorCode code) noexcept {
     return "E_UNKNOWN";
 }
 
-bool is_retryable(ErrorCode code) noexcept {
+bool isRetryable(ErrorCode code) noexcept {
     switch (code) {
         case ErrorCode::NetworkTimeout:
         case ErrorCode::NetworkDns:

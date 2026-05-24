@@ -11,7 +11,7 @@ class TextRenderer {
 public:
     explicit TextRenderer(std::ostream& out);
 
-    void on_event(const engine::RunEvent& event);
+    void onEvent(const engine::RunEvent& event);
     void render(const engine::RunResult& result);
 
 private:

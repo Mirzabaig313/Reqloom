@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chainapi/engine/RunContext.h>
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,7 +18,7 @@ public:
     /// Substitute every `{{X.y}}` reference. Unresolved references are
     /// listed; the caller decides whether to fail (live run) or surface
     /// `<UNRESOLVED: X.y>` markers (dry run).
-    Result resolve(std::string_view template_str, const RunContext& ctx) const;
+    Result resolve(std::string_view templateStr, const RunContext& ctx) const;
 };
 
 }  // namespace chainapi::engine

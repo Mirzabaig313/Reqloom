@@ -5,8 +5,8 @@
 //   chainapi lint          — validate a project schema
 //   chainapi import <file> — import OpenAPI / Postman / Bruno
 //
-// This skeleton just dispatches to the command stubs so CI can build
-// the binary end-to-end before any feature work lands.
+// This skeleton dispatches to the command stubs so CI can build the
+// binary end-to-end before any feature work lands.
 #include "commands/ImportCommand.h"
 #include "commands/LintCommand.h"
 #include "commands/RunCommand.h"
@@ -15,17 +15,17 @@
 #include <QtCore/QString>
 #include <QtCore/QStringList>
 
-#include <iostream>
+#include <print>
 
 namespace {
 
-void print_usage() {
-    std::cout
-        << "ChainAPI CLI\n"
-        << "  chainapi run <operation>      Execute a chain ending at <operation>\n"
-        << "  chainapi lint                 Validate the schema in current project\n"
-        << "  chainapi import <file>        Import an external API spec\n"
-        << "  chainapi --help               Show this message\n";
+void printUsage() {
+    std::println(
+        "ChainAPI CLI\n"
+        "  chainapi run <operation>      Execute a chain ending at <operation>\n"
+        "  chainapi lint                 Validate the schema in current project\n"
+        "  chainapi import <file>        Import an external API spec\n"
+        "  chainapi --help               Show this message");
 }
 
 }  // namespace
@@ -37,22 +37,22 @@ int main(int argc, char** argv) {
 
     const QStringList args = QCoreApplication::arguments();
     if (args.size() < 2 || args.at(1) == QStringLiteral("--help")) {
-        print_usage();
+        printUsage();
         return args.size() < 2 ? 1 : 0;
     }
 
     const QString verb = args.at(1);
     if (verb == QStringLiteral("run")) {
-        return chainapi::cli::run_command(args.mid(2));
+        return chainapi::cli::runCommand(args.mid(2));
     }
     if (verb == QStringLiteral("lint")) {
-        return chainapi::cli::lint_command(args.mid(2));
+        return chainapi::cli::lintCommand(args.mid(2));
     }
     if (verb == QStringLiteral("import")) {
-        return chainapi::cli::import_command(args.mid(2));
+        return chainapi::cli::importCommand(args.mid(2));
     }
 
-    std::cerr << "Unknown command: " << verb.toStdString() << "\n";
-    print_usage();
+    std::println(stderr, "Unknown command: {}", verb.toStdString());
+    printUsage();
     return 2;
 }

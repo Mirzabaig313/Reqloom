@@ -4,10 +4,10 @@
 #include <QtWidgets/QApplication>
 
 int main(int argc, char** argv) {
-    QApplication qt_app(argc, argv);
-    qt_app.setApplicationName(QStringLiteral("ChainAPI"));
-    qt_app.setApplicationVersion(QStringLiteral("0.1.0"));
-    qt_app.setOrganizationName(QStringLiteral("ChainAPI"));
+    QApplication qtApp(argc, argv);
+    qtApp.setApplicationName(QStringLiteral("ChainAPI"));
+    qtApp.setApplicationVersion(QStringLiteral("0.1.0"));
+    qtApp.setOrganizationName(QStringLiteral("ChainAPI"));
 
     chainapi::desktop::App app;
     app.show();

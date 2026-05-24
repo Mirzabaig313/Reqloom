@@ -2,8 +2,11 @@
 // Engine Requirement §3.1.
 #pragma once
 
+#include <chainapi/engine/ErrorCodes.h>
 #include <chainapi/engine/ExecutionEngine.h>
 #include <chainapi/engine/Operation.h>
+
+#include <expected>
 #include <vector>
 
 namespace chainapi::engine {
@@ -14,9 +17,11 @@ public:
     ~DependencyResolver();
 
     /// Returns the chain in topological order, terminating with `target`.
-    /// Throws on cycle (caught by caller and surfaced as ErrorCode::Cycle).
-    std::vector<OperationId> resolve(const Project& project,
-                                      const OperationId& target) const;
+    /// Returns `ChainApiError{Cycle | RefUndefined | ...}` on schema
+    /// problems detected during resolution.
+    std::expected<std::vector<OperationId>, ChainApiError> resolve(
+        const Project& project,
+        const OperationId& target) const;
 };
 
 }  // namespace chainapi::engine

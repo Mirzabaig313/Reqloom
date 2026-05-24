@@ -1,9 +1,9 @@
 // Public façade for libchainapi-engine. Project Layout §3.
 //
 // pImpl + value types only — no Qt UI types appear here, no infra-library
-// types leak to embedders. Phase B (post-MVP) extracting the engine to a
-// separate process or a Rust rewrite is a build-system change rather than a
-// rewrite because of this surface.
+// types leak. Phase B (post-MVP) extracting the engine to a separate
+// process or rewriting the implementation in Rust is a build-system change
+// rather than a rewrite because of this surface.
 #pragma once
 
 #include <chainapi/engine/Actor.h>
@@ -13,6 +13,7 @@
 #include <chainapi/engine/Resource.h>
 #include <chainapi/engine/RunContext.h>
 
+#include <expected>
 #include <functional>
 #include <map>
 #include <memory>
@@ -32,7 +33,7 @@ class HookRunner;
 
 /// Result of a run.
 struct RunResult {
-    RunId run_id;
+    RunId runId;
     RunOutcome outcome{RunOutcome::Succeeded};
     std::vector<StepResult> steps;
 
@@ -41,12 +42,12 @@ struct RunResult {
     }
 };
 
-/// Loaded, validated project. The schema parser produces this; the engine
-/// consumes it. Cycles, undefined references, and unsupported versions
-/// are caught at parse time and surfaced as `ErrorCode::*` values.
+/// A loaded, validated project. The schema parser produces this; the
+/// engine consumes it. Cycles, undefined references, and unsupported
+/// versions are caught at parse time and surfaced as `ChainApiError`.
 struct Project {
     std::string name;
-    std::string default_environment;
+    std::string defaultEnvironment;
     std::map<ActorId, Actor> actors;
     std::map<ResourceId, Resource> resources;
     std::map<std::string, std::map<std::string, std::string>> environments;
@@ -54,10 +55,10 @@ struct Project {
 
 /// Per-run options.
 struct RunOptions {
-    bool dry_run{false};
-    bool reset_extractions{false};        ///< "Reset Cache" — Engine Req AC-3.4.2
-    bool reset_sessions{false};           ///< "Send Cleanly"  — AC-3.4.3
-    std::string environment;              ///< Empty → use project default.
+    bool dryRun{false};
+    bool resetExtractions{false};       ///< "Reset Cache" — Engine Req AC-3.4.2.
+    bool resetSessions{false};          ///< "Send Cleanly" — AC-3.4.3.
+    std::string environment;            ///< Empty → use project default.
 };
 
 class ExecutionEngine {
@@ -82,12 +83,16 @@ public:
     ExecutionEngine& operator=(ExecutionEngine&&) noexcept;
 
     /// Execute a single operation, auto-resolving its dependency chain.
-    /// `ctx` is mutated with session and extraction state for reuse on
-    /// subsequent runs in the same project session.
-    RunResult run(const Project& project,
-                  const OperationId& target,
-                  RunContext& ctx,
-                  const RunOptions& options = {});
+    /// Returns a populated `RunResult` on success or a `ChainApiError`
+    /// on schema-time failures (cycle, undefined reference, etc.). A
+    /// chain whose target step fails at runtime returns a `RunResult`
+    /// with `outcome == Failed`, not an error — the caller inspects
+    /// `steps` to discover which step failed.
+    std::expected<RunResult, ChainApiError> run(
+        const Project& project,
+        const OperationId& target,
+        RunContext& ctx,
+        const RunOptions& options = {});
 
     /// Cancel an in-flight run. Engine Req §3.8.
     void cancel(RunId run);

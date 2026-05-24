@@ -2,6 +2,7 @@
 #pragma once
 
 #include <chrono>
+#include <compare>
 #include <map>
 #include <optional>
 #include <string>
@@ -13,7 +14,6 @@ namespace chainapi::engine {
 struct OperationId {
     std::string value;
 
-    bool operator==(const OperationId&) const = default;
     auto operator<=>(const OperationId&) const = default;
 };
 
@@ -21,7 +21,6 @@ struct OperationId {
 struct ResourceId {
     std::string value;
 
-    bool operator==(const ResourceId&) const = default;
     auto operator<=>(const ResourceId&) const = default;
 };
 
@@ -29,7 +28,6 @@ struct ResourceId {
 struct ActorId {
     std::string value;
 
-    bool operator==(const ActorId&) const = default;
     auto operator<=>(const ActorId&) const = default;
 };
 
@@ -37,19 +35,20 @@ enum class HttpMethod {
     Get, Post, Put, Patch, Delete, Head, Options
 };
 
-/// Where to pull a value out of the response.
+/// Where to pull a value out of a response.
 struct Extraction {
-    std::string variable_name;       ///< Stored as <resource>.<variable_name>
-    std::string source_path;         ///< JSONPath / XPath / header / regex
     enum class Source { JsonPath, XPath, Header, StatusCode, Regex, Cookie };
+
+    std::string variableName;       ///< Stored as <resource>.<variableName>.
+    std::string sourcePath;         ///< JSONPath / XPath / header name / regex.
     Source source{Source::JsonPath};
 };
 
 /// Per-operation retry policy. Engine spec §3.5.
 struct RetryPolicy {
-    int max_attempts{3};
-    std::chrono::milliseconds base_backoff{500};
-    std::chrono::milliseconds max_backoff{30'000};
+    int maxAttempts{3};
+    std::chrono::milliseconds baseBackoff{500};
+    std::chrono::milliseconds maxBackoff{30'000};
 };
 
 /// One declared operation. Mirrors PRD §5.6 schema.
@@ -59,24 +58,24 @@ struct Operation {
     ActorId     actor;
 
     HttpMethod  method{HttpMethod::Get};
-    std::string path_template;                      ///< e.g. /api/v1/orders/{{order.order_id}}
+    std::string pathTemplate;                          ///< e.g. /api/v1/orders/{{order.order_id}}
     std::map<std::string, std::string> headers;
-    std::map<std::string, std::string> query_params;
-    std::optional<std::string> body_template;       ///< raw template, may contain {{X.y}}
+    std::map<std::string, std::string> queryParams;
+    std::optional<std::string> bodyTemplate;           ///< Raw template, may contain {{X.y}}.
 
-    std::optional<int> expect_status;
+    std::optional<int> expectStatus;
     std::vector<Extraction> extractions;
 
     /// Explicit dependencies declared by the user (PRD §5.7 / §4.3).
-    std::vector<OperationId> explicit_dependencies;
+    std::vector<OperationId> explicitDependencies;
 
     /// Optional inline JS hook scripts (engine spec §3.12).
-    std::optional<std::string> pre_request_script;
-    std::optional<std::string> post_response_script;
+    std::optional<std::string> preRequestScript;
+    std::optional<std::string> postResponseScript;
 
     RetryPolicy retry;
     std::optional<std::chrono::milliseconds> timeout;
-    bool force{false};                              ///< Per-op force re-run flag.
+    bool force{false};                                 ///< Per-op force re-run flag.
 };
 
 }  // namespace chainapi::engine

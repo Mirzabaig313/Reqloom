@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Workflow-aware API testing tool with auto-resolved dependency chains",
   "homepage": "https://github.com/chainapi/chainapi",
+  "builtin-baseline": "aa40adda5352e87655b8583cfb2451d5e9e276fd",
   "dependencies": [
     {
       "name": "qtbase",

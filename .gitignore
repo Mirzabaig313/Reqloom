@@ -49,3 +49,7 @@ coverage/
 
 # Logs
 *.log
+
+# local 
+.kiro/hooks
+doc/local

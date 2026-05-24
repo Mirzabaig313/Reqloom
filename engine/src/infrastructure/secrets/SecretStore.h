@@ -2,6 +2,9 @@
 // Concrete impl: KeychainSecretStore (QtKeychain-backed).
 #pragma once
 
+#include <chainapi/engine/ErrorCodes.h>
+
+#include <expected>
 #include <optional>
 #include <string>
 
@@ -11,14 +14,18 @@ class SecretStore {
 public:
     virtual ~SecretStore() = default;
 
-    /// Read a named secret. Returns nullopt if not present.
-    virtual std::optional<std::string> read(const std::string& name) = 0;
+    /// Read a named secret. Returns nullopt if not present in the
+    /// keychain; returns `ChainApiError` on backend failure.
+    virtual std::expected<std::optional<std::string>, ChainApiError>
+        read(const std::string& name) = 0;
 
-    /// Write or overwrite a secret. Throws on backend failure.
-    virtual void write(const std::string& name, const std::string& value) = 0;
+    virtual std::expected<void, ChainApiError> write(
+        const std::string& name,
+        const std::string& value) = 0;
 
     /// Remove a secret. No-op if missing.
-    virtual void remove(const std::string& name) = 0;
+    virtual std::expected<void, ChainApiError> remove(
+        const std::string& name) = 0;
 };
 
 }  // namespace chainapi::engine

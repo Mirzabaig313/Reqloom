@@ -1,13 +1,17 @@
 #pragma once
 
+#include <chainapi/engine/ErrorCodes.h>
 #include <chainapi/engine/Operation.h>
+
+#include <expected>
 #include <map>
 #include <vector>
 
 namespace chainapi::engine {
 
-/// Stable topological sort. Tie-break is lexicographic over OperationId.value.
-std::vector<OperationId>
-topological_sort(const std::map<OperationId, std::vector<OperationId>>& edges);
+/// Stable topological sort. Tie-break is lexicographic over `OperationId.value`.
+/// Returns `ChainApiError{Cycle, ...}` if the graph contains a cycle.
+std::expected<std::vector<OperationId>, ChainApiError> topologicalSort(
+    const std::map<OperationId, std::vector<OperationId>>& edges);
 
 }  // namespace chainapi::engine

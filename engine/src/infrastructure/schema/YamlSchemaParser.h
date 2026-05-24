@@ -9,7 +9,7 @@ public:
     YamlSchemaParser();
     ~YamlSchemaParser() override;
 
-    SchemaParseResult parse(const std::filesystem::path& root_yaml) override;
+    SchemaParseResult parse(const std::filesystem::path& rootYaml) override;
 };
 
 }  // namespace chainapi::engine

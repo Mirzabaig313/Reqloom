@@ -1,15 +1,15 @@
 #include "ImportCommand.h"
 
-#include <iostream>
+#include <print>
 
 namespace chainapi::cli {
 
-int import_command(const QStringList& args) {
+int importCommand(const QStringList& args) {
     if (args.isEmpty()) {
-        std::cerr << "chainapi import: missing <file>\n";
+        std::println(stderr, "chainapi import: missing <file>");
         return 2;
     }
-    std::cout << "[stub] would import: " << args.first().toStdString() << "\n";
+    std::println("[stub] would import: {}", args.first().toStdString());
     return 0;
 }
 

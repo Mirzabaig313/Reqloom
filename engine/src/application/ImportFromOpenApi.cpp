@@ -6,9 +6,13 @@
 
 namespace chainapi::engine {
 
-ImportFromOpenApi::Result
+std::expected<ImportFromOpenApi::Outcome, ChainApiError>
 ImportFromOpenApi::run(const std::filesystem::path& /*spec*/) const {
-    return Result{};
+    return std::unexpected(ChainApiError{
+        ErrorCode::SchemaInvalid,
+        ErrorClass::Schema,
+        "OpenAPI import not yet implemented (Phase 3)."
+    });
 }
 
 }  // namespace chainapi::engine

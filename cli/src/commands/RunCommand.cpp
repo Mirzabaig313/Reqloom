@@ -1,17 +1,17 @@
 #include "RunCommand.h"
 
-#include <iostream>
+#include <print>
 
 namespace chainapi::cli {
 
-int run_command(const QStringList& args) {
+int runCommand(const QStringList& args) {
     if (args.isEmpty()) {
-        std::cerr << "chainapi run: missing <operation>\n";
+        std::println(stderr, "chainapi run: missing <operation>");
         return 2;
     }
     // Phase 1: load project, construct ExecutionEngine, dispatch run,
     // render via TextRenderer / JsonRenderer / JUnitRenderer.
-    std::cout << "[stub] would run: " << args.first().toStdString() << "\n";
+    std::println("[stub] would run: {}", args.first().toStdString());
     return 0;
 }
 

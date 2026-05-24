@@ -26,9 +26,9 @@ target_include_directories(chainapi-engine-domain
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-target_link_libraries(chainapi-engine-domain
-    PUBLIC Qt6::Core
-)
+# Domain layer is currently std-only. AGENTS.md permits Qt6::Core (for
+# QString) but we have not needed it; keep this layer Qt-free as long as
+# possible to ease the Phase B engine extraction.
 chainapi_set_warnings(chainapi-engine-domain)
 chainapi_apply_sanitizers(chainapi-engine-domain)
 

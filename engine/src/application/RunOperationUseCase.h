@@ -2,6 +2,8 @@
 
 #include <chainapi/engine/ExecutionEngine.h>
 
+#include <expected>
+
 namespace chainapi::engine {
 
 /// Application-layer use case wrapping ExecutionEngine. Kept as a separate
@@ -11,10 +13,11 @@ class RunOperationUseCase {
 public:
     explicit RunOperationUseCase(ExecutionEngine& engine);
 
-    RunResult execute(const Project& project,
-                      const OperationId& target,
-                      RunContext& ctx,
-                      const RunOptions& options = {});
+    std::expected<RunResult, ChainApiError> execute(
+        const Project& project,
+        const OperationId& target,
+        RunContext& ctx,
+        const RunOptions& options = {});
 
 private:
     ExecutionEngine& engine_;

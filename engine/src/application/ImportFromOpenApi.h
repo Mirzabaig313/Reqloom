@@ -1,20 +1,23 @@
 #pragma once
 
+#include <chainapi/engine/ErrorCodes.h>
 #include <chainapi/engine/ExecutionEngine.h>
+
+#include <expected>
 #include <filesystem>
-#include <optional>
 #include <string>
 
 namespace chainapi::engine {
 
 class ImportFromOpenApi {
 public:
-    struct Result {
-        std::optional<Project> project;
+    struct Outcome {
+        Project project;
         std::string warnings;
     };
 
-    Result run(const std::filesystem::path& spec) const;
+    std::expected<Outcome, ChainApiError> run(
+        const std::filesystem::path& spec) const;
 };
 
 }  // namespace chainapi::engine

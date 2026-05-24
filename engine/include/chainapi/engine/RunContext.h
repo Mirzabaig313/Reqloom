@@ -5,6 +5,7 @@
 #include <chainapi/engine/ErrorCodes.h>
 #include <chainapi/engine/Events.h>
 #include <chainapi/engine/Operation.h>
+
 #include <chrono>
 #include <map>
 #include <memory>
@@ -20,20 +21,21 @@ struct ActorSession {
 
     State state{State::None};
     std::map<std::string, std::string> variables;          ///< token, user_id, etc.
-    std::chrono::steady_clock::time_point expires_at{};
+    std::chrono::steady_clock::time_point expiresAt{};
 };
 
-/// One extracted resource instance. Indexed for {{R[k].x}} resolution.
+/// One extracted resource instance. Indexed for `{{R[k].x}}` resolution.
 struct ResourceInstance {
     std::map<std::string, std::string> variables;
 };
 
-/// State for a single step execution.
+/// Status of a single step in a chain. Engine Req §4.1.
 struct StepResult {
-    OperationId op;
     enum class Status {
         Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked
     };
+
+    OperationId op;
     Status status{Status::Pending};
     std::optional<ErrorCode> error;
     int attempts{0};
@@ -51,18 +53,18 @@ public:
     RunContext& operator=(RunContext&&) noexcept;
 
     // Session cache — per actor.
-    [[nodiscard]] const ActorSession* session(const ActorId&) const noexcept;
-    void put_session(const ActorId&, ActorSession);
-    void invalidate_session(const ActorId&);
+    [[nodiscard]] const ActorSession* session(const ActorId& actor) const noexcept;
+    void putSession(const ActorId& actor, ActorSession session);
+    void invalidateSession(const ActorId& actor);
 
-    // Extraction cache — list of instances per resource (for {{R[k].x}}).
+    // Extraction cache — list of instances per resource (for `{{R[k].x}}`).
     [[nodiscard]] const std::vector<ResourceInstance>&
-        instances(const ResourceId&) const noexcept;
-    void append_instance(const ResourceId&, ResourceInstance);
-    void clear_extractions();
+        instances(const ResourceId& resource) const noexcept;
+    void appendInstance(const ResourceId& resource, ResourceInstance instance);
+    void clearExtractions();
 
     // Step recording.
-    void record(StepResult);
+    void record(StepResult step);
     [[nodiscard]] const std::vector<StepResult>& steps() const noexcept;
 
 private:

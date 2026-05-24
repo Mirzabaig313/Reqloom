@@ -9,7 +9,8 @@ public:
     CurlHttpClient();
     ~CurlHttpClient() override;
 
-    HttpResponse send(const HttpRequest& request) override;
+    std::expected<HttpResponse, ChainApiError> send(
+        const HttpRequest& request) override;
 };
 
 }  // namespace chainapi::engine

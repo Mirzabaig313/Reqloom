@@ -21,17 +21,31 @@ WarningsAsErrors: ''
 HeaderFilterRegex: '(engine|cli|desktop)/(include|src)/.*'
 FormatStyle: file
 
+# Naming aligned with AGENTS.md:
+#   Types               PascalCase
+#   Functions / methods camelCase
+#   Constants           kCamelCase (local) or SCREAMING_SNAKE_CASE (macros only)
+#   Members             camelCase with trailing _ for private/protected
 CheckOptions:
-  - { key: readability-identifier-naming.NamespaceCase,        value: lower_case }
-  - { key: readability-identifier-naming.ClassCase,            value: CamelCase }
-  - { key: readability-identifier-naming.StructCase,           value: CamelCase }
-  - { key: readability-identifier-naming.EnumCase,             value: CamelCase }
-  - { key: readability-identifier-naming.FunctionCase,         value: lower_case }
-  - { key: readability-identifier-naming.MethodCase,           value: lower_case }
-  - { key: readability-identifier-naming.MemberCase,           value: lower_case }
-  - { key: readability-identifier-naming.PrivateMemberSuffix,  value: _ }
-  - { key: readability-identifier-naming.ProtectedMemberSuffix,value: _ }
-  - { key: readability-identifier-naming.VariableCase,         value: lower_case }
-  - { key: readability-identifier-naming.ConstantCase,         value: lower_case }
-  - { key: readability-identifier-naming.GlobalConstantCase,   value: UPPER_CASE }
-  - { key: readability-identifier-naming.MacroDefinitionCase,  value: UPPER_CASE }
+  - { key: readability-identifier-naming.NamespaceCase,           value: lower_case }
+  - { key: readability-identifier-naming.ClassCase,               value: CamelCase }
+  - { key: readability-identifier-naming.StructCase,              value: CamelCase }
+  - { key: readability-identifier-naming.EnumCase,                value: CamelCase }
+  - { key: readability-identifier-naming.EnumConstantCase,        value: CamelCase }
+  - { key: readability-identifier-naming.FunctionCase,            value: camelBack }
+  - { key: readability-identifier-naming.MethodCase,              value: camelBack }
+  - { key: readability-identifier-naming.MemberCase,              value: camelBack }
+  - { key: readability-identifier-naming.PrivateMemberSuffix,     value: _ }
+  - { key: readability-identifier-naming.ProtectedMemberSuffix,   value: _ }
+  - { key: readability-identifier-naming.VariableCase,            value: camelBack }
+  - { key: readability-identifier-naming.ParameterCase,           value: camelBack }
+  - { key: readability-identifier-naming.LocalConstantCase,       value: camelBack }
+  - { key: readability-identifier-naming.LocalConstantPrefix,     value: k }
+  - { key: readability-identifier-naming.ClassConstantCase,       value: camelBack }
+  - { key: readability-identifier-naming.ClassConstantPrefix,     value: k }
+  - { key: readability-identifier-naming.GlobalConstantCase,      value: camelBack }
+  - { key: readability-identifier-naming.GlobalConstantPrefix,    value: k }
+  - { key: readability-identifier-naming.StaticConstantCase,      value: camelBack }
+  - { key: readability-identifier-naming.StaticConstantPrefix,    value: k }
+  - { key: readability-identifier-naming.MacroDefinitionCase,     value: UPPER_CASE }
+  - { key: readability-identifier-naming.TemplateParameterCase,   value: CamelCase }

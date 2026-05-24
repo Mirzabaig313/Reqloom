@@ -5,6 +5,6 @@
 namespace chainapi::cli {
 
 /// Import an external API spec (OpenAPI, Postman, Bruno, Insomnia).
-int import_command(const QStringList& args);
+int importCommand(const QStringList& args);
 
 }  // namespace chainapi::cli
