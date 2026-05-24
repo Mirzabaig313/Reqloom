@@ -1,0 +1,46 @@
+name: post
+
+operations:
+  reply:
+    method: POST
+    path: /posts.json
+    actor: member
+    depends_on: [topic.create]
+    body:
+      raw: "Reply from ChainAPI validation."
+      topic_id: "{{topic.topic_id}}"
+    expect_status: 200
+    extract:
+      post_id: $.id
+      post_number: $.post_number
+
+  edit:
+    method: PUT
+    path: /posts/{{post.post_id}}.json
+    actor: member
+    depends_on: [post.reply]
+    body:
+      post:
+        raw: "Edited by ChainAPI validation."
+        edit_reason: "validation"
+    expect_status: 200
+
+  like:
+    # POST /post_actions.json with post_action_type_id=2 (Like) is the
+    # action API. Tests that the schema accepts arbitrary form keys.
+    method: POST
+    path: /post_actions.json
+    actor: admin
+    depends_on: [post.reply]
+    body:
+      id: "{{post.post_id}}"
+      post_action_type_id: 2
+      flag_topic: false
+    expect_status: 200
+
+  delete:
+    method: DELETE
+    path: /posts/{{post.post_id}}.json
+    actor: admin
+    depends_on: [post.reply]
+    expect_status: 200

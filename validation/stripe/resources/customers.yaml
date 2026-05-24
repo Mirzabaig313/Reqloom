@@ -1,0 +1,51 @@
+name: customer
+
+operations:
+  create:
+    method: POST
+    path: /v1/customers
+    actor: platform
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Idempotency-Key: "{{$.uuid}}"
+    body_form:                 # SCHEMA FINDING #5: see findings.md
+      email: "test+{{$.uuid}}@{{env.test_email_domain}}"
+      name: "Test Customer {{$.uuid}}"
+      "metadata[source]": "chainapi-validation"
+    expect_status: 200
+    extract:
+      customer_id: $.id
+
+  retrieve:
+    method: GET
+    path: /v1/customers/{{customer.customer_id}}
+    actor: platform
+    depends_on: [customer.create]
+    expect_status: 200
+
+  update:
+    method: POST
+    path: /v1/customers/{{customer.customer_id}}
+    actor: platform
+    depends_on: [customer.create]
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Idempotency-Key: "{{$.uuid}}"
+    body_form:
+      description: "Updated by ChainAPI validation"
+    expect_status: 200
+
+  list:
+    method: GET
+    path: /v1/customers
+    actor: platform
+    query_params:
+      limit: "10"
+    expect_status: 200
+
+  delete:
+    method: DELETE
+    path: /v1/customers/{{customer.customer_id}}
+    actor: platform
+    depends_on: [customer.create]
+    expect_status: 200

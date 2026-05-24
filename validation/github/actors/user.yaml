@@ -1,0 +1,47 @@
+# Regular user actor authenticated via Personal Access Token.
+#
+# GitHub PATs are pre-issued — there is no login endpoint. The "auth"
+# step here is a verification call to /user that confirms the token is
+# valid and extracts the user's id and login for use by downstream
+# operations. Some auth chains return a token; this one starts with a
+# token and must "echo it forward" so subsequent ops can inject it.
+#
+# This pattern (auth = "validate a pre-issued credential") is common in
+# header-token APIs (GitHub, Discourse, GitLab PAT, Cloudflare API tokens)
+# and is the schema's first stress test.
+name: user
+description: GitHub user authenticated via Personal Access Token
+
+auth:
+  strategy: simple
+  method: GET
+  path: /user
+  headers:
+    Authorization: "Bearer {{env.user_pat}}"
+    Accept: "application/vnd.github+json"
+    X-GitHub-Api-Version: "{{env.api_version}}"
+  expect_status: 200
+  extract:
+    user_id: $.id
+    user_login: $.login
+    # SCHEMA FINDING #1 — see findings.md
+    # We need to "carry forward" the env-supplied PAT so the inject block
+    # can reference it. The current schema's inject block resolves
+    # against the actor's session variables only. Workaround: extract
+    # the token from the request that just used it, via a hypothetical
+    # built-in $.request.headers.Authorization. This does not exist in
+    # PRD §5.7 and is the first real schema gap.
+    #
+    # Pragmatic interim: the inject block below references env directly,
+    # which works if the schema relaxes inject's resolution rules to
+    # include env (proposed in findings.md).
+
+session:
+  ttl: 24h
+
+inject:
+  # Bypass: reference env directly. Requires schema change.
+  headers:
+    Authorization: "Bearer {{env.user_pat}}"
+    Accept: "application/vnd.github+json"
+    X-GitHub-Api-Version: "{{env.api_version}}"

@@ -5,10 +5,14 @@ operations:
     method: POST
     path: /api/v1/orders
     actor: customer
-    depends_on: [product.publish]
+    depends_on: [cart.add_item]
     body:
-      product_id: "{{product.product_id}}"
-      quantity: 1
+      shipping_address:
+        line1: "123 Test Street"
+        city: "San Francisco"
+        postal_code: "94105"
+        country: "US"
+    expect_status: 201
     extract:
       order_id: $.data.id
 
@@ -20,5 +24,48 @@ operations:
     body:
       method: card
       token: tok_test_visa
+    expect_status: 200
     extract:
       payment_id: $.data.payment.id
+
+  get:
+    method: GET
+    path: /api/v1/orders/{{order.order_id}}
+    actor: customer
+    depends_on: [order.create]
+    expect_status: 200
+
+  list_for_customer:
+    method: GET
+    path: /api/v1/customers/me/orders
+    actor: customer
+    query_params:
+      limit: "20"
+    expect_status: 200
+
+  list_for_vendor:
+    method: GET
+    path: /api/v1/vendors/me/orders
+    actor: vendor
+    query_params:
+      limit: "20"
+    expect_status: 200
+
+  ship:
+    method: POST
+    path: /api/v1/orders/{{order.order_id}}/ship
+    actor: vendor
+    depends_on: [order.pay]
+    body:
+      tracking_number: "1Z999AA{{$.uuid}}"
+      carrier: "UPS"
+    expect_status: 200
+
+  cancel:
+    method: POST
+    path: /api/v1/orders/{{order.order_id}}/cancel
+    actor: customer
+    depends_on: [order.create]
+    body:
+      reason: "Changed my mind"
+    expect_status: 200

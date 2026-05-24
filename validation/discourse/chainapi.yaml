@@ -1,0 +1,20 @@
+# Validation Project — Discourse API
+#
+# Models a 21-endpoint slice of the Discourse forum API to stress the
+# schema against:
+#   - Two-header auth (Api-Key + Api-Username), unusual pattern
+#   - Single API key impersonating multiple users (admin can pass
+#     Api-Username: "anyuser") — a real-world same-credential-multi-actor
+#     test that exercises the actor abstraction
+#   - CRUD with realistic dependencies (category → topic → post → reply)
+#
+# Reference: https://docs.discourse.org/
+version: 1
+name: Discourse API
+description: Phase 0 validation — Discourse
+default_environment: live
+
+imports:
+  - environments/*.yaml
+  - actors/*.yaml
+  - resources/*.yaml

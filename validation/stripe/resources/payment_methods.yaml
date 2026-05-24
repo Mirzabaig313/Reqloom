@@ -1,0 +1,38 @@
+name: payment_method
+
+operations:
+  attach:
+    method: POST
+    path: /v1/payment_methods
+    actor: platform
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Idempotency-Key: "{{$.uuid}}"
+    body_form:
+      type: "card"
+      "card[token]": "{{env.test_card_token}}"
+    expect_status: 200
+    extract:
+      payment_method_id: $.id
+
+  attach_to_customer:
+    method: POST
+    path: /v1/payment_methods/{{payment_method.payment_method_id}}/attach
+    actor: platform
+    depends_on: [payment_method.attach, customer.create]
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Idempotency-Key: "{{$.uuid}}"
+    body_form:
+      customer: "{{customer.customer_id}}"
+    expect_status: 200
+
+  detach:
+    method: POST
+    path: /v1/payment_methods/{{payment_method.payment_method_id}}/detach
+    actor: platform
+    depends_on: [payment_method.attach_to_customer]
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Idempotency-Key: "{{$.uuid}}"
+    expect_status: 200

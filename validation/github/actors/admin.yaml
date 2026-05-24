@@ -1,0 +1,29 @@
+# Admin actor — same auth flow as user, different PAT with org-admin scope.
+#
+# Demonstrates that two actors can share an auth strategy but differ in
+# credentials. This pattern is what powers multi-role testing and is the
+# core ChainAPI value prop.
+name: admin
+description: GitHub org admin (PAT with admin:org scope)
+
+auth:
+  strategy: simple
+  method: GET
+  path: /user
+  headers:
+    Authorization: "Bearer {{env.admin_pat}}"
+    Accept: "application/vnd.github+json"
+    X-GitHub-Api-Version: "{{env.api_version}}"
+  expect_status: 200
+  extract:
+    admin_id: $.id
+    admin_login: $.login
+
+session:
+  ttl: 24h
+
+inject:
+  headers:
+    Authorization: "Bearer {{env.admin_pat}}"
+    Accept: "application/vnd.github+json"
+    X-GitHub-Api-Version: "{{env.api_version}}"

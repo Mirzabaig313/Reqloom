@@ -1,0 +1,52 @@
+name: pull
+
+operations:
+  create:
+    method: POST
+    path: /repos/{{repo.repo_full_name}}/pulls
+    actor: user
+    depends_on: [content.create_file]
+    body:
+      title: "ChainAPI validation PR"
+      head: "{{branch.branch_ref}}"
+      base: "{{repo.default_branch}}"
+      body: "Validating ChainAPI schema against GitHub REST API"
+    expect_status: 201
+    extract:
+      pull_number: $.number
+      pull_id: $.id
+
+  get:
+    method: GET
+    path: /repos/{{repo.repo_full_name}}/pulls/{{pull.pull_number}}
+    actor: user
+    depends_on: [pull.create]
+    expect_status: 200
+
+  list_files:
+    method: GET
+    path: /repos/{{repo.repo_full_name}}/pulls/{{pull.pull_number}}/files
+    actor: user
+    depends_on: [pull.create]
+    expect_status: 200
+
+  request_review:
+    method: POST
+    path: /repos/{{repo.repo_full_name}}/pulls/{{pull.pull_number}}/requested_reviewers
+    actor: user
+    depends_on: [pull.create]
+    body:
+      reviewers: ["{{admin.admin_login}}"]
+    expect_status: 201
+
+  merge:
+    method: PUT
+    path: /repos/{{repo.repo_full_name}}/pulls/{{pull.pull_number}}/merge
+    actor: user
+    depends_on: [pull.create]
+    body:
+      commit_title: "Merge {{pull.pull_number}}"
+      merge_method: "squash"
+    expect_status: 200
+    extract:
+      merge_sha: $.sha

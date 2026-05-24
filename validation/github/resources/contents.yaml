@@ -1,0 +1,31 @@
+# File contents API — demonstrates base64-encoded body fields and
+# stress-tests the schema's ability to express request bodies that
+# contain dynamically-generated content.
+name: content
+
+operations:
+  create_file:
+    method: PUT
+    path: /repos/{{repo.repo_full_name}}/contents/CHAINAPI.md
+    actor: user
+    depends_on: [branch.create]
+    body:
+      message: "Add CHAINAPI.md"
+      content: !base64 "Hello from ChainAPI validation"
+      branch: "{{branch.branch_ref}}"
+    expect_status: 201
+    # SCHEMA FINDING #3: !base64 is not in PRD §5.7. We need either a
+    # built-in $.base64(value) helper or a tag-style transformer like
+    # !secret. See findings.md.
+    extract:
+      file_sha: $.content.sha
+      commit_sha: $.commit.sha
+
+  get_file:
+    method: GET
+    path: /repos/{{repo.repo_full_name}}/contents/CHAINAPI.md
+    actor: user
+    depends_on: [content.create_file]
+    query_params:
+      ref: "{{branch.branch_ref}}"
+    expect_status: 200

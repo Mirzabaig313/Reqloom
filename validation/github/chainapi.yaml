@@ -1,0 +1,19 @@
+# Validation Project — GitHub REST API
+#
+# Models a 22-endpoint slice of the GitHub REST API to stress the schema
+# against PAT auth, header-based pagination, role hierarchies, and deep
+# dependency chains.
+#
+# Reference: https://docs.github.com/rest
+#
+# Runs against api.github.com (no test environment exists; PAT must have
+# the scopes listed under each operation).
+version: 1
+name: GitHub REST API
+description: Phase 0 validation — GitHub
+default_environment: live
+
+imports:
+  - environments/*.yaml
+  - actors/*.yaml
+  - resources/*.yaml

@@ -47,6 +47,14 @@ if(CHAINAPI_BUILD_DESKTOP)
 endif()
 
 # ─── Subdirectories ───────────────────────────────────────────────────────────
+# Note: enable_testing() must run BEFORE any add_subdirectory() that calls
+# add_test() / gtest_discover_tests(); otherwise the tests are silently
+# dropped from CTest's view. See the CMake docs for enable_testing().
+if(CHAINAPI_BUILD_TESTS)
+    enable_testing()
+    include(CTest)
+endif()
+
 add_subdirectory(third_party)
 add_subdirectory(engine)
 
@@ -64,10 +72,6 @@ endif()
 
 # ─── Boundary enforcement runs after all targets are declared ────────────────
 chainapi_enforce_boundary_rules()
-
-if(CHAINAPI_BUILD_TESTS)
-    enable_testing()
-endif()
 
 # ─── Status summary ───────────────────────────────────────────────────────────
 message(STATUS "")

@@ -1,0 +1,42 @@
+name: user
+
+operations:
+  create:
+    method: POST
+    path: /users.json
+    actor: admin
+    body:
+      name: "Validation User"
+      email: "validation+{{$.uuid}}@example.com"
+      username: "valid_{{$.uuid}}"
+      password: "{{$.uuid}}-pwd-extra"
+      active: true
+      approved: true
+    expect_status: 200
+    extract:
+      user_id: $.user_id
+      username: $.username
+
+  get:
+    method: GET
+    path: /users/{{user.username}}.json
+    actor: admin
+    depends_on: [user.create]
+    expect_status: 200
+
+  suspend:
+    method: PUT
+    path: /admin/users/{{user.user_id}}/suspend.json
+    actor: admin
+    depends_on: [user.create]
+    body:
+      suspend_until: "2099-01-01"
+      reason: "validation test"
+    expect_status: 200
+
+  unsuspend:
+    method: PUT
+    path: /admin/users/{{user.user_id}}/unsuspend.json
+    actor: admin
+    depends_on: [user.suspend]
+    expect_status: 200

@@ -1,0 +1,37 @@
+name: refund
+
+operations:
+  create:
+    method: POST
+    path: /v1/refunds
+    actor: platform
+    depends_on: [payment_intent.create]
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Idempotency-Key: "{{$.uuid}}"
+    body_form:
+      charge: "{{payment_intent.charge_id}}"
+      amount: "500"
+      reason: "requested_by_customer"
+    expect_status: 200
+    extract:
+      refund_id: $.id
+
+  retrieve:
+    method: GET
+    path: /v1/refunds/{{refund.refund_id}}
+    actor: platform
+    depends_on: [refund.create]
+    expect_status: 200
+
+  update:
+    method: POST
+    path: /v1/refunds/{{refund.refund_id}}
+    actor: platform
+    depends_on: [refund.create]
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Idempotency-Key: "{{$.uuid}}"
+    body_form:
+      "metadata[validation]": "complete"
+    expect_status: 200

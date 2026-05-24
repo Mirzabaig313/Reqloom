@@ -1,0 +1,24 @@
+name: branch
+
+operations:
+  get_default:
+    method: GET
+    path: /repos/{{repo.repo_full_name}}/branches/{{repo.default_branch}}
+    actor: user
+    depends_on: [repo.create_user_repo]
+    expect_status: 200
+    extract:
+      head_sha: $.commit.sha
+
+  create:
+    method: POST
+    path: /repos/{{repo.repo_full_name}}/git/refs
+    actor: user
+    depends_on: [branch.get_default]
+    body:
+      ref: "refs/heads/feature/chainapi-{{$.uuid}}"
+      sha: "{{branch.head_sha}}"
+    expect_status: 201
+    extract:
+      branch_ref: $.ref
+      branch_sha: $.object.sha

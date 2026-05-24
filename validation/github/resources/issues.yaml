@@ -1,0 +1,45 @@
+name: issue
+
+operations:
+  create:
+    method: POST
+    path: /repos/{{repo.repo_full_name}}/issues
+    actor: user
+    depends_on: [repo.create_user_repo]
+    body:
+      title: "ChainAPI validation issue"
+      body: "Filed by validation suite"
+      labels: ["validation"]
+    expect_status: 201
+    extract:
+      issue_number: $.number
+      issue_id: $.id
+
+  comment:
+    method: POST
+    path: /repos/{{repo.repo_full_name}}/issues/{{issue.issue_number}}/comments
+    actor: user
+    depends_on: [issue.create]
+    body:
+      body: "Comment from ChainAPI"
+    expect_status: 201
+    extract:
+      comment_id: $.id
+
+  close:
+    method: PATCH
+    path: /repos/{{repo.repo_full_name}}/issues/{{issue.issue_number}}
+    actor: user
+    depends_on: [issue.create]
+    body:
+      state: "closed"
+    expect_status: 200
+
+  reopen:
+    method: PATCH
+    path: /repos/{{repo.repo_full_name}}/issues/{{issue.issue_number}}
+    actor: admin
+    depends_on: [issue.close]
+    body:
+      state: "open"
+    expect_status: 200

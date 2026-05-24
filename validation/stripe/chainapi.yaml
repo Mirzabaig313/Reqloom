@@ -1,0 +1,18 @@
+# Validation Project — Stripe API
+#
+# Models a 24-endpoint slice of Stripe's API to stress the schema against
+# application/x-www-form-urlencoded bodies, mandatory Idempotency-Key
+# generation, multi-tenant headers (Stripe-Account), and Stripe's
+# expansion mechanism.
+#
+# Reference: https://stripe.com/docs/api
+# Test mode: uses Stripe's test API keys; runs against api.stripe.com
+version: 1
+name: Stripe API
+description: Phase 0 validation — Stripe (test mode)
+default_environment: test
+
+imports:
+  - environments/*.yaml
+  - actors/*.yaml
+  - resources/*.yaml

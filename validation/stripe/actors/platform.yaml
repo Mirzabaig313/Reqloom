@@ -1,0 +1,33 @@
+# Stripe platform-level actor (the Stripe account that owns this
+# integration). Authenticates with Basic auth using the secret key as
+# the username and an empty password.
+#
+# Stress points for the schema:
+#   - Basic auth, not Bearer (PRD §5.5 examples show Bearer only)
+#   - Verification call to /v1/account confirms the key works
+name: platform
+description: Stripe platform account (secret key)
+
+auth:
+  strategy: simple
+  method: GET
+  path: /v1/account
+  headers:
+    # SCHEMA FINDING #4: Basic auth requires base64(secret_key + ":").
+    # The schema today provides no Basic-auth helper. Workarounds:
+    #   (a) require user to base64-encode in YAML — ugly and reveals
+    #       structure of the key
+    #   (b) ship a !basic transformer alongside !base64 in Finding 3
+    # See findings.md.
+    Authorization: !basic "{{env.platform_key}}:"
+  expect_status: 200
+  extract:
+    account_id: $.id
+    account_country: $.country
+
+session:
+  ttl: 24h
+
+inject:
+  headers:
+    Authorization: !basic "{{env.platform_key}}:"
