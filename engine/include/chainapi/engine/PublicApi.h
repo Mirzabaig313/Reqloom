@@ -6,6 +6,7 @@
 #include <chainapi/engine/ErrorCodes.h>
 #include <chainapi/engine/Events.h>
 #include <chainapi/engine/ExecutionEngine.h>
+#include <chainapi/engine/Factories.h>
 #include <chainapi/engine/Operation.h>
 #include <chainapi/engine/Resource.h>
 #include <chainapi/engine/RunContext.h>

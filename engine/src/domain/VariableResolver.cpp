@@ -174,13 +174,18 @@ VariableResolver::Result VariableResolver::resolve(
                             }
                         }
                     } else {
-                        // Most-recent instance
+                        // Search instances in reverse (most recent first) for the field.
+                        // This handles the common case where a single logical
+                        // resource accrues fields across multiple operations
+                        // (order.create extracts order_id; order.pay extracts
+                        // payment_id; later we want order.order_id to still
+                        // resolve from the older instance).
                         const auto& instances = ctx.instances(ResourceId{scope});
-                        if (!instances.empty()) {
-                            const auto& latest = instances.back();
-                            auto varIt = latest.variables.find(field);
-                            if (varIt != latest.variables.end()) {
+                        for (auto it = instances.rbegin(); it != instances.rend(); ++it) {
+                            auto varIt = it->variables.find(field);
+                            if (varIt != it->variables.end()) {
                                 resolved = varIt->second;
+                                break;
                             }
                         }
                     }

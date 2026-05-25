@@ -14,6 +14,7 @@
 #include "../infrastructure/storage/HistoryStore.h"
 
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -35,7 +36,8 @@ namespace {
 std::string urlEncode(std::string_view in) {
     std::string out;
     out.reserve(in.size());
-    for (unsigned char c : in) {
+    for (char rawChar : in) {
+        const auto c = static_cast<unsigned char>(rawChar);
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
             || (c >= '0' && c <= '9')
             || c == '-' || c == '_' || c == '.' || c == '~') {
@@ -53,6 +55,12 @@ std::string urlEncode(std::string_view in) {
 /// or a ChainApiError if parsing failed or a required path was missing.
 /// Engine Requirement §5: ResponseParse for malformed JSON, ExtractionFailed
 /// for missing JSONPath.
+///
+/// JSONPath subset supported:
+///   $.field
+///   $.nested.field
+///   $.array[0].field          ← bracketed numeric index
+///   $.field[0]
 std::expected<std::map<std::string, std::string>, ChainApiError>
 extractFromJson(const std::string& body,
                 const std::vector<Extraction>& extractions) {
@@ -68,9 +76,47 @@ extractFromJson(const std::string& body,
             std::string("response is not valid JSON: ") + e.what()});
     }
 
+    // Walk a single segment that may be either "name" or "name[N]" or just "[N]".
+    // Returns nullptr on miss; otherwise the new current pointer.
+    auto walkSegment = [](const json* current, const std::string& segment) -> const json* {
+        if (segment.empty()) return current;
+
+        // Find optional bracket — segment looks like "name", "name[0]", or "[0]".
+        auto bracketPos = segment.find('[');
+        std::string name = (bracketPos == std::string::npos)
+            ? segment
+            : segment.substr(0, bracketPos);
+
+        // Step into named field if any.
+        if (!name.empty()) {
+            if (!current->is_object()) return nullptr;
+            auto it = current->find(name);
+            if (it == current->end()) return nullptr;
+            current = &(*it);
+        }
+
+        // Apply each [N] index in turn. There can be multiple, e.g. data[0][1].
+        std::size_t pos = bracketPos;
+        while (pos != std::string::npos) {
+            auto closePos = segment.find(']', pos);
+            if (closePos == std::string::npos) return nullptr;
+            auto indexStr = segment.substr(pos + 1, closePos - pos - 1);
+            std::size_t index = 0;
+            const auto* first = indexStr.data();
+            const auto* last = first + indexStr.size();
+            auto fc = std::from_chars(first, last, index);
+            if (fc.ec != std::errc{}) return nullptr;
+
+            if (!current->is_array() || index >= current->size()) return nullptr;
+            current = &(*current)[index];
+
+            pos = segment.find('[', closePos);
+        }
+        return current;
+    };
+
     std::map<std::string, std::string> values;
     for (const auto& ext : extractions) {
-        // Walk dotted path. Use `at`/`find` to avoid implicit insertion.
         auto path = ext.sourcePath;
         if (path.starts_with("$.")) path = path.substr(2);
 
@@ -79,14 +125,8 @@ extractFromJson(const std::string& body,
         std::istringstream ss(path);
         std::string segment;
         while (std::getline(ss, segment, '.')) {
-            if (current->is_object()) {
-                auto it = current->find(segment);
-                if (it == current->end()) { found = false; break; }
-                current = &(*it);
-            } else {
-                found = false;
-                break;
-            }
+            current = walkSegment(current, segment);
+            if (!current) { found = false; break; }
         }
         if (!found) {
             return std::unexpected(ChainApiError{
@@ -140,7 +180,7 @@ struct ExecutionEngine::Impl {
 
     /// Authenticate an actor if session is not live. Returns true on success.
     bool ensureSession(const Actor& actor, RunContext& ctx,
-                       const ResolveContext& rctx, RunId runId) {
+                       const ResolveContext& rctx, RunId /*runId*/) {
         auto existing = ctx.session(actor.id);
         if (existing && existing->state == ActorSession::State::Live) {
             auto now = std::chrono::steady_clock::now();
@@ -149,29 +189,24 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        // Execute auth steps.
         ActorSession session;
         session.state = ActorSession::State::Authenticating;
 
         for (const auto& step : actor.authSteps) {
-            // Resolve templates.
             auto resolvedPath = varResolver.resolve(step.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) return false;
 
             HttpRequest req;
             req.method = step.method;
-            // Build URL from env baseUrl + path.
             auto baseUrlIt = rctx.envVars.find("baseUrl");
             std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
             req.url = baseUrl + resolvedPath.output;
 
-            // Headers
             for (const auto& [k, v] : step.headers) {
                 auto resolved = varResolver.resolve(v, ctx, rctx);
                 req.headers[k] = resolved.output;
             }
 
-            // Body
             if (step.bodyTemplate) {
                 auto resolved = varResolver.resolve(*step.bodyTemplate, ctx, rctx);
                 req.body = resolved.output;
@@ -183,18 +218,13 @@ struct ExecutionEngine::Impl {
             auto response = deps.http->send(req);
             if (!response) return false;
 
-            // Check status.
             if (step.expectStatus && response->status != *step.expectStatus) {
                 return false;
             }
 
-            // Extract variables.
             if (!response->body.empty() && !step.extractions.empty()) {
                 auto values = extractFromJson(response->body, step.extractions);
-                if (!values) {
-                    // Auth-time extraction failure is fatal — fail the session.
-                    return false;
-                }
+                if (!values) return false;
                 for (auto& [k, v] : *values) {
                     session.variables[k] = std::move(v);
                 }
@@ -334,6 +364,14 @@ struct ExecutionEngine::Impl {
         if (op.expectStatus && httpResp && httpResp->status != *op.expectStatus) {
             result.status = StepResult::Status::Failed;
             result.error = (httpResp->status >= 500) ? ErrorCode::Http5xx : ErrorCode::Http4xx;
+            // Capture HTTP status + a short body excerpt so the user can
+            // see exactly what the server said.
+            constexpr std::size_t kBodyExcerpt = 200;
+            std::string bodyExcerpt = httpResp->body.size() > kBodyExcerpt
+                ? httpResp->body.substr(0, kBodyExcerpt) + "..."
+                : httpResp->body;
+            result.detail = "HTTP " + std::to_string(httpResp->status)
+                + " — " + bodyExcerpt;
             auto elapsed = std::chrono::steady_clock::now() - startTime;
             result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
             return result;
@@ -491,7 +529,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
             impl_->emit(StepFailed{runId, i, opId,
                                    stepResult.error.value_or(ErrorCode::Http4xx),
                                    classify(stepResult.error.value_or(ErrorCode::Http4xx)),
-                                   stepResult.attempts, "",
+                                   stepResult.attempts, stepResult.detail,
                                    std::chrono::system_clock::now()});
             result.outcome = RunOutcome::Failed;
             // Mark remaining as blocked.

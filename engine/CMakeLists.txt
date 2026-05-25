@@ -17,18 +17,13 @@ add_library(chainapi-engine-domain OBJECT
     src/domain/Topology.cpp
     src/domain/VariableResolver.cpp
     src/domain/RunContext.cpp
-    src/domain/Operation.cpp
-    src/domain/Actor.cpp
-    src/domain/Resource.cpp
     src/domain/ErrorCodes.cpp
 )
 target_include_directories(chainapi-engine-domain
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-# Domain layer is currently std-only. AGENTS.md permits Qt6::Core (for
-# QString) but we have not needed it; keep this layer Qt-free as long as
-# possible to ease the Phase B engine extraction.
+# Domain layer is currently std-only.
 chainapi_set_warnings(chainapi-engine-domain)
 chainapi_apply_sanitizers(chainapi-engine-domain)
 
@@ -71,6 +66,7 @@ add_library(chainapi-engine-application OBJECT
     src/application/RunOperationUseCase.cpp
     src/application/ImportFromOpenApi.cpp
     src/application/ExecutionEngine.cpp
+    src/application/Factories.cpp
 )
 target_include_directories(chainapi-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

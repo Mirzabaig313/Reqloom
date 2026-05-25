@@ -64,12 +64,31 @@ public:
     /// Dependencies are constructor-injected. Tests substitute fakes;
     /// production wiring lives in `Bootstrapper.cpp` (desktop) or
     /// `main.cpp` (cli).
+    ///
+    /// The destructor and move operations are defined out-of-line in
+    /// the engine library (Factories.cpp) so consumers do not need the
+    /// full definitions of HttpClient/SchemaParser/etc. to destroy or
+    /// move a Dependencies. Standard pImpl applied to a unique_ptr struct.
     struct Dependencies {
-        std::unique_ptr<HttpClient> http;
+        Dependencies();
+        Dependencies(std::unique_ptr<HttpClient> http,
+                     std::unique_ptr<SchemaParser> schema,
+                     std::unique_ptr<HistoryStore> history,
+                     std::unique_ptr<SecretStore> secrets,
+                     std::unique_ptr<HookRunner> hooks);
+        ~Dependencies();
+
+        Dependencies(Dependencies&&) noexcept;
+        Dependencies& operator=(Dependencies&&) noexcept;
+
+        Dependencies(const Dependencies&) = delete;
+        Dependencies& operator=(const Dependencies&) = delete;
+
+        std::unique_ptr<HttpClient>   http;
         std::unique_ptr<SchemaParser> schema;
         std::unique_ptr<HistoryStore> history;
-        std::unique_ptr<SecretStore> secrets;
-        std::unique_ptr<HookRunner> hooks;
+        std::unique_ptr<SecretStore>  secrets;
+        std::unique_ptr<HookRunner>   hooks;
     };
 
     explicit ExecutionEngine(Dependencies deps);
