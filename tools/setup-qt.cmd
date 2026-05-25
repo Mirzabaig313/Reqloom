@@ -15,7 +15,7 @@ REM After install, set CMAKE_PREFIX_PATH per the printed instructions, then
 REM run `cmake --preset windows-debug`.
 setlocal enabledelayedexpansion
 
-if "%QT_VERSION%"=="" set QT_VERSION=6.8.0
+if "%QT_VERSION%"=="" set QT_VERSION=6.8.3
 if "%AQT_VERSION%"=="" set AQT_VERSION=3.1.18
 if "%QT_DIR%"=="" set QT_DIR=C:\Qt
 
@@ -35,8 +35,7 @@ if exist "%QT_PREFIX%" (
 ) else (
     echo Installing Qt %QT_VERSION% (windows/win64_msvc2022_64) into %QT_DIR%...
     aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 ^
-        --outputdir "%QT_DIR%" ^
-        --modules qtdeclarative
+        --outputdir "%QT_DIR%"
 )
 
 echo.

@@ -1,4 +1,4 @@
-// ExecutionEngine — the run loop. Engine Requirement §3.2.
+// ExecutionEngine 
 //
 // Resolves the dependency chain, authenticates actors as needed, executes
 // each step with variable substitution, extracts response values, and
@@ -12,7 +12,11 @@
 #include "../infrastructure/schema/SchemaParser.h"
 #include "../infrastructure/secrets/SecretStore.h"
 #include "../infrastructure/storage/HistoryStore.h"
+#include "AuthStrategy.h"
+#include "JsonExtraction.h"
+#include "PredicateEvaluator.h"
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -51,99 +55,6 @@ std::string urlEncode(std::string_view in) {
     return out;
 }
 
-/// Apply extractions to a parsed JSON body. Returns mapped values on success
-/// or a ChainApiError if parsing failed or a required path was missing.
-/// Engine Requirement §5: ResponseParse for malformed JSON, ExtractionFailed
-/// for missing JSONPath.
-///
-/// JSONPath subset supported:
-///   $.field
-///   $.nested.field
-///   $.array[0].field          ← bracketed numeric index
-///   $.field[0]
-std::expected<std::map<std::string, std::string>, ChainApiError>
-extractFromJson(const std::string& body,
-                const std::vector<Extraction>& extractions) {
-    if (extractions.empty()) return std::map<std::string, std::string>{};
-
-    json doc;
-    try {
-        doc = json::parse(body);
-    } catch (const json::parse_error& e) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::ResponseParse,
-            ErrorClass::Extraction,
-            std::string("response is not valid JSON: ") + e.what()});
-    }
-
-    // Walk a single segment that may be either "name" or "name[N]" or just "[N]".
-    // Returns nullptr on miss; otherwise the new current pointer.
-    auto walkSegment = [](const json* current, const std::string& segment) -> const json* {
-        if (segment.empty()) return current;
-
-        // Find optional bracket — segment looks like "name", "name[0]", or "[0]".
-        auto bracketPos = segment.find('[');
-        std::string name = (bracketPos == std::string::npos)
-            ? segment
-            : segment.substr(0, bracketPos);
-
-        // Step into named field if any.
-        if (!name.empty()) {
-            if (!current->is_object()) return nullptr;
-            auto it = current->find(name);
-            if (it == current->end()) return nullptr;
-            current = &(*it);
-        }
-
-        // Apply each [N] index in turn. There can be multiple, e.g. data[0][1].
-        std::size_t pos = bracketPos;
-        while (pos != std::string::npos) {
-            auto closePos = segment.find(']', pos);
-            if (closePos == std::string::npos) return nullptr;
-            auto indexStr = segment.substr(pos + 1, closePos - pos - 1);
-            std::size_t index = 0;
-            const auto* first = indexStr.data();
-            const auto* last = first + indexStr.size();
-            auto fc = std::from_chars(first, last, index);
-            if (fc.ec != std::errc{}) return nullptr;
-
-            if (!current->is_array() || index >= current->size()) return nullptr;
-            current = &(*current)[index];
-
-            pos = segment.find('[', closePos);
-        }
-        return current;
-    };
-
-    std::map<std::string, std::string> values;
-    for (const auto& ext : extractions) {
-        auto path = ext.sourcePath;
-        if (path.starts_with("$.")) path = path.substr(2);
-
-        const json* current = &doc;
-        bool found = true;
-        std::istringstream ss(path);
-        std::string segment;
-        while (std::getline(ss, segment, '.')) {
-            current = walkSegment(current, segment);
-            if (!current) { found = false; break; }
-        }
-        if (!found) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::ExtractionFailed,
-                ErrorClass::Extraction,
-                "extract path '" + ext.sourcePath +
-                "' not found in response (variable: " + ext.variableName + ")"});
-        }
-
-        std::string value = current->is_string()
-            ? current->get<std::string>()
-            : current->dump();
-        values[ext.variableName] = std::move(value);
-    }
-    return values;
-}
-
 }  // namespace
 
 struct ExecutionEngine::Impl {
@@ -179,62 +90,219 @@ struct ExecutionEngine::Impl {
     }
 
     /// Authenticate an actor if session is not live. Returns true on success.
+    ///
+    ///  the strategy-specific work to an Authenticator
+    /// (`engine/src/application/AuthStrategy.h`); this method owns the
+    /// session-cache check, the post-success state flip, and the
+    /// expiry-deadline computation.
     bool ensureSession(const Actor& actor, RunContext& ctx,
                        const ResolveContext& rctx, RunId /*runId*/) {
         auto existing = ctx.session(actor.id);
         if (existing && existing->state == ActorSession::State::Live) {
-            auto now = std::chrono::steady_clock::now();
+            const auto now = std::chrono::steady_clock::now();
             if (now < existing->expiresAt) {
-                return true;  // Cache hit — AC-3.3.1.
+                return true;  // Cache hit
             }
         }
 
-        ActorSession session;
-        session.state = ActorSession::State::Authenticating;
+        auto authenticator = selectAuthenticator(
+            actor, AuthDependencies{deps.http.get(), &varResolver});
+        if (!authenticator) return false;
 
-        for (const auto& step : actor.authSteps) {
-            auto resolvedPath = varResolver.resolve(step.pathTemplate, ctx, rctx);
-            if (!resolvedPath.unresolved.empty()) return false;
+        auto outcome = authenticator->authenticate(actor, ctx, rctx);
+        if (!outcome) return false;
 
-            HttpRequest req;
-            req.method = step.method;
-            auto baseUrlIt = rctx.envVars.find("baseUrl");
-            std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
-            req.url = baseUrl + resolvedPath.output;
-
-            for (const auto& [k, v] : step.headers) {
-                auto resolved = varResolver.resolve(v, ctx, rctx);
-                req.headers[k] = resolved.output;
-            }
-
-            if (step.bodyTemplate) {
-                auto resolved = varResolver.resolve(*step.bodyTemplate, ctx, rctx);
-                req.body = resolved.output;
-                if (!req.headers.contains("Content-Type")) {
-                    req.headers["Content-Type"] = "application/json";
-                }
-            }
-
-            auto response = deps.http->send(req);
-            if (!response) return false;
-
-            if (step.expectStatus && response->status != *step.expectStatus) {
-                return false;
-            }
-
-            if (!response->body.empty() && !step.extractions.empty()) {
-                auto values = extractFromJson(response->body, step.extractions);
-                if (!values) return false;
-                for (auto& [k, v] : *values) {
-                    session.variables[k] = std::move(v);
-                }
-            }
-        }
-
+        ActorSession session = std::move(*outcome);
         session.state = ActorSession::State::Live;
-        session.expiresAt = std::chrono::steady_clock::now() + actor.sessionTtl;
+        session.expiresAt =
+            std::chrono::steady_clock::now() + actor.sessionTtl;
         ctx.putSession(actor.id, std::move(session));
         return true;
+    }
+
+    /// Run the polling phase for an operation.
+    ///
+    /// Returns the FINAL poll response on success — the caller substitutes
+    /// it for the initial response so extractions run against the completion
+    /// payload. Returns ChainApiError with a Poll* code on:
+    ///   - PollFailPredicate: fail_when matched a response
+    ///   - PollTimeout:        wall-clock budget exceeded
+    ///   - PollMaxAttemptsExceeded: attempt-count budget exceeded
+    ///   - SchemaInvalid:      success_when / fail_when failed to parse
+    ///                          (caught at run time only — schema-time
+    ///                          parsing is a Slice 3d concern)
+    ///
+    /// Cancellation: the loop checks isCancelled() each iteration and
+    /// returns Cancelled cleanly so the parent step can mark itself
+    /// Cancelled instead of Failed.
+    std::expected<HttpResponse, ChainApiError>
+    runPollLoop(const Operation& op,
+                const PollUntil& poll,
+                const Project& project,
+                RunContext& ctx,
+                const ResolveContext& rctx,
+                RunId runId,
+                const HttpResponse& /*initialResponse*/) {
+        PredicateEvaluator evaluator;
+
+        auto successPredicate = evaluator.parse(poll.successWhen);
+        if (!successPredicate) {
+            return std::unexpected(ChainApiError{
+                ErrorCode::SchemaInvalid,
+                ErrorClass::Schema,
+                "poll_until.success_when: " + successPredicate.error().detail});
+        }
+
+        std::optional<ParsedPredicate> failPredicate;
+        if (poll.failWhen) {
+            auto parsed = evaluator.parse(*poll.failWhen);
+            if (!parsed) {
+                return std::unexpected(ChainApiError{
+                    ErrorCode::SchemaInvalid,
+                    ErrorClass::Schema,
+                    "poll_until.fail_when: " + parsed.error().detail});
+            }
+            failPredicate = std::move(*parsed);
+        }
+
+        // Resolve the polling URL once per attempt — the response from
+        // attempt N may influence attempt N+1's URL (rare, but allowed).
+        const auto baseUrlIt = rctx.envVars.find("baseUrl");
+        const std::string baseUrl =
+            baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
+
+        // Determine which actor's inject headers to use.
+        const Actor* pollActor = nullptr;
+        if (poll.actor) {
+            auto it = project.actors.find(*poll.actor);
+            if (it != project.actors.end()) pollActor = &it->second;
+        } else if (!op.actor.value.empty()) {
+            auto it = project.actors.find(op.actor);
+            if (it != project.actors.end()) pollActor = &it->second;
+        }
+
+        // Ensure the polling actor has a live session.
+        if (pollActor && !ensureSession(*pollActor, ctx, rctx, runId)) {
+            return std::unexpected(ChainApiError{
+                ErrorCode::SessionRefreshFailed, ErrorClass::Auth,
+                "poll_until: actor session refresh failed"});
+        }
+
+        const auto deadline = std::chrono::steady_clock::now() + poll.timeout;
+        HttpResponse lastResponse;
+        bool haveLastResponse = false;
+
+        for (int attempt = 0; attempt < poll.maxAttempts; ++attempt) {
+            if (isCancelled(runId)) {
+                return std::unexpected(ChainApiError{
+                    ErrorCode::Cancelled, ErrorClass::Run,
+                    "poll_until: cancelled"});
+            }
+
+            HttpRequest req;
+            req.method = poll.method;
+            auto resolvedPath = varResolver.resolve(poll.pathTemplate, ctx, rctx);
+            if (!resolvedPath.unresolved.empty()) {
+                return std::unexpected(ChainApiError{
+                    ErrorCode::VarUnresolved, ErrorClass::Resolution,
+                    "poll_until: unresolved variable in path: " +
+                    resolvedPath.unresolved.front()});
+            }
+            req.url = baseUrl + resolvedPath.output;
+            if (pollActor) {
+                for (const auto& [k, v] : pollActor->inject.headers) {
+                    auto resolved = varResolver.resolve(v, ctx, rctx);
+                    req.headers[k] = resolved.output;
+                }
+                // Session-level inject . Same precedence
+                // rule as the executor: session wins on collision.
+                if (auto* session = ctx.session(pollActor->id); session) {
+                    for (const auto& [k, v] : session->injectHeaders) {
+                        req.headers[k] = v;
+                    }
+                    // The polling URL is built from `pathTemplate`
+                    // alone today; query-param injects on the parent
+                    // actor would silently miss the poll endpoint.
+                    // Append them explicitly so api_key + query-form
+                    // auth carries through to the status fetch.
+                    if (!session->injectQueryParams.empty()) {
+                        std::string qs;
+                        for (const auto& [k, v] : session->injectQueryParams) {
+                            if (!qs.empty()) qs += "&";
+                            qs += urlEncode(k) + "=" + urlEncode(v);
+                        }
+                        req.url += (req.url.find('?') == std::string::npos
+                                        ? "?"
+                                        : "&") + qs;
+                    }
+                }
+            }
+
+            auto resp = deps.http->send(req);
+            if (!resp) {
+                // Network error during polling — treat the same as the
+                // initial-request retry policy: bail with the network code.
+                return std::unexpected(resp.error());
+            }
+            lastResponse = std::move(*resp);
+            haveLastResponse = true;
+
+            // fail_when wins over success_when when both match.
+            if (failPredicate &&
+                evaluator.evaluate(*failPredicate, lastResponse.body,
+                                   lastResponse.status) ==
+                    PredicateValue::True) {
+                return std::unexpected(ChainApiError{
+                    ErrorCode::PollFailPredicate, ErrorClass::Polling,
+                    "poll_until.fail_when matched (HTTP " +
+                    std::to_string(lastResponse.status) + ")"});
+            }
+            if (evaluator.evaluate(*successPredicate, lastResponse.body,
+                                   lastResponse.status) ==
+                    PredicateValue::True) {
+                return lastResponse;
+            }
+
+            // Compute next-attempt delay. Either fixed interval or
+            // exponential backoff with jitter — never both.
+            std::chrono::milliseconds delay = poll.interval;
+            if (poll.backoffBase) {
+                const auto shift = std::min(attempt, 20);
+                auto raw = *poll.backoffBase * (std::uint32_t{1} << shift);
+                delay = (raw < poll.backoffMax) ? raw : poll.backoffMax;
+            }
+
+            // Floor the inter-poll delay at a small but non-zero minimum
+            // so a misconfigured poll (`interval: 0ms`, no backoff) does
+            // not busy-loop the SUT until maxAttempts. 
+            constexpr auto kMinPollDelay = std::chrono::milliseconds{50};
+            if (delay < kMinPollDelay) delay = kMinPollDelay;
+
+            // Honour the wall-clock deadline: never sleep past it.
+            const auto remaining = deadline - std::chrono::steady_clock::now();
+            if (remaining <= std::chrono::milliseconds{0}) {
+                return std::unexpected(ChainApiError{
+                    ErrorCode::PollTimeout, ErrorClass::Polling,
+                    haveLastResponse
+                        ? "poll_until: timeout exceeded — last response: HTTP " +
+                          std::to_string(lastResponse.status)
+                        : "poll_until: timeout exceeded"});
+            }
+            const auto sleepFor = std::min(
+                std::chrono::duration_cast<std::chrono::milliseconds>(remaining),
+                delay);
+            std::this_thread::sleep_for(sleepFor);
+        }
+
+        return std::unexpected(ChainApiError{
+            ErrorCode::PollMaxAttemptsExceeded, ErrorClass::Polling,
+            haveLastResponse
+                ? "poll_until: max_attempts (" +
+                  std::to_string(poll.maxAttempts) +
+                  ") exceeded — last response: HTTP " +
+                  std::to_string(lastResponse.status)
+                : "poll_until: max_attempts (" +
+                  std::to_string(poll.maxAttempts) + ") exceeded"});
     }
 
     /// Execute a single operation step. Returns the StepResult.
@@ -287,16 +355,40 @@ struct ExecutionEngine::Impl {
                     auto resolved = varResolver.resolve(v, ctx, rctx);
                     req.headers[k] = resolved.output;
                 }
+                // Session-level inject .
+                // Strategies like api_key auto-populate these; we apply
+                // them after the static inject block so the strategy's
+                // resolved values win on key collision. Already-resolved
+                // — no `varResolver.resolve` call needed.
+                if (auto* session = ctx.session(op.actor); session) {
+                    for (const auto& [k, v] : session->injectHeaders) {
+                        req.headers[k] = v;
+                    }
+                }
             }
         }
 
         // Query params → append to URL.
-        if (!op.queryParams.empty()) {
+        // Session-level injects  are folded in
+        // alongside the operation's static query params; session values
+        // win on key collision, mirroring the header-inject precedence.
+        std::map<std::string, std::string> queryParams;
+        for (const auto& [k, v] : op.queryParams) {
+            auto resolved = varResolver.resolve(v, ctx, rctx);
+            queryParams[k] = resolved.output;
+        }
+        if (!op.actor.value.empty()) {
+            if (auto* session = ctx.session(op.actor); session) {
+                for (const auto& [k, v] : session->injectQueryParams) {
+                    queryParams[k] = v;
+                }
+            }
+        }
+        if (!queryParams.empty()) {
             std::string qs;
-            for (const auto& [k, v] : op.queryParams) {
-                auto resolved = varResolver.resolve(v, ctx, rctx);
+            for (const auto& [k, v] : queryParams) {
                 if (!qs.empty()) qs += "&";
-                qs += urlEncode(k) + "=" + urlEncode(resolved.output);
+                qs += urlEncode(k) + "=" + urlEncode(v);
             }
             req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
         }
@@ -360,8 +452,24 @@ struct ExecutionEngine::Impl {
 
         result.attempts = attemptCount;
 
-        // Check status.
-        if (op.expectStatus && httpResp && httpResp->status != *op.expectStatus) {
+        // Status check. when expectStatusList is non-empty
+        // (e.g. `expect_status: [200, 202]`) it takes precedence over
+        // the singular expectStatus field; the latter is the legacy
+        // single-value form and only consulted when the list is empty.
+        const auto statusMatches = [&]() -> bool {
+            if (!httpResp) return true;  // network failure already handled
+            if (!op.expectStatusList.empty()) {
+                return std::find(op.expectStatusList.begin(),
+                                 op.expectStatusList.end(),
+                                 httpResp->status) != op.expectStatusList.end();
+            }
+            if (op.expectStatus) {
+                return httpResp->status == *op.expectStatus;
+            }
+            return true;  // no expectation declared
+        }();
+
+        if (!statusMatches) {
             result.status = StepResult::Status::Failed;
             result.error = (httpResp->status >= 500) ? ErrorCode::Http5xx : ErrorCode::Http4xx;
             // Capture HTTP status + a short body excerpt so the user can
@@ -377,8 +485,31 @@ struct ExecutionEngine::Impl {
             return result;
         }
 
+        // ── Polling phase ────────────────────────────────
+        // When the operation declares poll_until, the initial response
+        // is treated as a launch acknowledgement; the engine polls a
+        // status endpoint until success_when matches (then extractions
+        // run against the FINAL poll response) or fail_when matches
+        // (the step fails with PollFailPredicate) or one of the budgets
+        // fires (PollTimeout / PollMaxAttemptsExceeded).
+        if (op.pollUntil && httpResp) {
+            const auto pollResult = runPollLoop(op, *op.pollUntil, project,
+                                                ctx, rctx, runId, *httpResp);
+            if (!pollResult.has_value()) {
+                result.status = StepResult::Status::Failed;
+                result.error = pollResult.error().code;
+                result.detail = pollResult.error().detail;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<
+                    std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+            // Replace the response we extract from with the final poll
+            // response. Subsequent extraction logic is unchanged.
+            httpResp = std::move(*pollResult);
+        }
+
         // Extract variables — surfaces ResponseParse / ExtractionFailed
-        // properly per Engine Req §5.
         if (httpResp && !op.extractions.empty()) {
             auto values = extractFromJson(httpResp->body, op.extractions);
             if (!values) {
@@ -425,7 +556,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
     }
     if (options.resetSessions) {
         // "Send Cleanly" — clear sessions only. Extractions are independent
-        // (Engine Req AC-3.4.2 vs AC-3.4.3).
+
         for (const auto& [actorId, _] : project.actors) {
             ctx.invalidateSession(actorId);
         }
@@ -478,9 +609,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
         const auto& op = opIt->second;
         const bool isTarget = (opId.value == target.value);
 
-        // Skip if extraction already cached (AC-3.4.1) and not force.
-        // The user's explicit target is never skipped — caching applies
-        // only to prerequisite dependencies.
+
         if (!isTarget && !op.force && !op.extractions.empty()) {
             const auto& instances = ctx.instances(op.resource);
             if (!instances.empty()) {

@@ -1,5 +1,5 @@
 // Per-run mutable state: session cache, extraction cache, and recorded steps.
-// Engine Requirement §3.3, §3.4.
+
 #pragma once
 
 #include <chainapi/engine/ErrorCodes.h>
@@ -15,12 +15,25 @@
 
 namespace chainapi::engine {
 
-/// One actor session, lifecycled per Engine Requirement §4.2.
+/// One actor session, lifecycled per Engine 
 struct ActorSession {
     enum class State { None, Authenticating, Live, Refreshing };
 
     State state{State::None};
     std::map<std::string, std::string> variables;  ///< token, user_id, etc.
+
+    /// Strategy-populated request augmentations. 
+    /// auth: strategies may pre-resolve and stash request mutations
+    /// here so the engine adds them to every operation owned by the
+    /// actor without the user having to write an explicit `inject:`
+    /// block. Empty maps are the no-op default — the existing static
+    /// `Actor::inject.headers` continues to work alongside these.
+    ///
+    /// Values stored here are already variable-resolved; the engine
+    /// does NOT re-resolve them when merging into a request.
+    std::map<std::string, std::string> injectHeaders;
+    std::map<std::string, std::string> injectQueryParams;
+
     std::chrono::steady_clock::time_point expiresAt{};
 };
 

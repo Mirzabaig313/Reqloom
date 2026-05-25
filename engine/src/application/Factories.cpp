@@ -15,7 +15,9 @@
 #include "../infrastructure/http/CurlHttpClient.h"
 #include "../infrastructure/http/HttpClient.h"
 #include "../infrastructure/schema/SchemaParser.h"
+#include "../infrastructure/schema/SchemaWriter.h"
 #include "../infrastructure/schema/YamlSchemaParser.h"
+#include "../infrastructure/schema/YamlSchemaWriter.h"
 #include "../infrastructure/secrets/KeychainSecretStore.h"
 #include "../infrastructure/secrets/SecretStore.h"
 #include "../infrastructure/storage/HistoryStore.h"
@@ -80,6 +82,14 @@ std::expected<Project, ChainApiError>
 parseProject(const std::filesystem::path& chainapiYaml) {
     YamlSchemaParser parser;
     return parser.parse(chainapiYaml);
+}
+
+std::expected<std::filesystem::path, ChainApiError>
+writeProject(const std::filesystem::path& targetDir,
+             const Project& project,
+             bool overwrite) {
+    YamlSchemaWriter writer;
+    return writer.write(targetDir, project, overwrite);
 }
 
 }  // namespace chainapi::engine

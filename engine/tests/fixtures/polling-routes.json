@@ -1,0 +1,71 @@
+{
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "status": 200,
+      "body": { "data": { "accessToken": "tok-1", "user": { "id": "u-1" } } }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments",
+      "status": 202,
+      "body": { "data": { "id": "pay-42" } }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/pay-42/status",
+      "sequence": [
+        { "status": 200, "body": { "id": "pay-42", "status": "PENDING" } },
+        { "status": 200, "body": { "id": "pay-42", "status": "PROCESSING" } },
+        { "status": 200, "body": { "id": "pay-42", "status": "COMPLETED",
+                                    "settled_at": "2026-05-24T12:00:00Z" } }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/jobs",
+      "status": 202,
+      "body": { "data": { "id": "job-99" } }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/jobs/job-99/status",
+      "sequence": [
+        { "status": 200, "body": { "status": "QUEUED" } },
+        { "status": 200, "body": { "status": "FAILED", "error_code": "DECLINED" } }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/never-completes",
+      "status": 202,
+      "body": { "data": { "id": "stuck-1" } }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/never-completes/stuck-1/status",
+      "status": 200,
+      "body": { "status": "PENDING" }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/with-api-key",
+      "status": 200,
+      "body": { "ok": true, "id": "apikey-1" }
+    },
+    {
+      "method": "POST",
+      "path": "/oauth/token",
+      "status": 200,
+      "body": { "access_token": "oauth-tok-7", "token_type": "Bearer",
+                "expires_in": 3600, "scope": "read:ping" }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/with-bearer",
+      "status": 200,
+      "body": { "ok": true, "id": "bearer-1" }
+    }
+  ]
+}

@@ -153,8 +153,20 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
 
     const auto& auth = node["auth"];
     if (auth) {
-        auto strategy = auth["strategy"].as<std::string>("simple");
-        actor.strategy = (strategy == "chain") ? AuthStrategy::Chain : AuthStrategy::Simple;
+        const auto strategy = auth["strategy"].as<std::string>("simple");
+        if (strategy == "chain") {
+            actor.strategy = AuthStrategy::Chain;
+        } else if (strategy == "basic") {
+            actor.strategy = AuthStrategy::Basic;
+        } else if (strategy == "api_key") {
+            actor.strategy = AuthStrategy::ApiKey;
+        } else if (strategy == "oauth2_client_credentials") {
+            actor.strategy = AuthStrategy::OAuth2ClientCredentials;
+        } else if (strategy == "oauth2_password") {
+            actor.strategy = AuthStrategy::OAuth2Password;
+        } else {
+            actor.strategy = AuthStrategy::Simple;
+        }
 
         if (actor.strategy == AuthStrategy::Chain && auth["steps"]) {
             for (const auto& stepNode : auth["steps"]) {
@@ -171,6 +183,56 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
                 }
                 step.extractions = parseExtractions(stepNode["extract"]);
                 actor.authSteps.push_back(std::move(step));
+            }
+        } else if (actor.strategy == AuthStrategy::Basic) {
+            // No steps. Configuration is two scalars; the authenticator
+            // resolves variable references at run time so secrets and
+            // env values flow through (`username: "{{secret.API_USER}}"`).
+            actor.authConfig["username"] =
+                auth["username"].as<std::string>("");
+            actor.authConfig["password"] =
+                auth["password"].as<std::string>("");
+        } else if (actor.strategy == AuthStrategy::ApiKey) {
+            // Required: `key`. Optional: `location` (header|query|cookie)
+            // and `name`. When both are set the strategy auto-injects
+            // into every operation; otherwise the user wires `inject:`
+            // manually using the session variable `<actor>.key`.
+            actor.authConfig["key"] = auth["key"].as<std::string>("");
+            if (auth["location"]) {
+                actor.authConfig["location"] =
+                    auth["location"].as<std::string>();
+            }
+            if (auth["name"]) {
+                actor.authConfig["name"] = auth["name"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::OAuth2ClientCredentials) {
+            // RFC 6749 §4.4: token_url + client_id + client_secret are
+            // required; scope is optional. All four resolved through
+            // the variable resolver at run time so secrets/env work.
+            actor.authConfig["token_url"] =
+                auth["token_url"].as<std::string>("");
+            actor.authConfig["client_id"] =
+                auth["client_id"].as<std::string>("");
+            actor.authConfig["client_secret"] =
+                auth["client_secret"].as<std::string>("");
+            if (auth["scope"]) {
+                actor.authConfig["scope"] = auth["scope"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::OAuth2Password) {
+            // RFC 6749 §4.3: same as client_credentials plus the
+            // resource-owner's username/password in the form body.
+            actor.authConfig["token_url"] =
+                auth["token_url"].as<std::string>("");
+            actor.authConfig["client_id"] =
+                auth["client_id"].as<std::string>("");
+            actor.authConfig["client_secret"] =
+                auth["client_secret"].as<std::string>("");
+            actor.authConfig["username"] =
+                auth["username"].as<std::string>("");
+            actor.authConfig["password"] =
+                auth["password"].as<std::string>("");
+            if (auth["scope"]) {
+                actor.authConfig["scope"] = auth["scope"].as<std::string>();
             }
         } else {
             // Simple strategy — single auth request
@@ -253,7 +315,87 @@ Resource parseResource(const std::string& resourceId, const YAML::Node& node) {
         }
 
         if (opNode["expect_status"]) {
-            op.expectStatus = opNode["expect_status"].as<int>();
+            //  expect_status accepts either a scalar or an
+            // array. The array form is required when poll_until is in
+            // play (a 202 Accepted alongside a 200 from the eventual
+            // poll completion); both forms remain valid for plain
+            // operations.
+            const auto& es = opNode["expect_status"];
+            if (es.IsSequence()) {
+                for (const auto& s : es) {
+                    op.expectStatusList.push_back(s.as<int>());
+                }
+            } else if (es.IsScalar()) {
+                op.expectStatus = es.as<int>();
+            }
+        }
+
+        // Polling block. The presence of poll_until on an
+        // operation tells the executor to enter the poll loop after the
+        // initial request returns one of the expect_status codes.
+        if (opNode["poll_until"]) {
+            const auto& p = opNode["poll_until"];
+            PollUntil poll;
+            poll.method = parseMethod(p["method"].as<std::string>("GET"));
+            poll.pathTemplate = p["path"].as<std::string>("");
+            if (p["actor"]) {
+                poll.actor = ActorId{p["actor"].as<std::string>()};
+            }
+            poll.successWhen = p["success_when"].as<std::string>("");
+            if (p["fail_when"]) {
+                poll.failWhen = p["fail_when"].as<std::string>();
+            }
+            if (p["interval"]) {
+                // Reuse the existing duration parser for consistency
+                // with session.ttl. parseDuration returns seconds; the
+                // poll interval is naturally finer-grained, so read
+                // milliseconds directly when the literal ends in 'ms'.
+                const auto literal = p["interval"].as<std::string>("2s");
+                if (literal.ends_with("ms")) {
+                    poll.interval = std::chrono::milliseconds{
+                        std::stol(literal.substr(0, literal.size() - 2))};
+                } else {
+                    poll.interval = std::chrono::duration_cast<
+                        std::chrono::milliseconds>(parseDuration(literal));
+                }
+            }
+            if (p["backoff"]) {
+                const auto& b = p["backoff"];
+                if (b["base"]) {
+                    const auto literal = b["base"].as<std::string>("500ms");
+                    if (literal.ends_with("ms")) {
+                        poll.backoffBase = std::chrono::milliseconds{
+                            std::stol(literal.substr(0, literal.size() - 2))};
+                    } else {
+                        poll.backoffBase = std::chrono::duration_cast<
+                            std::chrono::milliseconds>(parseDuration(literal));
+                    }
+                }
+                if (b["max"]) {
+                    const auto literal = b["max"].as<std::string>("30s");
+                    if (literal.ends_with("ms")) {
+                        poll.backoffMax = std::chrono::milliseconds{
+                            std::stol(literal.substr(0, literal.size() - 2))};
+                    } else {
+                        poll.backoffMax = std::chrono::duration_cast<
+                            std::chrono::milliseconds>(parseDuration(literal));
+                    }
+                }
+            }
+            if (p["timeout"]) {
+                const auto literal = p["timeout"].as<std::string>("60s");
+                if (literal.ends_with("ms")) {
+                    poll.timeout = std::chrono::milliseconds{
+                        std::stol(literal.substr(0, literal.size() - 2))};
+                } else {
+                    poll.timeout = std::chrono::duration_cast<
+                        std::chrono::milliseconds>(parseDuration(literal));
+                }
+            }
+            if (p["max_attempts"]) {
+                poll.maxAttempts = p["max_attempts"].as<int>();
+            }
+            op.pollUntil = std::move(poll);
         }
 
         op.extractions = parseExtractions(opNode["extract"]);

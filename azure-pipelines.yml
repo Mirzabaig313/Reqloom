@@ -32,7 +32,7 @@ variables:
   # Pinned vcpkg baseline used elsewhere in the repo.
   VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
   # Qt version pin — must match appveyor.yml.
-  QT_VERSION: 6.8.0
+  QT_VERSION: 6.8.3
   AQT_VERSION: 3.1.18
   # vcpkg binary cache: small now that Qt is no longer in vcpkg.
   VCPKG_DEFAULT_BINARY_CACHE: $(Pipeline.Workspace)/vcpkg-bincache
@@ -147,8 +147,7 @@ stages:
               set -euo pipefail
               if [[ ! -d "$(QT_INSTALL_DIR)/$(QT_VERSION)/macos" ]]; then
                 aqt install-qt mac desktop "$(QT_VERSION)" clang_64 \
-                  --outputdir "$(QT_INSTALL_DIR)" \
-                  --modules qtdeclarative
+                  --outputdir "$(QT_INSTALL_DIR)"
               else
                 echo "Qt $(QT_VERSION) already present from cache."
               fi
