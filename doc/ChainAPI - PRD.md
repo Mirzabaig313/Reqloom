@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | **Document Owner** | Mirza |
-| **Status** | Draft v0.3 |
-| **Last Updated** | 2026-05-23 |
+| **Status** | Draft v0.4 |
+| **Last Updated** | 2026-05-24 |
 | **Target Release** | MVP — 10 weeks from kickoff |
 
 > **Note**:Examples in this document use a generic **"MarketplaceAPI"** with admin / vendor / customer actors and product / order / refund resources. Any resemblance to a specific real-world API is illustrative only.
@@ -423,9 +423,19 @@ operations:
 | `{{order[2].order_id}}` | Indexed (the second order created in this run) |
 | `{{secret.STRIPE_KEY}}` | OS keychain entry |
 | `{{$.now}}` | Built-in (current ISO timestamp) |
-| `{{$.uuid}}` | Built-in (generates a UUID) |
+| `{{$.now+5m}}` / `{{$.now-1h}}` | Built-in (relative time — supports `s`, `m`, `h`, `d`) |
+| `{{$.uuid}}` | Built-in (generates a UUID v4) |
 | `{{$.faker.email}}` | Built-in (fake data — Faker.js style) |
 | `{{$.env.HOSTNAME}}` | OS environment variable |
+| `{{$.base64.encode(body)}}` / `{{$.base64.decode(...)}}` | Built-in (base64 codec) |
+| `{{$.hex.encode(...)}}` / `{{$.hex.decode(...)}}` | Built-in (hex codec) |
+| `{{$.hmac.sha256(secret.HMAC_KEY, body)}}` | Built-in (HMAC; `sha1`, `sha256`, `sha512` supported) |
+| `{{$.hash.sha256(body)}}` | Built-in (one-shot hash; `md5`, `sha1`, `sha256`, `sha512`) |
+| `{{$.jwt.sign({sub: customer.id, exp: $.now+1h}, secret.JWT_KEY)}}` | Built-in (JWT signing — HS256, HS512, RS256) |
+| `{{$.url.encode(...)}}` / `{{$.url.decode(...)}}` | Built-in (URL component codec) |
+| `{{$.json.stringify(body)}}` | Built-in (canonicalised JSON for signing) |
+
+The intent is that the **built-in function library covers the 80% of cases** where users would otherwise reach for a JS hook (HMAC signing, JWT generation, base64-wrapping, relative timestamps). Hooks (§5.10) remain available for the genuine long tail.
 
 ### 5.8 Dependency Resolution Algorithm
 
@@ -466,7 +476,16 @@ The schema spec itself will evolve. To avoid breaking existing projects:
 
 ### 5.10 Hooks & Scripting API
 
-For edge cases the declarative schema can't express (HMAC signing, AWS SigV4, custom encryption), operations support pre-request and post-response hooks:
+Most signing and dynamic-payload needs are covered by the built-in functions in §5.7 and the named auth strategies in §5.10.1. Hooks are the escape hatch for the genuine long tail (custom encryption, request-rewriting based on a previous response, vendor-specific signature schemes).
+
+**Hook authoring rules**
+
+- Hooks live in **sibling `.js` files**, referenced by relative path. Inline JS-in-YAML strings are supported but discouraged — they lose syntax highlighting, formatting, and editor LSP support.
+- The project ships a generated `chainapi.d.ts` so any editor with TypeScript LSP gives autocomplete on `ctx.request`, `ctx.env`, `ctx.actors`, and the built-in helpers (`hmac`, `jwt`, `base64`, …).
+- Hooks are sandboxed via QuickJS — no filesystem, no network beyond the request itself, no `require`. The built-in helpers from §5.7 are exposed on the `ctx` object so hooks don't need to re-implement crypto.
+- 1-second timeout per hook. Hooks have read-only access to other actors' variables; can only write to their own request/response.
+- Hooks are explicitly opt-in via the `pre_request` / `post_response` keys (no implicit script execution).
+- Errors in hooks fail the operation with a clear message pointing to the script and line number.
 
 ```yaml
 operations:
@@ -474,23 +493,117 @@ operations:
     method: POST
     path: /api/v1/secure/payment
     actor: customer
-    pre_request: |
-      // hook receives ctx with mutable request, sees all variables
-      const sig = sha256(ctx.request.body + ctx.env.HMAC_SECRET);
-      ctx.request.headers['X-Signature'] = sig;
-    post_response: |
-      // hook can transform response before extraction
-      if (ctx.response.body.encrypted) {
-        ctx.response.body = decrypt(ctx.response.body, ctx.env.KEY);
-      }
+    pre_request:  ./hooks/sign-payment.js      # path relative to this YAML file
+    post_response: ./hooks/decrypt-response.js
 ```
 
-Hook execution rules:
-- Sandboxed JS via QuickJS — no filesystem, no network beyond the request itself, no `require`
-- 1-second timeout per hook
-- Hooks have read-only access to other actors' variables; can only write to their own request/response
-- Hooks are explicitly opt-in via the `pre_request` / `post_response` keys (no implicit script execution)
-- Errors in hooks fail the operation with a clear message pointing to the script
+```js
+// hooks/sign-payment.js
+// ctx.request is mutable; ctx.env / ctx.secret / ctx.actors are read-only.
+// All §5.7 built-ins are exposed on ctx (ctx.hmac, ctx.jwt, ctx.base64, …).
+export default function (ctx) {
+  const canonical = ctx.json.stringify(ctx.request.body);
+  ctx.request.headers['X-Signature'] =
+    ctx.hmac.sha256(ctx.secret.HMAC_KEY, canonical);
+}
+```
+
+Inline form is still legal for one-liners and migrations from Postman scripts:
+
+```yaml
+operations:
+  create_signed:
+    pre_request: |
+      ctx.request.headers['X-Signature'] =
+        ctx.hmac.sha256(ctx.secret.HMAC_KEY, ctx.json.stringify(ctx.request.body));
+```
+
+#### 5.10.1 Named Auth Strategies (Built-in)
+
+Common signed-auth schemes are first-class strategies, not hooks. The MVP ships with:
+
+| Strategy | Use For |
+|---|---|
+| `simple` | Single-shot username/password login (default, shown in §5.5) |
+| `chain` | Multi-step auth (OTP, magic-link confirmation, MFA) — shown in §5.5 |
+| `oauth2_client_credentials` | Service-to-service OAuth2 |
+| `oauth2_password` | Resource-owner password grant |
+| `oauth2_authorization_code` | Browser-based OAuth (with PKCE; opens system browser) |
+| `oauth1` | OAuth 1.0a (Twitter v1, legacy APIs) |
+| `aws_sigv4` | AWS API Gateway, Lambda, S3-compatible services |
+| `api_key` | Static key in header / query / cookie |
+| `basic` | HTTP Basic |
+
+```yaml
+# AWS SigV4 — no hook required
+auth:
+  strategy: aws_sigv4
+  region:     ap-south-1
+  service:    execute-api
+  access_key: "{{secret.AWS_ACCESS_KEY}}"
+  secret_key: "{{secret.AWS_SECRET_KEY}}"
+  session_token: "{{secret.AWS_SESSION_TOKEN}}"   # optional, for STS
+
+# OAuth2 client credentials
+auth:
+  strategy: oauth2_client_credentials
+  token_url: "{{env.baseUrl}}/oauth/token"
+  client_id:     "{{secret.OAUTH_CLIENT_ID}}"
+  client_secret: "{{secret.OAUTH_CLIENT_SECRET}}"
+  scope: "read:orders write:orders"
+inject:
+  headers:
+    Authorization: "Bearer {{actor.access_token}}"
+```
+
+A built-in strategy that can't be expressed declaratively (vendor-specific signing, non-standard token exchange) falls back to the `chain` strategy with `pre_request` hooks on individual steps.
+
+### 5.11 Polling & Async Operations
+
+Many production APIs return `202 Accepted` for write operations and require the client to poll a status endpoint until completion. ChainAPI models polling as a first-class part of an operation, not a separate "wait" primitive.
+
+```yaml
+operations:
+  pay:
+    method: POST
+    path: /api/v1/orders/{{order.order_id}}/pay
+    actor: customer
+    body:
+      method: "card"
+      token:  "tok_test_visa"
+    expect_status: [200, 202]                # 202 triggers the poll
+
+    poll_until:
+      method: GET
+      path: "{{response.headers.Location}}"  # or an explicit /api/v1/payments/{{response.body.data.id}}/status
+      actor: customer                        # defaults to the parent op's actor
+      success_when: "$.status == 'COMPLETED'"
+      fail_when:    "$.status in ['FAILED', 'CANCELLED', 'EXPIRED']"
+      interval: 2s                           # fixed interval, or:
+      # backoff: { base: 500ms, factor: 2, max: 10s, jitter: 0.2 }
+      timeout: 60s
+      max_attempts: 30
+
+    extract:
+      payment_id:    $.data.payment.id       # extracts run against the FINAL poll response
+      payment_state: $.status
+```
+
+**Engine semantics**
+
+- The initial request runs once. If its response status is in the `202`-equivalent set (or the user explicitly asks for polling regardless), the engine begins polling.
+- `success_when` and `fail_when` are predicate expressions over the poll response (`$` is the response body; `$.status_code` is also available). If both match a single response, `fail_when` wins.
+- A `fail_when` clause is **strongly recommended**. Without it, every terminal failure state turns into a `timeout` after `timeout` / `max_attempts` — wasted minutes on every test of a known-bad path.
+- Each poll attempt is recorded as a step in the run timeline. The timeline shows the predicate evaluations so users can see exactly when and why polling stopped.
+- Extractions on the parent operation run against the **final** poll response (whichever response satisfied `success_when`), not the initial `202`.
+- `interval` accepts a duration (`500ms`, `2s`, `1m`); `backoff` accepts the standard exponential-with-jitter form. Use one or the other, not both.
+- `timeout` is the wall-clock cap; `max_attempts` is the request-count cap; whichever fires first ends the poll.
+- The polling step shares the parent operation's actor and inherits its session; override with an explicit `actor:` if the status endpoint requires a different context.
+
+**Out of scope for MVP**
+
+- Webhook-driven waits (`wait_for_webhook` against a local listener). These require a local HTTP receiver and a tunnel for cloud APIs; the audience can fake webhooks adequately with `poll_until` against a status endpoint. Tracked for post-MVP.
+- WebSocket / SSE-driven completion. Tracked alongside FR-3.8.
 
 ---
 
@@ -515,6 +628,8 @@ Hook execution rules:
 - **FR-2.6** Stop execution on first failure; show full execution log
 - **FR-2.7** Support pre-request and post-response hooks (sandboxed JS) for edge cases
 - **FR-2.8** "Dry run" mode — show resolved chain + final request body without executing
+- **FR-2.9** Support polling operations (`poll_until`) per §5.11 — predicate-driven success/fail, configurable interval or exponential backoff, wall-clock and attempt-count caps, every poll attempt visible in the timeline
+- **FR-2.10** Support named auth strategies (§5.10.1) including `oauth2_client_credentials`, `oauth2_authorization_code` (with PKCE), `aws_sigv4`, `oauth1`, `api_key`, `basic` — no hook required for any of these
 
 ### 6.3 HTTP Client
 
@@ -574,12 +689,13 @@ Hook execution rules:
 - **FR-9.4** Show diff/preview before writing files
 - **FR-9.5** Allow user corrections; learn from corrections within session
 - **FR-9.6** Store no data in the cloud; all LLM calls go from user's machine to their chosen provider
+- **FR-9.7** Run a **verification pass** against sample responses (from OpenAPI examples / Postman responses / HAR / synthetic) for every proposed extraction. Refuse to write any operation where extractions don't resolve cleanly. (See §10.3.1.)
+- **FR-9.8** Tag every AI-generated operation with a `_provenance` block recording source, model, timestamp, the verification source used, and the per-field evidence string. (See §10.3.3.)
+- **FR-9.9** Surface a per-field evidence string for every AI inference in the review UI — not a confidence score. (See §10.3.2.)
+- **FR-9.10** When an AI-imported operation fails at runtime, show targeted diagnostics that cross-reference the failure with the original inference and the actual response shape. (See §10.3.4.)
+- **FR-9.11** Run timeline shows the value produced by every `extract` step, with `null` results highlighted and traced to their downstream consumers. (See §10.3.5.)
 
-**AI Importer Acceptance Criteria** (must hit all to ship):
-- Operations correctly inferred: ≥ 80% (user accepts without edits)
-- Dependencies correctly inferred: ≥ 60%
-- Auth flows correctly inferred for OpenAPI input: ≥ 90%
-- Time from "paste docs" to "first successful run" with reasonable input: ≤ 5 minutes
+**AI Importer Acceptance Criteria** (must hit all to ship): see §10.5.
 
 ### 6.10 Postman / Bruno / Insomnia Migration
 
@@ -901,16 +1017,99 @@ The LLM returns:
 - Proposed dependencies between operations
 - Confidence score per inference
 
-### 10.3 Review & Correction Flow
+### 10.3 Verify-Before-Write & Review Flow
 
-1. LLM proposes schema
-2. UI shows side-by-side: input docs ↔ proposed YAML
+A 90%-accurate importer is more dangerous than a 60%-accurate one because users *trust it*. They accept the YAML, hit run, get a `404`, and have no debugging anchor. The flow is designed around four behaviors that turn silent wrongness into visible wrongness.
+
+#### 10.3.1 Verification Pass (Mandatory, before any file is written)
+
+After the LLM proposes a schema, the importer runs a probe pass against representative sample responses:
+
+1. For each operation, obtain a sample response — preferred sources, in order:
+   - OpenAPI `examples` / response schemas (when present)
+   - Postman / Insomnia / Bruno `response` blocks captured alongside requests
+   - HAR file response bodies
+   - As a last resort, ask the LLM for a synthetic sample matching the documented schema
+2. Evaluate every proposed `extract` JSONPath against the sample response.
+3. Tag each extraction:
+   - ✅ **verified** — JSONPath matched a non-null scalar of plausible type
+   - ⚠️ **null** — JSONPath was structurally valid but produced no value
+   - ❌ **no match** — JSONPath did not resolve at all
+4. **The importer refuses to write any operation whose extractions are not all ✅.** Failed extractions are surfaced in the review UI as "needs your input" rather than written silently.
+
+This single rule eliminates the entire class of "AI generated YAML, run gives 404, user has no idea why" failures.
+
+#### 10.3.2 Show Evidence, Not Confidence Scores
+
+A bare `confidence: 0.85` is unactionable. Each AI-inferred field carries a short evidence string visible on hover or in a dedicated review pane:
+
+> *Inferred `actor: vendor` because the OpenAPI security scheme `BearerAuth` is used on this endpoint, and `vendor` is the only actor that obtains a Bearer token (from `/api/v1/auth/vendor/login`).*
+
+> *Inferred dependency `order.create` for `order.pay` because the path template `/orders/{order_id}/pay` references `{order_id}`, which is the documented response field of `POST /orders`.*
+
+Users can spot wrong reasoning. They cannot spot wrong probabilities.
+
+#### 10.3.3 Provenance Tagging
+
+Every AI-imported entity is tagged with `_provenance`:
+
+```yaml
+operations:
+  create:
+    method: POST
+    path: /api/v1/products
+    extract:
+      product_id: $.data.id
+    _provenance:
+      source: ai_import
+      model:  gpt-4o
+      imported_at: 2026-05-24T10:30:00Z
+      verified_against: openapi_example   # or postman_response, har, synthetic
+      evidence:
+        actor: "...inferred from BearerAuth scheme..."
+        extract.product_id: "verified against POST /products `examples.default`"
+```
+
+Provenance is metadata-only and stripped from the engine's runtime view; tooling and UX consume it to drive runtime diagnostics (§10.3.4) and to generate "AI Import Audit" reports.
+
+#### 10.3.4 Targeted Runtime Diagnostics for AI-Imported Operations
+
+When an operation tagged with `_provenance.source: ai_import` fails at runtime, the response panel shows AI-aware diagnostics that cross-reference the failure with the importer's inferences:
+
+> **`order.pay` returned 404. This operation was AI-imported.**
+>
+> Likely cause: the path template references `{{order.order_id}}`, which resolved to `null`. The extraction `order_id: $.data.id` on `order.create` produced no match against the actual response.
+>
+> The actual response from `order.create` was:
+> ```json
+> { "data": { "order": { "id": "ord_abc123" } } }
+> ```
+> The AI inferred `$.data.id`. Try `$.data.order.id`. [Apply Fix] [Edit Schema]
+
+To make this possible, the engine must:
+- Track which extractions resolved to `null` per run, not just non-null ones.
+- Link a failing variable reference (`{{order.order_id}}`) back to the operation that should have produced it.
+- Walk back through dependencies to find the most recent failed extraction on the chain.
+
+#### 10.3.5 Visible Data Flow in the Timeline
+
+In the run timeline panel, each step displays a one-line strip showing what its `extract` block produced. Resolved values render in green; `null` results render in red with an arrow to the next operation that consumes them.
+
+Most "subtly wrong extraction" bugs become obvious the moment users *see* the data instead of reading YAML. This view is independent of AI import — it benefits hand-written schemas too — but it's the primary debugging surface for hallucinated extractions.
+
+#### 10.3.6 Review UI Flow
+
+1. Import → LLM proposes schema → verification pass runs.
+2. Side-by-side review:
+   - Left: input docs (highlighted to show what each operation derives from)
+   - Right: proposed YAML, with per-field evidence on hover and ✅/⚠️/❌ tags on every extraction
 3. User can:
-   - Accept all
-   - Edit YAML inline
+   - Accept all (only enabled when all extractions are ✅)
+   - Edit YAML inline with live re-verification
    - Reject specific operations
    - Re-prompt with corrections ("the customer also needs phone OTP, not email login")
-4. Final schema written to project files (with confirmation diff)
+   - Skip to manual completion for ⚠️/❌ items
+4. Final schema written with `_provenance` tags intact.
 
 ### 10.4 LLM Provider Support
 
@@ -921,11 +1120,15 @@ The LLM returns:
 
 ### 10.5 Acceptance Criteria
 
-- Operations correctly inferred from OpenAPI: ≥ 90%
-- Operations correctly inferred from Markdown/curl: ≥ 70%
-- Dependencies correctly inferred: ≥ 60%
-- Time from "paste docs" to "first successful run" with reasonable input: ≤ 5 min
-- LLM API cost per import: typically < $0.05 (using GPT-4o-mini or Claude Haiku for first pass)
+The MVP ships only when all of the following hold against a curated benchmark of 20 real-world API specs (mix of OpenAPI, Postman, Markdown, HAR; both small <50-endpoint and large >200-endpoint inputs):
+
+- **Operation extraction**: ≥ 90% of operations correctly inferred from OpenAPI input; ≥ 70% from Markdown / curl / free-form
+- **Auth flow inference**: ≥ 90% for OpenAPI; ≥ 75% for Postman collections with non-trivial auth
+- **Dependency inference**: ≥ 60% of inferable dependencies correctly identified
+- **Verification pass coverage**: 100% of written extractions are ✅ verified — never ⚠️ or ❌. Operations with unresolvable extractions are surfaced for manual completion, never silently written.
+- **Time-to-first-run**: ≤ 5 minutes from "paste docs" to first successful run on a reasonable input
+- **AI import cost**: typically < $0.05 per import using GPT-4o-mini or Claude Haiku for the proposal pass; verification pass adds < $0.02
+- **Provenance integrity**: every AI-imported operation carries a non-empty `_provenance` block; runtime diagnostics correctly identify the failing AI inference for at least 80% of seeded extraction-error scenarios in the test harness
 
 ---
 
@@ -1137,9 +1340,9 @@ Before writing production code, validate the concept:
 ### 16.2 Go / No-Go Decision Gate
 
 Build the MVP only if:
-- Schema can express all 3 sample APIs without escape hatches
+- Schema can express all 3 sample APIs without escape hatches (including at least one with a polling/async endpoint and one with HMAC or AWS SigV4 signing)
 - ≥ 6 of 10 design partners say "I would switch to this from Postman"
-- LLM accuracy for OpenAPI input is ≥ 80% with simple prompting
+- LLM accuracy for OpenAPI input is ≥ 80% with simple prompting **and** the verification pass (§10.3.1) successfully filters the remaining bad inferences without rejecting more than 5% of correct ones
 
 If any fail, iterate or pivot before committing 10 weeks.
 
@@ -1171,7 +1374,7 @@ If any fail, iterate or pivot before committing 10 weeks.
 | Risk | Likelihood | Impact | Owner | Mitigation |
 |------|------------|--------|-------|------------|
 | **Schema feels too rigid; can't express edge-case APIs** | Medium | High | Tech lead | Add escape hatches (hooks); validate via Phase 0 against real APIs |
-| **AI importer produces bad schemas** | Medium | High | AI lead | Mandatory review step; never write files without confirmation; degrade to manual mode |
+| **AI importer produces bad schemas** | Medium | High | AI lead | Mandatory verification pass (§10.3.1) refuses to write unverified extractions; per-field evidence (§10.3.2) makes wrong reasoning visible; provenance + runtime diagnostics (§10.3.3-4) give failed runs a debugging anchor; degrade to manual mode |
 | **Postman ships native version of this** | Low | High | Founder | Stay focused, ship faster, open-source the engine to commoditize |
 | **Adoption stalls — devs comfortable with Postman** | Medium | High | Marketing | Free tier with all core features; sample projects; viral demos; one-click Postman import |
 | **Cross-platform Qt desktop bugs** | Medium | Medium | Tech lead | Test on all 3 OSes weekly; CI matrix builds (macOS / Windows / Linux × Debug / Release) |
@@ -1259,8 +1462,34 @@ The system prompt template, few-shot examples, and post-processing logic will li
 - ADR-005: Why DAG-based execution over linear scripts
 - ADR-006: Why open-core over pure-OSS or pure-SaaS
 
+#### ADR-007 — Schema completeness over hook-everything
+
+- **Status**: Accepted (PRD v0.4)
+- **Context**: Real APIs have polling/async endpoints, HMAC-signed payloads, OAuth/SigV4 auth, and dynamic timestamps. The original schema (v0.3) handled these by deferring to JS hooks for everything beyond simple username/password auth and JSONPath extraction. Hooks-as-escape-hatch is fast to ship but produces a long tail of YAML files with inline JS that defeats the schema's value proposition.
+- **Decision**: Promote the three most common pain points to first-class schema citizens:
+  1. Polling becomes `poll_until` on operations (§5.11), not a hook
+  2. Common signed-auth schemes (OAuth2, AWS SigV4, OAuth1, API key, Basic) are named strategies (§5.10.1), not hooks
+  3. Dynamic-payload primitives (HMAC, JWT, base64, relative timestamps) are built-in template functions (§5.7), not hooks
+- **Rationale**:
+  - Each promotion eliminates a category of "you need to write JS to test our API" friction
+  - The declarative form is reviewable by tooling — extractions, retries, and signing can be linted, diffed, and AI-imported. Hooks are opaque
+  - Hooks remain available for the genuine long tail (§5.10), now stored in sibling `.js` files with TypeScript-typed `ctx` for editor support
+- **Trade-offs accepted**:
+  - More engineering work in MVP — each named auth strategy needs implementation, polling needs a predicate evaluator
+  - Schema spec is larger to learn (mitigated: the minimum viable schema in §5.1 stays small; new features are opt-in)
+- **Triggers for revisiting**: design-partner feedback that reveals an auth scheme used by ≥ 3 partners that doesn't fit the named strategies — promote that scheme to first class
+
+#### ADR-008 — Verify-before-write for AI-imported schemas
+
+- **Status**: Accepted (PRD v0.4)
+- **Context**: AI importers in the wild generate plausible-looking output that fails silently at runtime. Users hit a 404 with no debugging anchor and blame the tool. A 90%-accurate importer is more dangerous than a 60%-accurate one because users *trust* it.
+- **Decision**: Make the importer adversarial to its own output. Run a verification pass against sample responses (from OpenAPI examples, captured Postman responses, HAR files, or synthetic LLM-generated samples) for every proposed `extract`. Refuse to write any operation whose extractions are not all ✅ verified. Surface evidence strings instead of confidence scores. Tag every AI-imported entity with `_provenance` so runtime failures get AI-aware diagnostics.
+- **Rationale**: Turns silent wrongness into visible wrongness. The first place a user encounters AI output is the review UI — where errors are cheap to fix — not the response panel after a failed run.
+- **Trade-offs accepted**: Higher LLM cost per import (verification pass adds ~$0.02). Lower "operations written" rate per import (some are deferred to manual completion). Both are accepted in exchange for trust.
+- **Triggers for revisiting**: If the verification pass rejects > 30% of correct extractions on the benchmark, the bar is too strict and the predicate logic needs softening (e.g., type-only verification when sample responses lack the field but the schema declares it).
+
 ---
 
-**End of PRD v0.3**
+**End of PRD v0.4**
 
 > Next steps: validate the concept (Section 16) before kickoff. Recruit design partners, hand-author the MarketplaceAPI sample, and run the LLM feasibility test for the AI importer.

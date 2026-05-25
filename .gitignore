@@ -23,6 +23,12 @@ install_manifest.txt
 # vcpkg
 vcpkg_installed/
 .vcpkg-root
+# vcpkg checkout when bootstrapped at the repo root by CI/local.
+/vcpkg/
+
+# Qt — installed via tools/setup-qt.sh into ~/Qt by default; ignored when
+# someone installs it inside the repo tree.
+/Qt/
 
 # Conan
 .conan/

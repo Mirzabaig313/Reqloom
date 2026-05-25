@@ -50,7 +50,7 @@ boundary is mechanically enforced in three places:
    + value types only, no Qt UI types appear.
 
 This keeps the future Phase B option open: extracting the engine into a
-separate process or a Rust rewrite becomes a build-system change rather
+separate process or a rewrite becomes a build-system change rather
 than a rewrite. See PRD §8.6 / ADR-002.
 
 ---

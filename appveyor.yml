@@ -8,10 +8,9 @@
 #                                                     plain Debug build+test on Windows)
 #   * push to main → linux-release + windows-release (-O2, build only)
 #
-# AppVeyor's free OSS plan gives unlimited minutes but only 1 concurrent job.
-# The first cold-cache build on each (OS, preset) pair will spend ~25-30 min
-# in `cmake --preset` building qtbase from source via vcpkg; warm-cache builds
-# drop to ~3-5 min.
+# Qt 6.8 LTS comes from the official Qt download mirror via aqtinstall, NOT
+# from vcpkg. Building qtbase from source via vcpkg blew past AppVeyor's
+# 60-minute-per-job cap; pre-built Qt brings cold-cache builds to ~10-15 min.
 
 version: '0.1.0+{build}'
 
@@ -28,24 +27,31 @@ skip_branch_with_pr: true
 clone_depth: 1
 shallow_clone: true
 
-# vcpkg pin shared with the rest of the repo.
+# Pinned versions used by every job.
 environment:
   VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
-  VCPKG_DEFAULT_BINARY_CACHE: C:\vcpkg-bincache  # overridden per-job for Linux
+  QT_VERSION: 6.8.0
+  AQT_VERSION: 3.1.18
 
 # --------------------------------------------------------------------------
-# Cache strategy: store the bootstrapped vcpkg tree and the binary cache
-# between runs. AppVeyor invalidates a cache when its YAML hash changes;
-# clear the cache via the AppVeyor UI if vcpkg.json drifts mid-debug.
+# Cache strategy:
+#   * vcpkg tool tree (cheap to clone, expensive when network blips).
+#   * vcpkg binary cache (compiled curl/sqlite3/yaml-cpp/nlohmann-json/gtest).
+#     Qt is no longer in vcpkg, so this cache is small and fast.
+#   * Qt 6.8 install dir, keyed on QT_VERSION + the appveyor.yml hash.
+# AppVeyor invalidates a cache when its YAML hash changes; clear the cache
+# via the AppVeyor UI if vcpkg.json drifts mid-debug.
 # --------------------------------------------------------------------------
 cache:
   - vcpkg -> vcpkg.json, appveyor.yml
   - C:\vcpkg-bincache -> vcpkg.json, appveyor.yml
   - /home/appveyor/vcpkg-bincache -> vcpkg.json, appveyor.yml
+  - C:\Qt -> appveyor.yml
+  - /home/appveyor/Qt -> appveyor.yml
 
 # --------------------------------------------------------------------------
-# Build matrix: Linux + Windows × (debug | release). The preset chosen at
-# build time depends on the branch (see install: scripts).
+# Build matrix: Linux + Windows × (debug | release). The preset is chosen at
+# install time based on the branch (see install: scripts).
 # --------------------------------------------------------------------------
 image:
   - Ubuntu2404
@@ -55,16 +61,18 @@ image:
 build: off
 
 # --------------------------------------------------------------------------
-# Per-OS prereqs + CMake 4.x + vcpkg bootstrap. Runs once per job.
+# Per-OS prereqs + CMake 4.x + Qt 6.8 + vcpkg bootstrap.
 # --------------------------------------------------------------------------
 install:
   # ----- Linux -----------------------------------------------------------
   - sh: |
       set -euo pipefail
+
+      # System deps for vcpkg ports + Qt's runtime XCB stack.
       sudo apt-get update
       sudo apt-get install -y --no-install-recommends \
         autoconf autoconf-archive automake libtool pkg-config \
-        ninja-build bison flex python3 python3-jinja2 python3-pip \
+        ninja-build python3 python3-pip python3-venv \
         libx11-dev libxext-dev libxrender-dev \
         libxkbcommon-dev libxkbcommon-x11-dev \
         libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
@@ -76,11 +84,29 @@ install:
         libfontconfig1-dev libfreetype6-dev libdbus-1-dev
 
       # CMake 4.x via pip — AppVeyor Ubuntu ships 3.x.
-      python3 -m pip install --upgrade --quiet --break-system-packages 'cmake~=4.0'
+      python3 -m pip install --upgrade --quiet --break-system-packages \
+        "cmake~=4.0" "aqtinstall==${AQT_VERSION}"
+
       export PATH="$HOME/.local/bin:$PATH"
       cmake --version
 
-      export VCPKG_DEFAULT_BINARY_CACHE=/home/appveyor/vcpkg-bincache
+      # Install Qt 6.8 desktop (Core, GUI, QML) into ~/Qt if not already
+      # cached. aqtinstall prints "already installed" cheaply if present.
+      mkdir -p "$HOME/Qt"
+      if [[ ! -d "$HOME/Qt/${QT_VERSION}/gcc_64" ]]; then
+        aqt install-qt linux desktop "${QT_VERSION}" linux_gcc_64 \
+          --outputdir "$HOME/Qt" \
+          --modules qtdeclarative
+      else
+        echo "Qt ${QT_VERSION} already present from cache."
+      fi
+
+      QT_PREFIX="$HOME/Qt/${QT_VERSION}/gcc_64"
+      ls -1 "$QT_PREFIX/lib/cmake/Qt6" | head -3
+
+      # vcpkg binary cache lives outside vcpkg/ so the vcpkg tree cache
+      # doesn't churn it.
+      VCPKG_DEFAULT_BINARY_CACHE="$HOME/vcpkg-bincache"
       mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
 
       # Pick preset by branch.
@@ -90,10 +116,11 @@ install:
         PRESET=linux-debug
       fi
 
-      # Persist variables for subsequent steps.
+      # Persist values for subsequent steps.
+      appveyor SetVariable -Name PATH -Value "$HOME/.local/bin:$PATH"
+      appveyor SetVariable -Name CMAKE_PREFIX_PATH -Value "$QT_PREFIX"
       appveyor SetVariable -Name VCPKG_DEFAULT_BINARY_CACHE -Value "$VCPKG_DEFAULT_BINARY_CACHE"
       appveyor SetVariable -Name PRESET -Value "$PRESET"
-      appveyor SetVariable -Name PATH -Value "$HOME/.local/bin:$PATH"
 
   # ----- Windows ---------------------------------------------------------
   - cmd: |
@@ -102,10 +129,23 @@ install:
       REM Refresh PATH so the new cmake is visible in subsequent commands.
       refreshenv
 
-      if not exist "C:\vcpkg-bincache" mkdir "C:\vcpkg-bincache"
-      appveyor SetVariable -Name VCPKG_DEFAULT_BINARY_CACHE -Value "C:\vcpkg-bincache"
+      REM aqtinstall — pin via pip so cache invalidation is predictable.
+      python -m pip install --upgrade --quiet "aqtinstall==%AQT_VERSION%"
 
-      REM Pick preset by branch.
+      REM Install Qt 6.8 for MSVC 2022 64-bit if not already cached.
+      if not exist "C:\Qt\%QT_VERSION%\msvc2022_64" (
+        aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 ^
+          --outputdir C:\Qt ^
+          --modules qtdeclarative
+      ) else (
+        echo Qt %QT_VERSION% already present from cache.
+      )
+
+      if not exist "C:\vcpkg-bincache" mkdir "C:\vcpkg-bincache"
+
+      REM Pick preset by branch and persist Qt prefix + cache paths.
+      appveyor SetVariable -Name CMAKE_PREFIX_PATH -Value "C:\Qt\%QT_VERSION%\msvc2022_64"
+      appveyor SetVariable -Name VCPKG_DEFAULT_BINARY_CACHE -Value "C:\vcpkg-bincache"
       if "%APPVEYOR_REPO_BRANCH%" == "main" (
         appveyor SetVariable -Name PRESET -Value "windows-release"
       ) else (

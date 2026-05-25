@@ -15,7 +15,7 @@ public:
     void render(const engine::RunResult& result);
 
 private:
-    std::ostream& out_;
+    [[maybe_unused]] std::ostream& out_;
 };
 
 }  // namespace chainapi::cli

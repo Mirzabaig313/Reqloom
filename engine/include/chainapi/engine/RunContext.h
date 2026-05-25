@@ -38,6 +38,11 @@ struct StepResult {
     std::optional<ErrorCode> error;
     int attempts{0};
     std::chrono::milliseconds elapsed{};
+
+    /// Human-readable context for this step's outcome — HTTP status,
+    /// response body excerpt, missing variable name, etc. Populated
+    /// best-effort; not a contract.
+    std::string detail;
 };
 
 /// The mutable state of a single run.

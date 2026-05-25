@@ -5,11 +5,16 @@
 #include "YamlSchemaParser.h"
 
 #include <yaml-cpp/yaml.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
+#include <charconv>
 #include <filesystem>
+#include <optional>
 #include <set>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -50,11 +55,62 @@ std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     return result;
 }
 
+// Convert a yaml-cpp Node to a JSON string suitable as an HTTP request body.
+// Quotes strings, recurses into maps/sequences. Numbers and booleans are
+// emitted as JSON literals (yaml-cpp gives us strings only, so we sniff).
+nlohmann::json yamlNodeToJsonValue(const YAML::Node& node);
+
+nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
+    const auto raw = scalar.as<std::string>();
+    // NOTE: use direct constructor (parens), NOT brace-init, because
+    // nlohmann::json{x} treats braces as an array initializer-list, so
+    // `json{"foo"}` makes ["foo"], not "foo".
+    if (raw == "true")  return nlohmann::json(true);
+    if (raw == "false") return nlohmann::json(false);
+    if (raw == "null" || raw == "~") return nlohmann::json(nullptr);
+    if (!raw.empty() && (std::isdigit(static_cast<unsigned char>(raw.front()))
+                          || raw.front() == '-' || raw.front() == '+')) {
+        long long ll = 0;
+        const auto* first = raw.data();
+        const auto* last  = first + raw.size();
+        auto fc = std::from_chars(first, last, ll);
+        if (fc.ec == std::errc{} && fc.ptr == last) {
+            return nlohmann::json(ll);
+        }
+        try {
+            std::size_t pos = 0;
+            double d = std::stod(raw, &pos);
+            if (pos == raw.size()) return nlohmann::json(d);
+        } catch (...) {
+            // fall through to string
+        }
+    }
+    return nlohmann::json(raw);
+}
+
+nlohmann::json yamlNodeToJsonValue(const YAML::Node& node) {
+    if (!node || node.IsNull()) return nlohmann::json(nullptr);
+    if (node.IsScalar())        return yamlScalarToJsonValue(node);
+    if (node.IsSequence()) {
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& item : node) {
+            arr.push_back(yamlNodeToJsonValue(item));
+        }
+        return arr;
+    }
+    if (node.IsMap()) {
+        nlohmann::json obj = nlohmann::json::object();
+        for (const auto& kv : node) {
+            obj[kv.first.as<std::string>()] = yamlNodeToJsonValue(kv.second);
+        }
+        return obj;
+    }
+    return nlohmann::json(nullptr);
+}
+
 std::string nodeToJsonString(const YAML::Node& node) {
     if (!node || node.IsNull()) return "";
-    YAML::Emitter emitter;
-    emitter << YAML::Flow << node;
-    return emitter.c_str();
+    return yamlNodeToJsonValue(node).dump();
 }
 
 std::vector<Extraction> parseExtractions(const YAML::Node& node) {
@@ -313,49 +369,113 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
 
     const auto baseDir = rootYaml.parent_path();
 
-    // Load imports
-    if (root["imports"] && root["imports"].IsSequence()) {
-        for (const auto& importPattern : root["imports"]) {
-            auto pattern = importPattern.as<std::string>();
-            auto files = resolveGlob(baseDir, pattern);
-            for (const auto& file : files) {
-                YAML::Node subDoc;
-                try {
-                    subDoc = YAML::LoadFile(file.string());
-                } catch (const YAML::Exception& e) {
-                    return std::unexpected(ChainApiError{
-                        ErrorCode::YamlParse,
-                        ErrorClass::Schema,
-                        file.string() + ": " + e.what()});
-                }
+    // Helper: load and dispatch a single sub-file based on its location.
+    auto loadSubFile = [&](const fs::path& file)
+        -> std::optional<ChainApiError> {
+        YAML::Node subDoc;
+        try {
+            subDoc = YAML::LoadFile(file.string());
+        } catch (const YAML::Exception& e) {
+            return ChainApiError{
+                ErrorCode::YamlParse,
+                ErrorClass::Schema,
+                file.string() + ": " + e.what()};
+        }
 
-                // Detect what kind of file this is by content
-                auto relPath = fs::relative(file, baseDir).string();
-                if (relPath.starts_with("actors/") || relPath.starts_with("actors\\")) {
-                    // Actor file: top-level "name" key identifies the actor
-                    auto actorId = subDoc["name"].as<std::string>("");
-                    if (actorId.empty()) {
-                        actorId = file.stem().string();
+        const auto relPath = fs::relative(file, baseDir).string();
+        if (relPath.starts_with("actors/") || relPath.starts_with("actors\\")) {
+            // Two file shapes accepted:
+            //   Form A (flat):    name: vendor\n description: ...\n auth: ...
+            //   Form B (wrapped): vendor:\n   description: ...\n   auth: ...
+            auto actorId = subDoc["name"].as<std::string>("");
+            const YAML::Node actorBody = subDoc["name"] ? subDoc : [&]() {
+                // Wrapped form: take the first (and only) top-level key as the id.
+                if (subDoc.IsMap() && subDoc.size() == 1) {
+                    auto it = subDoc.begin();
+                    actorId = it->first.as<std::string>();
+                    return it->second;
+                }
+                return subDoc;
+            }();
+            if (actorId.empty()) actorId = file.stem().string();
+            project.actors[ActorId{actorId}] = parseActor(actorId, actorBody);
+        } else if (relPath.starts_with("resources/") || relPath.starts_with("resources\\")) {
+            auto resourceId = subDoc["name"].as<std::string>("");
+            const YAML::Node resourceBody = subDoc["name"] ? subDoc : [&]() {
+                if (subDoc.IsMap() && subDoc.size() == 1) {
+                    auto it = subDoc.begin();
+                    resourceId = it->first.as<std::string>();
+                    return it->second;
+                }
+                return subDoc;
+            }();
+            if (resourceId.empty()) resourceId = file.stem().string();
+            project.resources[ResourceId{resourceId}] = parseResource(resourceId, resourceBody);
+        } else if (relPath.starts_with("environments/") || relPath.starts_with("environments\\")) {
+            // Two env file shapes accepted:
+            //   Form A (wrapped): name: local\n variables:\n   baseUrl: ...
+            //   Form B (flat):    baseUrl: ...\n admin_email: ...
+            auto envName = subDoc["name"].as<std::string>(file.stem().string());
+            std::map<std::string, std::string> vars;
+            if (subDoc["variables"] && subDoc["variables"].IsMap()) {
+                // Form A
+                for (const auto& kv : subDoc["variables"]) {
+                    vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
+                }
+            } else if (subDoc.IsMap()) {
+                // Form B — every top-level scalar key (except "name") is a variable.
+                for (const auto& kv : subDoc) {
+                    auto key = kv.first.as<std::string>();
+                    if (key == "name") continue;
+                    if (kv.second.IsScalar()) {
+                        vars[key] = kv.second.as<std::string>("");
                     }
-                    project.actors[ActorId{actorId}] = parseActor(actorId, subDoc);
-                } else if (relPath.starts_with("resources/") || relPath.starts_with("resources\\")) {
-                    auto resourceId = subDoc["name"].as<std::string>("");
-                    if (resourceId.empty()) {
-                        resourceId = file.stem().string();
+                }
+            }
+            project.environments[envName] = std::move(vars);
+        }
+        return std::nullopt;
+    };
+
+    // Helper: process a YAML node that's either a single string pattern,
+    // a sequence of string patterns, or a map of category → patterns.
+    auto processImports = [&](const YAML::Node& importsNode)
+        -> std::optional<ChainApiError> {
+        if (!importsNode) return std::nullopt;
+
+        // Form 1: flat sequence — `imports: [actors/*.yaml, resources/*.yaml]`
+        // Form 2: categorised map — `imports: { actors: [...], resources: [...] }`
+        // Both are valid; iterate either way and reuse the same loadSubFile logic.
+        std::vector<std::string> patterns;
+        if (importsNode.IsSequence()) {
+            for (const auto& p : importsNode) {
+                patterns.push_back(p.as<std::string>());
+            }
+        } else if (importsNode.IsMap()) {
+            for (const auto& kv : importsNode) {
+                if (kv.second.IsSequence()) {
+                    for (const auto& p : kv.second) {
+                        patterns.push_back(p.as<std::string>());
                     }
-                    project.resources[ResourceId{resourceId}] = parseResource(resourceId, subDoc);
-                } else if (relPath.starts_with("environments/") || relPath.starts_with("environments\\")) {
-                    auto envName = subDoc["name"].as<std::string>(file.stem().string());
-                    std::map<std::string, std::string> vars;
-                    if (subDoc["variables"] && subDoc["variables"].IsMap()) {
-                        for (const auto& kv : subDoc["variables"]) {
-                            vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
-                        }
-                    }
-                    project.environments[envName] = std::move(vars);
+                } else if (kv.second.IsScalar()) {
+                    patterns.push_back(kv.second.as<std::string>());
                 }
             }
         }
+
+        for (const auto& pattern : patterns) {
+            auto files = resolveGlob(baseDir, pattern);
+            for (const auto& file : files) {
+                if (auto err = loadSubFile(file)) {
+                    return err;
+                }
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (auto err = processImports(root["imports"])) {
+        return std::unexpected(*err);
     }
 
     // Inline actors (single-file format)
