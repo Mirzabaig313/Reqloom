@@ -14,7 +14,7 @@
 # run `cmake --preset macos-debug` (or your platform's equivalent).
 set -euo pipefail
 
-QT_VERSION="${QT_VERSION:-6.8.0}"
+QT_VERSION="${QT_VERSION:-6.8.3}"
 AQT_VERSION="${AQT_VERSION:-3.1.18}"
 QT_DIR="${QT_DIR:-$HOME/Qt}"
 
@@ -51,8 +51,7 @@ if [[ -d "$qt_prefix" ]]; then
 else
     echo "Installing Qt ${QT_VERSION} (${qt_platform}/${qt_arch}) into ${QT_DIR}..."
     aqt install-qt "$qt_platform" desktop "$QT_VERSION" "$qt_arch" \
-        --outputdir "$QT_DIR" \
-        --modules qtdeclarative
+        --outputdir "$QT_DIR"
 fi
 
 cat <<EOF

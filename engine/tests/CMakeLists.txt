@@ -7,8 +7,19 @@ add_subdirectory(fixtures/mock-sut)
 # ─── Unit tests ──────────────────────────────────────────────────────────────
 # Smoke test: confirms libchainapi-engine builds, links, and the public
 # error-code mapping is stable.
+# VariableResolverTest: pinned to the domain layer (PRD §5.7), needs the
+# private `engine/src/` include path to reach `domain/VariableResolver.h`.
 add_executable(chainapi-engine-unit-tests
     unit/SmokeTest.cpp
+    unit/VariableResolverTest.cpp
+    unit/PredicateEvaluatorTest.cpp
+    unit/SchemaParserPollUntilTest.cpp
+    unit/VerifierTest.cpp
+    unit/SchemaWriterTest.cpp
+    unit/AuthStrategyTest.cpp
+)
+target_include_directories(chainapi-engine-unit-tests
+    PRIVATE ${CMAKE_SOURCE_DIR}/engine/src
 )
 target_link_libraries(chainapi-engine-unit-tests
     PRIVATE
@@ -29,6 +40,7 @@ add_executable(chainapi-engine-integration-tests
     integration/MockSutHarness.h
     integration/MockSutHarness.cpp
     integration/HappyPathTest.cpp
+    integration/PollingTest.cpp
 )
 target_link_libraries(chainapi-engine-integration-tests
     PRIVATE

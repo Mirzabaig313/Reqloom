@@ -35,6 +35,7 @@ add_library(chainapi-engine-infrastructure OBJECT
     src/infrastructure/storage/SqliteHistoryStore.cpp
     src/infrastructure/secrets/KeychainSecretStore.cpp
     src/infrastructure/schema/YamlSchemaParser.cpp
+    src/infrastructure/schema/YamlSchemaWriter.cpp
     src/infrastructure/hooks/QuickJsHookRunner.cpp
     src/infrastructure/extraction/JsonPathEvaluator.cpp
 )
@@ -67,6 +68,10 @@ add_library(chainapi-engine-application OBJECT
     src/application/ImportFromOpenApi.cpp
     src/application/ExecutionEngine.cpp
     src/application/Factories.cpp
+    src/application/PredicateEvaluator.cpp
+    src/application/Verifier.cpp
+    src/application/AuthStrategy.cpp
+    src/application/JsonExtraction.cpp
 )
 target_include_directories(chainapi-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

@@ -30,7 +30,7 @@ shallow_clone: true
 # Pinned versions used by every job.
 environment:
   VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
-  QT_VERSION: 6.8.0
+  QT_VERSION: 6.8.3
   AQT_VERSION: 3.1.18
 
 # --------------------------------------------------------------------------
@@ -95,8 +95,7 @@ install:
       mkdir -p "$HOME/Qt"
       if [[ ! -d "$HOME/Qt/${QT_VERSION}/gcc_64" ]]; then
         aqt install-qt linux desktop "${QT_VERSION}" linux_gcc_64 \
-          --outputdir "$HOME/Qt" \
-          --modules qtdeclarative
+          --outputdir "$HOME/Qt"
       else
         echo "Qt ${QT_VERSION} already present from cache."
       fi
@@ -125,32 +124,28 @@ install:
   # ----- Windows ---------------------------------------------------------
   - cmd: |
       REM AppVeyor VS2022 image ships CMake 3.x. Force 4.x via Chocolatey.
-      choco upgrade cmake --version=4.0.2 --installargs "ADD_CMAKE_TO_PATH=System" --no-progress -y
+      choco upgrade cmake --version=4.0.2 --installargs "ADD_CMAKE_TO_PATH=System" --no-progress -y || exit /b
       REM Refresh PATH so the new cmake is visible in subsequent commands.
-      refreshenv
+      call refreshenv
 
       REM aqtinstall — pin via pip so cache invalidation is predictable.
-      python -m pip install --upgrade --quiet "aqtinstall==%AQT_VERSION%"
+      python -m pip install --upgrade --quiet "aqtinstall==%AQT_VERSION%" || exit /b
 
       REM Install Qt 6.8 for MSVC 2022 64-bit if not already cached.
-      if not exist "C:\Qt\%QT_VERSION%\msvc2022_64" (
-        aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 ^
-          --outputdir C:\Qt ^
-          --modules qtdeclarative
-      ) else (
-        echo Qt %QT_VERSION% already present from cache.
-      )
+      if exist "C:\Qt\%QT_VERSION%\msvc2022_64" goto :qt_cached
+      aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 --outputdir C:\Qt
+      if errorlevel 1 exit /b 1
+      goto :qt_done
+      :qt_cached
+      echo Qt %QT_VERSION% already present from cache.
+      :qt_done
 
       if not exist "C:\vcpkg-bincache" mkdir "C:\vcpkg-bincache"
 
       REM Pick preset by branch and persist Qt prefix + cache paths.
       appveyor SetVariable -Name CMAKE_PREFIX_PATH -Value "C:\Qt\%QT_VERSION%\msvc2022_64"
       appveyor SetVariable -Name VCPKG_DEFAULT_BINARY_CACHE -Value "C:\vcpkg-bincache"
-      if "%APPVEYOR_REPO_BRANCH%" == "main" (
-        appveyor SetVariable -Name PRESET -Value "windows-release"
-      ) else (
-        appveyor SetVariable -Name PRESET -Value "windows-debug"
-      )
+      if "%APPVEYOR_REPO_BRANCH%" == "main" (appveyor SetVariable -Name PRESET -Value "windows-release") else (appveyor SetVariable -Name PRESET -Value "windows-debug")
 
 # --------------------------------------------------------------------------
 # Bootstrap vcpkg (cached between runs) and run configure + build + test.

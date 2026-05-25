@@ -26,10 +26,13 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <print>
 #include <sstream>
 #include <string>
@@ -46,6 +49,19 @@ struct Route {
     int status{200};
     std::string body;
     std::vector<std::pair<std::string, std::string>> headers;
+
+    /// Optional response sequence (PRD §5.11 polling integration tests).
+    /// When non-empty, the route returns sequence[0] on the first call,
+    /// sequence[1] on the second, and so on. After exhaustion, it sticks
+    /// on the last element. Each entry has its own status, optional
+    /// body, and optional headers; top-level `status`/`body` serve as
+    /// the fallback for any omitted field within a sequence entry.
+    struct Step {
+        int status{200};
+        std::string body;
+        std::vector<std::pair<std::string, std::string>> headers;
+    };
+    std::vector<Step> sequence;
 };
 
 [[nodiscard]] std::vector<Route> loadRoutes(const fs::path& file) {
@@ -81,13 +97,53 @@ struct Route {
                 route.headers.emplace_back(it.key(), it.value().get<std::string>());
             }
         }
+        if (r.contains("sequence") && r["sequence"].is_array()) {
+            for (const auto& s : r["sequence"]) {
+                Route::Step step;
+                step.status = s.value("status", route.status);
+                if (s.contains("body")) {
+                    step.body = s["body"].is_string()
+                        ? s["body"].get<std::string>()
+                        : s["body"].dump();
+                }
+                if (s.contains("headers")) {
+                    for (auto it = s["headers"].begin(); it != s["headers"].end(); ++it) {
+                        step.headers.emplace_back(it.key(),
+                                                  it.value().get<std::string>());
+                    }
+                }
+                route.sequence.push_back(std::move(step));
+            }
+        }
         routes.push_back(std::move(route));
     }
     return routes;
 }
 
 void registerRoute(httplib::Server& server, const Route& route) {
-    auto handler = [route](const httplib::Request& /*req*/, httplib::Response& res) {
+    // Per-route call counter, captured into the handler. shared_ptr so
+    // the lambda closure (which is copied into httplib's internal route
+    // table) all see the same counter.
+    auto callCount = std::make_shared<std::atomic<std::size_t>>(0);
+
+    auto handler = [route, callCount](const httplib::Request& /*req*/,
+                                      httplib::Response& res) {
+        if (!route.sequence.empty()) {
+            const auto idx = std::min(callCount->fetch_add(1),
+                                      route.sequence.size() - 1);
+            const auto& step = route.sequence[idx];
+            for (const auto& [k, v] : step.headers) {
+                res.set_header(k, v);
+            }
+            res.status = step.status;
+            if (!step.body.empty()) {
+                const auto contentType =
+                    step.body.front() == '{' ? "application/json" : "text/plain";
+                res.set_content(step.body, contentType);
+            }
+            return;
+        }
+
         for (const auto& [k, v] : route.headers) {
             res.set_header(k, v);
         }

@@ -40,6 +40,11 @@ enum class ErrorCode {
     ExtractionFailed,
     ResponseParse,
 
+    // Polling (PRD §5.11)
+    PollTimeout,             ///< wall-clock budget exceeded
+    PollMaxAttemptsExceeded, ///< attempt-count budget exceeded
+    PollFailPredicate,       ///< fail_when matched a poll response
+
     // Run
     Cancelled,
 };
@@ -52,6 +57,7 @@ enum class ErrorClass {
     Auth,
     Hook,
     Extraction,
+    Polling,
     Run,
 };
 
