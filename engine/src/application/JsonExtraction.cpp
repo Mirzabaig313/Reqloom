@@ -146,9 +146,7 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
 }  // namespace
 
 std::expected<DetailedExtraction, ChainApiError> extractFromJsonDetailed(
-    const OperationId& opId,
-    const std::string& body,
-    const std::vector<Extraction>& extractions) {
+    const OperationId& opId, const std::string& body, const std::vector<Extraction>& extractions) {
     DetailedExtraction out;
     if (extractions.empty()) return out;
 

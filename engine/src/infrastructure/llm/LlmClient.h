@@ -27,12 +27,12 @@ enum class LlmProvider {
 /// persist the key on `LlmConfig`.
 struct LlmConfig {
     LlmProvider provider{LlmProvider::OpenAI};
-    std::string endpoint;       ///< e.g. "https://api.openai.com" — no trailing slash.
-    std::string model;          ///< e.g. "gpt-4o", "claude-3-5-sonnet-20241022", "llama3.1".
-    std::string apiKey;         ///< Bearer / x-api-key value. Empty for Ollama.
-    std::optional<int> maxTokens;     ///< Required by Anthropic; optional elsewhere.
+    std::string endpoint;          ///< e.g. "https://api.openai.com" — no trailing slash.
+    std::string model;             ///< e.g. "gpt-4o", "claude-3-5-sonnet-20241022", "llama3.1".
+    std::string apiKey;            ///< Bearer / x-api-key value. Empty for Ollama.
+    std::optional<int> maxTokens;  ///< Required by Anthropic; optional elsewhere.
     std::chrono::milliseconds timeout{60'000};
-    bool jsonOnly{true};        ///< Hint the provider to emit JSON-only output.
+    bool jsonOnly{true};  ///< Hint the provider to emit JSON-only output.
 };
 
 /// One conversation turn. The system prompt lands in `messages[0]` for
@@ -50,8 +50,8 @@ struct LlmRequest {
 };
 
 struct LlmResponse {
-    std::string content;        ///< Assistant message verbatim.
-    std::string finishReason;   ///< Provider-specific (e.g. "stop", "length", "end_turn").
+    std::string content;       ///< Assistant message verbatim.
+    std::string finishReason;  ///< Provider-specific (e.g. "stop", "length", "end_turn").
     std::optional<int> promptTokens;
     std::optional<int> completionTokens;
     std::chrono::milliseconds elapsed{};

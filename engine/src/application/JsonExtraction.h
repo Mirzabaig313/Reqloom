@@ -36,8 +36,6 @@ struct DetailedExtraction {
 };
 
 [[nodiscard]] std::expected<DetailedExtraction, ChainApiError> extractFromJsonDetailed(
-    const OperationId& opId,
-    const std::string& body,
-    const std::vector<Extraction>& extractions);
+    const OperationId& opId, const std::string& body, const std::vector<Extraction>& extractions);
 
 }  // namespace chainapi::engine

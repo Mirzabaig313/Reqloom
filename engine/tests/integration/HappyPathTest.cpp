@@ -177,8 +177,7 @@ TEST_F(MarketplaceHappyPath, ExtractionCompletedEventEmittedPerExtraction) {
     ASSERT_TRUE(result.has_value());
     ASSERT_TRUE(result->succeeded());
 
-    ASSERT_EQ(events.size(), ctx.extractionTrace().size())
-        << "one event per trace row";
+    ASSERT_EQ(events.size(), ctx.extractionTrace().size()) << "one event per trace row";
 
     for (const auto& ev : events) {
         EXPECT_EQ(ev.outcome, ce::ExtractionCompleted::Outcome::Resolved);

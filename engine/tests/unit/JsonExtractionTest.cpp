@@ -47,8 +47,8 @@ TEST(JsonExtractionDetailed, classifies_resolved_null_and_missing_per_extraction
 }
 
 TEST(JsonExtractionDetailed, surfaces_invalid_json_as_ResponseParse) {
-    auto result = ce::extractFromJsonDetailed(
-        ce::OperationId{"x.y"}, "not json", {jsonpath("id", "$.id")});
+    auto result =
+        ce::extractFromJsonDetailed(ce::OperationId{"x.y"}, "not json", {jsonpath("id", "$.id")});
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::ResponseParse);
 }
@@ -56,8 +56,7 @@ TEST(JsonExtractionDetailed, surfaces_invalid_json_as_ResponseParse) {
 TEST(JsonExtractionDetailed, marks_non_jsonpath_sources_as_Unsupported) {
     ce::Extraction headerExt{"Location", "Location", ce::Extraction::Source::Header};
 
-    auto result = ce::extractFromJsonDetailed(
-        ce::OperationId{"x.y"}, R"({"id":"x"})", {headerExt});
+    auto result = ce::extractFromJsonDetailed(ce::OperationId{"x.y"}, R"({"id":"x"})", {headerExt});
     ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->traces.size(), 1u);
     EXPECT_EQ(result->traces[0].outcome, ce::ExtractionTrace::Outcome::Unsupported);
@@ -68,8 +67,8 @@ TEST(JsonExtractionDetailed, truncates_oversized_resolved_values) {
     std::string longValue(1024, 'x');
     const std::string body = R"({"big":")" + longValue + R"("})";
 
-    auto result = ce::extractFromJsonDetailed(
-        ce::OperationId{"x.y"}, body, {jsonpath("big", "$.big")});
+    auto result =
+        ce::extractFromJsonDetailed(ce::OperationId{"x.y"}, body, {jsonpath("big", "$.big")});
     ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->traces.size(), 1u);
     EXPECT_EQ(result->traces[0].outcome, ce::ExtractionTrace::Outcome::Resolved);
