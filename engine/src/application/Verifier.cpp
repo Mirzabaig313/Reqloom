@@ -74,8 +74,7 @@ const Json* walk(const Json& root, std::string_view path) {
     return cur;
 }
 
-VerifiedExtraction verifyJsonPath(const Extraction& ext,
-                                  const Json& body) {
+VerifiedExtraction verifyJsonPath(const Extraction& ext, const Json& body) {
     VerifiedExtraction out;
     out.variableName = ext.variableName;
     out.sourcePath = ext.sourcePath;
@@ -100,8 +99,7 @@ VerifiedExtraction verifyJsonPath(const Extraction& ext,
     }
     if ((hit->is_array() || hit->is_object()) && hit->empty()) {
         out.status = VerificationStatus::Null;
-        out.detail = "path resolved to empty " +
-                     std::string{hit->is_array() ? "array" : "object"};
+        out.detail = "path resolved to empty " + std::string{hit->is_array() ? "array" : "object"};
         return out;
     }
 
@@ -113,8 +111,7 @@ VerifiedExtraction verifyJsonPath(const Extraction& ext,
 /// Header extraction paths follow the convention `$.headers.<Name>`.
 /// The header map uses a case-insensitive comparator (RFC 7230 §3.2).
 VerifiedExtraction verifyHeader(
-    const Extraction& ext,
-    const std::map<std::string, std::string, CaseInsensitiveLess>& headers) {
+    const Extraction& ext, const std::map<std::string, std::string, CaseInsensitiveLess>& headers) {
     VerifiedExtraction out;
     out.variableName = ext.variableName;
     out.sourcePath = ext.sourcePath;
@@ -157,8 +154,7 @@ VerifiedExtraction verifyStatusCode(const Extraction& ext, int statusCode) {
     return out;
 }
 
-VerifiedExtraction verifyNotEvaluable(const Extraction& ext,
-                                      std::string_view reason) {
+VerifiedExtraction verifyNotEvaluable(const Extraction& ext, std::string_view reason) {
     VerifiedExtraction out;
     out.variableName = ext.variableName;
     out.sourcePath = ext.sourcePath;
@@ -172,16 +168,15 @@ VerifiedExtraction verifyNotEvaluable(const Extraction& ext,
 // ─── Aggregate accessors ─────────────────────────────────────────────────────
 
 bool VerificationReport::allVerified() const noexcept {
-    return std::all_of(extractions.begin(), extractions.end(),
-        [](const auto& v) { return v.status == VerificationStatus::Verified; });
+    return std::all_of(extractions.begin(), extractions.end(), [](const auto& v) {
+        return v.status == VerificationStatus::Verified;
+    });
 }
 
 bool VerificationReport::hasFailures() const noexcept {
-    return std::any_of(extractions.begin(), extractions.end(),
-        [](const auto& v) {
-            return v.status == VerificationStatus::Null ||
-                   v.status == VerificationStatus::NoMatch;
-        });
+    return std::any_of(extractions.begin(), extractions.end(), [](const auto& v) {
+        return v.status == VerificationStatus::Null || v.status == VerificationStatus::NoMatch;
+    });
 }
 
 bool VerificationReport::noFailures() const noexcept {
@@ -193,8 +188,8 @@ bool VerificationReport::noFailures() const noexcept {
 Verifier::Verifier() = default;
 Verifier::~Verifier() = default;
 
-std::expected<VerificationReport, ChainApiError>
-Verifier::verify(const Operation& op, const SampleResponse& sample) const {
+std::expected<VerificationReport, ChainApiError> Verifier::verify(
+    const Operation& op, const SampleResponse& sample) const {
     VerificationReport report;
     report.extractions.reserve(op.extractions.size());
 
@@ -222,8 +217,7 @@ Verifier::verify(const Operation& op, const SampleResponse& sample) const {
                     out.detail = "no sample body available";
                     report.extractions.push_back(std::move(out));
                 } else {
-                    report.extractions.push_back(
-                        verifyJsonPath(ext, bodyDoc));
+                    report.extractions.push_back(verifyJsonPath(ext, bodyDoc));
                 }
                 break;
 
@@ -236,29 +230,27 @@ Verifier::verify(const Operation& op, const SampleResponse& sample) const {
                     out.detail = "no sample headers available";
                     report.extractions.push_back(std::move(out));
                 } else {
-                    report.extractions.push_back(
-                        verifyHeader(ext, sample.headers));
+                    report.extractions.push_back(verifyHeader(ext, sample.headers));
                 }
                 break;
 
             case Extraction::Source::StatusCode:
-                report.extractions.push_back(
-                    verifyStatusCode(ext, sample.statusCode));
+                report.extractions.push_back(verifyStatusCode(ext, sample.statusCode));
                 break;
 
             case Extraction::Source::XPath:
-                report.extractions.push_back(verifyNotEvaluable(
-                    ext, "xpath extractions are not statically verifiable"));
+                report.extractions.push_back(
+                    verifyNotEvaluable(ext, "xpath extractions are not statically verifiable"));
                 break;
 
             case Extraction::Source::Regex:
-                report.extractions.push_back(verifyNotEvaluable(
-                    ext, "regex extractions are not statically verifiable"));
+                report.extractions.push_back(
+                    verifyNotEvaluable(ext, "regex extractions are not statically verifiable"));
                 break;
 
             case Extraction::Source::Cookie:
-                report.extractions.push_back(verifyNotEvaluable(
-                    ext, "cookie extractions require a live response"));
+                report.extractions.push_back(
+                    verifyNotEvaluable(ext, "cookie extractions require a live response"));
                 break;
         }
     }
@@ -266,8 +258,7 @@ Verifier::verify(const Operation& op, const SampleResponse& sample) const {
     return report;
 }
 
-VerificationReport
-Verifier::verifyWithoutSample(const Operation& op) const noexcept {
+VerificationReport Verifier::verifyWithoutSample(const Operation& op) const noexcept {
     VerificationReport report;
     report.extractions.reserve(op.extractions.size());
     for (const auto& ext : op.extractions) {

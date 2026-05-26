@@ -114,15 +114,14 @@ declare type PostResponseHook =
     (ctx: ChainApi.Context) => void;
 )TS";
 
-std::expected<void, ChainApiError>
-writeAtomic(const fs::path& target, std::string_view content) {
+std::expected<void, ChainApiError> writeAtomic(const fs::path& target, std::string_view content) {
     std::error_code ec;
     fs::create_directories(target.parent_path(), ec);
     if (ec) {
         return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "typings: cannot create dir " + target.parent_path().string() +
-            ": " + ec.message()});
+            ErrorCode::SchemaInvalid,
+            ErrorClass::Schema,
+            "typings: cannot create dir " + target.parent_path().string() + ": " + ec.message()});
     }
 
     auto temp = target;
@@ -130,15 +129,17 @@ writeAtomic(const fs::path& target, std::string_view content) {
     {
         std::ofstream out{temp, std::ios::binary | std::ios::trunc};
         if (!out) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::SchemaInvalid, ErrorClass::Schema,
-                "typings: cannot open temp file " + temp.string()});
+            return std::unexpected(
+                ChainApiError{ErrorCode::SchemaInvalid,
+                              ErrorClass::Schema,
+                              "typings: cannot open temp file " + temp.string()});
         }
         out << content;
         if (!out) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::SchemaInvalid, ErrorClass::Schema,
-                "typings: failed writing temp file " + temp.string()});
+            return std::unexpected(
+                ChainApiError{ErrorCode::SchemaInvalid,
+                              ErrorClass::Schema,
+                              "typings: failed writing temp file " + temp.string()});
         }
     }
 
@@ -154,10 +155,10 @@ writeAtomic(const fs::path& target, std::string_view content) {
     if (ec) {
         std::error_code _;
         fs::remove(temp, _);
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "typings: cannot rename " + temp.string() + " → " +
-            target.string() + ": " + ec.message()});
+        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+                                             ErrorClass::Schema,
+                                             "typings: cannot rename " + temp.string() + " → " +
+                                                 target.string() + ": " + ec.message()});
     }
     return {};
 }
@@ -167,26 +168,26 @@ writeAtomic(const fs::path& target, std::string_view content) {
 StaticHookTypingsEmitter::StaticHookTypingsEmitter() = default;
 StaticHookTypingsEmitter::~StaticHookTypingsEmitter() = default;
 
-TypingsEmitResult
-StaticHookTypingsEmitter::emit(const fs::path& targetDir,
-                               const Project& /*project*/,
-                               bool overwrite) {
+TypingsEmitResult StaticHookTypingsEmitter::emit(const fs::path& targetDir,
+                                                 const Project& /*project*/,
+                                                 bool overwrite) {
     const auto target = targetDir / "chainapi.d.ts";
 
     std::error_code ec;
     if (fs::exists(target, ec) && !overwrite) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "typings: chainapi.d.ts exists in " + targetDir.string() +
-            " (pass overwrite=true to replace)"});
+        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+                                             ErrorClass::Schema,
+                                             "typings: chainapi.d.ts exists in " +
+                                                 targetDir.string() +
+                                                 " (pass overwrite=true to replace)"});
     }
 
     fs::create_directories(targetDir, ec);
     if (ec) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "typings: cannot create " + targetDir.string() + ": " +
-            ec.message()});
+        return std::unexpected(
+            ChainApiError{ErrorCode::SchemaInvalid,
+                          ErrorClass::Schema,
+                          "typings: cannot create " + targetDir.string() + ": " + ec.message()});
     }
 
     if (auto r = writeAtomic(target, kTypingsBody); !r) {

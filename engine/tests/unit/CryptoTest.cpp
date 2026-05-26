@@ -7,8 +7,8 @@
 // engine/tests/CMakeLists.txt PRIVATE include directive).
 //
 // Each test fails on the parent commit — `Crypto.h` did not exist.
-#include "infrastructure/util/Crypto.h"
 #include "domain/Codecs.h"
+#include "infrastructure/util/Crypto.h"
 
 #include <gtest/gtest.h>
 
@@ -26,8 +26,7 @@ namespace ce = chainapi::engine;
 TEST(Crypto, hmac_sha1_matches_rfc2202_vector_1) {
     const std::string key(20, '\x0b');
     const auto mac = ce::crypto::hmacSha1(key, "Hi There");
-    EXPECT_EQ(ce::codecs::hexEncode(mac),
-              "b617318655057264e28bc0b6fb378c8ef146be00");
+    EXPECT_EQ(ce::codecs::hexEncode(mac), "b617318655057264e28bc0b6fb378c8ef146be00");
 }
 
 // HMAC-SHA256: RFC 4231 §4.2 test case 1.
@@ -43,7 +42,8 @@ TEST(Crypto, hmac_sha512_matches_rfc4231_vector_1) {
     const std::string key(20, '\x0b');
     const auto mac = ce::crypto::hmacSha512(key, "Hi There");
     EXPECT_EQ(ce::codecs::hexEncode(mac),
-              "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854");
+              "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b"
+              "274eaea3f4e4be9d914eeb61f1702e696c203a126854");
 }
 
 TEST(Crypto, hmac_returns_empty_string_on_zero_length_inputs) {
@@ -83,8 +83,7 @@ TEST(Crypto, sha256_of_empty_string_matches_known_value) {
 //             .eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ
 //             .SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
 TEST(Crypto, jwt_hs256_matches_jwt_io_playground_vector) {
-    const std::string payload =
-        R"({"sub":"1234567890","name":"John Doe","iat":1516239022})";
+    const std::string payload = R"({"sub":"1234567890","name":"John Doe","iat":1516239022})";
     const auto token = ce::crypto::jwtSignHs256(payload, "your-256-bit-secret");
     EXPECT_EQ(token,
               "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
@@ -94,9 +93,9 @@ TEST(Crypto, jwt_hs256_matches_jwt_io_playground_vector) {
 
 TEST(Crypto, jwt_hs256_produces_three_dot_separated_segments) {
     const auto token = ce::crypto::jwtSignHs256(R"({"x":1})", "k");
-    const auto firstDot  = token.find('.');
+    const auto firstDot = token.find('.');
     const auto secondDot = token.find('.', firstDot + 1);
-    ASSERT_NE(firstDot,  std::string::npos);
+    ASSERT_NE(firstDot, std::string::npos);
     ASSERT_NE(secondDot, std::string::npos);
     EXPECT_EQ(token.find('.', secondDot + 1), std::string::npos)
         << "JWT must have exactly two dots";
@@ -130,6 +129,5 @@ TEST(Crypto, jwt_hs512_signature_is_distinct_from_hs256) {
     const auto secondDot512 = t512.find_last_of('.');
     const auto sig256Len = t256.size() - secondDot256 - 1;
     const auto sig512Len = t512.size() - secondDot512 - 1;
-    EXPECT_LT(sig256Len, sig512Len)
-        << "HS512 signature must be longer than HS256";
+    EXPECT_LT(sig256Len, sig512Len) << "HS512 signature must be longer than HS256";
 }

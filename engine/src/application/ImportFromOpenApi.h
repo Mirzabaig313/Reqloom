@@ -31,8 +31,8 @@ public:
     /// Returns `SchemaInvalid` for malformed input (not a YAML map, missing
     /// `openapi` field, no `paths`, etc.) or `IoError` for file-system
     /// problems.
-    [[nodiscard]] std::expected<Outcome, ChainApiError>
-    run(const std::filesystem::path& spec) const;
+    [[nodiscard]] std::expected<Outcome, ChainApiError> run(
+        const std::filesystem::path& spec) const;
 };
 
 }  // namespace chainapi::engine

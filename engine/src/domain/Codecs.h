@@ -51,13 +51,20 @@ namespace chainapi::engine::codecs {
 /// Shared by the schema writer and the OAuth1 signer.
 [[nodiscard]] constexpr std::string_view methodToString(HttpMethod m) noexcept {
     switch (m) {
-        case HttpMethod::Get:     return "GET";
-        case HttpMethod::Post:    return "POST";
-        case HttpMethod::Put:     return "PUT";
-        case HttpMethod::Patch:   return "PATCH";
-        case HttpMethod::Delete:  return "DELETE";
-        case HttpMethod::Head:    return "HEAD";
-        case HttpMethod::Options: return "OPTIONS";
+        case HttpMethod::Get:
+            return "GET";
+        case HttpMethod::Post:
+            return "POST";
+        case HttpMethod::Put:
+            return "PUT";
+        case HttpMethod::Patch:
+            return "PATCH";
+        case HttpMethod::Delete:
+            return "DELETE";
+        case HttpMethod::Head:
+            return "HEAD";
+        case HttpMethod::Options:
+            return "OPTIONS";
     }
     return "GET";
 }

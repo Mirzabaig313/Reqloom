@@ -20,8 +20,7 @@
 namespace chainapi::engine {
 
 /// Returns the written `chainapi.d.ts` path on success.
-using TypingsEmitResult =
-    std::expected<std::filesystem::path, ChainApiError>;
+using TypingsEmitResult = std::expected<std::filesystem::path, ChainApiError>;
 
 class HookTypingsEmitter {
 public:

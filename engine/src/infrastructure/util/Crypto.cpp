@@ -20,25 +20,21 @@ namespace {
 
 /// HMAC via the legacy convenience wrapper. `HMAC()` is documented to
 /// remain in OpenSSL 3.x and is simpler than EVP_MAC.
-std::string hmacWith(const EVP_MD* md,
-                     std::string_view key,
-                     std::string_view data) {
+std::string hmacWith(const EVP_MD* md, std::string_view key, std::string_view data) {
     if (md == nullptr) return {};
 
     unsigned int outLen = 0;
     std::array<unsigned char, EVP_MAX_MD_SIZE> buf{};
     // Cap keyLen defensively — no real key is anywhere near INT_MAX, but
     // the cast is UB on overflow.
-    const auto keyLen = static_cast<int>(
-        std::min(key.size(), static_cast<std::size_t>(INT_MAX)));
-    const auto* result = HMAC(
-        md,
-        key.data(),
-        keyLen,
-        reinterpret_cast<const unsigned char*>(data.data()),
-        data.size(),
-        buf.data(),
-        &outLen);
+    const auto keyLen = static_cast<int>(std::min(key.size(), static_cast<std::size_t>(INT_MAX)));
+    const auto* result = HMAC(md,
+                              key.data(),
+                              keyLen,
+                              reinterpret_cast<const unsigned char*>(data.data()),
+                              data.size(),
+                              buf.data(),
+                              &outLen);
     if (result == nullptr || outLen == 0) return {};
     return std::string(reinterpret_cast<const char*>(buf.data()), outLen);
 }
@@ -50,8 +46,7 @@ std::string hashWith(const EVP_MD* md, std::string_view data) {
 
     unsigned int outLen = 0;
     std::array<unsigned char, EVP_MAX_MD_SIZE> buf{};
-    if (EVP_Digest(data.data(), data.size(), buf.data(), &outLen, md, nullptr)
-        != 1) {
+    if (EVP_Digest(data.data(), data.size(), buf.data(), &outLen, md, nullptr) != 1) {
         return {};
     }
     return std::string(reinterpret_cast<const char*>(buf.data()), outLen);
@@ -62,8 +57,10 @@ std::string hashWith(const EVP_MD* md, std::string_view data) {
 std::string base64UrlEncode(std::string_view data) {
     std::string s = codecs::base64Encode(data);
     for (auto& c : s) {
-        if (c == '+') c = '-';
-        else if (c == '/') c = '_';
+        if (c == '+')
+            c = '-';
+        else if (c == '/')
+            c = '_';
     }
     while (!s.empty() && s.back() == '=') s.pop_back();
     return s;

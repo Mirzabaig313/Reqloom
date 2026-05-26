@@ -44,20 +44,20 @@ std::string generateUuid() {
     thread_local std::mt19937_64 gen{std::random_device{}()};
     std::uniform_int_distribution<std::uint32_t> dist;
 
-    auto r = [&]() { return dist(gen); };
+    auto r = [&]() {
+        return dist(gen);
+    };
     auto hex = [](std::uint32_t v, int digits) {
-        const std::uint64_t mask = (digits >= 8)
-            ? std::uint64_t{0xFFFF'FFFFu}
-            : ((std::uint64_t{1} << (digits * 4)) - 1);
+        const std::uint64_t mask =
+            (digits >= 8) ? std::uint64_t{0xFFFF'FFFFu} : ((std::uint64_t{1} << (digits * 4)) - 1);
         std::ostringstream ss;
         ss << std::hex << std::setfill('0') << std::setw(digits)
            << (static_cast<std::uint64_t>(v) & mask);
         return ss.str();
     };
 
-    return hex(r(), 8) + "-" + hex(r(), 4) + "-4" + hex(r(), 3) +
-           "-" + hex(0x8 | (r() & 0x3), 1) + hex(r(), 3) + "-" +
-           hex(r(), 8) + hex(r(), 4);
+    return hex(r(), 8) + "-" + hex(r(), 4) + "-4" + hex(r(), 3) + "-" + hex(0x8 | (r() & 0x3), 1) +
+           hex(r(), 3) + "-" + hex(r(), 8) + hex(r(), 4);
 }
 
 /// ISO 8601 timestamp for a given system_clock time point (UTC, second precision).
@@ -95,8 +95,7 @@ std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
         return std::nullopt;
     }
 
-    auto safeMul = [](long long v, long long factor)
-        -> std::optional<long long> {
+    auto safeMul = [](long long v, long long factor) -> std::optional<long long> {
         if (factor == 0) return 0;
         if (v > std::numeric_limits<long long>::max() / factor) {
             return std::nullopt;
@@ -105,7 +104,8 @@ std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
     };
 
     switch (unit) {
-        case 's': return std::chrono::seconds{value};
+        case 's':
+            return std::chrono::seconds{value};
         case 'm':
             if (auto r = safeMul(value, 60); r) return std::chrono::seconds{*r};
             return std::nullopt;
@@ -115,7 +115,8 @@ std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
         case 'd':
             if (auto r = safeMul(value, 86400); r) return std::chrono::seconds{*r};
             return std::nullopt;
-        default: return std::nullopt;
+        default:
+            return std::nullopt;
     }
 }
 
@@ -128,9 +129,7 @@ std::string_view trim(std::string_view s) {
 
 using ResolvedRef = std::optional<std::string>;
 
-ResolvedRef resolveDotted(std::string_view ref,
-                          const RunContext& ctx,
-                          const ResolveContext& rctx);
+ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const ResolveContext& rctx);
 
 struct CallParts {
     std::string_view name;
@@ -157,8 +156,7 @@ ResolvedRef resolveCallArg(std::string_view arg,
     arg = trim(arg);
     if (arg.empty()) return std::nullopt;
 
-    if ((arg.front() == '"' && arg.back() == '"') ||
-        (arg.front() == '\'' && arg.back() == '\'')) {
+    if ((arg.front() == '"' && arg.back() == '"') || (arg.front() == '\'' && arg.back() == '\'')) {
         if (arg.size() < 2) return std::nullopt;
         return std::string{arg.substr(1, arg.size() - 2)};
     }
@@ -215,8 +213,10 @@ ResolvedRef resolveBuiltin(std::string_view ref,
         char opCh = '\0';
         for (std::size_t i = 0; i < ref.size(); ++i) {
             const char c = ref[i];
-            if (c == '(') ++depth;
-            else if (c == ')') --depth;
+            if (c == '(')
+                ++depth;
+            else if (c == ')')
+                --depth;
             else if (depth == 0 && (c == '+' || c == '-') && i > 1) {
                 opPos = i;
                 opCh = c;
@@ -259,8 +259,7 @@ ResolvedRef resolveBuiltin(std::string_view ref,
             // Weak RNG is fine here — faker is for fixture data, not security.
             return "+1555" + std::to_string(std::random_device{}() % 10000000);
         }
-        return std::string{"faker_"} + std::string{fakerType} + "_" +
-               generateUuid().substr(0, 8);
+        return std::string{"faker_"} + std::string{fakerType} + "_" + generateUuid().substr(0, 8);
     }
 
     return std::nullopt;
@@ -268,9 +267,7 @@ ResolvedRef resolveBuiltin(std::string_view ref,
 
 /// Resolve dotted refs (env.X, secret.X, actor.var, resource.var) and
 /// indexed refs (resource[N].var).
-ResolvedRef resolveDotted(std::string_view ref,
-                          const RunContext& ctx,
-                          const ResolveContext& rctx) {
+ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const ResolveContext& rctx) {
     const auto dotPos = ref.find('.');
     if (dotPos == std::string_view::npos) return std::nullopt;
 
@@ -332,11 +329,9 @@ ResolvedRef resolveDotted(std::string_view ref,
 VariableResolver::VariableResolver() = default;
 VariableResolver::~VariableResolver() = default;
 
-VariableResolver::Result VariableResolver::resolve(
-    std::string_view templateStr,
-    const RunContext& ctx,
-    const ResolveContext& resolveCtx) const {
-
+VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
+                                                   const RunContext& ctx,
+                                                   const ResolveContext& resolveCtx) const {
     static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
     const std::string input(templateStr);
     std::string output;

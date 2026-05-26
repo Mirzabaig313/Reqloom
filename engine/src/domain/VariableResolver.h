@@ -21,8 +21,8 @@ public:
     ~VariableResolver();
 
     struct Result {
-        std::string output;                       ///< Substituted string.
-        std::vector<std::string> unresolved;      ///< {{X.y}} that could not resolve.
+        std::string output;                   ///< Substituted string.
+        std::vector<std::string> unresolved;  ///< {{X.y}} that could not resolve.
     };
 
     /// Substitute every `{{X.y}}` reference. Unresolved references are

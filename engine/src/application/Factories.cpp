@@ -16,11 +16,11 @@
 #include "../infrastructure/schema/SchemaWriter.h"
 #include "../infrastructure/schema/YamlSchemaParser.h"
 #include "../infrastructure/schema/YamlSchemaWriter.h"
-#include "../infrastructure/typings/StaticHookTypingsEmitter.h"
 #include "../infrastructure/secrets/KeychainSecretStore.h"
 #include "../infrastructure/secrets/SecretStore.h"
 #include "../infrastructure/storage/HistoryStore.h"
 #include "../infrastructure/storage/SqliteHistoryStore.h"
+#include "../infrastructure/typings/StaticHookTypingsEmitter.h"
 
 namespace chainapi::engine {
 
@@ -28,12 +28,11 @@ namespace chainapi::engine {
 
 ExecutionEngine::Dependencies::Dependencies() = default;
 
-ExecutionEngine::Dependencies::Dependencies(
-    std::unique_ptr<HttpClient> httpIn,
-    std::unique_ptr<SchemaParser> schemaIn,
-    std::unique_ptr<HistoryStore> historyIn,
-    std::unique_ptr<SecretStore> secretsIn,
-    std::unique_ptr<HookRunner> hooksIn)
+ExecutionEngine::Dependencies::Dependencies(std::unique_ptr<HttpClient> httpIn,
+                                            std::unique_ptr<SchemaParser> schemaIn,
+                                            std::unique_ptr<HistoryStore> historyIn,
+                                            std::unique_ptr<SecretStore> secretsIn,
+                                            std::unique_ptr<HookRunner> hooksIn)
     : http(std::move(httpIn)),
       schema(std::move(schemaIn)),
       history(std::move(historyIn)),
@@ -42,8 +41,8 @@ ExecutionEngine::Dependencies::Dependencies(
 
 ExecutionEngine::Dependencies::~Dependencies() = default;
 ExecutionEngine::Dependencies::Dependencies(Dependencies&&) noexcept = default;
-ExecutionEngine::Dependencies&
-ExecutionEngine::Dependencies::operator=(Dependencies&&) noexcept = default;
+ExecutionEngine::Dependencies& ExecutionEngine::Dependencies::operator=(Dependencies&&) noexcept =
+    default;
 
 // Factories
 
@@ -77,35 +76,29 @@ ExecutionEngine::Dependencies makeDefaultDependencies() {
     };
 }
 
-std::expected<Project, ChainApiError>
-parseProject(const std::filesystem::path& chainapiYaml) {
+std::expected<Project, ChainApiError> parseProject(const std::filesystem::path& chainapiYaml) {
     YamlSchemaParser parser;
     return parser.parse(chainapiYaml);
 }
 
-std::expected<std::filesystem::path, ChainApiError>
-writeProject(const std::filesystem::path& targetDir,
-             const Project& project,
-             bool overwrite) {
+std::expected<std::filesystem::path, ChainApiError> writeProject(
+    const std::filesystem::path& targetDir, const Project& project, bool overwrite) {
     YamlSchemaWriter writer;
     return writer.write(targetDir, project, overwrite);
 }
 
-std::expected<std::filesystem::path, ChainApiError>
-emitHookTypings(const std::filesystem::path& targetDir,
-                const Project& project,
-                bool overwrite) {
+std::expected<std::filesystem::path, ChainApiError> emitHookTypings(
+    const std::filesystem::path& targetDir, const Project& project, bool overwrite) {
     StaticHookTypingsEmitter emitter;
     return emitter.emit(targetDir, project, overwrite);
 }
 
-std::expected<OpenApiImportOutcome, ChainApiError>
-importFromOpenApi(const std::filesystem::path& spec) {
+std::expected<OpenApiImportOutcome, ChainApiError> importFromOpenApi(
+    const std::filesystem::path& spec) {
     ImportFromOpenApi importer;
     auto inner = importer.run(spec);
     if (!inner) return std::unexpected(inner.error());
-    return OpenApiImportOutcome{std::move(inner->project),
-                                std::move(inner->warnings)};
+    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
 }
 
 }  // namespace chainapi::engine

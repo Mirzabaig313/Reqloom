@@ -26,9 +26,8 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        const auto unique = "chainapi-writer-" +
-                            std::to_string(::getpid()) + "-" +
-                            std::to_string(counter_++);
+        const auto unique =
+            "chainapi-writer-" + std::to_string(::getpid()) + "-" + std::to_string(counter_++);
         path_ = fs::temp_directory_path() / unique;
         fs::create_directories(path_);
     }
@@ -54,8 +53,7 @@ ce::Actor makeUserActor() {
     step.pathTemplate = "/api/v1/auth/login";
     step.bodyTemplate = R"({email: "u@x.test"})";
     step.expectStatus = 200;
-    step.extractions.push_back(
-        {"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
+    step.extractions.push_back({"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
     actor.authSteps.push_back(std::move(step));
     actor.sessionTtl = std::chrono::seconds{900};
     actor.inject.headers["Authorization"] = "Bearer {{user.token}}";
@@ -76,8 +74,7 @@ ce::Resource makePaymentResource() {
     pay.bodyTemplate = R"({method: "card"})";
     pay.expectStatusList = {200, 202};
 
-    pay.extractions.push_back(
-        {"payment_id", "$.id", ce::Extraction::Source::JsonPath});
+    pay.extractions.push_back({"payment_id", "$.id", ce::Extraction::Source::JsonPath});
 
     ce::PollUntil poll;
     poll.method = ce::HttpMethod::Get;
@@ -97,8 +94,7 @@ ce::Resource makePaymentResource() {
     prov.importedAt = "2026-05-24T12:00:00Z";
     prov.evidence = {
         {"actor", "inferred from BearerAuth security scheme"},
-        {"extract.payment_id",
-         "verified against POST /payments examples.default"},
+        {"extract.payment_id", "verified against POST /payments examples.default"},
     };
     pay.provenance = std::move(prov);
 
@@ -151,26 +147,22 @@ TEST(SchemaWriter, round_trips_actor_resource_environment) {
     // Actor structural equality.
     ASSERT_TRUE(reloaded->actors.contains(ce::ActorId{"user"}));
     const auto& actorOut = reloaded->actors.at(ce::ActorId{"user"});
-    const auto& actorIn  = original.actors.at(ce::ActorId{"user"});
+    const auto& actorIn = original.actors.at(ce::ActorId{"user"});
     EXPECT_EQ(actorOut.id, actorIn.id);
     EXPECT_EQ(actorOut.strategy, actorIn.strategy);
     EXPECT_EQ(actorOut.sessionTtl, actorIn.sessionTtl);
     ASSERT_EQ(actorOut.authSteps.size(), 1u);
-    EXPECT_EQ(actorOut.authSteps[0].pathTemplate,
-              actorIn.authSteps[0].pathTemplate);
+    EXPECT_EQ(actorOut.authSteps[0].pathTemplate, actorIn.authSteps[0].pathTemplate);
     EXPECT_EQ(actorOut.inject.headers, actorIn.inject.headers);
 
     // Environment.
     ASSERT_TRUE(reloaded->environments.contains("local"));
-    EXPECT_EQ(reloaded->environments.at("local").at("baseUrl"),
-              "http://localhost:0");
+    EXPECT_EQ(reloaded->environments.at("local").at("baseUrl"), "http://localhost:0");
 
     // Resource + operation.
     ASSERT_TRUE(reloaded->resources.contains(ce::ResourceId{"payment"}));
-    const auto& payOut = reloaded->resources.at(ce::ResourceId{"payment"})
-                              .operations.at("pay");
-    const auto& payIn  = original.resources.at(ce::ResourceId{"payment"})
-                              .operations.at("pay");
+    const auto& payOut = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    const auto& payIn = original.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
 
     EXPECT_EQ(payOut.method, payIn.method);
     EXPECT_EQ(payOut.pathTemplate, payIn.pathTemplate);
@@ -182,7 +174,7 @@ TEST(SchemaWriter, round_trips_actor_resource_environment) {
     EXPECT_EQ(payOut.pollUntil->successWhen, payIn.pollUntil->successWhen);
     ASSERT_TRUE(payOut.pollUntil->failWhen.has_value());
     EXPECT_EQ(*payOut.pollUntil->failWhen, *payIn.pollUntil->failWhen);
-    EXPECT_EQ(payOut.pollUntil->interval,    payIn.pollUntil->interval);
+    EXPECT_EQ(payOut.pollUntil->interval, payIn.pollUntil->interval);
     EXPECT_EQ(payOut.pollUntil->maxAttempts, payIn.pollUntil->maxAttempts);
 
     // Extractions round-trip (the parser's contract: paths starting with
@@ -213,8 +205,7 @@ TEST(SchemaWriter, provenance_round_trips_unaffected_by_runtime) {
     {
         std::ifstream in(resYaml, std::ios::binary);
         ASSERT_TRUE(in.good()) << "cannot open " << resYaml;
-        content.assign(std::istreambuf_iterator<char>(in),
-                       std::istreambuf_iterator<char>());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
     EXPECT_NE(content.find("_provenance"), std::string::npos);
     EXPECT_NE(content.find("ai_import"), std::string::npos);
@@ -240,7 +231,6 @@ TEST(SchemaWriter, written_yaml_emits_all_three_sub_directories) {
     EXPECT_TRUE(fs::exists(scratch.path() / "environments" / "local.yaml"));
 }
 
-
 // ─── Slice 4b — Basic auth strategy round-trip ──────────────────────────────
 
 TEST(SchemaWriter, basic_auth_round_trips) {
@@ -255,8 +245,7 @@ TEST(SchemaWriter, basic_auth_round_trips) {
     client.id = ce::ActorId{"client"};
     client.description = "Basic-auth client";
     client.strategy = ce::AuthStrategy::Basic;
-    client.authConfig = {{"username", "{{secret.API_USER}}"},
-                         {"password", "{{secret.API_PASS}}"}};
+    client.authConfig = {{"username", "{{secret.API_USER}}"}, {"password", "{{secret.API_PASS}}"}};
     client.inject.headers["Authorization"] = "Basic {{client.credential}}";
     original.actors[client.id] = std::move(client);
 
@@ -271,10 +260,8 @@ TEST(SchemaWriter, basic_auth_round_trips) {
     EXPECT_TRUE(reload.authSteps.empty());
     EXPECT_EQ(reload.authConfig.at("username"), "{{secret.API_USER}}");
     EXPECT_EQ(reload.authConfig.at("password"), "{{secret.API_PASS}}");
-    EXPECT_EQ(reload.inject.headers.at("Authorization"),
-              "Basic {{client.credential}}");
+    EXPECT_EQ(reload.inject.headers.at("Authorization"), "Basic {{client.credential}}");
 }
-
 
 // ─── Slice 4c — api_key auth strategy round-trip ────────────────────────────
 
@@ -289,9 +276,8 @@ TEST(SchemaWriter, api_key_auth_round_trips_with_full_options) {
     ce::Actor service;
     service.id = ce::ActorId{"service"};
     service.strategy = ce::AuthStrategy::ApiKey;
-    service.authConfig = {{"key", "{{secret.SERVICE_API_KEY}}"},
-                          {"location", "header"},
-                          {"name", "X-API-Key"}};
+    service.authConfig = {
+        {"key", "{{secret.SERVICE_API_KEY}}"}, {"location", "header"}, {"name", "X-API-Key"}};
     original.actors[service.id] = std::move(service);
 
     auto written = ce::writeProject(scratch.path(), original);
@@ -334,10 +320,8 @@ TEST(SchemaWriter, api_key_auth_round_trips_with_only_key) {
     EXPECT_EQ(reload.authConfig.at("key"), "sk_live_abc");
     EXPECT_FALSE(reload.authConfig.contains("location"));
     EXPECT_FALSE(reload.authConfig.contains("name"));
-    EXPECT_EQ(reload.inject.headers.at("Authorization"),
-              "Bearer {{service.key}}");
+    EXPECT_EQ(reload.inject.headers.at("Authorization"), "Bearer {{service.key}}");
 }
-
 
 // ─── Slice 4d — oauth2_client_credentials round-trip ────────────────────────
 
@@ -353,10 +337,10 @@ TEST(SchemaWriter, oauth2_client_credentials_round_trips_with_scope) {
     service.id = ce::ActorId{"service"};
     service.strategy = ce::AuthStrategy::OAuth2ClientCredentials;
     service.authConfig = {
-        {"token_url",     "{{env.baseUrl}}/oauth/token"},
-        {"client_id",     "{{secret.OAUTH_CLIENT_ID}}"},
+        {"token_url", "{{env.baseUrl}}/oauth/token"},
+        {"client_id", "{{secret.OAUTH_CLIENT_ID}}"},
         {"client_secret", "{{secret.OAUTH_CLIENT_SECRET}}"},
-        {"scope",         "read:orders write:orders"},
+        {"scope", "read:orders write:orders"},
     };
     original.actors[service.id] = std::move(service);
 
@@ -368,14 +352,10 @@ TEST(SchemaWriter, oauth2_client_credentials_round_trips_with_scope) {
 
     const auto& reload = reloaded->actors.at(ce::ActorId{"service"});
     EXPECT_EQ(reload.strategy, ce::AuthStrategy::OAuth2ClientCredentials);
-    EXPECT_EQ(reload.authConfig.at("token_url"),
-              "{{env.baseUrl}}/oauth/token");
-    EXPECT_EQ(reload.authConfig.at("client_id"),
-              "{{secret.OAUTH_CLIENT_ID}}");
-    EXPECT_EQ(reload.authConfig.at("client_secret"),
-              "{{secret.OAUTH_CLIENT_SECRET}}");
-    EXPECT_EQ(reload.authConfig.at("scope"),
-              "read:orders write:orders");
+    EXPECT_EQ(reload.authConfig.at("token_url"), "{{env.baseUrl}}/oauth/token");
+    EXPECT_EQ(reload.authConfig.at("client_id"), "{{secret.OAUTH_CLIENT_ID}}");
+    EXPECT_EQ(reload.authConfig.at("client_secret"), "{{secret.OAUTH_CLIENT_SECRET}}");
+    EXPECT_EQ(reload.authConfig.at("scope"), "read:orders write:orders");
 }
 
 TEST(SchemaWriter, oauth2_client_credentials_round_trips_without_scope) {
@@ -390,8 +370,8 @@ TEST(SchemaWriter, oauth2_client_credentials_round_trips_without_scope) {
     service.id = ce::ActorId{"service"};
     service.strategy = ce::AuthStrategy::OAuth2ClientCredentials;
     service.authConfig = {
-        {"token_url",     "https://idp.test/oauth/token"},
-        {"client_id",     "id"},
+        {"token_url", "https://idp.test/oauth/token"},
+        {"client_id", "id"},
         {"client_secret", "sec"},
     };
     original.actors[service.id] = std::move(service);
@@ -405,7 +385,6 @@ TEST(SchemaWriter, oauth2_client_credentials_round_trips_without_scope) {
     EXPECT_EQ(reload.strategy, ce::AuthStrategy::OAuth2ClientCredentials);
     EXPECT_FALSE(reload.authConfig.contains("scope"));
 }
-
 
 // ─── Slice 4e — oauth2_password round-trip ──────────────────────────────────
 
@@ -421,12 +400,12 @@ TEST(SchemaWriter, oauth2_password_round_trips_with_scope) {
     user.id = ce::ActorId{"user"};
     user.strategy = ce::AuthStrategy::OAuth2Password;
     user.authConfig = {
-        {"token_url",     "{{env.baseUrl}}/oauth/token"},
-        {"client_id",     "{{secret.OAUTH_CLIENT_ID}}"},
+        {"token_url", "{{env.baseUrl}}/oauth/token"},
+        {"client_id", "{{secret.OAUTH_CLIENT_ID}}"},
         {"client_secret", "{{secret.OAUTH_CLIENT_SECRET}}"},
-        {"username",      "alice@example.com"},
-        {"password",      "{{secret.RO_PASS}}"},
-        {"scope",         "read:notes write:notes"},
+        {"username", "alice@example.com"},
+        {"password", "{{secret.RO_PASS}}"},
+        {"scope", "read:notes write:notes"},
     };
     original.actors[user.id] = std::move(user);
 
@@ -438,17 +417,13 @@ TEST(SchemaWriter, oauth2_password_round_trips_with_scope) {
 
     const auto& reload = reloaded->actors.at(ce::ActorId{"user"});
     EXPECT_EQ(reload.strategy, ce::AuthStrategy::OAuth2Password);
-    EXPECT_EQ(reload.authConfig.at("token_url"),
-              "{{env.baseUrl}}/oauth/token");
-    EXPECT_EQ(reload.authConfig.at("client_id"),
-              "{{secret.OAUTH_CLIENT_ID}}");
-    EXPECT_EQ(reload.authConfig.at("client_secret"),
-              "{{secret.OAUTH_CLIENT_SECRET}}");
+    EXPECT_EQ(reload.authConfig.at("token_url"), "{{env.baseUrl}}/oauth/token");
+    EXPECT_EQ(reload.authConfig.at("client_id"), "{{secret.OAUTH_CLIENT_ID}}");
+    EXPECT_EQ(reload.authConfig.at("client_secret"), "{{secret.OAUTH_CLIENT_SECRET}}");
     EXPECT_EQ(reload.authConfig.at("username"), "alice@example.com");
     EXPECT_EQ(reload.authConfig.at("password"), "{{secret.RO_PASS}}");
-    EXPECT_EQ(reload.authConfig.at("scope"),    "read:notes write:notes");
+    EXPECT_EQ(reload.authConfig.at("scope"), "read:notes write:notes");
 }
-
 
 // ─── Slice 4f — oauth1 round-trip ───────────────────────────────────────────
 
@@ -464,11 +439,11 @@ TEST(SchemaWriter, oauth1_round_trips_three_legged_with_realm) {
     tw.id = ce::ActorId{"twitter"};
     tw.strategy = ce::AuthStrategy::OAuth1;
     tw.authConfig = {
-        {"consumer_key",    "{{secret.OAUTH_KEY}}"},
+        {"consumer_key", "{{secret.OAUTH_KEY}}"},
         {"consumer_secret", "{{secret.OAUTH_SECRET}}"},
-        {"token",           "{{secret.OAUTH_TOKEN}}"},
-        {"token_secret",    "{{secret.OAUTH_TOKEN_SECRET}}"},
-        {"realm",           "Photos"},
+        {"token", "{{secret.OAUTH_TOKEN}}"},
+        {"token_secret", "{{secret.OAUTH_TOKEN_SECRET}}"},
+        {"realm", "Photos"},
     };
     original.actors[tw.id] = std::move(tw);
 
@@ -480,14 +455,10 @@ TEST(SchemaWriter, oauth1_round_trips_three_legged_with_realm) {
 
     const auto& reload = reloaded->actors.at(ce::ActorId{"twitter"});
     EXPECT_EQ(reload.strategy, ce::AuthStrategy::OAuth1);
-    EXPECT_EQ(reload.authConfig.at("consumer_key"),
-              "{{secret.OAUTH_KEY}}");
-    EXPECT_EQ(reload.authConfig.at("consumer_secret"),
-              "{{secret.OAUTH_SECRET}}");
-    EXPECT_EQ(reload.authConfig.at("token"),
-              "{{secret.OAUTH_TOKEN}}");
-    EXPECT_EQ(reload.authConfig.at("token_secret"),
-              "{{secret.OAUTH_TOKEN_SECRET}}");
+    EXPECT_EQ(reload.authConfig.at("consumer_key"), "{{secret.OAUTH_KEY}}");
+    EXPECT_EQ(reload.authConfig.at("consumer_secret"), "{{secret.OAUTH_SECRET}}");
+    EXPECT_EQ(reload.authConfig.at("token"), "{{secret.OAUTH_TOKEN}}");
+    EXPECT_EQ(reload.authConfig.at("token_secret"), "{{secret.OAUTH_TOKEN_SECRET}}");
     EXPECT_EQ(reload.authConfig.at("realm"), "Photos");
 }
 
@@ -503,7 +474,7 @@ TEST(SchemaWriter, oauth1_round_trips_two_legged) {
     app.id = ce::ActorId{"app"};
     app.strategy = ce::AuthStrategy::OAuth1;
     app.authConfig = {
-        {"consumer_key",    "ck"},
+        {"consumer_key", "ck"},
         {"consumer_secret", "cs"},
     };
     original.actors[app.id] = std::move(app);
@@ -533,12 +504,12 @@ TEST(SchemaWriter, aws_sigv4_round_trips_with_session_token_and_sign_payload) {
     aws.id = ce::ActorId{"aws"};
     aws.strategy = ce::AuthStrategy::AwsSigV4;
     aws.authConfig = {
-        {"access_key",    "{{secret.AWS_ACCESS_KEY}}"},
-        {"secret_key",    "{{secret.AWS_SECRET_KEY}}"},
-        {"region",        "us-east-1"},
-        {"service",       "iam"},
+        {"access_key", "{{secret.AWS_ACCESS_KEY}}"},
+        {"secret_key", "{{secret.AWS_SECRET_KEY}}"},
+        {"region", "us-east-1"},
+        {"service", "iam"},
         {"session_token", "{{secret.AWS_SESSION_TOKEN}}"},
-        {"sign_payload",  "true"},
+        {"sign_payload", "true"},
     };
     original.actors[aws.id] = std::move(aws);
 
@@ -550,14 +521,11 @@ TEST(SchemaWriter, aws_sigv4_round_trips_with_session_token_and_sign_payload) {
 
     const auto& reload = reloaded->actors.at(ce::ActorId{"aws"});
     EXPECT_EQ(reload.strategy, ce::AuthStrategy::AwsSigV4);
-    EXPECT_EQ(reload.authConfig.at("access_key"),
-              "{{secret.AWS_ACCESS_KEY}}");
-    EXPECT_EQ(reload.authConfig.at("secret_key"),
-              "{{secret.AWS_SECRET_KEY}}");
-    EXPECT_EQ(reload.authConfig.at("region"),  "us-east-1");
+    EXPECT_EQ(reload.authConfig.at("access_key"), "{{secret.AWS_ACCESS_KEY}}");
+    EXPECT_EQ(reload.authConfig.at("secret_key"), "{{secret.AWS_SECRET_KEY}}");
+    EXPECT_EQ(reload.authConfig.at("region"), "us-east-1");
     EXPECT_EQ(reload.authConfig.at("service"), "iam");
-    EXPECT_EQ(reload.authConfig.at("session_token"),
-              "{{secret.AWS_SESSION_TOKEN}}");
+    EXPECT_EQ(reload.authConfig.at("session_token"), "{{secret.AWS_SESSION_TOKEN}}");
     EXPECT_EQ(reload.authConfig.at("sign_payload"), "true");
 }
 
@@ -575,8 +543,8 @@ TEST(SchemaWriter, aws_sigv4_round_trips_minimal_actor) {
     s3.authConfig = {
         {"access_key", "AKIAEXAMPLE"},
         {"secret_key", "secret"},
-        {"region",     "us-east-1"},
-        {"service",    "s3"},
+        {"region", "us-east-1"},
+        {"service", "s3"},
     };
     original.actors[s3.id] = std::move(s3);
 

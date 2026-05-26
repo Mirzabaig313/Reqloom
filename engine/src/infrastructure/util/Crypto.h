@@ -22,7 +22,7 @@ namespace chainapi::engine::crypto {
 //
 // Output is the raw MAC: 20 bytes for SHA-1, 32 for SHA-256, 64 for SHA-512.
 
-[[nodiscard]] std::string hmacSha1  (std::string_view key, std::string_view data);
+[[nodiscard]] std::string hmacSha1(std::string_view key, std::string_view data);
 [[nodiscard]] std::string hmacSha256(std::string_view key, std::string_view data);
 [[nodiscard]] std::string hmacSha512(std::string_view key, std::string_view data);
 
@@ -37,11 +37,9 @@ namespace chainapi::engine::crypto {
 // out of scope.
 
 /// HS256: HMAC-SHA256 over the encoded header + payload, signed with `key`.
-[[nodiscard]] std::string jwtSignHs256(std::string_view payloadJson,
-                                       std::string_view key);
+[[nodiscard]] std::string jwtSignHs256(std::string_view payloadJson, std::string_view key);
 
 /// HS512: same shape, HMAC-SHA512.
-[[nodiscard]] std::string jwtSignHs512(std::string_view payloadJson,
-                                       std::string_view key);
+[[nodiscard]] std::string jwtSignHs512(std::string_view payloadJson, std::string_view key);
 
 }  // namespace chainapi::engine::crypto

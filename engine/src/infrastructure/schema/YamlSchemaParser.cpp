@@ -61,14 +61,14 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
     const auto raw = scalar.as<std::string>();
     // Use parens, not braces — nlohmann::json{x} treats braces as an
     // initializer-list and produces a one-element array.
-    if (raw == "true")  return nlohmann::json(true);
+    if (raw == "true") return nlohmann::json(true);
     if (raw == "false") return nlohmann::json(false);
     if (raw == "null" || raw == "~") return nlohmann::json(nullptr);
-    if (!raw.empty() && (std::isdigit(static_cast<unsigned char>(raw.front()))
-                          || raw.front() == '-' || raw.front() == '+')) {
+    if (!raw.empty() && (std::isdigit(static_cast<unsigned char>(raw.front())) ||
+                         raw.front() == '-' || raw.front() == '+')) {
         long long ll = 0;
         const auto* first = raw.data();
-        const auto* last  = first + raw.size();
+        const auto* last = first + raw.size();
         auto fc = std::from_chars(first, last, ll);
         if (fc.ec == std::errc{} && fc.ptr == last) {
             return nlohmann::json(ll);
@@ -86,7 +86,7 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
 
 nlohmann::json yamlNodeToJsonValue(const YAML::Node& node) {
     if (!node || node.IsNull()) return nlohmann::json(nullptr);
-    if (node.IsScalar())        return yamlScalarToJsonValue(node);
+    if (node.IsScalar()) return yamlScalarToJsonValue(node);
     if (node.IsSequence()) {
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& item : node) {
@@ -129,11 +129,16 @@ std::chrono::seconds parseDuration(const std::string& s) {
     auto value = std::stol(s.substr(0, s.size() - 1));
     char unit = s.back();
     switch (unit) {
-        case 's': return std::chrono::seconds{value};
-        case 'm': return std::chrono::seconds{value * 60};
-        case 'h': return std::chrono::seconds{value * 3600};
-        case 'd': return std::chrono::seconds{value * 86400};
-        default: return std::chrono::seconds{value};
+        case 's':
+            return std::chrono::seconds{value};
+        case 'm':
+            return std::chrono::seconds{value * 60};
+        case 'h':
+            return std::chrono::seconds{value * 3600};
+        case 'd':
+            return std::chrono::seconds{value * 86400};
+        default:
+            return std::chrono::seconds{value};
     }
 }
 
@@ -149,35 +154,35 @@ std::chrono::seconds parseDuration(const std::string& s) {
 ///   - Path is canonicalised via `weakly_canonical` against `baseDir`.
 ///     Resolved paths outside the root are rejected.
 ///   - File size is capped at 1 MiB.
-[[nodiscard]] std::expected<std::string, ChainApiError>
-resolveHookScript(const std::string& value, const fs::path& baseDir) {
+[[nodiscard]] std::expected<std::string, ChainApiError> resolveHookScript(const std::string& value,
+                                                                          const fs::path& baseDir) {
     if (value.empty()) return value;
 
     const auto looksLikeRelativePath = [](std::string_view s) {
         if (s.starts_with("./") || s.starts_with("../")) return true;
         if (s.find('\n') != std::string_view::npos) return false;
-        if (s.find('{')  != std::string_view::npos) return false;
-        if (s.find('(')  != std::string_view::npos) return false;
-        if (s.find('=')  != std::string_view::npos) return false;
+        if (s.find('{') != std::string_view::npos) return false;
+        if (s.find('(') != std::string_view::npos) return false;
+        if (s.find('=') != std::string_view::npos) return false;
         return s.ends_with(".js") || s.ends_with(".mjs");
     };
     if (!looksLikeRelativePath(value)) return value;
 
     const fs::path raw{value};
     if (raw.is_absolute()) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "hook script path must be relative to the project root: " +
-            value});
+        return std::unexpected(
+            ChainApiError{ErrorCode::SchemaInvalid,
+                          ErrorClass::Schema,
+                          "hook script path must be relative to the project root: " + value});
     }
 
     std::error_code ec;
     const auto canonical = fs::weakly_canonical(baseDir / raw, ec);
     if (ec) {
         return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "hook script path is not resolvable: " + value +
-            " (" + ec.message() + ")"});
+            ErrorCode::SchemaInvalid,
+            ErrorClass::Schema,
+            "hook script path is not resolvable: " + value + " (" + ec.message() + ")"});
     }
 
     // Containment check using fs::canonical (not weakly_canonical) for the
@@ -186,63 +191,66 @@ resolveHookScript(const std::string& value, const fs::path& baseDir) {
     // prevent /home/user/proj matching /home/user/proj-evil/hook.js.
     const auto canonicalBase = fs::canonical(baseDir, ec);
     if (ec) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "could not canonicalise project root: " + ec.message()});
+        return std::unexpected(
+            ChainApiError{ErrorCode::SchemaInvalid,
+                          ErrorClass::Schema,
+                          "could not canonicalise project root: " + ec.message()});
     }
     {
         const auto canonStr = canonical.lexically_normal().string();
-        const auto baseStr  = canonicalBase.lexically_normal().string();
+        const auto baseStr = canonicalBase.lexically_normal().string();
         const bool contained =
-            canonStr.size() >= baseStr.size() &&
-            canonStr.substr(0, baseStr.size()) == baseStr &&
-            (canonStr.size() == baseStr.size() ||
-             canonStr[baseStr.size()] == '/' ||
+            canonStr.size() >= baseStr.size() && canonStr.substr(0, baseStr.size()) == baseStr &&
+            (canonStr.size() == baseStr.size() || canonStr[baseStr.size()] == '/' ||
              canonStr[baseStr.size()] == fs::path::preferred_separator);
         if (!contained) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::SchemaInvalid, ErrorClass::Schema,
-                "hook script path escapes the project root: " + value});
+            return std::unexpected(
+                ChainApiError{ErrorCode::SchemaInvalid,
+                              ErrorClass::Schema,
+                              "hook script path escapes the project root: " + value});
         }
     }
 
     if (!fs::exists(canonical, ec) || ec) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "hook script not found: " + canonical.string()});
+        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+                                             ErrorClass::Schema,
+                                             "hook script not found: " + canonical.string()});
     }
     if (!fs::is_regular_file(canonical, ec) || ec) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "hook script is not a regular file: " + canonical.string()});
+        return std::unexpected(
+            ChainApiError{ErrorCode::SchemaInvalid,
+                          ErrorClass::Schema,
+                          "hook script is not a regular file: " + canonical.string()});
     }
 
     constexpr std::uintmax_t kMaxHookBytes = 1 * 1024 * 1024;  // 1 MiB
     const auto size = fs::file_size(canonical, ec);
     if (ec) {
         return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "could not stat hook script " + canonical.string() +
-            ": " + ec.message()});
+            ErrorCode::SchemaInvalid,
+            ErrorClass::Schema,
+            "could not stat hook script " + canonical.string() + ": " + ec.message()});
     }
     if (size > kMaxHookBytes) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "hook script exceeds 1 MiB cap: " + canonical.string()});
+        return std::unexpected(
+            ChainApiError{ErrorCode::SchemaInvalid,
+                          ErrorClass::Schema,
+                          "hook script exceeds 1 MiB cap: " + canonical.string()});
     }
 
     std::ifstream in(canonical, std::ios::binary);
     if (!in) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "hook script could not be opened: " + canonical.string()});
+        return std::unexpected(
+            ChainApiError{ErrorCode::SchemaInvalid,
+                          ErrorClass::Schema,
+                          "hook script could not be opened: " + canonical.string()});
     }
     std::string contents(static_cast<std::size_t>(size), '\0');
     in.read(contents.data(), static_cast<std::streamsize>(size));
     if (in.gcount() != static_cast<std::streamsize>(size)) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "hook script read truncated: " + canonical.string()});
+        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+                                             ErrorClass::Schema,
+                                             "hook script read truncated: " + canonical.string()});
     }
     return contents;
 }
@@ -305,36 +313,37 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             }
         } else if (actor.strategy == AuthStrategy::OAuth2ClientCredentials) {
             // RFC 6749 §4.4: token_url + client_id + client_secret required; scope optional.
-            actor.authConfig["token_url"]     = auth["token_url"].as<std::string>("");
-            actor.authConfig["client_id"]     = auth["client_id"].as<std::string>("");
+            actor.authConfig["token_url"] = auth["token_url"].as<std::string>("");
+            actor.authConfig["client_id"] = auth["client_id"].as<std::string>("");
             actor.authConfig["client_secret"] = auth["client_secret"].as<std::string>("");
             if (auth["scope"]) {
                 actor.authConfig["scope"] = auth["scope"].as<std::string>();
             }
         } else if (actor.strategy == AuthStrategy::OAuth2Password) {
             // RFC 6749 §4.3: same as client_credentials plus username/password.
-            actor.authConfig["token_url"]     = auth["token_url"].as<std::string>("");
-            actor.authConfig["client_id"]     = auth["client_id"].as<std::string>("");
+            actor.authConfig["token_url"] = auth["token_url"].as<std::string>("");
+            actor.authConfig["client_id"] = auth["client_id"].as<std::string>("");
             actor.authConfig["client_secret"] = auth["client_secret"].as<std::string>("");
-            actor.authConfig["username"]      = auth["username"].as<std::string>("");
-            actor.authConfig["password"]      = auth["password"].as<std::string>("");
+            actor.authConfig["username"] = auth["username"].as<std::string>("");
+            actor.authConfig["password"] = auth["password"].as<std::string>("");
             if (auth["scope"]) {
                 actor.authConfig["scope"] = auth["scope"].as<std::string>();
             }
         } else if (actor.strategy == AuthStrategy::OAuth1) {
             // RFC 5849 two-legged + optional preacquired access token.
-            actor.authConfig["consumer_key"]    = auth["consumer_key"].as<std::string>("");
+            actor.authConfig["consumer_key"] = auth["consumer_key"].as<std::string>("");
             actor.authConfig["consumer_secret"] = auth["consumer_secret"].as<std::string>("");
-            if (auth["token"])        actor.authConfig["token"]        = auth["token"].as<std::string>();
-            if (auth["token_secret"]) actor.authConfig["token_secret"] = auth["token_secret"].as<std::string>();
-            if (auth["realm"])        actor.authConfig["realm"]        = auth["realm"].as<std::string>();
+            if (auth["token"]) actor.authConfig["token"] = auth["token"].as<std::string>();
+            if (auth["token_secret"])
+                actor.authConfig["token_secret"] = auth["token_secret"].as<std::string>();
+            if (auth["realm"]) actor.authConfig["realm"] = auth["realm"].as<std::string>();
         } else if (actor.strategy == AuthStrategy::AwsSigV4) {
             // AWS SigV4 (AWS4-HMAC-SHA256). Long-lived keys are discouraged;
             // prefer {{X.y}} references that pull from a secret store.
             actor.authConfig["access_key"] = auth["access_key"].as<std::string>("");
             actor.authConfig["secret_key"] = auth["secret_key"].as<std::string>("");
-            actor.authConfig["region"]     = auth["region"].as<std::string>("");
-            actor.authConfig["service"]    = auth["service"].as<std::string>("");
+            actor.authConfig["region"] = auth["region"].as<std::string>("");
+            actor.authConfig["service"] = auth["service"].as<std::string>("");
             if (auth["session_token"]) {
                 actor.authConfig["session_token"] = auth["session_token"].as<std::string>();
             }
@@ -387,10 +396,9 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
 
 // ─── Resource/Operation parsing ──────────────────────────────────────────────
 
-std::expected<Resource, ChainApiError>
-parseResource(const std::string& resourceId,
-              const YAML::Node& node,
-              const fs::path& baseDir) {
+std::expected<Resource, ChainApiError> parseResource(const std::string& resourceId,
+                                                     const YAML::Node& node,
+                                                     const fs::path& baseDir) {
     Resource resource;
     resource.id = ResourceId{resourceId};
     resource.description = node["description"].as<std::string>("");
@@ -453,11 +461,11 @@ parseResource(const std::string& resourceId,
                 // when the literal ends in 'ms'.
                 const auto literal = p["interval"].as<std::string>("2s");
                 if (literal.ends_with("ms")) {
-                    poll.interval = std::chrono::milliseconds{
-                        std::stol(literal.substr(0, literal.size() - 2))};
+                    poll.interval =
+                        std::chrono::milliseconds{std::stol(literal.substr(0, literal.size() - 2))};
                 } else {
-                    poll.interval = std::chrono::duration_cast<
-                        std::chrono::milliseconds>(parseDuration(literal));
+                    poll.interval = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        parseDuration(literal));
                 }
             }
             if (p["backoff"]) {
@@ -468,8 +476,8 @@ parseResource(const std::string& resourceId,
                         poll.backoffBase = std::chrono::milliseconds{
                             std::stol(literal.substr(0, literal.size() - 2))};
                     } else {
-                        poll.backoffBase = std::chrono::duration_cast<
-                            std::chrono::milliseconds>(parseDuration(literal));
+                        poll.backoffBase = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            parseDuration(literal));
                     }
                 }
                 if (b["max"]) {
@@ -478,19 +486,19 @@ parseResource(const std::string& resourceId,
                         poll.backoffMax = std::chrono::milliseconds{
                             std::stol(literal.substr(0, literal.size() - 2))};
                     } else {
-                        poll.backoffMax = std::chrono::duration_cast<
-                            std::chrono::milliseconds>(parseDuration(literal));
+                        poll.backoffMax = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            parseDuration(literal));
                     }
                 }
             }
             if (p["timeout"]) {
                 const auto literal = p["timeout"].as<std::string>("60s");
                 if (literal.ends_with("ms")) {
-                    poll.timeout = std::chrono::milliseconds{
-                        std::stol(literal.substr(0, literal.size() - 2))};
+                    poll.timeout =
+                        std::chrono::milliseconds{std::stol(literal.substr(0, literal.size() - 2))};
                 } else {
-                    poll.timeout = std::chrono::duration_cast<
-                        std::chrono::milliseconds>(parseDuration(literal));
+                    poll.timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        parseDuration(literal));
                 }
             }
             if (p["max_attempts"]) {
@@ -511,14 +519,12 @@ parseResource(const std::string& resourceId,
         // else is treated as inline JS. See `resolveHookScript` for the
         // heuristic and security checks.
         if (opNode["pre_request"]) {
-            auto resolved = resolveHookScript(
-                opNode["pre_request"].as<std::string>(), baseDir);
+            auto resolved = resolveHookScript(opNode["pre_request"].as<std::string>(), baseDir);
             if (!resolved) return std::unexpected(resolved.error());
             op.preRequestScript = std::move(*resolved);
         }
         if (opNode["post_response"]) {
-            auto resolved = resolveHookScript(
-                opNode["post_response"].as<std::string>(), baseDir);
+            auto resolved = resolveHookScript(opNode["post_response"].as<std::string>(), baseDir);
             if (!resolved) return std::unexpected(resolved.error());
             op.postResponseScript = std::move(*resolved);
         }
@@ -527,8 +533,7 @@ parseResource(const std::string& resourceId,
             const auto& retryNode = opNode["retry"];
             if (retryNode["max"]) op.retry.maxAttempts = retryNode["max"].as<int>();
             if (retryNode["backoff"]) {
-                op.retry.baseBackoff = std::chrono::milliseconds{
-                    retryNode["backoff"].as<int>(500)};
+                op.retry.baseBackoff = std::chrono::milliseconds{retryNode["backoff"].as<int>(500)};
             }
         }
 
@@ -582,9 +587,7 @@ YamlSchemaParser::~YamlSchemaParser() = default;
 SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
     if (!fs::exists(rootYaml)) {
         return std::unexpected(ChainApiError{
-            ErrorCode::YamlParse,
-            ErrorClass::Schema,
-            "File not found: " + rootYaml.string()});
+            ErrorCode::YamlParse, ErrorClass::Schema, "File not found: " + rootYaml.string()});
     }
 
     YAML::Node root;
@@ -592,18 +595,16 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         root = YAML::LoadFile(rootYaml.string());
     } catch (const YAML::Exception& e) {
         return std::unexpected(ChainApiError{
-            ErrorCode::YamlParse,
-            ErrorClass::Schema,
-            rootYaml.string() + ": " + e.what()});
+            ErrorCode::YamlParse, ErrorClass::Schema, rootYaml.string() + ": " + e.what()});
     }
 
     auto version = root["version"].as<int>(0);
     if (version < 1 || version > 3) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaVersion,
-            ErrorClass::Schema,
-            "Unsupported schema version " + std::to_string(version) +
-            " (supported: 1–3). Run `chainapi migrate` to upgrade."});
+        return std::unexpected(
+            ChainApiError{ErrorCode::SchemaVersion,
+                          ErrorClass::Schema,
+                          "Unsupported schema version " + std::to_string(version) +
+                              " (supported: 1–3). Run `chainapi migrate` to upgrade."});
     }
 
     Project project;
@@ -612,16 +613,13 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
 
     const auto baseDir = rootYaml.parent_path();
 
-    auto loadSubFile = [&](const fs::path& file)
-        -> std::optional<ChainApiError> {
+    auto loadSubFile = [&](const fs::path& file) -> std::optional<ChainApiError> {
         YAML::Node subDoc;
         try {
             subDoc = YAML::LoadFile(file.string());
         } catch (const YAML::Exception& e) {
             return ChainApiError{
-                ErrorCode::YamlParse,
-                ErrorClass::Schema,
-                file.string() + ": " + e.what()};
+                ErrorCode::YamlParse, ErrorClass::Schema, file.string() + ": " + e.what()};
         }
 
         const auto relPath = fs::relative(file, baseDir).string();
@@ -678,8 +676,7 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         return std::nullopt;
     };
 
-    auto processImports = [&](const YAML::Node& importsNode)
-        -> std::optional<ChainApiError> {
+    auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ChainApiError> {
         if (!importsNode) return std::nullopt;
 
         std::vector<std::string> patterns;

@@ -30,7 +30,8 @@ public:
         std::string body;
     };
 
-    void enqueue(int status, std::string body,
+    void enqueue(int status,
+                 std::string body,
                  std::vector<std::pair<std::string, std::string>> headers = {}) {
         ce::HttpResponse resp;
         resp.status = status;
@@ -39,22 +40,18 @@ public:
         responses_.push_back(std::move(resp));
     }
 
-    std::expected<ce::HttpResponse, ce::ChainApiError>
-    send(const ce::HttpRequest& req) override {
+    std::expected<ce::HttpResponse, ce::ChainApiError> send(const ce::HttpRequest& req) override {
         recorded_.push_back({req.url, req.body.value_or("")});
         if (responses_.empty()) {
             return std::unexpected(ce::ChainApiError{
-                ce::ErrorCode::NetworkTimeout, ce::ErrorClass::Network,
-                "fake: queue exhausted"});
+                ce::ErrorCode::NetworkTimeout, ce::ErrorClass::Network, "fake: queue exhausted"});
         }
         auto resp = std::move(responses_.front());
         responses_.erase(responses_.begin());
         return resp;
     }
 
-    [[nodiscard]] const std::vector<Recorded>& recorded() const noexcept {
-        return recorded_;
-    }
+    [[nodiscard]] const std::vector<Recorded>& recorded() const noexcept { return recorded_; }
 
 private:
     std::vector<ce::HttpResponse> responses_;
@@ -72,8 +69,7 @@ ce::Actor makeSimpleActor() {
     step.pathTemplate = "/api/v1/auth/login";
     step.bodyTemplate = R"({email:"u@x.test"})";
     step.expectStatus = 200;
-    step.extractions.push_back(
-        {"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
+    step.extractions.push_back({"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
     actor.authSteps.push_back(std::move(step));
     return actor;
 }
@@ -94,8 +90,7 @@ ce::Actor makeChainActor() {
     verify.method = ce::HttpMethod::Post;
     verify.pathTemplate = "/api/v1/auth/verify-otp";
     verify.expectStatus = 200;
-    verify.extractions.push_back(
-        {"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
+    verify.extractions.push_back({"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
 
     actor.authSteps.push_back(std::move(send));
     actor.authSteps.push_back(std::move(verify));
@@ -115,9 +110,8 @@ TEST(AuthStrategy, simple_strategy_authenticates_via_single_step) {
     http.enqueue(200, R"({"data":{"accessToken":"tok-abc"}})");
 
     ce::VariableResolver resolver;
-    auto auther = ce::selectAuthenticator(
-        makeSimpleActor(),
-        ce::AuthDependencies{&http, &resolver});
+    auto auther =
+        ce::selectAuthenticator(makeSimpleActor(), ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -131,13 +125,11 @@ TEST(AuthStrategy, simple_strategy_authenticates_via_single_step) {
 
 TEST(AuthStrategy, chain_strategy_runs_steps_in_order) {
     FakeHttpClient http;
-    http.enqueue(200, R"({"ok":true})");                                 // send_otp
-    http.enqueue(200, R"({"data":{"accessToken":"tok-xyz"}})");          // verify_otp
+    http.enqueue(200, R"({"ok":true})");                         // send_otp
+    http.enqueue(200, R"({"data":{"accessToken":"tok-xyz"}})");  // verify_otp
 
     ce::VariableResolver resolver;
-    auto auther = ce::selectAuthenticator(
-        makeChainActor(),
-        ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(makeChainActor(), ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -157,9 +149,8 @@ TEST(AuthStrategy, status_mismatch_surfaces_session_refresh_failed) {
     http.enqueue(500, R"({"err":"oops"})");
 
     ce::VariableResolver resolver;
-    auto auther = ce::selectAuthenticator(
-        makeSimpleActor(),
-        ce::AuthDependencies{&http, &resolver});
+    auto auther =
+        ce::selectAuthenticator(makeSimpleActor(), ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -167,7 +158,7 @@ TEST(AuthStrategy, status_mismatch_surfaces_session_refresh_failed) {
 
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
-    EXPECT_EQ(result.error().cls,  ce::ErrorClass::Auth);
+    EXPECT_EQ(result.error().cls, ce::ErrorClass::Auth);
     EXPECT_NE(result.error().detail.find("HTTP 500"), std::string::npos);
 }
 
@@ -175,9 +166,8 @@ TEST(AuthStrategy, network_failure_surfaces_session_refresh_failed) {
     FakeHttpClient http;  // empty queue — every send() returns NetworkTimeout
 
     ce::VariableResolver resolver;
-    auto auther = ce::selectAuthenticator(
-        makeSimpleActor(),
-        ce::AuthDependencies{&http, &resolver});
+    auto auther =
+        ce::selectAuthenticator(makeSimpleActor(), ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -194,9 +184,8 @@ TEST(AuthStrategy, extraction_miss_surfaces_session_refresh_failed) {
     http.enqueue(200, R"({"data":{}})");
 
     ce::VariableResolver resolver;
-    auto auther = ce::selectAuthenticator(
-        makeSimpleActor(),
-        ce::AuthDependencies{&http, &resolver});
+    auto auther =
+        ce::selectAuthenticator(makeSimpleActor(), ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -204,8 +193,7 @@ TEST(AuthStrategy, extraction_miss_surfaces_session_refresh_failed) {
 
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
-    EXPECT_NE(result.error().detail.find("extraction failed"),
-              std::string::npos);
+    EXPECT_NE(result.error().detail.find("extraction failed"), std::string::npos);
 }
 
 TEST(AuthStrategy, simple_and_chain_route_to_the_same_authenticator) {
@@ -219,10 +207,8 @@ TEST(AuthStrategy, simple_and_chain_route_to_the_same_authenticator) {
     h2.enqueue(200, R"({"data":{"accessToken":"t2"}})");
 
     ce::VariableResolver resolver;
-    auto a1 = ce::selectAuthenticator(makeSimpleActor(),
-                                      ce::AuthDependencies{&h1, &resolver});
-    auto a2 = ce::selectAuthenticator(makeChainActor(),
-                                      ce::AuthDependencies{&h2, &resolver});
+    auto a1 = ce::selectAuthenticator(makeSimpleActor(), ce::AuthDependencies{&h1, &resolver});
+    auto a2 = ce::selectAuthenticator(makeChainActor(), ce::AuthDependencies{&h2, &resolver});
     ASSERT_NE(a1, nullptr);
     ASSERT_NE(a2, nullptr);
 
@@ -235,14 +221,13 @@ TEST(AuthStrategy, simple_and_chain_route_to_the_same_authenticator) {
     ce::RunContext c1;
     ce::RunContext c2;
     auto r1 = a1->authenticate(makeSimpleActor(), c1, makeRctx());
-    auto r2 = a2->authenticate(makeChainActor(),  c2, makeRctx());
+    auto r2 = a2->authenticate(makeChainActor(), c2, makeRctx());
 
     ASSERT_TRUE(r1.has_value()) << r1.error().detail;
     ASSERT_TRUE(r2.has_value()) << r2.error().detail;
     EXPECT_EQ(r1->variables.at("token"), "t1");
     EXPECT_EQ(r2->variables.at("token"), "t2");
 }
-
 
 // ───  BasicAuthenticator ──────────────────────────────────────────
 
@@ -252,8 +237,7 @@ ce::Actor makeBasicActor(std::string username, std::string password) {
     ce::Actor actor;
     actor.id = ce::ActorId{"client"};
     actor.strategy = ce::AuthStrategy::Basic;
-    actor.authConfig = {{"username", std::move(username)},
-                        {"password", std::move(password)}};
+    actor.authConfig = {{"username", std::move(username)}, {"password", std::move(password)}};
     actor.inject.headers["Authorization"] = "Basic {{client.credential}}";
     return actor;
 }
@@ -266,16 +250,14 @@ TEST(AuthStrategy, basic_emits_rfc7617_canonical_credential) {
     ce::VariableResolver resolver;
 
     auto actor = makeBasicActor("Aladdin", "open sesame");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
 
     ASSERT_TRUE(result.has_value()) << result.error().detail;
-    EXPECT_EQ(result->variables.at("credential"),
-              "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+    EXPECT_EQ(result->variables.at("credential"), "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
     // No HTTP call happened.
     EXPECT_TRUE(http.recorded().empty());
 }
@@ -285,8 +267,7 @@ TEST(AuthStrategy, basic_resolves_secret_references_in_credentials) {
     ce::VariableResolver resolver;
 
     auto actor = makeBasicActor("{{secret.API_USER}}", "{{secret.API_PASS}}");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -297,8 +278,7 @@ TEST(AuthStrategy, basic_resolves_secret_references_in_credentials) {
     auto result = auther->authenticate(actor, ctx, rctx);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
     // alice:wonderland → YWxpY2U6d29uZGVybGFuZA==
-    EXPECT_EQ(result->variables.at("credential"),
-              "YWxpY2U6d29uZGVybGFuZA==");
+    EXPECT_EQ(result->variables.at("credential"), "YWxpY2U6d29uZGVybGFuZA==");
 }
 
 TEST(AuthStrategy, basic_missing_credentials_surface_session_refresh_failed) {
@@ -310,8 +290,7 @@ TEST(AuthStrategy, basic_missing_credentials_surface_session_refresh_failed) {
     actor.strategy = ce::AuthStrategy::Basic;
     actor.authConfig = {{"username", "alice"}};  // password missing
 
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -326,8 +305,7 @@ TEST(AuthStrategy, basic_unresolved_variable_surfaces_session_refresh_failed) {
     ce::VariableResolver resolver;
 
     auto actor = makeBasicActor("{{secret.MISSING}}", "x");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -336,7 +314,6 @@ TEST(AuthStrategy, basic_unresolved_variable_surfaces_session_refresh_failed) {
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
     EXPECT_NE(result.error().detail.find("unresolved"), std::string::npos);
 }
-
 
 // ─── ApiKeyAuthenticator ─────────────────────────────────────────────────────
 namespace {
@@ -349,7 +326,7 @@ ce::Actor makeApiKeyActor(std::string key,
     actor.strategy = ce::AuthStrategy::ApiKey;
     actor.authConfig["key"] = std::move(key);
     if (location) actor.authConfig["location"] = std::move(*location);
-    if (name)     actor.authConfig["name"]     = std::move(*name);
+    if (name) actor.authConfig["name"] = std::move(*name);
     return actor;
 }
 
@@ -362,8 +339,7 @@ TEST(AuthStrategy, api_key_stores_resolved_value_as_session_variable) {
     ce::VariableResolver resolver;
 
     auto actor = makeApiKeyActor("{{secret.SERVICE_API_KEY}}");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -383,8 +359,7 @@ TEST(AuthStrategy, api_key_header_location_auto_injects_into_session) {
     ce::VariableResolver resolver;
 
     auto actor = makeApiKeyActor("sk_live_abc", "header", "X-API-Key");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -402,8 +377,7 @@ TEST(AuthStrategy, api_key_query_location_auto_injects_query_param) {
     ce::VariableResolver resolver;
 
     auto actor = makeApiKeyActor("sk_live_abc", "query", "api_key");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -421,8 +395,7 @@ TEST(AuthStrategy, api_key_cookie_location_is_explicitly_unsupported) {
     ce::VariableResolver resolver;
 
     auto actor = makeApiKeyActor("sk_live_abc", "cookie", "session");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -437,8 +410,7 @@ TEST(AuthStrategy, api_key_unknown_location_is_a_clear_error) {
     ce::VariableResolver resolver;
 
     auto actor = makeApiKeyActor("sk_live_abc", "body", "X-Key");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -457,8 +429,7 @@ TEST(AuthStrategy, api_key_missing_key_surfaces_session_refresh_failed) {
     actor.strategy = ce::AuthStrategy::ApiKey;
     // No `key` configured.
 
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -477,8 +448,7 @@ TEST(AuthStrategy, api_key_location_without_name_does_not_auto_inject) {
     ce::VariableResolver resolver;
 
     auto actor = makeApiKeyActor("sk_live_abc", "header" /* name omitted */);
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -489,21 +459,19 @@ TEST(AuthStrategy, api_key_location_without_name_does_not_auto_inject) {
         << "auto-inject should require both location AND name";
 }
 
-
 // ─── OAuth2ClientCredentialsAuthenticator ────────────────────────────────────
 
 namespace {
 
-ce::Actor makeOAuth2ClientCredsActor(
-    std::string tokenUrl,
-    std::string clientId,
-    std::string clientSecret,
-    std::optional<std::string> scope = std::nullopt) {
+ce::Actor makeOAuth2ClientCredsActor(std::string tokenUrl,
+                                     std::string clientId,
+                                     std::string clientSecret,
+                                     std::optional<std::string> scope = std::nullopt) {
     ce::Actor actor;
     actor.id = ce::ActorId{"service"};
     actor.strategy = ce::AuthStrategy::OAuth2ClientCredentials;
-    actor.authConfig["token_url"]     = std::move(tokenUrl);
-    actor.authConfig["client_id"]     = std::move(clientId);
+    actor.authConfig["token_url"] = std::move(tokenUrl);
+    actor.authConfig["client_id"] = std::move(clientId);
     actor.authConfig["client_secret"] = std::move(clientSecret);
     if (scope) actor.authConfig["scope"] = std::move(*scope);
     return actor;
@@ -518,10 +486,8 @@ TEST(AuthStrategy, oauth2_client_credentials_extracts_bearer_and_auto_injects) {
 
     ce::VariableResolver resolver;
     auto actor = makeOAuth2ClientCredsActor(
-        "https://idp.test/oauth/token", "client-1", "secret-1",
-        "read write");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+        "https://idp.test/oauth/token", "client-1", "secret-1", "read write");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
@@ -529,12 +495,11 @@ TEST(AuthStrategy, oauth2_client_credentials_extracts_bearer_and_auto_injects) {
 
     ASSERT_TRUE(result.has_value()) << result.error().detail;
     EXPECT_EQ(result->variables.at("access_token"), "tok-XYZ");
-    EXPECT_EQ(result->variables.at("token_type"),  "Bearer");
-    EXPECT_EQ(result->variables.at("expires_in"),  "3600");
-    EXPECT_EQ(result->variables.at("scope"),       "read write");
+    EXPECT_EQ(result->variables.at("token_type"), "Bearer");
+    EXPECT_EQ(result->variables.at("expires_in"), "3600");
+    EXPECT_EQ(result->variables.at("scope"), "read write");
     // Auto-inject populated.
-    EXPECT_EQ(result->injectHeaders.at("Authorization"),
-              "Bearer tok-XYZ");
+    EXPECT_EQ(result->injectHeaders.at("Authorization"), "Bearer tok-XYZ");
 
     // The strategy made exactly one POST to the token endpoint with
     // the correct form body.
@@ -553,17 +518,14 @@ TEST(AuthStrategy, oauth2_client_credentials_resolves_secret_references) {
 
     ce::VariableResolver resolver;
     auto actor = makeOAuth2ClientCredsActor(
-        "{{env.idp_url}}",
-        "{{secret.OAUTH_CLIENT_ID}}",
-        "{{secret.OAUTH_CLIENT_SECRET}}");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+        "{{env.idp_url}}", "{{secret.OAUTH_CLIENT_ID}}", "{{secret.OAUTH_CLIENT_SECRET}}");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
     auto rctx = makeRctx();
     rctx.envVars["idp_url"] = "https://idp.test/oauth/token";
-    rctx.secrets["OAUTH_CLIENT_ID"]     = "id-from-keychain";
+    rctx.secrets["OAUTH_CLIENT_ID"] = "id-from-keychain";
     rctx.secrets["OAUTH_CLIENT_SECRET"] = "secret-from-keychain";
 
     auto result = auther->authenticate(actor, ctx, rctx);
@@ -573,7 +535,7 @@ TEST(AuthStrategy, oauth2_client_credentials_resolves_secret_references) {
     ASSERT_EQ(http.recorded().size(), 1u);
     EXPECT_EQ(http.recorded()[0].url, "https://idp.test/oauth/token");
     const auto& body = http.recorded()[0].body;
-    EXPECT_NE(body.find("client_id=id-from-keychain"),     std::string::npos);
+    EXPECT_NE(body.find("client_id=id-from-keychain"), std::string::npos);
     EXPECT_NE(body.find("client_secret=secret-from-keychain"), std::string::npos);
 }
 
@@ -582,10 +544,8 @@ TEST(AuthStrategy, oauth2_client_credentials_omits_scope_when_not_configured) {
     http.enqueue(200, R"({"access_token":"tok-A"})");
 
     ce::VariableResolver resolver;
-    auto actor = makeOAuth2ClientCredsActor(
-        "https://idp.test/token", "id", "sec");  // no scope
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth2ClientCredsActor("https://idp.test/token", "id", "sec");  // no scope
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
@@ -602,12 +562,11 @@ TEST(AuthStrategy, oauth2_client_credentials_rejects_missing_client_id) {
     ce::Actor actor;
     actor.id = ce::ActorId{"service"};
     actor.strategy = ce::AuthStrategy::OAuth2ClientCredentials;
-    actor.authConfig["token_url"]     = "https://idp.test/token";
+    actor.authConfig["token_url"] = "https://idp.test/token";
     actor.authConfig["client_secret"] = "sec";
     // client_id missing entirely
 
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
 
@@ -623,14 +582,11 @@ TEST(AuthStrategy, oauth2_client_credentials_surfaces_token_endpoint_error) {
     // `error` field in the body. The strategy must surface enough of
     // that body for the user to debug.
     FakeHttpClient http;
-    http.enqueue(400,
-        R"({"error":"invalid_client","error_description":"Bad credentials"})");
+    http.enqueue(400, R"({"error":"invalid_client","error_description":"Bad credentials"})");
 
     ce::VariableResolver resolver;
-    auto actor = makeOAuth2ClientCredsActor(
-        "https://idp.test/token", "client-x", "wrong-secret");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth2ClientCredsActor("https://idp.test/token", "client-x", "wrong-secret");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
@@ -638,8 +594,7 @@ TEST(AuthStrategy, oauth2_client_credentials_surfaces_token_endpoint_error) {
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
     EXPECT_NE(result.error().detail.find("HTTP 400"), std::string::npos);
-    EXPECT_NE(result.error().detail.find("invalid_client"),
-              std::string::npos);
+    EXPECT_NE(result.error().detail.find("invalid_client"), std::string::npos);
 }
 
 TEST(AuthStrategy, oauth2_client_credentials_rejects_response_without_access_token) {
@@ -647,28 +602,23 @@ TEST(AuthStrategy, oauth2_client_credentials_rejects_response_without_access_tok
     http.enqueue(200, R"({"token_type":"Bearer"})");  // no access_token
 
     ce::VariableResolver resolver;
-    auto actor = makeOAuth2ClientCredsActor(
-        "https://idp.test/token", "id", "sec");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth2ClientCredsActor("https://idp.test/token", "id", "sec");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
 
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
-    EXPECT_NE(result.error().detail.find("access_token"),
-              std::string::npos);
+    EXPECT_NE(result.error().detail.find("access_token"), std::string::npos);
 }
 
 TEST(AuthStrategy, oauth2_client_credentials_network_error_surfaces_cleanly) {
     FakeHttpClient http;  // empty queue → NetworkTimeout
 
     ce::VariableResolver resolver;
-    auto actor = makeOAuth2ClientCredsActor(
-        "https://idp.test/token", "id", "sec");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth2ClientCredsActor("https://idp.test/token", "id", "sec");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
@@ -678,26 +628,24 @@ TEST(AuthStrategy, oauth2_client_credentials_network_error_surfaces_cleanly) {
     EXPECT_NE(result.error().detail.find("network"), std::string::npos);
 }
 
-
 // ─── OAuth2PasswordAuthenticator (RFC 6749 §4.3) ─────────────────────────────
 
 namespace {
 
-ce::Actor makeOAuth2PasswordActor(
-    std::string tokenUrl,
-    std::string clientId,
-    std::string clientSecret,
-    std::string username,
-    std::string password,
-    std::optional<std::string> scope = std::nullopt) {
+ce::Actor makeOAuth2PasswordActor(std::string tokenUrl,
+                                  std::string clientId,
+                                  std::string clientSecret,
+                                  std::string username,
+                                  std::string password,
+                                  std::optional<std::string> scope = std::nullopt) {
     ce::Actor actor;
     actor.id = ce::ActorId{"user"};
     actor.strategy = ce::AuthStrategy::OAuth2Password;
-    actor.authConfig["token_url"]     = std::move(tokenUrl);
-    actor.authConfig["client_id"]     = std::move(clientId);
+    actor.authConfig["token_url"] = std::move(tokenUrl);
+    actor.authConfig["client_id"] = std::move(clientId);
     actor.authConfig["client_secret"] = std::move(clientSecret);
-    actor.authConfig["username"]      = std::move(username);
-    actor.authConfig["password"]      = std::move(password);
+    actor.authConfig["username"] = std::move(username);
+    actor.authConfig["password"] = std::move(password);
     if (scope) actor.authConfig["scope"] = std::move(*scope);
     return actor;
 }
@@ -710,35 +658,34 @@ TEST(AuthStrategy, oauth2_password_extracts_bearer_and_auto_injects) {
                           "expires_in":7200,"refresh_token":"rt-1"})");
 
     ce::VariableResolver resolver;
-    auto actor = makeOAuth2PasswordActor(
-        "https://idp.test/oauth/token",
-        "client-id", "client-secret",
-        "alice", "wonderland",
-        "read:notes");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth2PasswordActor("https://idp.test/oauth/token",
+                                         "client-id",
+                                         "client-secret",
+                                         "alice",
+                                         "wonderland",
+                                         "read:notes");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
 
     ASSERT_TRUE(result.has_value()) << result.error().detail;
-    EXPECT_EQ(result->variables.at("access_token"),  "pwd-tok");
-    EXPECT_EQ(result->variables.at("token_type"),   "Bearer");
-    EXPECT_EQ(result->variables.at("expires_in"),   "7200");
-    EXPECT_EQ(result->variables.at("refresh_token"),"rt-1");
-    EXPECT_EQ(result->injectHeaders.at("Authorization"),
-              "Bearer pwd-tok");
+    EXPECT_EQ(result->variables.at("access_token"), "pwd-tok");
+    EXPECT_EQ(result->variables.at("token_type"), "Bearer");
+    EXPECT_EQ(result->variables.at("expires_in"), "7200");
+    EXPECT_EQ(result->variables.at("refresh_token"), "rt-1");
+    EXPECT_EQ(result->injectHeaders.at("Authorization"), "Bearer pwd-tok");
 
     ASSERT_EQ(http.recorded().size(), 1u);
     EXPECT_EQ(http.recorded()[0].url, "https://idp.test/oauth/token");
     const auto& body = http.recorded()[0].body;
-    EXPECT_NE(body.find("grant_type=password"),       std::string::npos);
-    EXPECT_NE(body.find("username=alice"),            std::string::npos);
-    EXPECT_NE(body.find("password=wonderland"),       std::string::npos);
-    EXPECT_NE(body.find("client_id=client-id"),       std::string::npos);
+    EXPECT_NE(body.find("grant_type=password"), std::string::npos);
+    EXPECT_NE(body.find("username=alice"), std::string::npos);
+    EXPECT_NE(body.find("password=wonderland"), std::string::npos);
+    EXPECT_NE(body.find("client_id=client-id"), std::string::npos);
     EXPECT_NE(body.find("client_secret=client-secret"), std::string::npos);
-    EXPECT_NE(body.find("scope=read%3Anotes"),        std::string::npos);
+    EXPECT_NE(body.find("scope=read%3Anotes"), std::string::npos);
 }
 
 TEST(AuthStrategy, oauth2_password_resolves_secret_username_and_password) {
@@ -747,12 +694,8 @@ TEST(AuthStrategy, oauth2_password_resolves_secret_username_and_password) {
 
     ce::VariableResolver resolver;
     auto actor = makeOAuth2PasswordActor(
-        "https://idp.test/oauth/token",
-        "id", "sec",
-        "{{secret.RO_USER}}",
-        "{{secret.RO_PASS}}");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+        "https://idp.test/oauth/token", "id", "sec", "{{secret.RO_USER}}", "{{secret.RO_PASS}}");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto rctx = makeRctx();
@@ -764,7 +707,7 @@ TEST(AuthStrategy, oauth2_password_resolves_secret_username_and_password) {
 
     ASSERT_EQ(http.recorded().size(), 1u);
     const auto& body = http.recorded()[0].body;
-    EXPECT_NE(body.find("username=real-alice"),  std::string::npos);
+    EXPECT_NE(body.find("username=real-alice"), std::string::npos);
     EXPECT_NE(body.find("password=real-secret"), std::string::npos);
     EXPECT_EQ(body.find("{{secret"), std::string::npos)
         << "secret references must not survive into the wire";
@@ -778,12 +721,12 @@ TEST(AuthStrategy, oauth2_password_url_encodes_special_chars_in_credentials) {
     http.enqueue(200, R"({"access_token":"x"})");
 
     ce::VariableResolver resolver;
-    auto actor = makeOAuth2PasswordActor(
-        "https://idp.test/token", "id", "sec",
-        "user@example.com",   // `@` requires %40
-        "p&w=hard!");          // `&` `=` `!`
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth2PasswordActor("https://idp.test/token",
+                                         "id",
+                                         "sec",
+                                         "user@example.com",  // `@` requires %40
+                                         "p&w=hard!");        // `&` `=` `!`
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
@@ -792,7 +735,7 @@ TEST(AuthStrategy, oauth2_password_url_encodes_special_chars_in_credentials) {
     ASSERT_EQ(http.recorded().size(), 1u);
     const auto& body = http.recorded()[0].body;
     EXPECT_NE(body.find("username=user%40example.com"), std::string::npos);
-    EXPECT_NE(body.find("password=p%26w%3Dhard%21"),    std::string::npos);
+    EXPECT_NE(body.find("password=p%26w%3Dhard%21"), std::string::npos);
 }
 
 TEST(AuthStrategy, oauth2_password_rejects_missing_username) {
@@ -803,15 +746,14 @@ TEST(AuthStrategy, oauth2_password_rejects_missing_username) {
     actor.id = ce::ActorId{"user"};
     actor.strategy = ce::AuthStrategy::OAuth2Password;
     actor.authConfig = {
-        {"token_url",     "https://idp.test/token"},
-        {"client_id",     "id"},
+        {"token_url", "https://idp.test/token"},
+        {"client_id", "id"},
         {"client_secret", "sec"},
         // username deliberately absent
-        {"password",      "x"},
+        {"password", "x"},
     };
 
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
@@ -824,14 +766,11 @@ TEST(AuthStrategy, oauth2_password_rejects_missing_username) {
 
 TEST(AuthStrategy, oauth2_password_surfaces_token_endpoint_error) {
     FakeHttpClient http;
-    http.enqueue(401,
-        R"({"error":"invalid_grant","error_description":"Bad password"})");
+    http.enqueue(401, R"({"error":"invalid_grant","error_description":"Bad password"})");
 
     ce::VariableResolver resolver;
-    auto actor = makeOAuth2PasswordActor(
-        "https://idp.test/token", "id", "sec", "alice", "wrong");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth2PasswordActor("https://idp.test/token", "id", "sec", "alice", "wrong");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
@@ -839,8 +778,7 @@ TEST(AuthStrategy, oauth2_password_surfaces_token_endpoint_error) {
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
     EXPECT_NE(result.error().detail.find("HTTP 401"), std::string::npos);
-    EXPECT_NE(result.error().detail.find("invalid_grant"),
-              std::string::npos);
+    EXPECT_NE(result.error().detail.find("invalid_grant"), std::string::npos);
 }
 
 TEST(AuthStrategy, oauth2_password_omits_scope_when_not_configured) {
@@ -848,10 +786,8 @@ TEST(AuthStrategy, oauth2_password_omits_scope_when_not_configured) {
     http.enqueue(200, R"({"access_token":"x"})");
 
     ce::VariableResolver resolver;
-    auto actor = makeOAuth2PasswordActor(
-        "https://idp.test/token", "id", "sec", "alice", "pw");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth2PasswordActor("https://idp.test/token", "id", "sec", "alice", "pw");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
@@ -860,7 +796,6 @@ TEST(AuthStrategy, oauth2_password_omits_scope_when_not_configured) {
     ASSERT_EQ(http.recorded().size(), 1u);
     EXPECT_EQ(http.recorded()[0].body.find("scope="), std::string::npos);
 }
-
 
 // ─── Slice 4f — OAuth1 (RFC 5849 HMAC-SHA1) ─────────────────────────────────
 
@@ -876,11 +811,11 @@ ce::Actor makeOAuth1Actor(std::string consumerKey,
     ce::Actor actor;
     actor.id = ce::ActorId{"twitter"};
     actor.strategy = ce::AuthStrategy::OAuth1;
-    actor.authConfig["consumer_key"]    = std::move(consumerKey);
+    actor.authConfig["consumer_key"] = std::move(consumerKey);
     actor.authConfig["consumer_secret"] = std::move(consumerSecret);
-    if (token)       actor.authConfig["token"]        = std::move(*token);
+    if (token) actor.authConfig["token"] = std::move(*token);
     if (tokenSecret) actor.authConfig["token_secret"] = std::move(*tokenSecret);
-    if (realm)       actor.authConfig["realm"]        = std::move(*realm);
+    if (realm) actor.authConfig["realm"] = std::move(*realm);
     return actor;
 }
 
@@ -890,36 +825,33 @@ TEST(AuthStrategy, oauth1_authenticator_populates_session_and_marks_signing) {
     FakeHttpClient http;  // intentionally empty — OAuth1 makes no auth call
     ce::VariableResolver resolver;
 
-    auto actor = makeOAuth1Actor(
-        "{{secret.OAUTH_KEY}}",
-        "{{secret.OAUTH_SECRET}}",
-        "{{secret.OAUTH_TOKEN}}",
-        "{{secret.OAUTH_TOKEN_SECRET}}",
-        "Realm");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth1Actor("{{secret.OAUTH_KEY}}",
+                                 "{{secret.OAUTH_SECRET}}",
+                                 "{{secret.OAUTH_TOKEN}}",
+                                 "{{secret.OAUTH_TOKEN_SECRET}}",
+                                 "Realm");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
     ASSERT_NE(auther, nullptr);
 
     ce::RunContext ctx;
     auto rctx = makeRctx();
-    rctx.secrets["OAUTH_KEY"]          = "9djdj82h48djs9d2";
-    rctx.secrets["OAUTH_SECRET"]       = "j49sk3j29djd";
-    rctx.secrets["OAUTH_TOKEN"]        = "kkk9d7dh3k39sjv7";
+    rctx.secrets["OAUTH_KEY"] = "9djdj82h48djs9d2";
+    rctx.secrets["OAUTH_SECRET"] = "j49sk3j29djd";
+    rctx.secrets["OAUTH_TOKEN"] = "kkk9d7dh3k39sjv7";
     rctx.secrets["OAUTH_TOKEN_SECRET"] = "dh893hdasih9";
 
     auto result = auther->authenticate(actor, ctx, rctx);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
 
-    EXPECT_EQ(result->variables.at("consumer_key"),    "9djdj82h48djs9d2");
+    EXPECT_EQ(result->variables.at("consumer_key"), "9djdj82h48djs9d2");
     EXPECT_EQ(result->variables.at("consumer_secret"), "j49sk3j29djd");
-    EXPECT_EQ(result->variables.at("token"),           "kkk9d7dh3k39sjv7");
-    EXPECT_EQ(result->variables.at("token_secret"),    "dh893hdasih9");
-    EXPECT_EQ(result->variables.at("realm"),           "Realm");
+    EXPECT_EQ(result->variables.at("token"), "kkk9d7dh3k39sjv7");
+    EXPECT_EQ(result->variables.at("token_secret"), "dh893hdasih9");
+    EXPECT_EQ(result->variables.at("realm"), "Realm");
 
     // OAuth1 signs per-request, not at auth time. The session must
     // carry the signing-scheme flag so the executor calls the signer.
-    EXPECT_EQ(result->signingScheme,
-              ce::ActorSession::SigningScheme::OAuth1HmacSha1);
+    EXPECT_EQ(result->signingScheme, ce::ActorSession::SigningScheme::OAuth1HmacSha1);
     EXPECT_TRUE(http.recorded().empty()) << "OAuth1 must make no HTTP call";
 }
 
@@ -929,18 +861,16 @@ TEST(AuthStrategy, oauth1_authenticator_supports_two_legged_signing) {
     ce::VariableResolver resolver;
 
     auto actor = makeOAuth1Actor("ck", "cs");
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
 
     ASSERT_TRUE(result.has_value()) << result.error().detail;
-    EXPECT_EQ(result->variables.at("consumer_key"),    "ck");
+    EXPECT_EQ(result->variables.at("consumer_key"), "ck");
     EXPECT_FALSE(result->variables.contains("token"));
     EXPECT_FALSE(result->variables.contains("token_secret"));
-    EXPECT_EQ(result->signingScheme,
-              ce::ActorSession::SigningScheme::OAuth1HmacSha1);
+    EXPECT_EQ(result->signingScheme, ce::ActorSession::SigningScheme::OAuth1HmacSha1);
 }
 
 TEST(AuthStrategy, oauth1_authenticator_rejects_token_without_secret) {
@@ -949,9 +879,8 @@ TEST(AuthStrategy, oauth1_authenticator_rejects_token_without_secret) {
 
     // Token set, token_secret missing — must fail cleanly rather than
     // silently producing bad signatures.
-    auto actor = makeOAuth1Actor("ck", "cs", "tok"  /* tokenSecret omitted */);
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto actor = makeOAuth1Actor("ck", "cs", "tok" /* tokenSecret omitted */);
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
@@ -971,8 +900,7 @@ TEST(AuthStrategy, oauth1_authenticator_rejects_missing_consumer_key) {
     actor.authConfig["consumer_secret"] = "cs";
     // consumer_key absent
 
-    auto auther = ce::selectAuthenticator(
-        actor, ce::AuthDependencies{&http, &resolver});
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
 
     ce::RunContext ctx;
     auto result = auther->authenticate(actor, ctx, makeRctx());
@@ -1002,17 +930,17 @@ TEST(OAuth1Signer, matches_rfc5849_section_3_4_3_reference_vector) {
     // Source: RFC 5849 §3.4.3 Appendix worked example (the canonical
     // one most OAuth1 libraries pin to).
     ce::ActorSession session;
-    session.variables["consumer_key"]    = "9djdj82h48djs9d2";
+    session.variables["consumer_key"] = "9djdj82h48djs9d2";
     session.variables["consumer_secret"] = "j49sk3j29djd";
-    session.variables["token"]           = "kkk9d7dh3k39sjv7";
-    session.variables["token_secret"]    = "dh893hdasih9";
-    session.signingScheme =
-        ce::ActorSession::SigningScheme::OAuth1HmacSha1;
+    session.variables["token"] = "kkk9d7dh3k39sjv7";
+    session.variables["token_secret"] = "dh893hdasih9";
+    session.signingScheme = ce::ActorSession::SigningScheme::OAuth1HmacSha1;
 
     ce::HttpRequest req;
     req.method = ce::HttpMethod::Post;
-    req.url = "http://example.com/request"
-              "?b5=%3D%253D&a3=a&c%40=&a2=r%20b";
+    req.url =
+        "http://example.com/request"
+        "?b5=%3D%253D&a3=a&c%40=&a2=r%20b";
     req.body = "c2&a3=2+q";
     req.headers["Content-Type"] = "application/x-www-form-urlencoded";
 
@@ -1039,12 +967,10 @@ TEST(OAuth1Signer, matches_rfc5849_section_3_4_3_reference_vector) {
     // canonical signature.
     EXPECT_NE(auth.find(R"(oauth_nonce="7d8f3e4a")"), std::string::npos);
     EXPECT_NE(auth.find(R"(oauth_timestamp="137131201")"), std::string::npos);
-    EXPECT_NE(auth.find(R"(oauth_signature_method="HMAC-SHA1")"),
-              std::string::npos);
+    EXPECT_NE(auth.find(R"(oauth_signature_method="HMAC-SHA1")"), std::string::npos);
     EXPECT_EQ(auth.find("oauth_version"), std::string::npos)
         << "RFC 5849 §3.4.3 worked example omits oauth_version";
-    EXPECT_NE(auth.find(R"(oauth_consumer_key="9djdj82h48djs9d2")"),
-              std::string::npos);
+    EXPECT_NE(auth.find(R"(oauth_consumer_key="9djdj82h48djs9d2")"), std::string::npos);
     EXPECT_NE(auth.find(R"(oauth_token="kkk9d7dh3k39sjv7")"), std::string::npos);
 }
 
@@ -1056,7 +982,7 @@ TEST(OAuth1Signer, two_legged_signs_with_empty_token_secret) {
     // captures is "signing succeeds, header is well-formed, no
     // oauth_token field is emitted".
     ce::ActorSession session;
-    session.variables["consumer_key"]    = "ck";
+    session.variables["consumer_key"] = "ck";
     session.variables["consumer_secret"] = "cs";
 
     ce::HttpRequest req;
@@ -1083,7 +1009,7 @@ TEST(OAuth1Signer, regenerates_distinct_signatures_across_calls) {
     // the same request must produce different Authorization headers
     // (different nonce → different signature).
     ce::ActorSession session;
-    session.variables["consumer_key"]    = "ck";
+    session.variables["consumer_key"] = "ck";
     session.variables["consumer_secret"] = "cs";
 
     ce::HttpRequest reqA;
@@ -1095,8 +1021,7 @@ TEST(OAuth1Signer, regenerates_distinct_signatures_across_calls) {
     ASSERT_TRUE(ce::signOAuth1Request(reqA, session));
     ASSERT_TRUE(ce::signOAuth1Request(reqB, session));
 
-    EXPECT_NE(reqA.headers.at("Authorization"),
-              reqB.headers.at("Authorization"));
+    EXPECT_NE(reqA.headers.at("Authorization"), reqB.headers.at("Authorization"));
 }
 
 TEST(OAuth1Signer, refuses_to_sign_when_consumer_credentials_missing) {
@@ -1113,9 +1038,9 @@ TEST(OAuth1Signer, refuses_to_sign_when_consumer_credentials_missing) {
 
 TEST(OAuth1Signer, includes_realm_in_header_when_present) {
     ce::ActorSession session;
-    session.variables["consumer_key"]    = "ck";
+    session.variables["consumer_key"] = "ck";
     session.variables["consumer_secret"] = "cs";
-    session.variables["realm"]           = "Photos";
+    session.variables["realm"] = "Photos";
 
     ce::HttpRequest req;
     req.method = ce::HttpMethod::Get;
@@ -1141,8 +1066,8 @@ ce::Actor makeAwsActor(std::string accessKey,
     actor.strategy = ce::AuthStrategy::AwsSigV4;
     actor.authConfig["access_key"] = std::move(accessKey);
     actor.authConfig["secret_key"] = std::move(secretKey);
-    actor.authConfig["region"]     = std::move(region);
-    actor.authConfig["service"]    = std::move(service);
+    actor.authConfig["region"] = std::move(region);
+    actor.authConfig["service"] = std::move(service);
     if (sessionToken) {
         actor.authConfig["session_token"] = std::move(*sessionToken);
     }
@@ -1158,9 +1083,8 @@ TEST(AuthStrategy, aws_sigv4_authenticator_populates_session_and_marks_signing) 
     FakeHttpClient http;  // empty — SigV4 makes no auth call
     ce::VariableResolver resolver;
 
-    auto actor = makeAwsActor("AKIDEXAMPLE",
-                              "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-                              "us-east-1", "iam");
+    auto actor =
+        makeAwsActor("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "us-east-1", "iam");
 
     ce::AuthDependencies deps{&http, &resolver};
     auto authn = ce::selectAuthenticator(actor, deps);
@@ -1170,15 +1094,12 @@ TEST(AuthStrategy, aws_sigv4_authenticator_populates_session_and_marks_signing) 
     ce::ResolveContext rctx;
     auto result = authn->authenticate(actor, ctx, rctx);
 
-    ASSERT_TRUE(result.has_value()) << "authenticate failed: "
-                                    << result.error().detail;
+    ASSERT_TRUE(result.has_value()) << "authenticate failed: " << result.error().detail;
     EXPECT_EQ(result->variables.at("access_key"), "AKIDEXAMPLE");
-    EXPECT_EQ(result->variables.at("secret_key"),
-              "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY");
-    EXPECT_EQ(result->variables.at("region"),  "us-east-1");
+    EXPECT_EQ(result->variables.at("secret_key"), "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY");
+    EXPECT_EQ(result->variables.at("region"), "us-east-1");
     EXPECT_EQ(result->variables.at("service"), "iam");
-    EXPECT_EQ(result->signingScheme,
-              ce::ActorSession::SigningScheme::AwsSigV4);
+    EXPECT_EQ(result->signingScheme, ce::ActorSession::SigningScheme::AwsSigV4);
     EXPECT_TRUE(http.recorded().empty()) << "SigV4 must make no HTTP call";
 }
 
@@ -1186,17 +1107,16 @@ TEST(AuthStrategy, aws_sigv4_optional_session_token_is_recorded_when_present) {
     FakeHttpClient http;
     ce::VariableResolver resolver;
 
-    auto actor = makeAwsActor("AKID", "secret", "us-west-2", "s3",
-                              std::string{"FwoGZXIvYXdzEJP"}, true);
+    auto actor =
+        makeAwsActor("AKID", "secret", "us-west-2", "s3", std::string{"FwoGZXIvYXdzEJP"}, true);
 
     ce::AuthDependencies deps{&http, &resolver};
     auto authn = ce::selectAuthenticator(actor, deps);
-    auto result = authn->authenticate(actor, ce::RunContext{},
-                                      ce::ResolveContext{});
+    auto result = authn->authenticate(actor, ce::RunContext{}, ce::ResolveContext{});
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->variables.at("session_token"), "FwoGZXIvYXdzEJP");
-    EXPECT_EQ(result->variables.at("sign_payload"),  "true");
+    EXPECT_EQ(result->variables.at("sign_payload"), "true");
 }
 
 TEST(AuthStrategy, aws_sigv4_rejects_missing_access_key) {
@@ -1207,8 +1127,7 @@ TEST(AuthStrategy, aws_sigv4_rejects_missing_access_key) {
 
     ce::AuthDependencies deps{&http, &resolver};
     auto authn = ce::selectAuthenticator(actor, deps);
-    auto result = authn->authenticate(actor, ce::RunContext{},
-                                      ce::ResolveContext{});
+    auto result = authn->authenticate(actor, ce::RunContext{}, ce::ResolveContext{});
 
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
@@ -1219,9 +1138,8 @@ TEST(AuthStrategy, aws_sigv4_resolves_secret_credentials) {
     FakeHttpClient http;
     ce::VariableResolver resolver;
 
-    auto actor = makeAwsActor("{{secret.AWS_ACCESS_KEY}}",
-                              "{{secret.AWS_SECRET_KEY}}",
-                              "eu-west-1", "execute-api");
+    auto actor = makeAwsActor(
+        "{{secret.AWS_ACCESS_KEY}}", "{{secret.AWS_SECRET_KEY}}", "eu-west-1", "execute-api");
 
     ce::AuthDependencies deps{&http, &resolver};
     auto authn = ce::selectAuthenticator(actor, deps);
@@ -1257,8 +1175,8 @@ TEST(SigV4Signer, matches_aws_sigv4_test_suite_get_vanilla_query) {
     ce::ActorSession session;
     session.variables["access_key"] = "AKIDEXAMPLE";
     session.variables["secret_key"] = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
-    session.variables["region"]     = "us-east-1";
-    session.variables["service"]    = "service";
+    session.variables["region"] = "us-east-1";
+    session.variables["service"] = "service";
     session.signingScheme = ce::ActorSession::SigningScheme::AwsSigV4;
 
     ce::HttpRequest req;
@@ -1276,8 +1194,7 @@ TEST(SigV4Signer, matches_aws_sigv4_test_suite_get_vanilla_query) {
     EXPECT_NE(auth.find("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"
                         "20150830/us-east-1/service/aws4_request"),
               std::string::npos);
-    EXPECT_NE(auth.find("SignedHeaders=host;x-amz-date"),
-              std::string::npos);
+    EXPECT_NE(auth.find("SignedHeaders=host;x-amz-date"), std::string::npos);
     EXPECT_NE(auth.find("Signature=b97d918cfa904a5beff61c982a1b6f458b7"
                         "99221646efd99d3219ec94cdf2500"),
               std::string::npos)
@@ -1286,15 +1203,15 @@ TEST(SigV4Signer, matches_aws_sigv4_test_suite_get_vanilla_query) {
 
 TEST(SigV4Signer, adds_x_amz_security_token_header_when_session_token_present) {
     ce::ActorSession session;
-    session.variables["access_key"]    = "AKID";
-    session.variables["secret_key"]    = "secret";
-    session.variables["region"]        = "us-east-1";
-    session.variables["service"]       = "s3";
+    session.variables["access_key"] = "AKID";
+    session.variables["secret_key"] = "secret";
+    session.variables["region"] = "us-east-1";
+    session.variables["service"] = "s3";
     session.variables["session_token"] = "STS-TOKEN-VALUE";
 
     ce::HttpRequest req;
     req.method = ce::HttpMethod::Get;
-    req.url    = "https://s3.amazonaws.com/my-bucket";
+    req.url = "https://s3.amazonaws.com/my-bucket";
 
     ce::SigV4TestOverrides overrides;
     overrides.amzDate = "20260101T000000Z";
@@ -1302,22 +1219,21 @@ TEST(SigV4Signer, adds_x_amz_security_token_header_when_session_token_present) {
     ASSERT_TRUE(ce::signSigV4Request(req, session, overrides));
     EXPECT_EQ(req.headers.at("x-amz-security-token"), "STS-TOKEN-VALUE");
     // session_token must end up in SignedHeaders so AWS validates it.
-    EXPECT_NE(req.headers.at("Authorization").find("x-amz-security-token"),
-              std::string::npos);
+    EXPECT_NE(req.headers.at("Authorization").find("x-amz-security-token"), std::string::npos);
 }
 
 TEST(SigV4Signer, sign_payload_flag_adds_x_amz_content_sha256) {
     ce::ActorSession session;
-    session.variables["access_key"]   = "AKID";
-    session.variables["secret_key"]   = "secret";
-    session.variables["region"]       = "us-east-1";
-    session.variables["service"]      = "s3";
+    session.variables["access_key"] = "AKID";
+    session.variables["secret_key"] = "secret";
+    session.variables["region"] = "us-east-1";
+    session.variables["service"] = "s3";
     session.variables["sign_payload"] = "true";
 
     ce::HttpRequest req;
     req.method = ce::HttpMethod::Put;
-    req.url    = "https://s3.amazonaws.com/bucket/key";
-    req.body   = std::string{"hello world"};
+    req.url = "https://s3.amazonaws.com/bucket/key";
+    req.body = std::string{"hello world"};
 
     ce::SigV4TestOverrides overrides;
     overrides.amzDate = "20260101T000000Z";
@@ -1332,12 +1248,12 @@ TEST(SigV4Signer, sign_payload_flag_adds_x_amz_content_sha256) {
 TEST(SigV4Signer, refuses_to_sign_when_required_credentials_missing) {
     ce::ActorSession session;
     // No access_key / secret_key.
-    session.variables["region"]  = "us-east-1";
+    session.variables["region"] = "us-east-1";
     session.variables["service"] = "s3";
 
     ce::HttpRequest req;
     req.method = ce::HttpMethod::Get;
-    req.url    = "https://s3.amazonaws.com/";
+    req.url = "https://s3.amazonaws.com/";
 
     EXPECT_FALSE(ce::signSigV4Request(req, session));
     EXPECT_EQ(req.headers.find("Authorization"), req.headers.end());
@@ -1347,12 +1263,12 @@ TEST(SigV4Signer, refuses_to_sign_malformed_url_without_scheme) {
     ce::ActorSession session;
     session.variables["access_key"] = "AKID";
     session.variables["secret_key"] = "secret";
-    session.variables["region"]     = "us-east-1";
-    session.variables["service"]    = "s3";
+    session.variables["region"] = "us-east-1";
+    session.variables["service"] = "s3";
 
     ce::HttpRequest req;
     req.method = ce::HttpMethod::Get;
-    req.url    = "no-scheme-here/path";  // no `://`
+    req.url = "no-scheme-here/path";  // no `://`
 
     EXPECT_FALSE(ce::signSigV4Request(req, session));
 }
@@ -1361,12 +1277,12 @@ TEST(SigV4Signer, regenerates_distinct_signatures_across_distinct_timestamps) {
     ce::ActorSession session;
     session.variables["access_key"] = "AKID";
     session.variables["secret_key"] = "secret";
-    session.variables["region"]     = "us-east-1";
-    session.variables["service"]    = "s3";
+    session.variables["region"] = "us-east-1";
+    session.variables["service"] = "s3";
 
     ce::HttpRequest reqA;
     reqA.method = ce::HttpMethod::Get;
-    reqA.url    = "https://s3.amazonaws.com/bucket";
+    reqA.url = "https://s3.amazonaws.com/bucket";
 
     ce::HttpRequest reqB = reqA;
 
@@ -1377,6 +1293,5 @@ TEST(SigV4Signer, regenerates_distinct_signatures_across_distinct_timestamps) {
 
     ASSERT_TRUE(ce::signSigV4Request(reqA, session, a));
     ASSERT_TRUE(ce::signSigV4Request(reqB, session, b));
-    EXPECT_NE(reqA.headers.at("Authorization"),
-              reqB.headers.at("Authorization"));
+    EXPECT_NE(reqA.headers.at("Authorization"), reqB.headers.at("Authorization"));
 }

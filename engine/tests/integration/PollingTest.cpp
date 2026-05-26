@@ -31,14 +31,15 @@ namespace fs = std::filesystem;
 
 namespace {
 
-[[nodiscard]] fs::path fixturesDir() { return fs::path(CHAINAPI_FIXTURES_DIR); }
+[[nodiscard]] fs::path fixturesDir() {
+    return fs::path(CHAINAPI_FIXTURES_DIR);
+}
 
 class PollingScratchProject {
 public:
     explicit PollingScratchProject(const std::string& yamlBody) {
-        const auto unique = "chainapi-polling-itest-" +
-                            std::to_string(::getpid()) +
-                            "-" + std::to_string(counter_++);
+        const auto unique = "chainapi-polling-itest-" + std::to_string(::getpid()) + "-" +
+                            std::to_string(counter_++);
         path_ = fs::temp_directory_path() / unique;
         fs::create_directories(path_);
         std::ofstream{path_ / "chainapi.yaml"} << yamlBody;
@@ -61,8 +62,7 @@ private:
 class PollingFixture : public ::testing::Test {
 protected:
     void SetUp() override {
-        harness_ = std::make_unique<ct::MockSutHarness>(
-            fixturesDir() / "polling-routes.json");
+        harness_ = std::make_unique<ct::MockSutHarness>(fixturesDir() / "polling-routes.json");
     }
     void TearDown() override { harness_.reset(); }
 
@@ -127,7 +127,7 @@ resources:
     const auto& payments = ctx.instances(ce::ResourceId{"payment"});
     ASSERT_FALSE(payments.empty());
     const auto& vars = payments.back().variables;
-    EXPECT_EQ(vars.at("payment_id"),  "pay-42");
+    EXPECT_EQ(vars.at("payment_id"), "pay-42");
     EXPECT_EQ(vars.at("settled_at"), "2026-05-24T12:00:00Z");
 }
 
@@ -193,7 +193,6 @@ resources:
     ASSERT_TRUE(submit->error.has_value());
     EXPECT_EQ(*submit->error, ce::ErrorCode::PollFailPredicate);
 }
-
 
 TEST_F(PollingFixture, zero_interval_does_not_busy_loop_and_includes_last_status) {
     // H2 + L1 regression. A misconfigured `interval: 0ms` (no backoff)
@@ -276,7 +275,6 @@ resources:
         << "polling exited too early — H2 floor probably not applied";
 }
 
-
 TEST_F(PollingFixture, api_key_actor_runs_an_operation_end_to_end) {
     // Slice 4c integration check. The api_key strategy makes no HTTP
     // call itself; this test proves the engine still treats an
@@ -336,7 +334,6 @@ resources:
     EXPECT_EQ(pings.back().variables.at("ping_id"), "apikey-1");
 }
 
-
 TEST_F(PollingFixture, oauth2_client_credentials_actor_runs_end_to_end) {
     // Slice 4d integration check. The strategy POSTs to /oauth/token,
     // extracts access_token, and auto-injects Authorization: Bearer.
@@ -388,9 +385,8 @@ resources:
     const auto* session = ctx.session(ce::ActorId{"service"});
     ASSERT_NE(session, nullptr);
     EXPECT_EQ(session->variables.at("access_token"), "oauth-tok-7");
-    EXPECT_EQ(session->variables.at("token_type"),  "Bearer");
-    EXPECT_EQ(session->injectHeaders.at("Authorization"),
-              "Bearer oauth-tok-7");
+    EXPECT_EQ(session->variables.at("token_type"), "Bearer");
+    EXPECT_EQ(session->injectHeaders.at("Authorization"), "Bearer oauth-tok-7");
 
     // The /api/v1/with-bearer route was reached and the response
     // extracted — proves the Bearer header carried through from the
@@ -399,7 +395,6 @@ resources:
     ASSERT_FALSE(pings.empty());
     EXPECT_EQ(pings.back().variables.at("ping_id"), "bearer-1");
 }
-
 
 TEST_F(PollingFixture, oauth2_password_actor_runs_end_to_end) {
     // Slice 4e integration check. The strategy POSTs to /oauth/token
@@ -453,14 +448,12 @@ resources:
     const auto* session = ctx.session(ce::ActorId{"user"});
     ASSERT_NE(session, nullptr);
     EXPECT_EQ(session->variables.at("access_token"), "oauth-tok-7");
-    EXPECT_EQ(session->injectHeaders.at("Authorization"),
-              "Bearer oauth-tok-7");
+    EXPECT_EQ(session->injectHeaders.at("Authorization"), "Bearer oauth-tok-7");
 
     const auto& pings = ctx.instances(ce::ResourceId{"ping"});
     ASSERT_FALSE(pings.empty());
     EXPECT_EQ(pings.back().variables.at("ping_id"), "bearer-1");
 }
-
 
 TEST_F(PollingFixture, oauth1_actor_runs_an_operation_end_to_end) {
     // Slice 4f integration check. OAuth1 signs per-request, so the
@@ -514,8 +507,7 @@ resources:
     ASSERT_NE(session, nullptr);
     EXPECT_EQ(session->variables.at("consumer_key"), "ck");
     EXPECT_EQ(session->variables.at("consumer_secret"), "cs");
-    EXPECT_EQ(session->signingScheme,
-              ce::ActorSession::SigningScheme::OAuth1HmacSha1);
+    EXPECT_EQ(session->signingScheme, ce::ActorSession::SigningScheme::OAuth1HmacSha1);
 
     // The /api/v1/with-bearer route was reached and the response
     // extracted — proves the signed request actually went out.
@@ -588,8 +580,10 @@ resources:
     const ce::StepResult* parent = nullptr;
     for (const auto& s : result->steps) {
         if (s.op.value != "payment.pay") continue;
-        if (s.pollAttempt) attempts.push_back(&s);
-        else               parent = &s;
+        if (s.pollAttempt)
+            attempts.push_back(&s);
+        else
+            parent = &s;
     }
 
     ASSERT_NE(parent, nullptr);

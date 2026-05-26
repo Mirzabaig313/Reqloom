@@ -41,8 +41,7 @@ TEST(VariableResolver, resolves_now_plus_offset_to_iso_in_the_future) {
     const auto result = resolver.resolve("at={{$.now+5m}}", ctx, rctx);
     const auto after = std::chrono::system_clock::now();
 
-    ASSERT_TRUE(result.unresolved.empty())
-        << "first unresolved: " << result.unresolved.front();
+    ASSERT_TRUE(result.unresolved.empty()) << "first unresolved: " << result.unresolved.front();
     ASSERT_TRUE(result.output.starts_with("at="));
 
     // Must look like ISO 8601: YYYY-MM-DDTHH:MM:SSZ
@@ -60,7 +59,7 @@ TEST(VariableResolver, resolves_now_plus_offset_to_iso_in_the_future) {
 
     const auto resolvedTime = std::chrono::system_clock::from_time_t(timegm(&tm));
     EXPECT_GE(resolvedTime - before, std::chrono::seconds{5 * 60 - 1});
-    EXPECT_LE(resolvedTime - after,  std::chrono::seconds{5 * 60 + 5});
+    EXPECT_LE(resolvedTime - after, std::chrono::seconds{5 * 60 + 5});
 }
 
 TEST(VariableResolver, resolves_now_minus_offset_to_iso_in_the_past) {
@@ -131,7 +130,8 @@ TEST(VariableResolver, preserves_uuid_and_now_behavior) {
     const auto uuid = resolver.resolve("{{$.uuid}}", ctx, rctx);
     EXPECT_TRUE(uuid.unresolved.empty());
     // UUID v4 shape: 8-4-4-4-12 hex chars
-    const std::regex uuidRe(R"([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})");
+    const std::regex uuidRe(
+        R"([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})");
     EXPECT_TRUE(std::regex_match(uuid.output, uuidRe)) << uuid.output;
 
     const auto now = resolver.resolve("{{$.now}}", ctx, rctx);
@@ -166,7 +166,6 @@ TEST(VariableResolver, preserves_secret_and_env_resolution) {
     EXPECT_EQ(resolver.resolve("{{secret.API_KEY}}", ctx, rctx).output, "shh");
 }
 
-
 // ─── Slice 2c: base64 / hex / url codecs ─────────────────────────────────────
 //
 // Each test fails on the pre-2c commit:
@@ -179,8 +178,7 @@ TEST(VariableResolver, base64_encodes_quoted_literal_with_padding) {
     const auto rctx = makeResolveCtx();
 
     // Classic basic-auth example from RFC 7617.
-    const auto r = resolver.resolve(
-        R"({{$.base64.encode("Aladdin:open sesame")}})", ctx, rctx);
+    const auto r = resolver.resolve(R"({{$.base64.encode("Aladdin:open sesame")}})", ctx, rctx);
 
     ASSERT_TRUE(r.unresolved.empty()) << "first: " << r.unresolved.front();
     EXPECT_EQ(r.output, "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
@@ -192,8 +190,7 @@ TEST(VariableResolver, base64_encodes_secret_reference) {
     auto rctx = makeResolveCtx();
     rctx.secrets["BASIC_PAIR"] = "user:pw";
 
-    const auto r = resolver.resolve(
-        "{{$.base64.encode(secret.BASIC_PAIR)}}", ctx, rctx);
+    const auto r = resolver.resolve("{{$.base64.encode(secret.BASIC_PAIR)}}", ctx, rctx);
 
     ASSERT_TRUE(r.unresolved.empty());
     EXPECT_EQ(r.output, "dXNlcjpwdw==");
@@ -258,8 +255,7 @@ TEST(VariableResolver, url_encodes_reserved_chars) {
     ce::RunContext ctx;
     const auto rctx = makeResolveCtx();
 
-    const auto r = resolver.resolve(
-        R"({{$.url.encode("hello world / ?&=")}})", ctx, rctx);
+    const auto r = resolver.resolve(R"({{$.url.encode("hello world / ?&=")}})", ctx, rctx);
     // Per RFC 3986: space → %20, '/' → %2F, '?' → %3F, '&' → %26, '=' → %3D.
     EXPECT_EQ(r.output, "hello%20world%20%2F%20%3F%26%3D");
 }
@@ -286,7 +282,6 @@ TEST(VariableResolver, codec_unknown_function_is_unresolved) {
     const auto r = resolver.resolve(R"({{$.base64.flip("x")}})", ctx, rctx);
     EXPECT_EQ(r.unresolved.size(), 1u);
 }
-
 
 // ─── Review-fix regression tests ────────────────────────────────────────────
 

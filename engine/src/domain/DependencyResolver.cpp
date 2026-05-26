@@ -16,10 +16,7 @@ namespace {
 /// A reference like `{{product.product_id}}` implies a dependency on
 /// the resource "product" — specifically on whatever operation produces
 /// that variable (i.e. has it in `extract:`).
-std::vector<OperationId> inferImplicitDeps(
-    const Operation& op,
-    const Project& project) {
-
+std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& project) {
     std::vector<std::string> templates;
     templates.push_back(op.pathTemplate);
     if (op.bodyTemplate) templates.push_back(*op.bodyTemplate);
@@ -79,9 +76,8 @@ std::vector<OperationId> inferImplicitDeps(
 DependencyResolver::DependencyResolver() = default;
 DependencyResolver::~DependencyResolver() = default;
 
-std::expected<std::vector<OperationId>, ChainApiError>
-DependencyResolver::resolve(const Project& project,
-                            const OperationId& target) const {
+std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resolve(
+    const Project& project, const OperationId& target) const {
     // 1. Build the full dependency graph (explicit + implicit edges) for the
     //    transitive closure of `target`.
     std::map<OperationId, std::vector<OperationId>> graph;
@@ -98,28 +94,27 @@ DependencyResolver::resolve(const Project& project,
 
         auto dotPos = current.value.find('.');
         if (dotPos == std::string::npos) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::RefUndefined,
-                ErrorClass::Schema,
-                "Invalid operation id (missing dot): " + current.value});
+            return std::unexpected(
+                ChainApiError{ErrorCode::RefUndefined,
+                              ErrorClass::Schema,
+                              "Invalid operation id (missing dot): " + current.value});
         }
         auto resName = current.value.substr(0, dotPos);
         auto opName = current.value.substr(dotPos + 1);
 
         auto resIt = project.resources.find(ResourceId{resName});
         if (resIt == project.resources.end()) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::RefUndefined,
-                ErrorClass::Schema,
-                "Resource not found: " + resName +
-                " (referenced by operation " + current.value + ")"});
+            return std::unexpected(ChainApiError{ErrorCode::RefUndefined,
+                                                 ErrorClass::Schema,
+                                                 "Resource not found: " + resName +
+                                                     " (referenced by operation " + current.value +
+                                                     ")"});
         }
         auto opIt = resIt->second.operations.find(opName);
         if (opIt == resIt->second.operations.end()) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::RefUndefined,
-                ErrorClass::Schema,
-                "Operation not found: " + current.value});
+            return std::unexpected(ChainApiError{ErrorCode::RefUndefined,
+                                                 ErrorClass::Schema,
+                                                 "Operation not found: " + current.value});
         }
 
         const auto& op = opIt->second;
@@ -193,9 +188,7 @@ DependencyResolver::resolve(const Project& project,
             }
         }
         return std::unexpected(ChainApiError{
-            ErrorCode::Cycle,
-            ErrorClass::Schema,
-            "Circular dependency detected: " + cycleOps});
+            ErrorCode::Cycle, ErrorClass::Schema, "Circular dependency detected: " + cycleOps});
     }
 
     return sorted;

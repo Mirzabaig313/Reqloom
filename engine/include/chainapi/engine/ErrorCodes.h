@@ -40,9 +40,9 @@ enum class ErrorCode {
     ResponseParse,
 
     // Polling
-    PollTimeout,             ///< wall-clock budget exceeded
-    PollMaxAttemptsExceeded, ///< attempt-count budget exceeded
-    PollFailPredicate,       ///< fail_when matched a poll response
+    PollTimeout,              ///< wall-clock budget exceeded
+    PollMaxAttemptsExceeded,  ///< attempt-count budget exceeded
+    PollFailPredicate,        ///< fail_when matched a poll response
 
     // Run
     Cancelled,
