@@ -4,20 +4,20 @@
 #include "../../domain/Codecs.h"
 
 #ifdef __clang__
-#  pragma clang diagnostic push
-#  pragma clang diagnostic ignored "-Wold-style-cast"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wold-style-cast"
 #elif defined(__GNUC__)
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wold-style-cast"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
 #endif
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 
 #ifdef __clang__
-#  pragma clang diagnostic pop
+#pragma clang diagnostic pop
 #elif defined(__GNUC__)
-#  pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 #endif
 
 #include <array>
