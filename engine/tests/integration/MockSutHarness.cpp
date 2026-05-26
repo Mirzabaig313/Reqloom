@@ -69,21 +69,17 @@ MockSutHarness::MockSutHarness(const std::filesystem::path& routesFile) {
     }
 
     if (pid == 0) {
-        // Child — redirect stdout to write end of pipe.
         ::close(pipeFds[0]);
         ::dup2(pipeFds[1], STDOUT_FILENO);
         ::close(pipeFds[1]);
 
-        // CHAINAPI_MOCK_SUT_PATH is injected by the test CMakeLists.
         const char* mockPath = CHAINAPI_MOCK_SUT_PATH;
         ::execl(mockPath, mockPath,
                 "--routes", routesFile.c_str(),
                 static_cast<const char*>(nullptr));
-        // execl failed.
         std::_Exit(127);
     }
 
-    // Parent.
     ::close(pipeFds[1]);
     pid_ = static_cast<int>(pid);
     port_ = readPortFromPipe(pipeFds[0]);

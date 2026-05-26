@@ -1,12 +1,11 @@
 // PredicateEvaluator — see PredicateEvaluator.h for the grammar.
 //
 // Implementation notes:
-//   - Recursive-descent parser. Single pass tokenizer.
+//   - Recursive-descent parser. Single-pass tokenizer.
 //   - AST nodes use std::variant + std::unique_ptr for child links.
 //   - Evaluation is total — every failure path returns `False`.
-//   - JSONPath subset matches what the existing JsonPathEvaluator
-//     supports (dot.child + [index] + ["key"]). Keep the two evaluators
-//     in lockstep when extending.
+//   - JSONPath subset matches what JsonPathEvaluator supports (dot.child +
+//     [index] + ["key"]). Keep the two in lockstep when extending.
 #include "PredicateEvaluator.h"
 
 #include <nlohmann/json.hpp>
@@ -45,8 +44,8 @@ enum class LogicOp { And, Or };
 
 struct LiteralNode { Json value; };
 struct JsonPathNode {
-    /// Stored as a sequence of segments so evaluation walks a JSON tree
-    /// without re-tokenising each call.
+    /// Stored as segments so evaluation walks the JSON tree without
+    /// re-tokenising each call.
     enum class SegKind { Field, Index };
     struct Seg { SegKind kind; std::string field; std::size_t index{}; };
     std::vector<Seg> segments;
@@ -163,7 +162,7 @@ private:
 
     std::expected<Token, std::string> readString(char quote) {
         const auto start = pos_;
-        ++pos_;  // consume opening quote
+        ++pos_;
         std::string buf;
         while (pos_ < src_.size() && src_[pos_] != quote) {
             const char c = src_[pos_];
@@ -188,7 +187,7 @@ private:
             return std::unexpected("unterminated string starting at position " +
                                    std::to_string(start));
         }
-        ++pos_;  // consume closing quote
+        ++pos_;
         return Token{Tok::String, std::move(buf), start};
     }
 
@@ -244,10 +243,6 @@ private:
 };
 
 // ─── Parser ──────────────────────────────────────────────────────────────────
-//
-// Recursive descent. The grammar is small enough that a single class
-// with one cursor is the cleanest shape. Errors are returned, not
-// thrown, so parse-time problems surface as ChainApiError to callers.
 
 class Parser {
 public:
@@ -301,9 +296,8 @@ private:
             k == Tok::Eq || k == Tok::Neq || k == Tok::Lt || k == Tok::Le ||
             k == Tok::Gt || k == Tok::Ge || k == Tok::In || k == Tok::Matches;
         if (!isCompareOp) {
-            // Bare term — must be a JSONPath truthiness check. Other bare
-            // terms (literal numbers, strings) cannot stand on their own
-            // as a predicate.
+            // Bare term — must be a JSONPath truthiness check. Bare literals
+            // cannot stand on their own as a predicate.
             const auto* path = std::get_if<JsonPathNode>(&((*lhs)->kind));
             if (!path) {
                 return std::unexpected("expected comparison operator at position " +
@@ -328,7 +322,7 @@ private:
             case Tok::Ge:      op = CompareOp::Ge;      break;
             case Tok::In:      op = CompareOp::In;      break;
             case Tok::Matches: op = CompareOp::Matches; break;
-            default: break;  // unreachable thanks to isCompareOp guard
+            default: break;
         }
         auto node = std::make_unique<ParsedPredicate::Node>();
         node->kind = CompareNode{op, std::move(*lhs), std::move(*rhs)};
@@ -340,9 +334,8 @@ private:
         switch (t.kind) {
             case Tok::Dollar:   return parseJsonPath();
             // Use parens, not braces, on Json constructors. nlohmann::json's
-            // initializer_list constructor would otherwise wrap the value
-            // in a one-element array, which breaks every string/bool/null
-            // comparison silently.
+            // initializer_list constructor would wrap the value in a one-element
+            // array, breaking string/bool/null comparisons silently.
             case Tok::String:   return literal(Json(consume().text));
             case Tok::Number:   return parseNumberLiteral();
             case Tok::True:     consume(); return literal(Json(true));
@@ -358,10 +351,6 @@ private:
     std::expected<NodePtr, std::string> parseJsonPath() {
         consume();  // '$'
         JsonPathNode node;
-        // $.status_code as a flat name means "the http status", not a
-        // JSON field. Detect after walking segments because the user
-        // could in principle have a body field with the same name; the
-        // body field takes precedence at eval time.
         while (peek().kind == Tok::Dot || peek().kind == Tok::LBracket) {
             if (peek().kind == Tok::Dot) {
                 consume();
@@ -411,9 +400,7 @@ private:
 
     std::expected<NodePtr, std::string> parseNumberLiteral() {
         const auto t = consume();
-        // nlohmann::json parses "1" as int and "1.5" as double — we
-        // want both. Round-trip via the JSON parser to avoid duplicating
-        // the integer-vs-float decision.
+        // Round-trip via the JSON parser to let nlohmann decide int vs float.
         try {
             return literal(Json::parse(t.text));
         } catch (const std::exception&) {
@@ -462,8 +449,6 @@ private:
 
 // ─── Evaluator ───────────────────────────────────────────────────────────────
 
-/// Walk a JSONPath segment list against a parsed JSON document.
-/// Returns nullopt on any structural miss.
 std::optional<Json> walk(const Json& root, const JsonPathNode& path) {
     const Json* cur = &root;
     for (const auto& seg : path.segments) {
@@ -481,25 +466,18 @@ std::optional<Json> walk(const Json& root, const JsonPathNode& path) {
     return std::optional<Json>{*cur};
 }
 
-/// Resolve a JSONPath against the body or status-code shortcut.
-/// Returns nullopt for misses; the evaluator treats those as "False".
 std::optional<Json> resolvePath(const JsonPathNode& path,
                                 const Json& body,
                                 int statusCode) {
     if (path.isStatusCode) {
-        // Body field takes precedence if present (rare but possible).
+        // Body field takes precedence if present.
         if (auto bodyHit = walk(body, path); bodyHit) return bodyHit;
-        // Json(statusCode) — use parens, not braces. The brace form
-        // would invoke the initializer_list constructor and produce a
-        // one-element array.
+        // Use parens, not braces — brace form produces a one-element array.
         return std::optional<Json>{Json(statusCode)};
     }
     return walk(body, path);
 }
 
-/// Reduce an AST node to a JSON value. Returns nullopt when a JSONPath
-/// misses; the caller decides how to fold that into the comparison
-/// result. Literal nodes always produce a value.
 std::optional<Json> evalTerm(const ParsedPredicate::Node& node,
                              const Json& body,
                              int statusCode) {
@@ -518,13 +496,13 @@ std::optional<Json> evalTerm(const ParsedPredicate::Node& node,
             }
             return std::optional<Json>{std::move(arr)};
         } else {
-            return std::nullopt;  // Compare/Logic/Truthy can't be terms
+            return std::nullopt;
         }
     }, node.kind);
 }
 
-/// JSON-aware comparison. Type-mismatched compares (e.g. number > string)
-/// return false rather than erroring — keeps evaluation total per spec.
+/// JSON-aware comparison. Type-mismatched compares return false rather than
+/// erroring — keeps evaluation total.
 bool compareValues(CompareOp op, const Json& lhs, const Json& rhs) {
     switch (op) {
         case CompareOp::Eq:  return lhs == rhs;
@@ -533,11 +511,9 @@ bool compareValues(CompareOp op, const Json& lhs, const Json& rhs) {
         case CompareOp::Le:
         case CompareOp::Gt:
         case CompareOp::Ge: {
-            // Integer-vs-integer compares stay in 64-bit space. Real
-            // APIs return IDs as int64 (Twitter snowflakes, Stripe
-            // payment IDs in some configs) and double has only 53 bits
-            // of mantissa — `$.id > 9007199254740993` would compare
-            // incorrectly if both sides were coerced to double.
+            // Integer-vs-integer stays in 64-bit space. Real APIs return IDs
+            // as int64 (Twitter snowflakes, etc.) and double has only 53 bits
+            // of mantissa — coercing to double would lose precision.
             if (lhs.is_number_integer() && rhs.is_number_integer()) {
                 const auto a = lhs.get<std::int64_t>();
                 const auto b = rhs.get<std::int64_t>();
@@ -610,7 +586,6 @@ bool evalNode(const ParsedPredicate::Node& node,
         using T = std::decay_t<decltype(n)>;
         if constexpr (std::is_same_v<T, LogicNode>) {
             const bool lhs = evalNode(*n.lhs, body, statusCode);
-            // Short-circuit AND/OR.
             if (n.op == LogicOp::And && !lhs) return false;
             if (n.op == LogicOp::Or  &&  lhs) return true;
             return evalNode(*n.rhs, body, statusCode);
@@ -624,8 +599,6 @@ bool evalNode(const ParsedPredicate::Node& node,
             if (!v) return false;
             return isTruthy(*v);
         } else {
-            // Literals/JsonPath/Array nodes can't be the root of an
-            // expression — but if they reach here treat them as truthiness.
             const auto v = evalTerm(node, body, statusCode);
             return v && isTruthy(*v);
         }
@@ -634,7 +607,7 @@ bool evalNode(const ParsedPredicate::Node& node,
 
 }  // namespace
 
-// ─── ParsedPredicate (move-only opaque) ──────────────────────────────────────
+// ─── ParsedPredicate ─────────────────────────────────────────────────────────
 
 ParsedPredicate::ParsedPredicate() = default;
 ParsedPredicate::~ParsedPredicate() = default;
@@ -680,9 +653,9 @@ PredicateEvaluator::evaluate(const ParsedPredicate& predicate,
             try {
                 body = Json::parse(jsonBody);
             } catch (const std::exception&) {
-                // text/plain bodies on poll endpoints fall through with
-                // an empty object — predicates that only touch
-                // $.status_code still work.
+                // text/plain bodies on poll endpoints fall through with an
+                // empty object — predicates that only touch $.status_code
+                // still work.
                 body = Json::object();
             }
         } else {

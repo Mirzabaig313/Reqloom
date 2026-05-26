@@ -50,12 +50,10 @@ struct Route {
     std::string body;
     std::vector<std::pair<std::string, std::string>> headers;
 
-    /// Optional response sequence (PRD §5.11 polling integration tests).
-    /// When non-empty, the route returns sequence[0] on the first call,
+    /// Optional response sequence for polling integration tests. When
+    /// non-empty, the route returns sequence[0] on the first call,
     /// sequence[1] on the second, and so on. After exhaustion, it sticks
-    /// on the last element. Each entry has its own status, optional
-    /// body, and optional headers; top-level `status`/`body` serve as
-    /// the fallback for any omitted field within a sequence entry.
+    /// on the last element.
     struct Step {
         int status{200};
         std::string body;
@@ -121,9 +119,7 @@ struct Route {
 }
 
 void registerRoute(httplib::Server& server, const Route& route) {
-    // Per-route call counter, captured into the handler. shared_ptr so
-    // the lambda closure (which is copied into httplib's internal route
-    // table) all see the same counter.
+    // Per-route call counter, shared across all copies of the handler lambda.
     auto callCount = std::make_shared<std::atomic<std::size_t>>(0);
 
     auto handler = [route, callCount](const httplib::Request& /*req*/,
@@ -205,7 +201,6 @@ int main(int argc, char** argv) {
         // Caller wanted a specific port but we got something else; not fatal.
     }
 
-    // Print port on its own line so harness can parse it.
     std::println("PORT: {}", port);
     std::cout.flush();
 

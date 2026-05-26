@@ -1,4 +1,4 @@
-// Operation — a single endpoint action on a resource (PRD §4.2).
+// Operation — a single endpoint action on a resource.
 #pragma once
 
 #include <chrono>
@@ -42,32 +42,28 @@ struct Extraction {
     Source source{Source::JsonPath};
 };
 
-/// Per-operation retry policy. Engine spec §3.5.
+/// Per-operation retry policy.
 struct RetryPolicy {
     int maxAttempts{3};
     std::chrono::milliseconds baseBackoff{500};
     std::chrono::milliseconds maxBackoff{30'000};
 };
 
-/// Polling configuration. PRD §5.11. Attached to operations whose initial
-/// response triggers polling (e.g. 202 Accepted with a status URL).
+/// Polling configuration. Attached to operations whose initial response
+/// triggers polling (e.g. 202 Accepted with a status URL).
 ///
 /// Engine semantics:
 ///   - The initial request runs once. If its response is in
-///     `expectStatusList` and a `pollUntil` is set, the polling loop
-///     runs until `successWhen` matches, `failWhen` matches, or one of
-///     the budgets fires.
-///   - Each poll attempt records as its own `StepResult` so the timeline
-///     can show predicate evaluations.
-///   - Extractions on the parent operation evaluate against the FINAL
-///     poll response (whichever response satisfied `successWhen`), not
-///     the initial 202.
+///     `expectStatusList` and `pollUntil` is set, the polling loop runs
+///     until `successWhen` matches, `failWhen` matches, or a budget fires.
+///   - Each poll attempt records as its own `StepResult`.
+///   - Extractions evaluate against the FINAL poll response (the one that
+///     satisfied `successWhen`), not the initial 202.
 struct PollUntil {
     HttpMethod method{HttpMethod::Get};
 
     /// May reference `{{response.headers.Location}}` or
-    /// `{{response.body.X}}` from the initial response, in addition
-    /// to the standard variable-resolution sources.
+    /// `{{response.body.X}}` from the initial response.
     std::string pathTemplate;
 
     /// Defaults to the parent operation's actor when nullopt.
@@ -77,10 +73,9 @@ struct PollUntil {
     /// Required.
     std::string successWhen;
 
-    /// Predicate that short-circuits the poll. Optional but strongly
-    /// recommended — without it, a known-bad terminal state turns into
-    /// a wall-clock timeout. Wins over `successWhen` if both match a
-    /// single response.
+    /// Predicate that short-circuits the poll. Strongly recommended —
+    /// without it, a known-bad terminal state turns into a wall-clock
+    /// timeout. Wins over `successWhen` if both match a single response.
     std::optional<std::string> failWhen;
 
     /// Fixed inter-attempt delay. Mutually exclusive with `backoffBase`.
@@ -97,12 +92,10 @@ struct PollUntil {
     int maxAttempts{30};
 };
 
-/// Origin metadata for an operation. PRD §10.3.3.
-///
-/// Hand-written operations have no provenance. Operations produced by the
-/// AI importer carry a populated block so runtime diagnostics (§10.3.4)
-/// can cross-reference failures with the original inference, and so the
-/// review UI can surface evidence rather than confidence scores.
+/// Origin metadata for an operation. Hand-written operations have no
+/// provenance. Operations produced by the AI importer carry a populated
+/// block so runtime diagnostics can cross-reference failures with the
+/// original inference.
 ///
 /// Treated as opaque metadata by the runtime — extending the enum or
 /// adding fields here must not change execution semantics.
@@ -115,11 +108,11 @@ struct Provenance {
         BrunoImport,
         InsomniaImport,
         HarImport,
-        AiImport,       ///< LLM-driven import (§10)
+        AiImport,       ///< LLM-driven import
     };
 
-    /// What kind of sample response (if any) the verifier (§10.3.1) used
-    /// to confirm extractions when this op was written.
+    /// What kind of sample response (if any) the verifier used to confirm
+    /// extractions when this op was written.
     enum class VerifiedAgainst {
         None,             ///< verification was not run
         OpenApiExample,
@@ -133,20 +126,19 @@ struct Provenance {
     Source source{Source::HandWritten};
     VerifiedAgainst verifiedAgainst{VerifiedAgainst::None};
 
-    /// LLM model id when source is `AiImport` (e.g. "gpt-4o", "claude-sonnet-4.5").
+
     std::optional<std::string> model;
 
     /// ISO 8601 wall-clock timestamp at import time.
     std::optional<std::string> importedAt;
 
-    /// Free-form human-readable rationale per inferred field.
-    /// Keys are dotted field paths within the operation, e.g.
-    /// "actor", "extract.product_id", "depends_on[0]". Values are the
-    /// short evidence string surfaced in the review UI.
+    /// Free-form rationale per inferred field. Keys are dotted field paths
+    /// within the operation (e.g. "actor", "extract.product_id"). Values
+    /// are the short evidence string surfaced in the review UI.
     std::map<std::string, std::string> evidence;
 };
 
-/// One declared operation. 
+/// One declared operation.
 struct Operation {
     OperationId id;
     ResourceId resource;
@@ -163,16 +155,15 @@ struct Operation {
 
     /// Multi-value form (`expect_status: [200, 202]`). When non-empty,
     /// the executor accepts any code in this list; the singular
-    /// `expectStatus` is consulted when the list is empty so existing
-    /// schemas keep working unchanged.
+    /// `expectStatus` is consulted when the list is empty.
     std::vector<int> expectStatusList;
 
     std::vector<Extraction> extractions;
 
-    /// Explicit dependencies declared by the user 
+    /// Explicit dependencies declared by the user.
     std::vector<OperationId> explicitDependencies;
 
-    /// Optional inline JS hook scripts 
+    /// Optional inline JS hook scripts.
     std::optional<std::string> preRequestScript;
     std::optional<std::string> postResponseScript;
 
@@ -180,14 +171,13 @@ struct Operation {
     std::optional<std::chrono::milliseconds> timeout;
     bool force{false};  ///< Per-op force re-run flag.
 
-    /// Polling configuration (PRD §5.11). When set, after the initial
-    /// request returns a status in `expectStatusList`, the engine
-    /// enters a polling loop. The result of `successWhen` against the
-    /// final poll response is what flows into extractions.
+    /// When set, after the initial request returns a status in
+    /// `expectStatusList`, the engine enters a polling loop. Extractions
+    /// run against the final poll response.
     std::optional<PollUntil> pollUntil;
 
     /// Set only for non-hand-written operations. Pure metadata: the
-    /// runtime ignores this; tooling and the UI consume it (§10.3.3-4).
+    /// runtime ignores this; tooling and the UI consume it.
     std::optional<Provenance> provenance;
 };
 

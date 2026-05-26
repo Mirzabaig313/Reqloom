@@ -1,16 +1,15 @@
 // YamlSchemaWriter — see SchemaWriter.h for the contract.
 //
 // Implementation strategy:
-//   - One emitter per output file. yaml-cpp's emitter is stateful but
-//     trivial to reset across files.
-//   - Map ordering is not preserved by YAML; we sort by key for stable
-//     git diffs. The parser tolerates any ordering.
-//   - Provenance is emitted as `_provenance` (leading underscore makes
-//     the key stand out and signals "metadata, not content"). Empty
-//     enums and absent optional fields are simply not emitted.
-//   - Writes go through a temp file + rename for atomicity. Half-written
-//     YAML on a crash leaves the user with the prior version intact.
+//   - One emitter per output file.
+//   - Map ordering is not preserved by YAML; we sort by key for stable diffs.
+//   - Provenance is emitted as `_provenance` (leading underscore signals
+//     "metadata, not content"). Empty enums and absent optional fields are
+//     not emitted.
+//   - Writes go through a temp file + rename for atomicity.
 #include "YamlSchemaWriter.h"
+
+#include "../../domain/Codecs.h"
 
 #include <yaml-cpp/yaml.h>
 
@@ -29,26 +28,14 @@ namespace chainapi::engine {
 
 namespace {
 
-// ─── HttpMethod / enum mappings ─────────────────────────────────────────────
+// ─── HttpMethod / enum mappings ──────────────────────────────────────────────
 
-constexpr std::string_view methodToString(HttpMethod m) {
-    switch (m) {
-        case HttpMethod::Get:     return "GET";
-        case HttpMethod::Post:    return "POST";
-        case HttpMethod::Put:     return "PUT";
-        case HttpMethod::Patch:   return "PATCH";
-        case HttpMethod::Delete:  return "DELETE";
-        case HttpMethod::Head:    return "HEAD";
-        case HttpMethod::Options: return "OPTIONS";
-    }
-    return "GET";
-}
+using codecs::methodToString;
 
 // Note on Extraction::Source: only JsonPath round-trips through the parser
 // today (the parser detects header-style by `$.headers.` prefix). XPath /
-// Regex / Cookie / StatusCode are emit-only stubs in the model; an explicit
-// `source:` key on extractions will land alongside the parser change that
-// actually understands it. Tracked under §10.3.1 follow-up.
+// Regex / Cookie / StatusCode are emit-only stubs; an explicit `source:` key
+// will land alongside the parser change that understands it.
 
 constexpr std::string_view provenanceSourceToString(Provenance::Source s) {
     switch (s) {
@@ -76,7 +63,7 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
     return "none";
 }
 
-// ─── Atomic write helper ────────────────────────────────────────────────────
+// ─── Atomic write helper ─────────────────────────────────────────────────────
 
 std::expected<void, ChainApiError>
 writeAtomic(const fs::path& target, const std::string& content) {
@@ -108,7 +95,6 @@ writeAtomic(const fs::path& target, const std::string& content) {
 
     fs::rename(temp, target, ec);
     if (ec) {
-        // Best-effort cleanup; ignore secondary error.
         std::error_code _;
         fs::remove(temp, _);
         return std::unexpected(ChainApiError{
@@ -119,9 +105,8 @@ writeAtomic(const fs::path& target, const std::string& content) {
     return {};
 }
 
-// ─── Emitter helpers ────────────────────────────────────────────────────────
+// ─── Emitter helpers ─────────────────────────────────────────────────────────
 
-/// Emit a string-to-string map as a YAML map, sorted by key for stable diffs.
 void emitStringMap(YAML::Emitter& e,
                    const std::map<std::string, std::string>& m) {
     e << YAML::BeginMap;
@@ -140,21 +125,6 @@ void emitExtractions(YAML::Emitter& e,
     e << YAML::Key << "extract" << YAML::Value << YAML::BeginMap;
     for (const auto& ext : extractions) {
         e << YAML::Key << ext.variableName << YAML::Value << ext.sourcePath;
-        // Source kind is implicit when JsonPath; otherwise emit a comment
-        // (not directly supported by yaml-cpp), so we tag explicitly via a
-        // sibling key. The parser's current contract treats anything
-        // starting with `$.headers.` as a header — keeping this writer
-        // honest with the inverse rule means ext.source must round-trip
-        // for header-style paths. For non-default sources we use the
-        // long form: `extract: { name: { source: header, path: $... } }`.
-        // Avoid emitting that long form when `source == JsonPath` to keep
-        // the common case readable. Header-style extractions whose path
-        // starts with `$.headers.` are also handled by the existing
-        // parser without explicit `source:` — so we skip the long form
-        // there too, preserving the round-trip.
-        // Other source kinds (XPath, Regex, Cookie, StatusCode) are not
-        // currently emittable in a parser-readable form; they round-trip
-        // is best-effort and a TODO for the parser side.
     }
     e << YAML::EndMap;
 }
@@ -193,8 +163,6 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
         emitStringMap(e, op.queryParams);
     }
     if (op.bodyTemplate) {
-        // Body templates are stored as already-flow-formatted strings
-        // by the parser; emit them as scalars to round-trip cleanly.
         e << YAML::Key << "body" << YAML::Value << *op.bodyTemplate;
     }
     if (op.bodyForm) {
@@ -272,7 +240,6 @@ std::string emitResource(const Resource& res) {
       << YAML::Key << "name"        << YAML::Value << res.id.value
       << YAML::Key << "description" << YAML::Value << res.description
       << YAML::Key << "operations"  << YAML::Value << YAML::BeginMap;
-    // Sort operation names for stable diffs.
     std::vector<std::string> opNames;
     opNames.reserve(res.operations.size());
     for (const auto& [k, _] : res.operations) opNames.push_back(k);
@@ -285,8 +252,7 @@ std::string emitResource(const Resource& res) {
     return e.c_str();
 }
 
-void emitAuthStep(YAML::Emitter& e, const AuthStep& step,
-                  bool isChainStep) {
+void emitAuthStep(YAML::Emitter& e, const AuthStep& step, bool isChainStep) {
     if (isChainStep) {
         e << YAML::BeginMap;
         e << YAML::Key << "id" << YAML::Value << step.id;
@@ -327,38 +293,28 @@ std::string emitActor(const Actor& actor) {
     } else if (actor.strategy == AuthStrategy::Basic) {
         e << YAML::Key << "strategy" << YAML::Value << "basic";
         // Emit configured fields verbatim — values may contain {{X.y}}
-        // references and the parser resolves them at run time. Keys not
-        // configured are simply absent (round-trips with the parser's
-        // empty-string defaults).
-        if (auto it = actor.authConfig.find("username");
-            it != actor.authConfig.end()) {
+        // references resolved at run time.
+        if (auto it = actor.authConfig.find("username"); it != actor.authConfig.end()) {
             e << YAML::Key << "username" << YAML::Value << it->second;
         }
-        if (auto it = actor.authConfig.find("password");
-            it != actor.authConfig.end()) {
+        if (auto it = actor.authConfig.find("password"); it != actor.authConfig.end()) {
             e << YAML::Key << "password" << YAML::Value << it->second;
         }
     } else if (actor.strategy == AuthStrategy::ApiKey) {
         e << YAML::Key << "strategy" << YAML::Value << "api_key";
-        if (auto it = actor.authConfig.find("key");
-            it != actor.authConfig.end()) {
+        if (auto it = actor.authConfig.find("key"); it != actor.authConfig.end()) {
             e << YAML::Key << "key" << YAML::Value << it->second;
         }
-        if (auto it = actor.authConfig.find("location");
-            it != actor.authConfig.end()) {
+        if (auto it = actor.authConfig.find("location"); it != actor.authConfig.end()) {
             e << YAML::Key << "location" << YAML::Value << it->second;
         }
-        if (auto it = actor.authConfig.find("name");
-            it != actor.authConfig.end()) {
+        if (auto it = actor.authConfig.find("name"); it != actor.authConfig.end()) {
             e << YAML::Key << "name" << YAML::Value << it->second;
         }
     } else if (actor.strategy == AuthStrategy::OAuth2ClientCredentials) {
-        e << YAML::Key << "strategy" << YAML::Value
-          << "oauth2_client_credentials";
-        for (const auto* field : {"token_url", "client_id",
-                                  "client_secret", "scope"}) {
-            if (auto it = actor.authConfig.find(field);
-                it != actor.authConfig.end()) {
+        e << YAML::Key << "strategy" << YAML::Value << "oauth2_client_credentials";
+        for (const auto* field : {"token_url", "client_id", "client_secret", "scope"}) {
+            if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
                 e << YAML::Key << field << YAML::Value << it->second;
             }
         }
@@ -366,8 +322,15 @@ std::string emitActor(const Actor& actor) {
         e << YAML::Key << "strategy" << YAML::Value << "oauth2_password";
         for (const auto* field : {"token_url", "client_id", "client_secret",
                                   "username", "password", "scope"}) {
-            if (auto it = actor.authConfig.find(field);
-                it != actor.authConfig.end()) {
+            if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
+                e << YAML::Key << field << YAML::Value << it->second;
+            }
+        }
+    } else if (actor.strategy == AuthStrategy::OAuth1) {
+        e << YAML::Key << "strategy" << YAML::Value << "oauth1";
+        for (const auto* field : {"consumer_key", "consumer_secret",
+                                  "token", "token_secret", "realm"}) {
+            if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
                 e << YAML::Key << field << YAML::Value << it->second;
             }
         }
@@ -379,7 +342,6 @@ std::string emitActor(const Actor& actor) {
     }
     e << YAML::EndMap;
 
-    // Session block.
     e << YAML::Key << "session" << YAML::Value << YAML::BeginMap
       << YAML::Key << "ttl" << YAML::Value
       << (std::to_string(actor.sessionTtl.count()) + "s");
@@ -451,10 +413,9 @@ YamlSchemaWriter::write(const fs::path& targetDir,
                         bool overwrite) {
     std::error_code ec;
     if (fs::exists(targetDir) && !overwrite) {
-        // The directory existing alone is fine; we only fail if a
-        // chainapi.yaml is already there. This matches user expectation:
-        // the writer should slot into an existing project directory but
-        // never silently clobber its root config.
+        // The directory existing alone is fine; only fail if chainapi.yaml
+        // is already there. This lets the writer slot into an existing
+        // project directory without silently clobbering its root config.
         if (fs::exists(targetDir / "chainapi.yaml")) {
             return std::unexpected(ChainApiError{
                 ErrorCode::SchemaInvalid, ErrorClass::Schema,
@@ -470,13 +431,10 @@ YamlSchemaWriter::write(const fs::path& targetDir,
             ec.message()});
     }
 
-    // Root.
-    if (auto r = writeAtomic(targetDir / "chainapi.yaml", emitRoot(project));
-        !r) {
+    if (auto r = writeAtomic(targetDir / "chainapi.yaml", emitRoot(project)); !r) {
         return std::unexpected(r.error());
     }
 
-    // Actors.
     for (const auto& [id, actor] : project.actors) {
         const auto path = targetDir / "actors" / (id.value + ".yaml");
         if (auto r = writeAtomic(path, emitActor(actor)); !r) {
@@ -484,7 +442,6 @@ YamlSchemaWriter::write(const fs::path& targetDir,
         }
     }
 
-    // Resources.
     for (const auto& [id, resource] : project.resources) {
         const auto path = targetDir / "resources" / (id.value + ".yaml");
         if (auto r = writeAtomic(path, emitResource(resource)); !r) {
@@ -492,7 +449,6 @@ YamlSchemaWriter::write(const fs::path& targetDir,
         }
     }
 
-    // Environments.
     for (const auto& [name, vars] : project.environments) {
         const auto path = targetDir / "environments" / (name + ".yaml");
         if (auto r = writeAtomic(path, emitEnvironment(name, vars)); !r) {

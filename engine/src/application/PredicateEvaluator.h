@@ -1,13 +1,7 @@
 // PredicateEvaluator — boolean expression engine for poll_until success/fail
-// predicates (PRD §5.11) and AI-import verification (§10.3.1).
+// predicates and AI-import verification.
 //
-// Both features ask the same question: "given a JSON document, does this
-// expression hold?" Building one evaluator earns both. PRD §5.11 wires
-// the result into the polling loop; PRD §10.3.1 wires it into the AI
-// importer's verification pass to check that proposed extractions
-// resolve to non-null values against sample responses.
-//
-// Grammar (intentionally shallow — keep it dumb):
+// Grammar (intentionally shallow):
 //
 //   expr     := compare ( ('&&' | '||') compare )*
 //   compare  := term op term | jsonpath        // bare jsonpath = truthiness
@@ -18,9 +12,9 @@
 //   string   := '"' chars '"' | "'" chars "'"
 //   array    := '[' term ( ',' term )* ']'
 //
-// Lives in the application layer because it parses JSON (third-party
-// dep), which the domain layer is not allowed to pull in. Pure
-// computation — no I/O, no engine state.
+// Lives in the application layer because it parses JSON (third-party dep),
+// which the domain layer is not allowed to pull in. Pure computation — no
+// I/O, no engine state.
 #pragma once
 
 #include <chainapi/engine/ErrorCodes.h>
@@ -32,12 +26,12 @@
 
 namespace chainapi::engine {
 
-/// One evaluation outcome. Outcome is total: structurally invalid
-/// expressions or misses produce `False`, never an error.
+/// One evaluation outcome. Structurally invalid expressions or misses
+/// produce `False`, never an error.
 enum class PredicateValue { False, True };
 
-/// Compiled expression handle. Opaque to callers — keeps the AST out
-/// of the header. Move-only because the AST contains unique_ptr nodes.
+/// Compiled expression handle. Opaque to callers — keeps the AST out of
+/// the header. Move-only because the AST contains unique_ptr nodes.
 class ParsedPredicate {
 public:
     ParsedPredicate();
@@ -62,26 +56,23 @@ public:
     PredicateEvaluator();
     ~PredicateEvaluator();
 
-    /// Parse-and-validate. Returns `ChainApiError` (with `SchemaInvalid`)
-    /// when the expression is malformed. Successful parse hands the
-    /// caller a `ParsedPredicate` ready for `evaluate(...)`.
+    /// Parse and validate. Returns `ChainApiError{SchemaInvalid}` when the
+    /// expression is malformed.
     [[nodiscard]] std::expected<ParsedPredicate, ChainApiError>
     parse(std::string_view expression) const;
 
     /// Evaluate a previously-parsed expression against a JSON document.
-    /// Total: never throws, never returns an error. PRD §5.11 polling
-    /// semantics demand totality — a bad predicate must not crash a run.
+    /// Total: never throws, never returns an error. Polling semantics
+    /// demand totality — a bad predicate must not crash a run.
     ///
-    /// `statusCode` is exposed inside expressions as `$.status_code`
-    /// per PRD §5.11 ("`$` is the response body; `$.status_code` is
-    /// also available"). Pass 0 when there is no associated HTTP status.
+    /// `statusCode` is exposed inside expressions as `$.status_code`.
+    /// Pass 0 when there is no associated HTTP status.
     [[nodiscard]] PredicateValue
     evaluate(const ParsedPredicate& predicate,
              std::string_view jsonBody,
              int statusCode = 0) const noexcept;
 
-    /// Convenience: parse and evaluate in one shot. Surfaces parse errors
-    /// the same way `parse(...)` does. Most callers want this form.
+    /// Convenience: parse and evaluate in one shot.
     [[nodiscard]] std::expected<PredicateValue, ChainApiError>
     eval(std::string_view expression,
          std::string_view jsonBody,

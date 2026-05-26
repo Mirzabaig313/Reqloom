@@ -26,7 +26,6 @@ public:
     /// Base URL the spawned server is listening on, e.g. "http://127.0.0.1:53921".
     [[nodiscard]] const std::string& baseUrl() const noexcept { return baseUrl_; }
 
-    /// Port the spawned server is listening on.
     [[nodiscard]] int port() const noexcept { return port_; }
 
 private:

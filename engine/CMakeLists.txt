@@ -18,6 +18,7 @@ add_library(chainapi-engine-domain OBJECT
     src/domain/VariableResolver.cpp
     src/domain/RunContext.cpp
     src/domain/ErrorCodes.cpp
+    src/domain/Codecs.cpp
 )
 target_include_directories(chainapi-engine-domain
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -38,11 +39,14 @@ add_library(chainapi-engine-infrastructure OBJECT
     src/infrastructure/schema/YamlSchemaWriter.cpp
     src/infrastructure/hooks/QuickJsHookRunner.cpp
     src/infrastructure/extraction/JsonPathEvaluator.cpp
+    src/infrastructure/util/Crypto.cpp
+    src/infrastructure/typings/StaticHookTypingsEmitter.cpp
 )
 target_include_directories(chainapi-engine-infrastructure
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+find_package(OpenSSL REQUIRED)
 target_link_libraries(chainapi-engine-infrastructure
     PUBLIC  chainapi-engine-domain
     PRIVATE
@@ -51,6 +55,7 @@ target_link_libraries(chainapi-engine-infrastructure
         yaml-cpp::yaml-cpp
         SQLite3::SQLite3
         nlohmann_json::nlohmann_json
+        OpenSSL::Crypto
 )
 if(TARGET Qt6Keychain::Qt6Keychain)
     target_link_libraries(chainapi-engine-infrastructure
@@ -72,6 +77,7 @@ add_library(chainapi-engine-application OBJECT
     src/application/Verifier.cpp
     src/application/AuthStrategy.cpp
     src/application/JsonExtraction.cpp
+    src/application/RequestSigners.cpp
 )
 target_include_directories(chainapi-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

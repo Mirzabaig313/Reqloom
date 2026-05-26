@@ -448,3 +448,75 @@ TEST(SchemaWriter, oauth2_password_round_trips_with_scope) {
     EXPECT_EQ(reload.authConfig.at("password"), "{{secret.RO_PASS}}");
     EXPECT_EQ(reload.authConfig.at("scope"),    "read:notes write:notes");
 }
+
+
+// ─── Slice 4f — oauth1 round-trip ───────────────────────────────────────────
+
+TEST(SchemaWriter, oauth1_round_trips_three_legged_with_realm) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "OAuth1RoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    ce::Actor tw;
+    tw.id = ce::ActorId{"twitter"};
+    tw.strategy = ce::AuthStrategy::OAuth1;
+    tw.authConfig = {
+        {"consumer_key",    "{{secret.OAUTH_KEY}}"},
+        {"consumer_secret", "{{secret.OAUTH_SECRET}}"},
+        {"token",           "{{secret.OAUTH_TOKEN}}"},
+        {"token_secret",    "{{secret.OAUTH_TOKEN_SECRET}}"},
+        {"realm",           "Photos"},
+    };
+    original.actors[tw.id] = std::move(tw);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"twitter"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::OAuth1);
+    EXPECT_EQ(reload.authConfig.at("consumer_key"),
+              "{{secret.OAUTH_KEY}}");
+    EXPECT_EQ(reload.authConfig.at("consumer_secret"),
+              "{{secret.OAUTH_SECRET}}");
+    EXPECT_EQ(reload.authConfig.at("token"),
+              "{{secret.OAUTH_TOKEN}}");
+    EXPECT_EQ(reload.authConfig.at("token_secret"),
+              "{{secret.OAUTH_TOKEN_SECRET}}");
+    EXPECT_EQ(reload.authConfig.at("realm"), "Photos");
+}
+
+TEST(SchemaWriter, oauth1_round_trips_two_legged) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "OAuth1TwoLeggedRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    ce::Actor app;
+    app.id = ce::ActorId{"app"};
+    app.strategy = ce::AuthStrategy::OAuth1;
+    app.authConfig = {
+        {"consumer_key",    "ck"},
+        {"consumer_secret", "cs"},
+    };
+    original.actors[app.id] = std::move(app);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value());
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value());
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"app"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::OAuth1);
+    EXPECT_EQ(reload.authConfig.at("consumer_key"), "ck");
+    EXPECT_FALSE(reload.authConfig.contains("token"));
+    EXPECT_FALSE(reload.authConfig.contains("realm"));
+}

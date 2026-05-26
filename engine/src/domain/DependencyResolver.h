@@ -1,5 +1,4 @@
 // Engine-internal: builds the execution chain for a target operation.
-// Engine Requirement §3.1.
 #pragma once
 
 #include <chainapi/engine/ErrorCodes.h>

@@ -1,9 +1,7 @@
 // CurlHttpClient — libcurl-backed implementation of HttpClient.
-// Supports: all HTTP methods, custom headers, request body, configurable
-// timeout, and basic error classification.
 //
 // Design notes:
-//   - Curl handle and slist are RAII-wrapped to survive exceptions.
+//   - Curl handle and slist are RAII-wrapped.
 //   - Global init/cleanup is process-wide (libcurl docs require ONCE per
 //     process). Multiple CurlHttpClient instances share one global init.
 //   - CURLOPT_COPYPOSTFIELDS is used so the body buffer's lifetime is not
@@ -37,7 +35,7 @@ struct CurlSlistDeleter {
 };
 using CurlSlistHandle = std::unique_ptr<curl_slist, CurlSlistDeleter>;
 
-// ─── Process-wide curl global init (libcurl requires ONCE per process) ──────
+// ─── Process-wide curl global init ──────────────────────────────────────────
 
 void ensureCurlGlobalInit() {
     static std::once_flag flag;
@@ -85,7 +83,7 @@ std::size_t headerCallback(char* ptr, std::size_t size, std::size_t nmemb, void*
         case HttpMethod::Head:    return "HEAD";
         case HttpMethod::Options: return "OPTIONS";
     }
-    return "GET";  // unreachable; defensive
+    return "GET";
 }
 
 [[nodiscard]] ErrorCode classifyCurlError(CURLcode res) noexcept {
@@ -133,7 +131,6 @@ CurlHttpClient::send(const HttpRequest& request) {
                      static_cast<long>(request.timeout.count()));
     curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 5000L);
 
-    // Headers — RAII via CurlSlistHandle.
     CurlSlistHandle headerList;
     for (const auto& [key, value] : request.headers) {
         auto headerLine = key + ": " + value;
@@ -153,7 +150,6 @@ CurlHttpClient::send(const HttpRequest& request) {
         curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headerList.get());
     }
 
-    // Body — use COPYPOSTFIELDS so libcurl owns the body buffer.
     if (request.body) {
         curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDSIZE,
                          static_cast<long>(request.body->size()));

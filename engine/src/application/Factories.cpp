@@ -18,6 +18,7 @@
 #include "../infrastructure/schema/SchemaWriter.h"
 #include "../infrastructure/schema/YamlSchemaParser.h"
 #include "../infrastructure/schema/YamlSchemaWriter.h"
+#include "../infrastructure/typings/StaticHookTypingsEmitter.h"
 #include "../infrastructure/secrets/KeychainSecretStore.h"
 #include "../infrastructure/secrets/SecretStore.h"
 #include "../infrastructure/storage/HistoryStore.h"
@@ -25,7 +26,7 @@
 
 namespace chainapi::engine {
 
-// ─── Dependencies special members (out-of-line for incomplete-type users) ──
+// ─── Dependencies special members (out-of-line for incomplete-type users) ───
 
 ExecutionEngine::Dependencies::Dependencies() = default;
 
@@ -90,6 +91,14 @@ writeProject(const std::filesystem::path& targetDir,
              bool overwrite) {
     YamlSchemaWriter writer;
     return writer.write(targetDir, project, overwrite);
+}
+
+std::expected<std::filesystem::path, ChainApiError>
+emitHookTypings(const std::filesystem::path& targetDir,
+                const Project& project,
+                bool overwrite) {
+    StaticHookTypingsEmitter emitter;
+    return emitter.emit(targetDir, project, overwrite);
 }
 
 }  // namespace chainapi::engine

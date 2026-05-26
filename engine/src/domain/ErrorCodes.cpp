@@ -1,5 +1,4 @@
 // Stable mapping of ErrorCode → string code, retryability, and class.
-// Engine Requirement §5.
 #include <chainapi/engine/ErrorCodes.h>
 
 namespace chainapi::engine {
@@ -63,8 +62,7 @@ bool isRetryable(ErrorCode code) noexcept {
         default:
             // Poll outcomes are NOT retryable at the operation level —
             // the polling loop owns its own retry budget. Once the loop
-            // exits (timeout, max-attempts, fail predicate), the parent
-            // operation should fail definitively.
+            // exits, the parent operation fails definitively.
             return false;
     }
 }

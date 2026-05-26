@@ -460,3 +460,66 @@ resources:
     ASSERT_FALSE(pings.empty());
     EXPECT_EQ(pings.back().variables.at("ping_id"), "bearer-1");
 }
+
+
+TEST_F(PollingFixture, oauth1_actor_runs_an_operation_end_to_end) {
+    // Slice 4f integration check. OAuth1 signs per-request, so the
+    // proof is: parse → authenticate → executor calls signOAuth1Request
+    // → mock SUT receives the request and returns 200. The SUT can't
+    // verify the OAuth1 signature itself (would need its own crypto),
+    // but the strategy populating the session and the signer running
+    // without errors is what we're testing here. Unit tests
+    // (OAuth1Signer.matches_rfc5849_section_3_4_3_reference_vector)
+    // pin the signature itself against the RFC.
+    PollingScratchProject project(R"YAML(
+version: 1
+name: OAuth1EndToEnd
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+actors:
+  app:
+    auth:
+      strategy: oauth1
+      consumer_key: "ck"
+      consumer_secret: "cs"
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/with-bearer
+        actor: app
+        expect_status: 200
+        extract:
+          ping_id: $.id
+)YAML");
+
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_TRUE(result->succeeded());
+
+    // The session must carry the credentials and the signing flag.
+    const auto* session = ctx.session(ce::ActorId{"app"});
+    ASSERT_NE(session, nullptr);
+    EXPECT_EQ(session->variables.at("consumer_key"), "ck");
+    EXPECT_EQ(session->variables.at("consumer_secret"), "cs");
+    EXPECT_EQ(session->signingScheme,
+              ce::ActorSession::SigningScheme::OAuth1HmacSha1);
+
+    // The /api/v1/with-bearer route was reached and the response
+    // extracted — proves the signed request actually went out.
+    const auto& pings = ctx.instances(ce::ResourceId{"ping"});
+    ASSERT_FALSE(pings.empty());
+    EXPECT_EQ(pings.back().variables.at("ping_id"), "bearer-1");
+}

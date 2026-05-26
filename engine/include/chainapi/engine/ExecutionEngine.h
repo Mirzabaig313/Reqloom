@@ -1,9 +1,8 @@
-// Public façade for libchainapi-engine. Project Layout §3.
+// Public façade for libchainapi-engine.
 //
-// pImpl + value types only — no Qt UI types appear here, no infra-library
-// types leak. Phase B (post-MVP) extracting the engine to a separate
-// process or rewriting the implementation in Rust is a build-system change
-// rather than a rewrite because of this surface.
+// pImpl + value types only — no Qt UI types, no infra-library types leak.
+// Swapping the implementation (e.g. extracting to a separate process) is
+// a build-system change, not a rewrite.
 #pragma once
 
 #include <chainapi/engine/Actor.h>
@@ -40,9 +39,9 @@ struct RunResult {
     [[nodiscard]] bool succeeded() const noexcept { return outcome == RunOutcome::Succeeded; }
 };
 
-/// A loaded, validated project. The schema parser produces this; the
-/// engine consumes it. Cycles, undefined references, and unsupported
-/// versions are caught at parse time and surfaced as `ChainApiError`.
+/// A loaded, validated project. The schema parser produces this; the engine
+/// consumes it. Cycles, undefined references, and unsupported versions are
+/// caught at parse time and surfaced as `ChainApiError`.
 struct Project {
     std::string name;
     std::string defaultEnvironment;
@@ -54,8 +53,8 @@ struct Project {
 /// Per-run options.
 struct RunOptions {
     bool dryRun{false};
-    bool resetExtractions{false};  ///< "Reset Cache" — Engine Req AC-3.4.2.
-    bool resetSessions{false};     ///< "Send Cleanly" — AC-3.4.3.
+    bool resetExtractions{false};  ///< "Reset Cache" — clears the extraction cache before running.
+    bool resetSessions{false};     ///< "Send Cleanly" — invalidates all sessions before running.
     std::string environment;       ///< Empty → use project default.
 };
 
@@ -63,12 +62,12 @@ class ExecutionEngine {
 public:
     /// Dependencies are constructor-injected. Tests substitute fakes;
     /// production wiring lives in `Bootstrapper.cpp` (desktop) or
-    /// `main.cpp` (cli).
+    /// `main.cpp` (CLI).
     ///
-    /// The destructor and move operations are defined out-of-line in
-    /// the engine library (Factories.cpp) so consumers do not need the
-    /// full definitions of HttpClient/SchemaParser/etc. to destroy or
-    /// move a Dependencies. Standard pImpl applied to a unique_ptr struct.
+    /// Destructor and move operations are defined out-of-line in
+    /// Factories.cpp so consumers don't need the full definitions of
+    /// HttpClient/SchemaParser/etc. Standard pImpl applied to a
+    /// unique_ptr struct.
     struct Dependencies {
         Dependencies();
         Dependencies(std::unique_ptr<HttpClient> http,
@@ -100,20 +99,21 @@ public:
     ExecutionEngine& operator=(ExecutionEngine&&) noexcept;
 
     /// Execute a single operation, auto-resolving its dependency chain.
-    /// Returns a populated `RunResult` on success or a `ChainApiError`
-    /// on schema-time failures (cycle, undefined reference, etc.). A
-    /// chain whose target step fails at runtime returns a `RunResult`
-    /// with `outcome == Failed`, not an error — the caller inspects
-    /// `steps` to discover which step failed.
+    ///
+    /// Returns a populated `RunResult` on success or a `ChainApiError` on
+    /// schema-time failures (cycle, undefined reference, etc.). A chain
+    /// whose target step fails at runtime returns a `RunResult` with
+    /// `outcome == Failed`, not an error — inspect `steps` to find which
+    /// step failed.
     std::expected<RunResult, ChainApiError> run(const Project& project,
                                                 const OperationId& target,
                                                 RunContext& ctx,
                                                 const RunOptions& options = {});
 
-    /// Cancel an in-flight run. Engine Req §3.8.
+    /// Cancel an in-flight run.
     void cancel(RunId run);
 
-    /// Subscribe to streaming run events. Engine Req §10.
+    /// Subscribe to streaming run events.
     using EventCallback = std::function<void(const RunEvent&)>;
     void subscribe(EventCallback callback);
 

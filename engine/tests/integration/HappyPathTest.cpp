@@ -1,6 +1,4 @@
-// HappyPathTest — Engine Requirement §8.1 scenarios 1, 2, 3.
-//
-// Validates the end-to-end run loop against the mock SUT using the
+// HappyPathTest — end-to-end run loop against the mock SUT using the
 // bundled marketplace sample. Confirms:
 //   - The chain for refund.approve resolves to the expected sequence
 //   - All steps execute and succeed
@@ -35,7 +33,6 @@ namespace {
     EXPECT_TRUE(project.has_value())
         << (project ? "" : project.error().detail);
 
-    // Override baseUrl in the local environment to point at the mock SUT.
     auto& env = project->environments["local"];
     env["baseUrl"] = mockBaseUrl;
 
@@ -87,10 +84,6 @@ TEST_F(MarketplaceHappyPath, RerunUsesCachedSessions) {
     ASSERT_TRUE(second);
     EXPECT_TRUE(second->succeeded());
 
-    // The second run's chain should have at least as many Skipped steps
-    // as the first run had auth-producing steps. Hard to count exactly
-    // without action-by-action introspection; assert at minimum that
-    // every step ended in a non-failure state.
     for (const auto& step : second->steps) {
         EXPECT_NE(step.status, ce::StepResult::Status::Failed);
         EXPECT_NE(step.status, ce::StepResult::Status::Cancelled);
@@ -105,9 +98,6 @@ TEST_F(MarketplaceHappyPath, ChainContainsExpectedOperations) {
     auto result = engine.run(project, ce::OperationId{"refund.approve"}, ctx);
     ASSERT_TRUE(result);
 
-    // Confirm key operations participated. We don't assert exact ordering
-    // beyond what the engine guarantees (target last), but we verify the
-    // critical prereqs are present.
     bool sawProductCreate = false;
     bool sawProductPublish = false;
     bool sawOrderCreate = false;

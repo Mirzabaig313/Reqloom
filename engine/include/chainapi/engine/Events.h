@@ -1,5 +1,5 @@
-// Observability events emitted by the engine (Engine Requirement §10).
-// Consumed by the desktop timeline UI and the CLI's renderers.
+// Observability events emitted by the engine. Consumed by the desktop
+// timeline UI and the CLI renderers.
 #pragma once
 
 #include <chainapi/engine/ErrorCodes.h>

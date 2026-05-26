@@ -1,13 +1,6 @@
 // Unit tests for the Authenticator interface and selectAuthenticator
-// dispatch. PRD §5.10.1 / Slice 4a.
-//
-// These tests pin the contract that future named-strategy commits
-// (4b–4h) will extend. They use fakes for HttpClient and parse the
-// VariableResolver from the domain layer directly, so no mock SUT
-// process is required.
-//
-// Each test fails on the parent commit — `Authenticator` and
-// `selectAuthenticator` did not exist.
+// dispatch. Uses fakes for HttpClient and the VariableResolver from
+// the domain layer directly, so no mock SUT process is required.
 #include "application/AuthStrategy.h"
 
 #include "domain/VariableResolver.h"
@@ -216,14 +209,10 @@ TEST(AuthStrategy, extraction_miss_surfaces_session_refresh_failed) {
 }
 
 TEST(AuthStrategy, simple_and_chain_route_to_the_same_authenticator) {
-    // Slice 4a contract: both Simple and Chain map to the same concrete
-    // authenticator (the only difference is authSteps.size()).
-    // This test exists to fail loudly if a future commit accidentally
-    // splits them without giving Simple its own implementation.
-    //
-    // Rather than reach for typeid (which triggers
-    // -Wpotentially-evaluated-expression on polymorphic refs), assert
-    // both authenticators behave identically against the same input.
+    // Both Simple and Chain map to the same concrete authenticator
+    // (the only difference is authSteps.size()). Assert both behave
+    // identically against the same input rather than using typeid
+    // (which triggers -Wpotentially-evaluated-expression on polymorphic refs).
     FakeHttpClient h1;
     FakeHttpClient h2;
     h1.enqueue(200, R"({"data":{"accessToken":"t1"}})");
@@ -256,11 +245,6 @@ TEST(AuthStrategy, simple_and_chain_route_to_the_same_authenticator) {
 
 
 // ───  BasicAuthenticator ──────────────────────────────────────────
-//
-// Each test fails on the parent commit (before 4b landed):
-//   - AuthStrategy::Basic enum value did not exist
-//   - selectAuthenticator returned nullptr for Basic
-//   - actor.authConfig field did not exist
 
 namespace {
 
@@ -278,8 +262,6 @@ ce::Actor makeBasicActor(std::string username, std::string password) {
 
 TEST(AuthStrategy, basic_emits_rfc7617_canonical_credential) {
     // RFC 7617 §2 example: "Aladdin" / "open sesame" → "QWxhZGRpbjpvcGVuIHNlc2FtZQ==".
-    // This is the widely-quoted Basic-auth test vector; the strategy's
-    // job is to reproduce it.
     FakeHttpClient http;  // intentionally empty — Basic makes no HTTP call
     ce::VariableResolver resolver;
 
@@ -356,8 +338,7 @@ TEST(AuthStrategy, basic_unresolved_variable_surfaces_session_refresh_failed) {
 }
 
 
-// ─── Slice 4c — ApiKeyAuthenticator (hybrid: variable + auto-inject) ────────
-
+// ─── ApiKeyAuthenticator ─────────────────────────────────────────────────────
 namespace {
 
 ce::Actor makeApiKeyActor(std::string key,
@@ -509,7 +490,7 @@ TEST(AuthStrategy, api_key_location_without_name_does_not_auto_inject) {
 }
 
 
-// ─── Slice 4d — OAuth2ClientCredentialsAuthenticator ────────────────────────
+// ─── OAuth2ClientCredentialsAuthenticator ────────────────────────────────────
 
 namespace {
 
@@ -698,7 +679,7 @@ TEST(AuthStrategy, oauth2_client_credentials_network_error_surfaces_cleanly) {
 }
 
 
-// ─── Slice 4e — OAuth2PasswordAuthenticator (RFC 6749 §4.3) ─────────────────
+// ─── OAuth2PasswordAuthenticator (RFC 6749 §4.3) ─────────────────────────────
 
 namespace {
 
@@ -878,4 +859,269 @@ TEST(AuthStrategy, oauth2_password_omits_scope_when_not_configured) {
 
     ASSERT_EQ(http.recorded().size(), 1u);
     EXPECT_EQ(http.recorded()[0].body.find("scope="), std::string::npos);
+}
+
+
+// ─── Slice 4f — OAuth1 (RFC 5849 HMAC-SHA1) ─────────────────────────────────
+
+#include "application/RequestSigners.h"
+
+namespace {
+
+ce::Actor makeOAuth1Actor(std::string consumerKey,
+                          std::string consumerSecret,
+                          std::optional<std::string> token = std::nullopt,
+                          std::optional<std::string> tokenSecret = std::nullopt,
+                          std::optional<std::string> realm = std::nullopt) {
+    ce::Actor actor;
+    actor.id = ce::ActorId{"twitter"};
+    actor.strategy = ce::AuthStrategy::OAuth1;
+    actor.authConfig["consumer_key"]    = std::move(consumerKey);
+    actor.authConfig["consumer_secret"] = std::move(consumerSecret);
+    if (token)       actor.authConfig["token"]        = std::move(*token);
+    if (tokenSecret) actor.authConfig["token_secret"] = std::move(*tokenSecret);
+    if (realm)       actor.authConfig["realm"]        = std::move(*realm);
+    return actor;
+}
+
+}  // namespace
+
+TEST(AuthStrategy, oauth1_authenticator_populates_session_and_marks_signing) {
+    FakeHttpClient http;  // intentionally empty — OAuth1 makes no auth call
+    ce::VariableResolver resolver;
+
+    auto actor = makeOAuth1Actor(
+        "{{secret.OAUTH_KEY}}",
+        "{{secret.OAUTH_SECRET}}",
+        "{{secret.OAUTH_TOKEN}}",
+        "{{secret.OAUTH_TOKEN_SECRET}}",
+        "Realm");
+    auto auther = ce::selectAuthenticator(
+        actor, ce::AuthDependencies{&http, &resolver});
+    ASSERT_NE(auther, nullptr);
+
+    ce::RunContext ctx;
+    auto rctx = makeRctx();
+    rctx.secrets["OAUTH_KEY"]          = "9djdj82h48djs9d2";
+    rctx.secrets["OAUTH_SECRET"]       = "j49sk3j29djd";
+    rctx.secrets["OAUTH_TOKEN"]        = "kkk9d7dh3k39sjv7";
+    rctx.secrets["OAUTH_TOKEN_SECRET"] = "dh893hdasih9";
+
+    auto result = auther->authenticate(actor, ctx, rctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    EXPECT_EQ(result->variables.at("consumer_key"),    "9djdj82h48djs9d2");
+    EXPECT_EQ(result->variables.at("consumer_secret"), "j49sk3j29djd");
+    EXPECT_EQ(result->variables.at("token"),           "kkk9d7dh3k39sjv7");
+    EXPECT_EQ(result->variables.at("token_secret"),    "dh893hdasih9");
+    EXPECT_EQ(result->variables.at("realm"),           "Realm");
+
+    // OAuth1 signs per-request, not at auth time. The session must
+    // carry the signing-scheme flag so the executor calls the signer.
+    EXPECT_EQ(result->signingScheme,
+              ce::ActorSession::SigningScheme::OAuth1HmacSha1);
+    EXPECT_TRUE(http.recorded().empty()) << "OAuth1 must make no HTTP call";
+}
+
+TEST(AuthStrategy, oauth1_authenticator_supports_two_legged_signing) {
+    // Two-legged: just consumer credentials, no token. RFC 5849 §3.1.
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    auto actor = makeOAuth1Actor("ck", "cs");
+    auto auther = ce::selectAuthenticator(
+        actor, ce::AuthDependencies{&http, &resolver});
+
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->variables.at("consumer_key"),    "ck");
+    EXPECT_FALSE(result->variables.contains("token"));
+    EXPECT_FALSE(result->variables.contains("token_secret"));
+    EXPECT_EQ(result->signingScheme,
+              ce::ActorSession::SigningScheme::OAuth1HmacSha1);
+}
+
+TEST(AuthStrategy, oauth1_authenticator_rejects_token_without_secret) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    // Token set, token_secret missing — must fail cleanly rather than
+    // silently producing bad signatures.
+    auto actor = makeOAuth1Actor("ck", "cs", "tok"  /* tokenSecret omitted */);
+    auto auther = ce::selectAuthenticator(
+        actor, ce::AuthDependencies{&http, &resolver});
+
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("token_secret"), std::string::npos);
+}
+
+TEST(AuthStrategy, oauth1_authenticator_rejects_missing_consumer_key) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"twitter"};
+    actor.strategy = ce::AuthStrategy::OAuth1;
+    actor.authConfig["consumer_secret"] = "cs";
+    // consumer_key absent
+
+    auto auther = ce::selectAuthenticator(
+        actor, ce::AuthDependencies{&http, &resolver});
+
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("consumer_key"), std::string::npos);
+}
+
+// ─── signOAuth1Request — RFC 5849 §3.4.3 reference vector ────────────────────
+
+TEST(OAuth1Signer, matches_rfc5849_section_3_4_3_reference_vector) {
+    // Worked example from RFC 5849 Appendix-equivalent section 3.4.3:
+    //   consumer_key    = 9djdj82h48djs9d2
+    //   consumer_secret = j49sk3j29djd
+    //   token           = kkk9d7dh3k39sjv7
+    //   token_secret    = dh893hdasih9
+    //   method = POST
+    //   url    = http://example.com/request?b5=%3D%253D&a3=a&c%40=&a2=r%20b
+    //   body   = c2&a3=2+q   (application/x-www-form-urlencoded)
+    //   nonce  = 7d8f3e4a    (forced via test override)
+    //   ts     = 137131201   (forced via test override)
+    //
+    // Expected signature (Base64-encoded HMAC-SHA1):
+    //   r6/TJjbCOr97/+UU0NsvSne7s5g=
+    //
+    // Source: RFC 5849 §3.4.3 Appendix worked example (the canonical
+    // one most OAuth1 libraries pin to).
+    ce::ActorSession session;
+    session.variables["consumer_key"]    = "9djdj82h48djs9d2";
+    session.variables["consumer_secret"] = "j49sk3j29djd";
+    session.variables["token"]           = "kkk9d7dh3k39sjv7";
+    session.variables["token_secret"]    = "dh893hdasih9";
+    session.signingScheme =
+        ce::ActorSession::SigningScheme::OAuth1HmacSha1;
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Post;
+    req.url = "http://example.com/request"
+              "?b5=%3D%253D&a3=a&c%40=&a2=r%20b";
+    req.body = "c2&a3=2+q";
+    req.headers["Content-Type"] = "application/x-www-form-urlencoded";
+
+    ce::OAuth1TestOverrides overrides;
+    overrides.nonce = "7d8f3e4a";
+    overrides.timestampSeconds = "137131201";
+
+    const bool ok = ce::signOAuth1Request(req, session, overrides);
+    ASSERT_TRUE(ok);
+
+    const auto& auth = req.headers.at("Authorization");
+    ASSERT_TRUE(auth.starts_with("OAuth ")) << "got: " << auth;
+
+    // Pin the exact signature from the RFC. URL-encoding of '=' is
+    // %3D and of '+' is %2B; the encoded form in the header is what
+    // we assert on.
+    EXPECT_NE(auth.find(R"(oauth_signature="r6%2FTJjbCOr97%2F%2BUU0NsvSne7s5g%3D")"),
+              std::string::npos)
+        << "auth header: " << auth;
+
+    // Sanity: nonce + timestamp are echoed verbatim, signature method
+    // is HMAC-SHA1. Per RFC 5849 §3.4.3 worked example, oauth_version
+    // is intentionally omitted; matching it interops with the
+    // canonical signature.
+    EXPECT_NE(auth.find(R"(oauth_nonce="7d8f3e4a")"), std::string::npos);
+    EXPECT_NE(auth.find(R"(oauth_timestamp="137131201")"), std::string::npos);
+    EXPECT_NE(auth.find(R"(oauth_signature_method="HMAC-SHA1")"),
+              std::string::npos);
+    EXPECT_EQ(auth.find("oauth_version"), std::string::npos)
+        << "RFC 5849 §3.4.3 worked example omits oauth_version";
+    EXPECT_NE(auth.find(R"(oauth_consumer_key="9djdj82h48djs9d2")"),
+              std::string::npos);
+    EXPECT_NE(auth.find(R"(oauth_token="kkk9d7dh3k39sjv7")"), std::string::npos);
+}
+
+TEST(OAuth1Signer, two_legged_signs_with_empty_token_secret) {
+    // Two-legged signing key per RFC 5849 §3.4.2 is
+    // `encode(consumer_secret) & encode("")` — the trailing & is
+    // mandatory. Pinning the exact signature here would require
+    // pre-computing it externally; the lighter contract this test
+    // captures is "signing succeeds, header is well-formed, no
+    // oauth_token field is emitted".
+    ce::ActorSession session;
+    session.variables["consumer_key"]    = "ck";
+    session.variables["consumer_secret"] = "cs";
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = "https://api.example.test/v1/things";
+
+    ce::OAuth1TestOverrides overrides;
+    overrides.nonce = "fixed-nonce";
+    overrides.timestampSeconds = "1700000000";
+
+    const bool ok = ce::signOAuth1Request(req, session, overrides);
+    ASSERT_TRUE(ok);
+
+    const auto& auth = req.headers.at("Authorization");
+    EXPECT_TRUE(auth.starts_with("OAuth "));
+    EXPECT_EQ(auth.find("oauth_token="), std::string::npos)
+        << "two-legged signing must omit oauth_token";
+    EXPECT_NE(auth.find(R"(oauth_consumer_key="ck")"), std::string::npos);
+    EXPECT_NE(auth.find("oauth_signature="), std::string::npos);
+}
+
+TEST(OAuth1Signer, regenerates_distinct_signatures_across_calls) {
+    // Per-attempt nonce regeneration: two consecutive sign calls on
+    // the same request must produce different Authorization headers
+    // (different nonce → different signature).
+    ce::ActorSession session;
+    session.variables["consumer_key"]    = "ck";
+    session.variables["consumer_secret"] = "cs";
+
+    ce::HttpRequest reqA;
+    reqA.method = ce::HttpMethod::Get;
+    reqA.url = "https://api.example.test/v1/things";
+
+    ce::HttpRequest reqB = reqA;
+
+    ASSERT_TRUE(ce::signOAuth1Request(reqA, session));
+    ASSERT_TRUE(ce::signOAuth1Request(reqB, session));
+
+    EXPECT_NE(reqA.headers.at("Authorization"),
+              reqB.headers.at("Authorization"));
+}
+
+TEST(OAuth1Signer, refuses_to_sign_when_consumer_credentials_missing) {
+    ce::ActorSession session;
+    // No consumer_key / consumer_secret in variables.
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = "https://api.example.test/v1/things";
+
+    EXPECT_FALSE(ce::signOAuth1Request(req, session));
+    EXPECT_EQ(req.headers.find("Authorization"), req.headers.end());
+}
+
+TEST(OAuth1Signer, includes_realm_in_header_when_present) {
+    ce::ActorSession session;
+    session.variables["consumer_key"]    = "ck";
+    session.variables["consumer_secret"] = "cs";
+    session.variables["realm"]           = "Photos";
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = "https://photos.example.com/v1/list";
+
+    ASSERT_TRUE(ce::signOAuth1Request(req, session));
+    const auto& auth = req.headers.at("Authorization");
+    EXPECT_NE(auth.find(R"(realm="Photos")"), std::string::npos);
 }
