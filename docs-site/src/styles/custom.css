@@ -1,0 +1,25 @@
+/* ChainAPI brand colours — adjust once a real palette is decided. */
+:root {
+    --sl-color-accent-low:   #1a1f3a;
+    --sl-color-accent:       #4a6cf7;
+    --sl-color-accent-high:  #c5d2ff;
+    --sl-color-white:        #ffffff;
+    --sl-color-gray-1:       #eef0fa;
+    --sl-color-gray-2:       #c8cdde;
+    --sl-color-gray-3:       #989eb1;
+    --sl-color-gray-4:       #5d6273;
+    --sl-color-gray-5:       #383b48;
+    --sl-color-gray-6:       #25272f;
+    --sl-color-black:        #14161c;
+}
+
+:root[data-theme="light"] {
+    --sl-color-accent-low:   #d2dcff;
+    --sl-color-accent:       #2c4ddb;
+    --sl-color-accent-high:  #1a306b;
+}
+
+/* Slightly tighter line-height for code blocks — better for dense schema YAML. */
+.expressive-code .code {
+    line-height: 1.45;
+}
