@@ -23,7 +23,7 @@ namespace chainapi::engine {
 
 namespace {
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// Helpers
 
 HttpMethod parseMethod(const std::string& m) {
     if (m == "GET" || m == "get") return HttpMethod::Get;
@@ -139,18 +139,10 @@ std::chrono::seconds parseDuration(const std::string& s) {
     }
 }
 
-/// Resolve a hook-script value: if it looks like a relative path to a
-/// `.js`/`.mjs` file, load the file content; otherwise treat the value
-/// as inline JS.
-///
-/// Heuristic for "is a path":
-///   - starts with "./" or "../"
-///   - OR ends with ".js" / ".mjs" with no whitespace, `=`, `{`, or `(`
-///
-/// Security:
-///   - Path is canonicalised via `weakly_canonical` against `baseDir`.
-///     Resolved paths outside the root are rejected.
-///   - File size is capped at 1 MiB.
+// Resolve a hook-script value: if it looks like a relative path to a .js/.mjs
+// file, load the file content; otherwise treat as inline JS. Paths are
+// canonicalised via weakly_canonical against baseDir and rejected if outside
+// root. File size capped at 1 MiB.
 [[nodiscard]] std::expected<std::string, ChainApiError> resolveHookScript(const std::string& value,
                                                                           const fs::path& baseDir) {
     if (value.empty()) return value;

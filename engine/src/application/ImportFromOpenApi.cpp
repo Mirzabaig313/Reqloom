@@ -29,11 +29,8 @@ ChainApiError invalid(std::string detail) {
     return ChainApiError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
 }
 
-/// Containment check matching the hook-script policy in YamlSchemaParser.cpp:
-/// the resolved path must live under `projectRoot`, with a path-separator
-/// boundary so `/home/user/proj` does not admit a sibling
-/// `/home/user/proj-evil/spec.yaml`. Both relative and absolute spec paths
-/// must satisfy this — a `--spec /etc/passwd` invocation gets rejected.
+// Containment check: resolved path must live under projectRoot with a
+// path-separator boundary so `/home/user/proj` doesn't admit `/home/user/proj-evil`.
 std::expected<fs::path, ChainApiError> canonicalSpecPath(const fs::path& spec,
                                                          const fs::path& projectRoot) {
     std::error_code ec;
@@ -156,8 +153,7 @@ constexpr bool isOpenApiMethod(std::string_view m) noexcept {
            m == "head" || m == "options";
 }
 
-/// Pick the first 2xx status declared on the operation, falling back to
-/// 200. This is what `expect_status` should pin per PRD §5.2.
+// Pick the first 2xx status declared on the operation, falling back to 200.
 int pickExpectedStatus(const YAML::Node& responses) {
     if (!responses || !responses.IsMap()) return 200;
     for (const auto& kv : responses) {

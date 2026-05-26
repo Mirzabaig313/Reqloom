@@ -1,6 +1,6 @@
 // LlmClient — provider-agnostic interface for the AI importer.
 //
-// The user supplies their own API key (PRD §10.4 — no proxy through
+// The user supplies their own API key (no proxy through
 // ChainAPI servers). The LLM call returns the assistant message verbatim;
 // JSON-shape validation is the importer's job, not the client's.
 #pragma once

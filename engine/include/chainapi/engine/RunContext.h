@@ -66,7 +66,7 @@ struct StepResult {
 };
 
 /// One extraction's runtime outcome, recorded by the executor each time
-/// it evaluates an `extract:` entry. Powers the timeline UI (PRD §10.3.4)
+/// it evaluates an `extract:` entry. Powers the timeline UI.
 /// and the AI-importer diagnostic loop — when an inferred extraction
 /// resolves to `null` at runtime, the user can see it without re-running
 /// against the schema.

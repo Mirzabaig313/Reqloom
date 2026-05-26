@@ -219,7 +219,7 @@ bool signOAuth1Request(HttpRequest& req,
     return true;
 }
 
-// ─── AWS Signature Version 4 (RFC 5234-ish — see AWS docs) ──────────────────
+// AWS Signature Version 4
 
 namespace {
 
@@ -342,12 +342,11 @@ bool signSigV4Request(HttpRequest& req,
     const auto urlParts = splitUrl(req.url);
     if (!urlParts) return false;
 
-    // Stage all header mutations on a local copy. We only commit them
-    // back onto `req` at the very end, so any failure mid-flight leaves
-    // the caller's request untouched (per RequestSigners.h contract).
+    // Stage header mutations on a local copy; commit only on success so a
+    // partial failure leaves the request untouched.
     std::map<std::string, std::string> stagedHeaders = req.headers;
 
-    // ── 1. Timestamp + date scope ────────────────────────────────────────
+    // 1. Timestamp + date scope
     std::string amzDate;
     if (overrides.amzDate) {
         amzDate = *overrides.amzDate;
@@ -374,7 +373,7 @@ bool signSigV4Request(HttpRequest& req,
     if (amzDate.size() < 8) return false;
     const std::string dateStamp = amzDate.substr(0, 8);
 
-    // ── 2. Canonical URI + canonical query string ────────────────────────
+    // 2. Canonical URI + query string
     const std::string canonicalUri = awsUriEncodePath(pathFromUrl(req.url));
 
     using Pair = std::pair<std::string, std::string>;
@@ -393,8 +392,8 @@ bool signSigV4Request(HttpRequest& req,
         canonicalQuery += v;
     }
 
-    // ── 3. Headers we sign ───────────────────────────────────────────────
-    // SigV4 requires Host. Add it from the URL if the caller didn't.
+    // 3. Headers we sign — SigV4 requires Host.
+    // Add it from the URL if the caller didn't.
     bool haveHost = false;
     for (const auto& [name, _] : stagedHeaders) {
         if (toLowerAscii(name) == "host") {
@@ -450,7 +449,7 @@ bool signSigV4Request(HttpRequest& req,
         signedHeaders += n;
     }
 
-    // ── 4. Canonical request → string-to-sign ────────────────────────────
+    // 4. Canonical request → string-to-sign
     const std::string method = std::string{methodToString(req.method)};
     const std::string canonicalRequest = method + "\n" + canonicalUri + "\n" + canonicalQuery +
                                          "\n" + canonicalHeaders + "\n" + signedHeaders + "\n" +
@@ -463,7 +462,7 @@ bool signSigV4Request(HttpRequest& req,
     const std::string stringToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope +
                                      "\n" + codecs::hexEncode(canonicalRequestHash);
 
-    // ── 5. Signing key derivation (4× HMAC-SHA256 chain) ─────────────────
+    // 5. Signing key derivation (4× HMAC-SHA256 chain)
     const auto kDate = crypto::hmacSha256("AWS4" + secretKey, dateStamp);
     const auto kRegion = crypto::hmacSha256(kDate, region);
     const auto kService = crypto::hmacSha256(kRegion, service);
@@ -476,7 +475,7 @@ bool signSigV4Request(HttpRequest& req,
     if (signatureRaw.empty()) return false;
     const std::string signatureHex = codecs::hexEncode(signatureRaw);
 
-    // ── 6. Authorization header ──────────────────────────────────────────
+    // 6. Authorization header
     std::string authHeader = "AWS4-HMAC-SHA256 Credential=";
     authHeader += accessKey;
     authHeader += '/';
@@ -487,7 +486,6 @@ bool signSigV4Request(HttpRequest& req,
     authHeader += signatureHex;
     stagedHeaders["Authorization"] = std::move(authHeader);
 
-    // Atomic commit. Up to this point any failure left `req` untouched.
     req.headers = std::move(stagedHeaders);
     return true;
 }

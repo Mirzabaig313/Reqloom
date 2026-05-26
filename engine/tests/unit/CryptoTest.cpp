@@ -1,4 +1,4 @@
-// Crypto unit tests. PRD §5.10.1 — Slice 5b primitives.
+// Crypto unit tests.
 //
 // Each test pins an RFC vector or a deterministic third-party fixture
 // so a future implementation swap (OpenSSL ↔ libsodium ↔ ...) lands

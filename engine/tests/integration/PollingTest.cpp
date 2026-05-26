@@ -1,4 +1,4 @@
-// PollingTest — end-to-end coverage for PRD §5.11 poll_until.
+// PollingTest — end-to-end coverage for poll_until.
 //
 // Uses the mock SUT's "sequence" route capability to return a series of
 // responses on the polling endpoint:
@@ -518,7 +518,7 @@ resources:
 
 // ─── Slice 3g — per-poll-attempt timeline visibility ────────────────────────
 //
-// PRD §5.11: "Each poll attempt is recorded as a step in the run timeline."
+    // Each poll attempt is recorded as a step in the run timeline.
 // Before this slice, only the parent step row was recorded; the timeline
 // hid every poll request behind a single elapsed-time bar. These tests
 // fail on the parent commit (zero per-attempt rows in `result->steps`).

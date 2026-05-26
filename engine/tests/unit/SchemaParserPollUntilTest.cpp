@@ -443,7 +443,7 @@ resources:
 
 // ─── Slice 5a — sibling-file hooks ──────────────────────────────────────────
 //
-// PRD §5.10: hook scripts can live in a sibling `.js` file referenced
+// Hook scripts can live in a sibling `.js` file referenced
 // by relative path. The parser detects path-shaped values, validates
 // containment under the project root, caps file size at 1 MiB, and
 // loads the content into Operation::preRequestScript /
@@ -570,7 +570,7 @@ resources:
 
 TEST(SchemaParserHooks, rejects_path_traversal_outside_project_root) {
     // Containment check fires on `../../etc/passwd`-style patterns
-    // even when the canonicalised target exists. PRD §5.10 +
+    // even when the canonicalised target exists.
     // AGENTS.md "Reading user input" §"Path inputs".
     ScratchDir scratch;
 
