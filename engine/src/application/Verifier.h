@@ -1,16 +1,8 @@
-// Verifier — evaluates AI-imported / non-hand-written extractions against
-// a sample response and tags each with Verified / Null / NoMatch /
-// NotEvaluated / NoSample.
-//
-// The AI importer calls this before writing any operation to disk. The
-// rule: refuse to write any operation whose extractions are not all
-// Verified. Extractions tagged with a soft state (NoSample, NotEvaluated)
-// surface in the review UI as "needs your input"; NoMatch / Null surface
-// as "the AI got this wrong".
+// Verifier — evaluates extractions against a sample response and tags each
+// with Verified / Null / NoMatch / NotEvaluated / NoSample.
 //
 // Pure computation — no I/O, no engine state. Lives in the application
-// layer because it parses JSON (third-party dep), which the domain layer
-// is not allowed to pull in.
+// layer because it parses JSON (third-party dep).
 #pragma once
 
 #include <chainapi/engine/ErrorCodes.h>
@@ -46,9 +38,7 @@ struct VerifiedExtraction {
     std::string detail;
 };
 
-/// Aggregate result for one operation. Used to decide whether the operation
-/// can be written (Verified or NoSample for every extraction) or surfaced
-/// as "needs your input" (Null / NoMatch for any extraction).
+/// Aggregate result for one operation.
 struct VerificationReport {
     std::vector<VerifiedExtraction> extractions;
 
@@ -63,8 +53,7 @@ struct VerificationReport {
     [[nodiscard]] bool hasFailures() const noexcept;
 };
 
-/// Case-insensitive comparator with heterogeneous lookup. Headers compare
-/// per RFC 7230 §3.2 — `ETag` and `etag` are the same header.
+/// Case-insensitive comparator for header maps (RFC 7230 §3.2).
 struct CaseInsensitiveLess {
     using is_transparent = void;
 
@@ -77,9 +66,7 @@ struct CaseInsensitiveLess {
     }
 };
 
-/// Sample response context. The verifier prefers strong sources (real
-/// responses) over weak ones (synthetic LLM samples). `verifiedAgainst`
-/// flows through to the resulting Provenance.
+/// Sample response used for extraction verification.
 struct SampleResponse {
     /// Raw JSON body of the sample. May be empty.
     std::string body;
@@ -99,11 +86,9 @@ public:
     Verifier();
     ~Verifier();
 
-    /// Verify every extraction on `op` against `sample`. Pure function.
-    ///
-    /// Returns `ChainApiError{SchemaInvalid, ...}` only when one of the
-    /// extraction source paths is itself malformed. A path that simply
-    /// doesn't match the sample is NOT an error — it surfaces as `NoMatch`.
+    /// Returns `ChainApiError{SchemaInvalid}` only when an extraction source
+    /// path is malformed. A path that doesn't match the sample is NOT an
+    /// error — it surfaces as `NoMatch`.
     [[nodiscard]] std::expected<VerificationReport, ChainApiError>
     verify(const Operation& op, const SampleResponse& sample) const;
 

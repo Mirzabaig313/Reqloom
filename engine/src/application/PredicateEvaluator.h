@@ -1,5 +1,4 @@
-// PredicateEvaluator — boolean expression engine for poll_until success/fail
-// predicates and AI-import verification.
+// PredicateEvaluator — boolean expression engine for poll_until predicates.
 //
 // Grammar (intentionally shallow):
 //
@@ -13,8 +12,7 @@
 //   array    := '[' term ( ',' term )* ']'
 //
 // Lives in the application layer because it parses JSON (third-party dep),
-// which the domain layer is not allowed to pull in. Pure computation — no
-// I/O, no engine state.
+// which the domain layer is not allowed to pull in.
 #pragma once
 
 #include <chainapi/engine/ErrorCodes.h>
@@ -62,8 +60,7 @@ public:
     parse(std::string_view expression) const;
 
     /// Evaluate a previously-parsed expression against a JSON document.
-    /// Total: never throws, never returns an error. Polling semantics
-    /// demand totality — a bad predicate must not crash a run.
+    /// Total: never throws, never returns an error.
     ///
     /// `statusCode` is exposed inside expressions as `$.status_code`.
     /// Pass 0 when there is no associated HTTP status.

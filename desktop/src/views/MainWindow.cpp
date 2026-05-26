@@ -8,7 +8,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(QStringLiteral("ChainAPI"));
     resize(1280, 800);
 
-    auto* placeholder = new QLabel(QStringLiteral("ChainAPI\n\nUI panels land in Phase 2."), this);
+    auto* placeholder = new QLabel(QStringLiteral("ChainAPI\n\nUI panels coming soon."), this);
     placeholder->setAlignment(Qt::AlignCenter);
     setCentralWidget(placeholder);
 }

@@ -1,11 +1,9 @@
 // YamlSchemaWriter — see SchemaWriter.h for the contract.
 //
-// Implementation strategy:
+// Implementation notes:
 //   - One emitter per output file.
-//   - Map ordering is not preserved by YAML; we sort by key for stable diffs.
-//   - Provenance is emitted as `_provenance` (leading underscore signals
-//     "metadata, not content"). Empty enums and absent optional fields are
-//     not emitted.
+//   - Map keys are sorted for stable diffs.
+//   - Provenance is emitted as `_provenance` (leading underscore = metadata).
 //   - Writes go through a temp file + rename for atomicity.
 #include "YamlSchemaWriter.h"
 
@@ -32,10 +30,9 @@ namespace {
 
 using codecs::methodToString;
 
-// Note on Extraction::Source: only JsonPath round-trips through the parser
-// today (the parser detects header-style by `$.headers.` prefix). XPath /
-// Regex / Cookie / StatusCode are emit-only stubs; an explicit `source:` key
-// will land alongside the parser change that understands it.
+// Note: only JsonPath round-trips through the parser today (the parser
+// detects header-style by `$.headers.` prefix). XPath / Regex / Cookie /
+// StatusCode are emit-only stubs.
 
 constexpr std::string_view provenanceSourceToString(Provenance::Source s) {
     switch (s) {
@@ -292,8 +289,7 @@ std::string emitActor(const Actor& actor) {
         e << YAML::EndSeq;
     } else if (actor.strategy == AuthStrategy::Basic) {
         e << YAML::Key << "strategy" << YAML::Value << "basic";
-        // Emit configured fields verbatim — values may contain {{X.y}}
-        // references resolved at run time.
+        // Values may contain {{X.y}} references resolved at run time.
         if (auto it = actor.authConfig.find("username"); it != actor.authConfig.end()) {
             e << YAML::Key << "username" << YAML::Value << it->second;
         }
@@ -413,9 +409,8 @@ YamlSchemaWriter::write(const fs::path& targetDir,
                         bool overwrite) {
     std::error_code ec;
     if (fs::exists(targetDir) && !overwrite) {
-        // The directory existing alone is fine; only fail if chainapi.yaml
-        // is already there. This lets the writer slot into an existing
-        // project directory without silently clobbering its root config.
+        // Only fail if chainapi.yaml is already there — the directory
+        // existing alone is fine (lets the writer slot into an existing project).
         if (fs::exists(targetDir / "chainapi.yaml")) {
             return std::unexpected(ChainApiError{
                 ErrorCode::SchemaInvalid, ErrorClass::Schema,

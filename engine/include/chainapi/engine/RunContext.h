@@ -21,19 +21,17 @@ struct ActorSession {
 
     /// Per-request signing scheme. Most strategies leave this as `None`
     /// and rely on `injectHeaders` for static auth values. OAuth 1.0a
-    /// (RFC 5849) is the exception — its signature depends on the request
-    /// URL/method/params, so the executor calls a strategy-specific signer
-    /// right before each send.
+    /// is the exception — its signature depends on the request URL/method/params,
+    /// so the executor calls a signer right before each send.
     enum class SigningScheme { None, OAuth1HmacSha1 };
 
     State state{State::None};
     std::map<std::string, std::string> variables;  ///< token, user_id, etc.
 
-    /// Strategy-populated request augmentations. Auth strategies may
-    /// pre-resolve and stash request mutations here so the engine adds
-    /// them to every operation owned by the actor without requiring an
-    /// explicit `inject:` block. Values are already variable-resolved;
-    /// the engine does NOT re-resolve them when merging into a request.
+    /// Auth strategies may pre-resolve request mutations here so the engine
+    /// adds them to every operation owned by the actor without requiring an
+    /// explicit `inject:` block. Values are already resolved — the engine
+    /// does NOT re-resolve them when merging into a request.
     std::map<std::string, std::string> injectHeaders;
     std::map<std::string, std::string> injectQueryParams;
 
@@ -60,8 +58,7 @@ struct StepResult {
     std::chrono::milliseconds elapsed{};
 
     /// Human-readable context for this step's outcome — HTTP status,
-    /// response body excerpt, missing variable name, etc. Populated
-    /// best-effort; not a contract.
+    /// response body excerpt, missing variable name, etc.
     std::string detail;
 };
 
@@ -75,18 +72,18 @@ public:
     RunContext(RunContext&&) noexcept;
     RunContext& operator=(RunContext&&) noexcept;
 
-    // ─── Session cache — per actor ───────────────────────────────────────
+    // Session cache — per actor
     [[nodiscard]] const ActorSession* session(const ActorId& actor) const noexcept;
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
 
-    // ─── Extraction cache — list of instances per resource ───────────────
+    // Extraction cache — list of instances per resource
     [[nodiscard]] const std::vector<ResourceInstance>& instances(
         const ResourceId& resource) const noexcept;
     void appendInstance(const ResourceId& resource, ResourceInstance instance);
     void clearExtractions();
 
-    // ─── Step recording ──────────────────────────────────────────────────
+    // Step recording
     void record(StepResult step);
     [[nodiscard]] const std::vector<StepResult>& steps() const noexcept;
 

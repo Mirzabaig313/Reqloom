@@ -15,9 +15,8 @@ class HttpClient;       // forward — defined in infrastructure
 class VariableResolver; // forward — defined in domain
 struct ResolveContext;  // forward — defined in domain (VariableResolver.h)
 
-/// Common dependencies every authenticator needs. Owned by the engine;
-/// passed by pointer so the contract is unambiguous: the authenticator
-/// is non-owning and must not outlive the engine that created it.
+/// Common dependencies every authenticator needs. Non-owning — must not
+/// outlive the engine that created it.
 struct AuthDependencies {
     HttpClient*       http{nullptr};
     VariableResolver* varResolver{nullptr};
@@ -31,9 +30,7 @@ public:
     /// (variables populated) or a `ChainApiError`.
     ///
     /// Authenticators must NOT consult or mutate the `RunContext`'s
-    /// session cache — that's the engine's job. Read-only access to
-    /// the run context is permitted (e.g. cross-actor variable refs
-    /// in templates).
+    /// session cache — that's the engine's job.
     [[nodiscard]] virtual std::expected<ActorSession, ChainApiError>
     authenticate(const Actor& actor,
                  const RunContext& ctx,

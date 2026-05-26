@@ -1,8 +1,6 @@
-// Engine-internal interface for parsing chainapi.yaml (and sub-files) into
-// a validated Project. Concrete impl: YamlSchemaParser (yaml-cpp).
-//
-// Cycle detection, undefined-reference detection, and version validation
-// happen here. Errors carry file:line context via `ChainApiError::detail`.
+// Engine-internal interface for parsing chainapi.yaml into a validated Project.
+// Concrete impl: YamlSchemaParser (yaml-cpp).
+// Errors carry file:line context via `ChainApiError::detail`.
 #pragma once
 
 #include <chainapi/engine/ErrorCodes.h>

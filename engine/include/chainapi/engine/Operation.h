@@ -49,16 +49,13 @@ struct RetryPolicy {
     std::chrono::milliseconds maxBackoff{30'000};
 };
 
-/// Polling configuration. Attached to operations whose initial response
-/// triggers polling (e.g. 202 Accepted with a status URL).
+/// Polling configuration for operations that return 202 Accepted and need
+/// a follow-up status poll.
 ///
-/// Engine semantics:
-///   - The initial request runs once. If its response is in
-///     `expectStatusList` and `pollUntil` is set, the polling loop runs
-///     until `successWhen` matches, `failWhen` matches, or a budget fires.
-///   - Each poll attempt records as its own `StepResult`.
-///   - Extractions evaluate against the FINAL poll response (the one that
-///     satisfied `successWhen`), not the initial 202.
+/// The initial request runs once. If its status matches `expectStatusList`
+/// and `pollUntil` is set, the engine polls until `successWhen` matches,
+/// `failWhen` matches, or a budget fires. Extractions run against the
+/// final poll response.
 struct PollUntil {
     HttpMethod method{HttpMethod::Get};
 
@@ -73,16 +70,15 @@ struct PollUntil {
     /// Required.
     std::string successWhen;
 
-    /// Predicate that short-circuits the poll. Strongly recommended —
-    /// without it, a known-bad terminal state turns into a wall-clock
-    /// timeout. Wins over `successWhen` if both match a single response.
+    /// Predicate that short-circuits the poll on a known-bad terminal state.
+    /// Wins over `successWhen` if both match the same response.
     std::optional<std::string> failWhen;
 
     /// Fixed inter-attempt delay. Mutually exclusive with `backoffBase`.
     std::chrono::milliseconds interval{2'000};
 
     /// Exponential-backoff base. When set, `interval` is ignored and the
-    /// nth attempt waits `min(backoffBase * 2^n, backoffMax)` plus jitter.
+    /// nth attempt waits `min(backoffBase * 2^n, backoffMax)`.
     std::optional<std::chrono::milliseconds> backoffBase;
     std::chrono::milliseconds backoffMax{30'000};
 
@@ -92,13 +88,9 @@ struct PollUntil {
     int maxAttempts{30};
 };
 
-/// Origin metadata for an operation. Hand-written operations have no
-/// provenance. Operations produced by the AI importer carry a populated
-/// block so runtime diagnostics can cross-reference failures with the
-/// original inference.
-///
-/// Treated as opaque metadata by the runtime — extending the enum or
-/// adding fields here must not change execution semantics.
+/// Import/verification provenance for non-hand-written operations.
+/// Treated as opaque metadata by the runtime — extending this struct
+/// must not change execution semantics.
 struct Provenance {
     /// How this operation entered the project.
     enum class Source {
@@ -154,8 +146,7 @@ struct Operation {
     std::optional<int> expectStatus;
 
     /// Multi-value form (`expect_status: [200, 202]`). When non-empty,
-    /// the executor accepts any code in this list; the singular
-    /// `expectStatus` is consulted when the list is empty.
+    /// takes precedence over the singular `expectStatus`.
     std::vector<int> expectStatusList;
 
     std::vector<Extraction> extractions;
@@ -176,8 +167,8 @@ struct Operation {
     /// run against the final poll response.
     std::optional<PollUntil> pollUntil;
 
-    /// Set only for non-hand-written operations. Pure metadata: the
-    /// runtime ignores this; tooling and the UI consume it.
+    /// Set only for non-hand-written operations. Pure metadata — the runtime
+    /// ignores this; tooling and the UI consume it.
     std::optional<Provenance> provenance;
 };
 

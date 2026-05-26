@@ -8,7 +8,7 @@ class MainWindow;
 class Bootstrapper;
 
 /// Top-level application object. Owns the engine wiring (via Bootstrapper)
-/// and the main window. Phase 2 expands this into the full MVVM tree.
+/// and the main window.
 class App {
 public:
     App();

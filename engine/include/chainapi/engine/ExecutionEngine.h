@@ -1,8 +1,5 @@
 // Public façade for libchainapi-engine.
-//
 // pImpl + value types only — no Qt UI types, no infra-library types leak.
-// Swapping the implementation (e.g. extracting to a separate process) is
-// a build-system change, not a rewrite.
 #pragma once
 
 #include <chainapi/engine/Actor.h>
@@ -53,21 +50,15 @@ struct Project {
 /// Per-run options.
 struct RunOptions {
     bool dryRun{false};
-    bool resetExtractions{false};  ///< "Reset Cache" — clears the extraction cache before running.
-    bool resetSessions{false};     ///< "Send Cleanly" — invalidates all sessions before running.
+    bool resetExtractions{false};  ///< Clears the extraction cache before running.
+    bool resetSessions{false};     ///< Invalidates all sessions before running.
     std::string environment;       ///< Empty → use project default.
 };
 
 class ExecutionEngine {
 public:
     /// Dependencies are constructor-injected. Tests substitute fakes;
-    /// production wiring lives in `Bootstrapper.cpp` (desktop) or
-    /// `main.cpp` (CLI).
-    ///
-    /// Destructor and move operations are defined out-of-line in
-    /// Factories.cpp so consumers don't need the full definitions of
-    /// HttpClient/SchemaParser/etc. Standard pImpl applied to a
-    /// unique_ptr struct.
+    /// production wiring lives in `Bootstrapper.cpp` (desktop) or `main.cpp` (CLI).
     struct Dependencies {
         Dependencies();
         Dependencies(std::unique_ptr<HttpClient> http,

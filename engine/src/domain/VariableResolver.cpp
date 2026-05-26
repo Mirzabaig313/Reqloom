@@ -15,10 +15,6 @@
 //   duration  := digits ('s' | 'm' | 'h' | 'd')
 //   dotted    := name '.' name        // env.X, secret.X, actor.var, resource.var
 //   indexed   := name '[' digits ']' '.' name   // resource[N].var
-//
-// Crypto-dependent builtins ($.hmac, $.jwt, $.hash) and content-aware
-// helpers ($.json.stringify) live on the hook `ctx` object where the
-// OpenSSL dep belongs.
 #include "VariableResolver.h"
 
 #include "Codecs.h"
@@ -155,9 +151,6 @@ std::optional<CallParts> splitCall(std::string_view tail) {
 /// Evaluate a single function argument. Supported forms:
 ///   - "literal" / 'literal' → returns the literal text
 ///   - bareReference         → resolves env.X / secret.X / actor.var / resource.var
-///
-/// Builtins inside arguments ($.base64.encode($.now)) are not supported in
-/// MVP — keep the grammar intentionally shallow.
 ResolvedRef resolveCallArg(std::string_view arg,
                            const RunContext& ctx,
                            const ResolveContext& rctx) {
@@ -213,8 +206,7 @@ ResolvedRef resolveBuiltin(std::string_view ref,
         return std::nullopt;
     }
 
-    // Split off optional ±offset. Find the rightmost '+' or '-' not inside
-    // parentheses.
+    // Split off optional ±offset. Find the rightmost '+' or '-' not inside parens.
     std::chrono::seconds offset{0};
     bool hasOffset = false;
     {
@@ -264,7 +256,7 @@ ResolvedRef resolveBuiltin(std::string_view ref,
             return "test+" + generateUuid().substr(0, 8) + "@example.com";
         }
         if (fakerType == "phone") {
-            // Weak RNG is intentional — faker is for fixture data, not security.
+            // Weak RNG is fine here — faker is for fixture data, not security.
             return "+1555" + std::to_string(std::random_device{}() % 10000000);
         }
         return std::string{"faker_"} + std::string{fakerType} + "_" +
@@ -323,11 +315,9 @@ ResolvedRef resolveDotted(std::string_view ref,
         return std::nullopt;
     }
 
-    // Search instances in reverse (most recent first). Handles the common
-    // case where a single logical resource accrues fields across multiple
-    // operations (order.create extracts order_id; order.pay extracts
-    // payment_id; later we want order.order_id to still resolve from the
-    // older instance).
+    // Search instances in reverse (most recent first). Handles the case where
+    // a resource accrues fields across multiple operations — e.g. order.create
+    // extracts order_id, order.pay extracts payment_id; both should resolve.
     const auto& instances = ctx.instances(ResourceId{scope});
     for (auto it = instances.rbegin(); it != instances.rend(); ++it) {
         auto fieldIt = it->variables.find(field);
