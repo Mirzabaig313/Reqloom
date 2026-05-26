@@ -15,7 +15,7 @@
 set -euo pipefail
 
 QT_VERSION="${QT_VERSION:-6.8.3}"
-AQT_VERSION="${AQT_VERSION:-3.1.18}"
+AQT_VERSION="${AQT_VERSION:-3.3.0}"
 QT_DIR="${QT_DIR:-$HOME/Qt}"
 
 uname_s="$(uname -s)"
