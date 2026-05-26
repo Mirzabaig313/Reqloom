@@ -121,7 +121,8 @@ stages:
               if [[ ! -f "$qt_marker" ]]; then
                 rm -rf "$(QT_INSTALL_DIR)/$(QT_VERSION)"
                 aqt install-qt mac desktop "$(QT_VERSION)" clang_64 \
-                  --outputdir "$(QT_INSTALL_DIR)"
+                  --outputdir "$(QT_INSTALL_DIR)" \
+                  --archives qtbase qtdeclarative qtsvg
               else
                 echo "Qt $(QT_VERSION) already present from cache."
               fi
