@@ -25,6 +25,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_NETWORK_DNS";
         case ErrorCode::NetworkTls:
             return "E_NETWORK_TLS";
+        case ErrorCode::UploadFileUnreadable:
+            return "E_UPLOAD_FILE_UNREADABLE";
         case ErrorCode::Http5xx:
             return "E_HTTP_5XX";
         case ErrorCode::Http4xx:
@@ -86,6 +88,9 @@ ErrorClass classify(ErrorCode code) noexcept {
         case ErrorCode::NetworkDns:
         case ErrorCode::NetworkTls:
             return ErrorClass::Network;
+
+        case ErrorCode::UploadFileUnreadable:
+            return ErrorClass::Resolution;
 
         case ErrorCode::Http5xx:
         case ErrorCode::Http4xx:

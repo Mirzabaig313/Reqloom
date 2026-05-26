@@ -28,6 +28,13 @@ struct CurlSlistDeleter {
 };
 using CurlSlistHandle = std::unique_ptr<curl_slist, CurlSlistDeleter>;
 
+struct CurlMimeDeleter {
+    void operator()(curl_mime* p) const noexcept {
+        if (p) curl_mime_free(p);
+    }
+};
+using CurlMimeHandle = std::unique_ptr<curl_mime, CurlMimeDeleter>;
+
 // ─── Process-wide curl global init ──────────────────────────────────────────
 
 void ensureCurlGlobalInit() {
@@ -142,6 +149,11 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
 
     CurlSlistHandle headerList;
     for (const auto& [key, value] : request.headers) {
+        // Multipart routing sets Content-Type itself (with the boundary),
+        // so suppress any caller-supplied Content-Type for those requests.
+        if (!request.multipart.empty() && key == "Content-Type") {
+            continue;
+        }
         auto headerLine = key + ": " + value;
         auto* appended = curl_slist_append(headerList.get(), headerLine.c_str());
         if (appended == nullptr) {
@@ -156,7 +168,54 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
         curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headerList.get());
     }
 
-    if (request.body) {
+    // Multipart and inline body are mutually exclusive. Multipart wins
+    // when both are set; the upper layer guarantees only one is populated.
+    CurlMimeHandle mime;
+    if (!request.multipart.empty()) {
+        mime.reset(curl_mime_init(curl.get()));
+        if (!mime) {
+            return std::unexpected(ChainApiError{ErrorCode::NetworkTimeout,
+                                                 ErrorClass::Network,
+                                                 "curl_mime_init failed (multipart request)"});
+        }
+        for (const auto& part : request.multipart) {
+            curl_mimepart* mp = curl_mime_addpart(mime.get());
+            if (mp == nullptr) {
+                return std::unexpected(
+                    ChainApiError{ErrorCode::NetworkTimeout,
+                                  ErrorClass::Network,
+                                  "curl_mime_addpart failed for part: " + part.name});
+            }
+            if (curl_mime_name(mp, part.name.c_str()) != CURLE_OK) {
+                return std::unexpected(
+                    ChainApiError{ErrorCode::NetworkTimeout,
+                                  ErrorClass::Network,
+                                  "curl_mime_name failed for part: " + part.name});
+            }
+            if (part.isFile()) {
+                if (curl_mime_filedata(mp, part.filePath->c_str()) != CURLE_OK) {
+                    return std::unexpected(
+                        ChainApiError{ErrorCode::NetworkTimeout,
+                                      ErrorClass::Network,
+                                      "curl_mime_filedata failed: " + *part.filePath});
+                }
+                if (part.filename) {
+                    curl_mime_filename(mp, part.filename->c_str());
+                }
+            } else {
+                if (curl_mime_data(mp, part.value.c_str(), part.value.size()) != CURLE_OK) {
+                    return std::unexpected(
+                        ChainApiError{ErrorCode::NetworkTimeout,
+                                      ErrorClass::Network,
+                                      "curl_mime_data failed for part: " + part.name});
+                }
+            }
+            if (part.contentType) {
+                curl_mime_type(mp, part.contentType->c_str());
+            }
+        }
+        curl_easy_setopt(curl.get(), CURLOPT_MIMEPOST, mime.get());
+    } else if (request.body) {
         curl_easy_setopt(
             curl.get(), CURLOPT_POSTFIELDSIZE, static_cast<long>(request.body->size()));
         curl_easy_setopt(curl.get(), CURLOPT_COPYPOSTFIELDS, request.body->c_str());

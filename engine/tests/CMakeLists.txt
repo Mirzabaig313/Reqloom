@@ -25,6 +25,7 @@ add_executable(chainapi-engine-unit-tests
     unit/TopologyTest.cpp
     unit/DependencyResolverTest.cpp
     unit/CodecsTest.cpp
+    unit/MultipartBuilderTest.cpp
     unit/SchemaParserMultiFileTest.cpp
 )
 target_include_directories(chainapi-engine-unit-tests
@@ -51,10 +52,13 @@ add_executable(chainapi-engine-integration-tests
     integration/HappyPathTest.cpp
     integration/PollingTest.cpp
     integration/RunOptionsTest.cpp
+    integration/MultipartTest.cpp
 )
 target_link_libraries(chainapi-engine-integration-tests
     PRIVATE
         chainapi::engine
+        CURL::libcurl
+        nlohmann_json::nlohmann_json
         GTest::gtest
         GTest::gtest_main
 )

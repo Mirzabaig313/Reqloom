@@ -1,0 +1,52 @@
+version: 1
+name: Multipart Smoke Project
+default_environment: local
+
+environments:
+  local:
+    baseUrl: http://placeholder.invalid
+
+actors:
+  user:
+    auth:
+      strategy: simple
+      method: POST
+      path: /api/v1/auth/login
+      body:
+        email: "test@test.com"
+        password: "test123"
+      expect_status: 200
+      extract:
+        token: $.data.accessToken
+    inject:
+      headers:
+        Authorization: "Bearer {{user.token}}"
+
+resources:
+  upload:
+    operations:
+      with_file:
+        method: POST
+        path: /api/v1/uploads
+        actor: user
+        headers:
+          Content-Type: multipart/form-data
+        body_form:
+          documentType: "passport"
+          file: "@{{env.uploadFile}}"
+        expect_status: 201
+        extract:
+          id: $.data.id
+
+  form:
+    operations:
+      url_encoded:
+        method: POST
+        path: /api/v1/forms
+        actor: user
+        body_form:
+          name: "alice"
+          qty: "5"
+        expect_status: 200
+        extract:
+          id: $.data.id
