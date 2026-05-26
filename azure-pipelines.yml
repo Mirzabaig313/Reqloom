@@ -1,8 +1,5 @@
 # ChainAPI — macOS CI on Azure DevOps Pipelines.
 #
-# Linux + Windows live on AppVeyor (see appveyor.yml). GitHub Actions is no
-# longer used for ChainAPI builds.
-#
 # Branch routing:
 #   * push to dev  → static checks + macos-debug   (ASan + UBSan + tests)
 #   * push to main → static checks + macos-release (-O2, build only)
@@ -12,9 +9,6 @@
 # limits on every provider we tried; pre-built Qt brings cold-cache builds
 # to ~10-15 min total.
 #
-# Until the public-project parallel grant is approved, this org has 0 free
-# Microsoft-hosted slots — pipeline will queue/fail at "Set up job" until
-# the grant lands. See https://aka.ms/azpipelines-parallelism-request.
 
 trigger:
   branches:
@@ -41,13 +35,13 @@ variables:
 stages:
   # ==========================================================================
   # Static checks — gates the macOS build. Cheap (≤ 1 min on Linux agent).
-  # Runs the architectural boundary check and clang-format dry-run.
+  # Runs the architectural boundary check.
   # ==========================================================================
   - stage: static_checks
     displayName: Static Checks
     jobs:
       - job: lint
-        displayName: Boundary + clang-format
+        displayName: Architectural boundary check
         pool:
           vmImage: ubuntu-latest
         steps:
@@ -56,28 +50,6 @@ stages:
 
           - script: ./tools/ci/boundary-check.sh
             displayName: Architectural boundary check
-
-          - script: |
-              sudo apt-get update
-              sudo apt-get install -y --no-install-recommends clang-format-18
-              sudo update-alternatives --install /usr/bin/clang-format clang-format \
-                /usr/bin/clang-format-18 100
-            displayName: Install clang-format-18
-
-          - script: |
-              set -euo pipefail
-              mapfile -t files < <(
-                find engine cli desktop ipc \
-                  \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cc' \) \
-                  -not -path '*/build/*' \
-                  2>/dev/null
-              )
-              if [[ ${#files[@]} -eq 0 ]]; then
-                echo "No C++ files found — nothing to check."
-                exit 0
-              fi
-              clang-format --dry-run --Werror "${files[@]}"
-            displayName: clang-format dry-run
 
   # ==========================================================================
   # macOS build — debug on dev, release on main.

@@ -67,5 +67,7 @@ validation/discourse/findings.md
 # local 
 .kiro/hooks
 doc/local
-chainapi/
+# Anchored to repo root: only the top-level chainapi/ working dir
+
+/chainapi/
 doc/adr

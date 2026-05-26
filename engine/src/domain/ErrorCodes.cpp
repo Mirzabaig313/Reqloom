@@ -47,6 +47,10 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_POLL_MAX_ATTEMPTS_EXCEEDED";
         case ErrorCode::PollFailPredicate:
             return "E_POLL_FAIL_PREDICATE";
+        case ErrorCode::LlmRequestFailed:
+            return "E_LLM_REQUEST_FAILED";
+        case ErrorCode::LlmResponseInvalid:
+            return "E_LLM_RESPONSE_INVALID";
         case ErrorCode::Cancelled:
             return "E_CANCELLED";
     }
@@ -103,6 +107,10 @@ ErrorClass classify(ErrorCode code) noexcept {
         case ErrorCode::PollMaxAttemptsExceeded:
         case ErrorCode::PollFailPredicate:
             return ErrorClass::Polling;
+
+        case ErrorCode::LlmRequestFailed:
+        case ErrorCode::LlmResponseInvalid:
+            return ErrorClass::Llm;
 
         case ErrorCode::Cancelled:
             return ErrorClass::Run;

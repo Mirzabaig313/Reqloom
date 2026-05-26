@@ -94,4 +94,107 @@ std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson
     return values;
 }
 
+namespace {
+
+constexpr std::size_t kMaxTraceValueBytes = 256;
+
+std::string truncateForTrace(std::string s) {
+    if (s.size() <= kMaxTraceValueBytes) return s;
+    s.resize(kMaxTraceValueBytes);
+    s += "...";
+    return s;
+}
+
+const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
+    std::string path{sourcePath};
+    if (path.starts_with("$.")) path = path.substr(2);
+
+    const json* current = &doc;
+    std::istringstream ss(path);
+    std::string segment;
+    while (std::getline(ss, segment, '.')) {
+        if (segment.empty()) continue;
+        const auto bracketPos = segment.find('[');
+        const std::string name =
+            (bracketPos == std::string::npos) ? segment : segment.substr(0, bracketPos);
+
+        if (!name.empty()) {
+            if (!current->is_object()) return nullptr;
+            auto it = current->find(name);
+            if (it == current->end()) return nullptr;
+            current = &(*it);
+        }
+
+        std::size_t pos = bracketPos;
+        while (pos != std::string::npos) {
+            const auto closePos = segment.find(']', pos);
+            if (closePos == std::string::npos) return nullptr;
+            const auto indexStr = segment.substr(pos + 1, closePos - pos - 1);
+            std::size_t index = 0;
+            const auto* first = indexStr.data();
+            const auto* last = first + indexStr.size();
+            const auto fc = std::from_chars(first, last, index);
+            if (fc.ec != std::errc{}) return nullptr;
+            if (!current->is_array() || index >= current->size()) return nullptr;
+            current = &(*current)[index];
+            pos = segment.find('[', closePos);
+        }
+    }
+    return current;
+}
+
+}  // namespace
+
+std::expected<DetailedExtraction, ChainApiError> extractFromJsonDetailed(
+    const OperationId& opId,
+    const std::string& body,
+    const std::vector<Extraction>& extractions) {
+    DetailedExtraction out;
+    if (extractions.empty()) return out;
+
+    json doc;
+    try {
+        doc = json::parse(body);
+    } catch (const json::parse_error& e) {
+        return std::unexpected(
+            ChainApiError{ErrorCode::ResponseParse,
+                          ErrorClass::Extraction,
+                          std::string("response is not valid JSON: ") + e.what()});
+    }
+
+    out.traces.reserve(extractions.size());
+    for (const auto& ext : extractions) {
+        ExtractionTrace trace;
+        trace.op = opId;
+        trace.variableName = ext.variableName;
+        trace.sourcePath = ext.sourcePath;
+        trace.sourceKind = ext.source;
+
+        if (ext.source != Extraction::Source::JsonPath) {
+            trace.outcome = ExtractionTrace::Outcome::Unsupported;
+            out.traces.push_back(std::move(trace));
+            continue;
+        }
+
+        const auto* node = walkPathOrNull(doc, ext.sourcePath);
+        if (node == nullptr) {
+            trace.outcome = ExtractionTrace::Outcome::Missing;
+            out.traces.push_back(std::move(trace));
+            continue;
+        }
+        if (node->is_null()) {
+            trace.outcome = ExtractionTrace::Outcome::Null;
+            out.traces.push_back(std::move(trace));
+            continue;
+        }
+
+        std::string value = node->is_string() ? node->get<std::string>() : node->dump();
+        trace.value = truncateForTrace(value);
+        trace.outcome = ExtractionTrace::Outcome::Resolved;
+        out.values[ext.variableName] = std::move(value);
+        out.traces.push_back(std::move(trace));
+    }
+    return out;
+}
+
 }  // namespace chainapi::engine

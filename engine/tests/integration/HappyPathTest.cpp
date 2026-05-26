@@ -126,3 +126,64 @@ TEST_F(MarketplaceHappyPath, ChainContainsExpectedOperations) {
     EXPECT_TRUE(sawRefundRequest);
     EXPECT_TRUE(targetIsLast);
 }
+
+TEST_F(MarketplaceHappyPath, ExtractionTraceCapturesEveryDeclaredExtraction) {
+    // Slice 6d/6e: every successful extraction lands as one row in
+    // ctx.extractionTrace(). The marketplace fixture has at least one
+    // extraction per resource — product.id, order.id, refund.id.
+    auto project = loadMarketplace(harness_->baseUrl());
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+
+    auto result = engine.run(project, ce::OperationId{"refund.approve"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->succeeded());
+
+    const auto& trace = ctx.extractionTrace();
+    ASSERT_FALSE(trace.empty()) << "expected at least one extraction trace";
+
+    // Confirm at least one Resolved entry per pivotal extraction. Names
+    // come from the marketplace fixture's chainapi.yaml.
+    bool sawProductId = false;
+    bool sawOrderId = false;
+    for (const auto& t : trace) {
+        EXPECT_EQ(t.outcome, ce::ExtractionTrace::Outcome::Resolved)
+            << "trace for " << t.op.value << "." << t.variableName << " was not Resolved";
+        if (t.variableName == "product_id" || t.variableName == "id") {
+            if (t.op.value.starts_with("product.")) sawProductId = true;
+            if (t.op.value.starts_with("order.")) sawOrderId = true;
+        }
+    }
+    EXPECT_TRUE(sawProductId || sawOrderId)
+        << "expected at least one product or order extraction in the trace";
+}
+
+TEST_F(MarketplaceHappyPath, ExtractionCompletedEventEmittedPerExtraction) {
+    // Slice 6f: an ExtractionCompleted event fires for every extraction
+    // the executor evaluates. Subscribers see the per-extraction outcome
+    // live without inspecting the trace after the fact.
+    auto project = loadMarketplace(harness_->baseUrl());
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+
+    std::vector<ce::ExtractionCompleted> events;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* e = std::get_if<ce::ExtractionCompleted>(&ev)) {
+            events.push_back(*e);
+        }
+    });
+
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"refund.approve"}, ctx);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result->succeeded());
+
+    ASSERT_EQ(events.size(), ctx.extractionTrace().size())
+        << "one event per trace row";
+
+    for (const auto& ev : events) {
+        EXPECT_EQ(ev.outcome, ce::ExtractionCompleted::Outcome::Resolved);
+        EXPECT_FALSE(ev.variableName.empty());
+        EXPECT_FALSE(ev.sourcePath.empty());
+        EXPECT_FALSE(ev.value.empty());
+    }
+}

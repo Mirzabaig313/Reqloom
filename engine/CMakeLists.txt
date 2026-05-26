@@ -41,6 +41,7 @@ add_library(chainapi-engine-infrastructure OBJECT
     src/infrastructure/extraction/JsonPathEvaluator.cpp
     src/infrastructure/util/Crypto.cpp
     src/infrastructure/typings/StaticHookTypingsEmitter.cpp
+    src/infrastructure/llm/HttpLlmClient.cpp
 )
 target_include_directories(chainapi-engine-infrastructure
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

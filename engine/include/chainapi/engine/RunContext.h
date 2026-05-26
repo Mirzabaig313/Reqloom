@@ -48,7 +48,7 @@ struct ResourceInstance {
     std::map<std::string, std::string> variables;
 };
 
-/// Status of a single step in a chain.
+/// One step in a chain.
 struct StepResult {
     enum class Status { Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked };
 
@@ -58,14 +58,35 @@ struct StepResult {
     int attempts{0};
     std::chrono::milliseconds elapsed{};
 
-    /// Human-readable context for this step's outcome — HTTP status,
-    /// response body excerpt, missing variable name, etc.
     std::string detail;
 
     /// Set when this row is one poll attempt within a `poll_until` loop
-    /// (1-based). Parent operation rows leave this empty. Renderers can
-    /// indent or group these under the parent step row.
+    /// (1-based). Parent operation rows leave this empty.
     std::optional<int> pollAttempt;
+};
+
+/// One extraction's runtime outcome, recorded by the executor each time
+/// it evaluates an `extract:` entry. Powers the timeline UI (PRD §10.3.4)
+/// and the AI-importer diagnostic loop — when an inferred extraction
+/// resolves to `null` at runtime, the user can see it without re-running
+/// against the schema.
+struct ExtractionTrace {
+    enum class Outcome {
+        Resolved,    ///< Source path resolved to a non-null value.
+        Null,        ///< Source path resolved but the value was null.
+        Missing,     ///< Source path did not resolve at all.
+        Unsupported, ///< Source kind cannot be resolved by this engine build.
+    };
+
+    OperationId op;
+    std::string variableName;
+    std::string sourcePath;
+    Extraction::Source sourceKind{Extraction::Source::JsonPath};
+    Outcome outcome{Outcome::Missing};
+
+    /// Resolved value when `outcome == Resolved`. Empty otherwise.
+    /// Truncated to ~256 bytes so the timeline doesn't store payloads.
+    std::string value;
 };
 
 /// The mutable state of a single run.
@@ -92,6 +113,9 @@ public:
     // Step recording
     void record(StepResult step);
     [[nodiscard]] const std::vector<StepResult>& steps() const noexcept;
+
+    void recordExtraction(ExtractionTrace trace);
+    [[nodiscard]] const std::vector<ExtractionTrace>& extractionTrace() const noexcept;
 
 private:
     struct Impl;
