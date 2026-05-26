@@ -10,6 +10,7 @@ struct RunContext::Impl {
     std::map<ResourceId, std::vector<ResourceInstance>> instances;
     std::vector<ResourceInstance> emptyInstances;
     std::vector<StepResult> steps;
+    std::vector<ExtractionTrace> extractionTrace;
 };
 
 RunContext::RunContext() : impl_(std::make_unique<Impl>()) {}
@@ -50,6 +51,14 @@ void RunContext::record(StepResult step) {
 
 const std::vector<StepResult>& RunContext::steps() const noexcept {
     return impl_->steps;
+}
+
+void RunContext::recordExtraction(ExtractionTrace trace) {
+    impl_->extractionTrace.push_back(std::move(trace));
+}
+
+const std::vector<ExtractionTrace>& RunContext::extractionTrace() const noexcept {
+    return impl_->extractionTrace;
 }
 
 }  // namespace chainapi::engine

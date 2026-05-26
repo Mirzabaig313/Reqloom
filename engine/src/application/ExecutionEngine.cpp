@@ -333,7 +333,7 @@ struct ExecutionEngine::Impl {
                            RunContext& ctx,
                            const ResolveContext& rctx,
                            RunId runId,
-                           std::size_t /*stepIndex*/,
+                           std::size_t stepIndex,
                            std::vector<StepResult>& pollAttemptRows) {
         StepResult result;
         result.op = op.id;
@@ -545,17 +545,63 @@ struct ExecutionEngine::Impl {
         }
 
         if (httpResp && !op.extractions.empty()) {
-            auto values = extractFromJson(httpResp->body, op.extractions);
-            if (!values) {
+            auto detailed = extractFromJsonDetailed(op.id, httpResp->body, op.extractions);
+            if (!detailed) {
                 result.status = StepResult::Status::Failed;
-                result.error = values.error().code;
+                result.error = detailed.error().code;
                 auto elapsed = std::chrono::steady_clock::now() - startTime;
                 result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
                 return result;
             }
-            if (!values->empty()) {
+
+            // Trace every extraction outcome — including misses — so the
+            // timeline shows nulls and missing fields. The op still fails
+            // when any required extraction misses; that contract pre-dates
+            // this slice and downstream ops depend on it.
+            std::optional<std::string> firstMiss;
+            for (auto& t : detailed->traces) {
+                if (!firstMiss && t.outcome == ExtractionTrace::Outcome::Missing) {
+                    firstMiss = t.variableName;
+                }
+
+                ExtractionCompleted ev;
+                ev.runId = runId;
+                ev.stepIndex = stepIndex;
+                ev.op = t.op;
+                ev.variableName = t.variableName;
+                ev.sourcePath = t.sourcePath;
+                ev.at = std::chrono::system_clock::now();
+                switch (t.outcome) {
+                    case ExtractionTrace::Outcome::Resolved:
+                        ev.outcome = ExtractionCompleted::Outcome::Resolved;
+                        ev.value = t.value;
+                        break;
+                    case ExtractionTrace::Outcome::Null:
+                        ev.outcome = ExtractionCompleted::Outcome::Null;
+                        break;
+                    case ExtractionTrace::Outcome::Missing:
+                        ev.outcome = ExtractionCompleted::Outcome::Missing;
+                        break;
+                    case ExtractionTrace::Outcome::Unsupported:
+                        ev.outcome = ExtractionCompleted::Outcome::Unsupported;
+                        break;
+                }
+                emit(std::move(ev));
+
+                ctx.recordExtraction(std::move(t));
+            }
+            if (firstMiss) {
+                result.status = StepResult::Status::Failed;
+                result.error = ErrorCode::ExtractionFailed;
+                result.detail = "extract '" + *firstMiss + "' missed for " + op.id.value;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+
+            if (!detailed->values.empty()) {
                 ResourceInstance instance;
-                instance.variables = std::move(*values);
+                instance.variables = std::move(detailed->values);
                 ctx.appendInstance(op.resource, std::move(instance));
             }
         }

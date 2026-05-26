@@ -75,6 +75,25 @@ struct ExtractionApplied {
     TimePoint at;
 };
 
+/// Per-extraction outcome — one event per extraction declared on an op.
+/// Mirrors `ExtractionTrace` on `RunContext`. Lets the desktop timeline
+/// surface resolved values, nulls, and missing fields per step instead
+/// of the coarse-grained `ExtractionApplied` summary.
+struct ExtractionCompleted {
+    enum class Outcome { Resolved, Null, Missing, Unsupported };
+
+    RunId runId;
+    std::size_t stepIndex{};
+    OperationId op;
+    std::string variableName;
+    std::string sourcePath;
+    Outcome outcome{Outcome::Missing};
+
+    /// Truncated value when `outcome == Resolved`. Empty otherwise.
+    std::string value;
+    TimePoint at;
+};
+
 struct StepFailed {
     RunId runId;
     std::size_t stepIndex{};
@@ -117,6 +136,7 @@ using RunEvent = std::variant<RunStarted,
                               RequestPrepared,
                               ResponseReceived,
                               ExtractionApplied,
+                              ExtractionCompleted,
                               StepFailed,
                               StepCancelled,
                               SessionRefreshed,

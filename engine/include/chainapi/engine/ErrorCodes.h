@@ -44,6 +44,10 @@ enum class ErrorCode {
     PollMaxAttemptsExceeded,  ///< attempt-count budget exceeded
     PollFailPredicate,        ///< fail_when matched a poll response
 
+    // LLM (AI importer)
+    LlmRequestFailed,    ///< provider call failed (network / 4xx / 5xx)
+    LlmResponseInvalid,  ///< provider responded but the body could not be decoded
+
     // Run
     Cancelled,
 };
@@ -57,6 +61,7 @@ enum class ErrorClass {
     Hook,
     Extraction,
     Polling,
+    Llm,
     Run,
 };
 

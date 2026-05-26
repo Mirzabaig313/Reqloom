@@ -12,6 +12,8 @@
 #include "../infrastructure/hooks/QuickJsHookRunner.h"
 #include "../infrastructure/http/CurlHttpClient.h"
 #include "../infrastructure/http/HttpClient.h"
+#include "../infrastructure/llm/HttpLlmClient.h"
+#include "../infrastructure/llm/LlmClient.h"
 #include "../infrastructure/schema/SchemaParser.h"
 #include "../infrastructure/schema/SchemaWriter.h"
 #include "../infrastructure/schema/YamlSchemaParser.h"
@@ -64,6 +66,10 @@ std::unique_ptr<SecretStore> makeKeychainSecretStore() {
 
 std::unique_ptr<HookRunner> makeQuickJsHookRunner() {
     return std::make_unique<QuickJsHookRunner>();
+}
+
+std::unique_ptr<LlmClient> makeHttpLlmClient(HttpClient& transport) {
+    return std::make_unique<HttpLlmClient>(transport);
 }
 
 ExecutionEngine::Dependencies makeDefaultDependencies() {
