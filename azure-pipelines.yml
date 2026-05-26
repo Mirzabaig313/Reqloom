@@ -153,7 +153,10 @@ stages:
               else
                 echo "Qt $(QT_VERSION) already present from cache."
               fi
-              ls -1 "$(CMAKE_PREFIX_PATH)/lib/cmake/Qt6" | head -3
+              [[ -f "$(CMAKE_PREFIX_PATH)/lib/cmake/Qt6/Qt6Config.cmake" ]] || {
+                echo "error: Qt6Config.cmake missing under $(CMAKE_PREFIX_PATH)" >&2
+                exit 1
+              }
             displayName: Install Qt $(QT_VERSION)
 
           # ------------------------------------------------------------------
