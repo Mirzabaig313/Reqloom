@@ -141,14 +141,13 @@ install:
       REM for the qconfig.pri marker specifically so a partial install
       REM doesn't masquerade as cached.
       set "QT_MARKER=C:\Qt\%QT_VERSION%\msvc2022_64\mkspecs\qconfig.pri"
-      if exist "%QT_MARKER%" goto :qt_cached
-      if exist "C:\Qt\%QT_VERSION%" rmdir /s /q "C:\Qt\%QT_VERSION%"
-      aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 --outputdir C:\Qt
-      if errorlevel 1 exit /b 1
-      goto :qt_done
-      :qt_cached
-      echo Qt %QT_VERSION% already present from cache.
-      :qt_done
+      if exist "%QT_MARKER%" (
+        echo Qt %QT_VERSION% already present from cache.
+      ) else (
+        if exist "C:\Qt\%QT_VERSION%" rmdir /s /q "C:\Qt\%QT_VERSION%"
+        aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 --outputdir C:\Qt
+        if errorlevel 1 exit /b 1
+      )
 
       if not exist "C:\vcpkg-bincache" mkdir "C:\vcpkg-bincache"
 
