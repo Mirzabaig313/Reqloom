@@ -1,11 +1,4 @@
-// Verifier — see Verifier.h for the contract.
-//
-// JSONPath walking here duplicates the small subset used by JsonPathEvaluator
-// and PredicateEvaluator. The infrastructure copy is on the wrong layer for
-// the application-layer verifier to depend on; the predicate copy is hidden
-// in an anonymous namespace. All three cover the same narrow grammar:
-//   $.field  /  $.nested.field  /  $.array[0].field  /  $.field[0]
-// When extending, update all three.
+// Verifier — validates extractions against response payloads.
 #include "Verifier.h"
 
 #include <nlohmann/json.hpp>

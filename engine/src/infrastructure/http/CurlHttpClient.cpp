@@ -1,10 +1,4 @@
-// CurlHttpClient — libcurl-backed implementation of HttpClient.
-//
-// Design notes:
-//   - Curl handle and slist are RAII-wrapped.
-//   - Global init is process-wide (libcurl requires once per process).
-//     Multiple instances share one global init.
-//   - CURLOPT_COPYPOSTFIELDS decouples the body buffer lifetime from the request.
+// CurlHttpClient — libcurl-backed HttpClient.
 #include "CurlHttpClient.h"
 
 #include <curl/curl.h>

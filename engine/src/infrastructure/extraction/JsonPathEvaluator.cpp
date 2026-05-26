@@ -1,4 +1,4 @@
-// JsonPathEvaluator — JSONPath evaluation against response bodies.
+// JsonPathEvaluator — JSONPath evaluation against response bodies. 
 #include "JsonPathEvaluator.h"
 
 namespace chainapi::engine {

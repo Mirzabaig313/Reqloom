@@ -1,4 +1,4 @@
-// HttpLlmClient — see header.
+// HttpLlmClient — LLM client via HTTP with truncation.
 #include "HttpLlmClient.h"
 
 #include <nlohmann/json.hpp>
@@ -32,9 +32,12 @@ std::string excerpt(const std::string& body) {
 
 std::string_view roleAsString(LlmMessage::Role role) noexcept {
     switch (role) {
-        case LlmMessage::Role::System:    return "system";
-        case LlmMessage::Role::User:      return "user";
-        case LlmMessage::Role::Assistant: return "assistant";
+        case LlmMessage::Role::System:
+            return "system";
+        case LlmMessage::Role::User:
+            return "user";
+        case LlmMessage::Role::Assistant:
+            return "assistant";
     }
     return "user";
 }
@@ -50,8 +53,8 @@ std::expected<HttpRequest, ChainApiError> buildOpenAiRequest(const LlmRequest& r
     body["model"] = req.config.model;
     body["messages"] = json::array();
     for (const auto& m : req.messages) {
-        body["messages"].push_back({{"role", std::string{roleAsString(m.role)}},
-                                    {"content", m.content}});
+        body["messages"].push_back(
+            {{"role", std::string{roleAsString(m.role)}}, {"content", m.content}});
     }
     if (req.config.maxTokens) body["max_tokens"] = *req.config.maxTokens;
     if (req.config.jsonOnly) {
@@ -62,8 +65,8 @@ std::expected<HttpRequest, ChainApiError> buildOpenAiRequest(const LlmRequest& r
     http.method = HttpMethod::Post;
     http.url = req.config.endpoint + "/v1/chat/completions";
     http.headers["Authorization"] = "Bearer " + req.config.apiKey;
-    http.headers["Content-Type"]  = "application/json";
-    http.headers["Accept"]        = "application/json";
+    http.headers["Content-Type"] = "application/json";
+    http.headers["Accept"] = "application/json";
     http.body = body.dump();
     http.timeout = req.config.timeout;
     return http;
@@ -77,7 +80,7 @@ std::expected<HttpRequest, ChainApiError> buildAnthropicRequest(const LlmRequest
     }
 
     json body;
-    body["model"]      = req.config.model;
+    body["model"] = req.config.model;
     body["max_tokens"] = req.config.maxTokens.value_or(4096);
 
     std::string systemPrompt;
@@ -88,8 +91,7 @@ std::expected<HttpRequest, ChainApiError> buildAnthropicRequest(const LlmRequest
             systemPrompt += m.content;
             continue;
         }
-        messages.push_back({{"role", std::string{roleAsString(m.role)}},
-                            {"content", m.content}});
+        messages.push_back({{"role", std::string{roleAsString(m.role)}}, {"content", m.content}});
     }
     if (!systemPrompt.empty()) body["system"] = std::move(systemPrompt);
     body["messages"] = std::move(messages);
@@ -97,10 +99,10 @@ std::expected<HttpRequest, ChainApiError> buildAnthropicRequest(const LlmRequest
     HttpRequest http;
     http.method = HttpMethod::Post;
     http.url = req.config.endpoint + "/v1/messages";
-    http.headers["x-api-key"]         = req.config.apiKey;
+    http.headers["x-api-key"] = req.config.apiKey;
     http.headers["anthropic-version"] = "2023-06-01";
-    http.headers["Content-Type"]      = "application/json";
-    http.headers["Accept"]            = "application/json";
+    http.headers["Content-Type"] = "application/json";
+    http.headers["Accept"] = "application/json";
     http.body = body.dump();
     http.timeout = req.config.timeout;
     return http;
@@ -109,11 +111,11 @@ std::expected<HttpRequest, ChainApiError> buildAnthropicRequest(const LlmRequest
 /// Ollama: local-only, no API key, JSON mode via `format: "json"`.
 std::expected<HttpRequest, ChainApiError> buildOllamaRequest(const LlmRequest& req) {
     json body;
-    body["model"]    = req.config.model;
+    body["model"] = req.config.model;
     body["messages"] = json::array();
     for (const auto& m : req.messages) {
-        body["messages"].push_back({{"role", std::string{roleAsString(m.role)}},
-                                    {"content", m.content}});
+        body["messages"].push_back(
+            {{"role", std::string{roleAsString(m.role)}}, {"content", m.content}});
     }
     if (req.config.jsonOnly) body["format"] = "json";
     body["stream"] = false;
@@ -122,7 +124,7 @@ std::expected<HttpRequest, ChainApiError> buildOllamaRequest(const LlmRequest& r
     http.method = HttpMethod::Post;
     http.url = req.config.endpoint + "/api/chat";
     http.headers["Content-Type"] = "application/json";
-    http.headers["Accept"]       = "application/json";
+    http.headers["Accept"] = "application/json";
     http.body = body.dump();
     http.timeout = req.config.timeout;
     return http;
@@ -134,7 +136,8 @@ std::expected<LlmResponse, ChainApiError> parseOpenAi(const json& doc) {
     }
     const auto& first = doc["choices"][0];
     if (!first.contains("message") || !first["message"].contains("content")) {
-        return std::unexpected(responseInvalid("openai: response missing `choices[0].message.content`"));
+        return std::unexpected(
+            responseInvalid("openai: response missing `choices[0].message.content`"));
     }
     LlmResponse out;
     out.content = first["message"]["content"].get<std::string>();
@@ -146,7 +149,8 @@ std::expected<LlmResponse, ChainApiError> parseOpenAi(const json& doc) {
     if (doc.contains("usage")) {
         const auto& u = doc["usage"];
         if (u.contains("prompt_tokens")) out.promptTokens = u["prompt_tokens"].get<int>();
-        if (u.contains("completion_tokens")) out.completionTokens = u["completion_tokens"].get<int>();
+        if (u.contains("completion_tokens"))
+            out.completionTokens = u["completion_tokens"].get<int>();
     }
     return out;
 }
@@ -170,7 +174,7 @@ std::expected<LlmResponse, ChainApiError> parseAnthropic(const json& doc) {
     }
     if (doc.contains("usage")) {
         const auto& u = doc["usage"];
-        if (u.contains("input_tokens"))  out.promptTokens     = u["input_tokens"].get<int>();
+        if (u.contains("input_tokens")) out.promptTokens = u["input_tokens"].get<int>();
         if (u.contains("output_tokens")) out.completionTokens = u["output_tokens"].get<int>();
     }
     return out;
@@ -212,9 +216,15 @@ std::expected<LlmResponse, ChainApiError> HttpLlmClient::complete(const LlmReque
 
     std::expected<HttpRequest, ChainApiError> built;
     switch (request.config.provider) {
-        case LlmProvider::OpenAI:    built = buildOpenAiRequest(request); break;
-        case LlmProvider::Anthropic: built = buildAnthropicRequest(request); break;
-        case LlmProvider::Ollama:    built = buildOllamaRequest(request); break;
+        case LlmProvider::OpenAI:
+            built = buildOpenAiRequest(request);
+            break;
+        case LlmProvider::Anthropic:
+            built = buildAnthropicRequest(request);
+            break;
+        case LlmProvider::Ollama:
+            built = buildOllamaRequest(request);
+            break;
     }
     if (!built) return std::unexpected(built.error());
 
@@ -224,23 +234,29 @@ std::expected<LlmResponse, ChainApiError> HttpLlmClient::complete(const LlmReque
         return std::unexpected(requestFailed("transport: " + response.error().detail));
     }
     if (response->status < 200 || response->status >= 300) {
-        return std::unexpected(requestFailed(
-            "provider HTTP " + std::to_string(response->status) + " — " + excerpt(response->body)));
+        return std::unexpected(requestFailed("provider HTTP " + std::to_string(response->status) +
+                                             " — " + excerpt(response->body)));
     }
 
     json doc;
     try {
         doc = json::parse(response->body);
     } catch (const json::parse_error& e) {
-        return std::unexpected(responseInvalid(
-            std::string{"could not parse provider JSON: "} + e.what()));
+        return std::unexpected(
+            responseInvalid(std::string{"could not parse provider JSON: "} + e.what()));
     }
 
     std::expected<LlmResponse, ChainApiError> parsed;
     switch (request.config.provider) {
-        case LlmProvider::OpenAI:    parsed = parseOpenAi(doc); break;
-        case LlmProvider::Anthropic: parsed = parseAnthropic(doc); break;
-        case LlmProvider::Ollama:    parsed = parseOllama(doc); break;
+        case LlmProvider::OpenAI:
+            parsed = parseOpenAi(doc);
+            break;
+        case LlmProvider::Anthropic:
+            parsed = parseAnthropic(doc);
+            break;
+        case LlmProvider::Ollama:
+            parsed = parseOllama(doc);
+            break;
     }
     if (!parsed) return std::unexpected(parsed.error());
 

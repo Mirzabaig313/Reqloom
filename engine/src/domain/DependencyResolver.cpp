@@ -1,7 +1,5 @@
-// DependencyResolver — builds the execution chain for a target operation.
-//
-// Uses Kahn's topological sort (O(V+E)) with deterministic lexicographic
-// tie-break. Detects cycles and undefined references.
+// DependencyResolver — builds execution chain using Kahn's topological sort. Detects cycles and
+// undefined refs.
 #include "DependencyResolver.h"
 
 #include <queue>

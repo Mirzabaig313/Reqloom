@@ -1,6 +1,4 @@
-// ImportFromOpenApi — direct OpenAPI 3.x → Project parser. Walks paths ×
-// methods, infers extractions from response schemas, verifies them against
-// the response example when one is present.
+// ImportFromOpenApi — OpenAPI 3.x → Project parser. 
 #include "ImportFromOpenApi.h"
 
 #include "Verifier.h"
@@ -77,14 +75,6 @@ std::string toLowerAscii(std::string_view s) {
     return out;
 }
 
-/// Strip a trailing 's' / 'es' / 'ies' for the most common English plurals.
-/// OpenAPI conventions are inconsistent enough that we treat anything we
-/// can't pluralise cleanly as already-singular.
-///
-/// Returns {derived, wasModified}. `wasModified == false` means the input
-/// looked already-singular (or didn't match any rule); the importer can
-/// emit derivation evidence when the heuristic fired so users see why a
-/// resource ended up named the way it did.
 struct SingulariseResult {
     std::string value;
     bool modified{false};
@@ -105,7 +95,6 @@ SingulariseResult singulariseDetailed(std::string_view word) {
     return {std::string{word}, false};
 }
 
-/// Split a path into segments, dropping empty entries.
 std::vector<std::string> splitPathSegments(std::string_view path) {
     std::vector<std::string> out;
     std::size_t i = 0;
@@ -120,13 +109,9 @@ std::vector<std::string> splitPathSegments(std::string_view path) {
     return out;
 }
 
-/// Pick a resource id for the path. Walks segments back-to-front and
-/// takes the first non-parameter segment, singularised. Returns an empty
-/// string when the path contains only path parameters (rare; we name the
-/// resource "root" in that case).
 struct ResourceDerivation {
     std::string id;
-    std::string fromSegment;  ///< original segment that produced `id`
+    std::string fromSegment;
     bool singularised{false};
 };
 
@@ -141,14 +126,6 @@ ResourceDerivation deriveResourceIdDetailed(std::string_view path) {
     return {"root", "", false};
 }
 
-/// Translate (method, path) into a short operation name. Heuristics:
-///   GET    /things        → list
-///   GET    /things/{id}   → get
-///   POST   /things        → create
-///   PUT    /things/{id}   → update
-///   PATCH  /things/{id}   → patch
-///   DELETE /things/{id}   → delete
-///   *      /things/{id}/action → action
 std::string deriveOperationName(std::string_view methodLower, std::string_view path) {
     const auto segments = splitPathSegments(path);
     const bool endsWithParam =
@@ -267,9 +244,6 @@ PathRewriteResult rewritePathParams(std::string_view pathTemplate, std::string_v
     return out;
 }
 
-/// Walk the (responses[2xx].content."application/json".schema) chain on an
-/// OpenAPI operation node. Returns the first 2xx JSON schema, or an
-/// undefined Node when nothing matched.
 YAML::Node firstJsonResponseSchema(const YAML::Node& opNode) {
     const auto& responses = opNode["responses"];
     if (!responses || !responses.IsMap()) return {};
@@ -287,9 +261,6 @@ YAML::Node firstJsonResponseSchema(const YAML::Node& opNode) {
     return {};
 }
 
-/// Walk the same chain but for the example payload. Tolerates both the
-/// plural `examples.<name>.value` form and the singular `example` form.
-/// Returns an undefined Node when no example is present.
 std::optional<YAML::Node> firstJsonResponseExample(const YAML::Node& opNode) {
     const auto& responses = opNode["responses"];
     if (!responses || !responses.IsMap()) return std::nullopt;
@@ -322,7 +293,7 @@ bool isScalarSchemaType(std::string_view t) noexcept {
 
 struct UnwrappedSchema {
     YAML::Node schema;
-    bool wrappedInData{false};  ///< true → JSONPath root must be `$.data.<x>`
+    bool wrappedInData{false};
 };
 
 UnwrappedSchema unwrapSchema(const YAML::Node& schema) {
@@ -365,11 +336,6 @@ std::vector<std::pair<std::string, std::string>> inferExtractionsFromSchema(
     return out;
 }
 
-/// Recursive YAML-to-JSON converter. yaml-cpp's Emitter does not produce
-/// JSON-compatible output (flow-style YAML omits quoting on keys), so we
-/// walk the node tree directly.
-///
-/// `depth` guards against pathological specs with very deep alias chains.
 constexpr int kMaxYamlToJsonDepth = 64;
 
 nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
@@ -383,7 +349,6 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
         if (raw == "null" || raw == "~") return nlohmann::json{nullptr};
 
         if (!raw.empty()) {
-            // from_chars is locale-independent, unlike stoll / stod.
             const auto* first = raw.data();
             const auto* last = first + raw.size();
             long long asInt = 0;

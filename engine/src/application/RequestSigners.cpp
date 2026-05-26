@@ -1,4 +1,4 @@
-// RequestSigners — see header. OAuth 1.0a signing per RFC 5849 §3.4.
+// RequestSigners — OAuth 1.0a signing per RFC 5849 §3.4.
 #include "RequestSigners.h"
 
 #include "../domain/Codecs.h"
@@ -19,12 +19,6 @@ namespace {
 
 using namespace codecs;
 
-/// Generate an OAuth1 nonce (RFC 5849 §3.3 — "unique for the timestamp").
-/// 64 hex chars from a thread-local PRNG.
-///
-/// std::random_device is non-deterministic on macOS/Linux/MSVC.
-/// On MinGW it may be deterministic — replace with BCryptGenRandom if
-/// Windows support via MinGW is added.
 std::string randomNonce() {
     thread_local std::mt19937_64 gen{std::random_device{}()};
     std::uniform_int_distribution<std::uint64_t> dist;
@@ -48,12 +42,9 @@ std::string nowUnixSeconds() {
     return std::to_string(secs);
 }
 
-/// Split a URL into base (scheme://host[:port]/path) + query string.
-/// RFC 5849 §3.4.1.2: the signature base URL excludes the query.
-/// Returns nullopt when the URL is too malformed to find the scheme delimiter.
 struct UrlParts {
-    std::string base;         ///< scheme://host[:port]/path, no query/fragment
-    std::string queryString;  ///< everything after the first '?', no leading '?'
+    std::string base;
+    std::string queryString;
 };
 
 std::optional<UrlParts> splitUrl(std::string_view url) {

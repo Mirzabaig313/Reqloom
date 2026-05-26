@@ -1,10 +1,4 @@
-// YamlSchemaWriter — see SchemaWriter.h for the contract.
-//
-// Implementation notes:
-//   - One emitter per output file.
-//   - Map keys are sorted for stable diffs.
-//   - Provenance is emitted as `_provenance` (leading underscore = metadata).
-//   - Writes go through a temp file + rename for atomicity.
+// YamlSchemaWriter — writes Project to chainapi.yaml.
 #include "YamlSchemaWriter.h"
 
 #include "../../domain/Codecs.h"
