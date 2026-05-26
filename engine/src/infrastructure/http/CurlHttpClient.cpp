@@ -127,7 +127,17 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
     curl_easy_setopt(curl.get(), CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.get(), CURLOPT_HEADERDATA, &responseHeaders);
     curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+    // chrono::milliseconds::rep is long on libstdc++ but long long on libc++,
+    // so the cast is platform-conditional. Suppress GCC's useless-cast on the
+    // platform where it happens to be a no-op.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wuseless-cast"
+#endif
     curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, static_cast<long>(request.timeout.count()));
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
     curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 5000L);
 
     CurlSlistHandle headerList;

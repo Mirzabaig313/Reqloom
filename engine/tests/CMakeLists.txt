@@ -22,6 +22,10 @@ add_executable(chainapi-engine-unit-tests
     unit/ImportFromOpenApiTest.cpp
     unit/JsonExtractionTest.cpp
     unit/HttpLlmClientTest.cpp
+    unit/TopologyTest.cpp
+    unit/DependencyResolverTest.cpp
+    unit/CodecsTest.cpp
+    unit/SchemaParserMultiFileTest.cpp
 )
 target_include_directories(chainapi-engine-unit-tests
     PRIVATE ${CMAKE_SOURCE_DIR}/engine/src
@@ -46,6 +50,7 @@ add_executable(chainapi-engine-integration-tests
     integration/MockSutHarness.cpp
     integration/HappyPathTest.cpp
     integration/PollingTest.cpp
+    integration/RunOptionsTest.cpp
 )
 target_link_libraries(chainapi-engine-integration-tests
     PRIVATE

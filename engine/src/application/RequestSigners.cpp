@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <format>
 #include <random>
 #include <sstream>
 #include <string>
@@ -358,17 +359,13 @@ bool signSigV4Request(HttpRequest& req,
 #else
         gmtime_r(&now, &tm);
 #endif
-        char buf[32];
-        std::snprintf(buf,
-                      sizeof(buf),
-                      "%04d%02d%02dT%02d%02d%02dZ",
-                      tm.tm_year + 1900,
-                      tm.tm_mon + 1,
-                      tm.tm_mday,
-                      tm.tm_hour,
-                      tm.tm_min,
-                      tm.tm_sec);
-        amzDate = buf;
+        amzDate = std::format("{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+                              tm.tm_year + 1900,
+                              tm.tm_mon + 1,
+                              tm.tm_mday,
+                              tm.tm_hour,
+                              tm.tm_min,
+                              tm.tm_sec);
     }
     if (amzDate.size() < 8) return false;
     const std::string dateStamp = amzDate.substr(0, 8);
