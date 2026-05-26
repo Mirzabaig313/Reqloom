@@ -19,10 +19,17 @@ namespace {
 void printUsage() {
     std::println(
         "ChainAPI CLI\n"
-        "  chainapi run <operation>      Execute a chain ending at <operation>\n"
-        "  chainapi lint                 Validate the schema in current project\n"
-        "  chainapi import <file>        Import an external API spec\n"
-        "  chainapi --help               Show this message");
+        "  chainapi run <operation> [opts]   Execute a chain ending at <operation>\n"
+        "    --project <path>                Project directory (default: cwd)\n"
+        "    --env <name>                    Environment to run against\n"
+        "    --var KEY=VALUE                 Override an env variable (repeatable)\n"
+        "    --format text|json|junit        Output format (default: text)\n"
+        "    --output <file>                 Write rendered output to <file>\n"
+        "    --quiet                         Suppress live progress on stdout\n"
+        "  chainapi lint                     Validate the schema in current project\n"
+        "    --project <path>                Project directory (default: cwd)\n"
+        "  chainapi import <file>            Import an external API spec\n"
+        "  chainapi --help                   Show this message");
 }
 
 }  // namespace
