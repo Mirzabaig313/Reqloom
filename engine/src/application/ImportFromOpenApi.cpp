@@ -1,4 +1,4 @@
-// ImportFromOpenApi — OpenAPI 3.x → Project parser. 
+// ImportFromOpenApi — OpenAPI 3.x → Project parser.
 #include "ImportFromOpenApi.h"
 
 #include "Verifier.h"
