@@ -74,11 +74,11 @@ public:
         Dependencies(const Dependencies&) = delete;
         Dependencies& operator=(const Dependencies&) = delete;
 
-        std::unique_ptr<HttpClient>   http;
+        std::unique_ptr<HttpClient> http;
         std::unique_ptr<SchemaParser> schema;
         std::unique_ptr<HistoryStore> history;
-        std::unique_ptr<SecretStore>  secrets;
-        std::unique_ptr<HookRunner>   hooks;
+        std::unique_ptr<SecretStore> secrets;
+        std::unique_ptr<HookRunner> hooks;
     };
 
     explicit ExecutionEngine(Dependencies deps);

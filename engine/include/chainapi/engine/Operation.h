@@ -100,24 +100,23 @@ struct Provenance {
         BrunoImport,
         InsomniaImport,
         HarImport,
-        AiImport,       ///< LLM-driven import
+        AiImport,  ///< LLM-driven import
     };
 
     /// What kind of sample response (if any) the verifier used to confirm
     /// extractions when this op was written.
     enum class VerifiedAgainst {
-        None,             ///< verification was not run
+        None,  ///< verification was not run
         OpenApiExample,
         PostmanResponse,
         InsomniaResponse,
         HarEntry,
-        Synthetic,        ///< LLM-produced sample — weakest signal
-        LiveCapture,      ///< observed during a real run
+        Synthetic,    ///< LLM-produced sample — weakest signal
+        LiveCapture,  ///< observed during a real run
     };
 
     Source source{Source::HandWritten};
     VerifiedAgainst verifiedAgainst{VerifiedAgainst::None};
-
 
     std::optional<std::string> model;
 

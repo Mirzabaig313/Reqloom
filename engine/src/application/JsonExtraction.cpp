@@ -12,33 +12,30 @@ namespace chainapi::engine {
 
 namespace {
 using json = nlohmann::json;
-}
+}  // namespace
 
-std::expected<std::map<std::string, std::string>, ChainApiError>
-extractFromJson(const std::string& body,
-                const std::vector<Extraction>& extractions) {
+std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson(
+    const std::string& body, const std::vector<Extraction>& extractions) {
     if (extractions.empty()) return std::map<std::string, std::string>{};
 
     json doc;
     try {
         doc = json::parse(body);
     } catch (const json::parse_error& e) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::ResponseParse,
-            ErrorClass::Extraction,
-            std::string("response is not valid JSON: ") + e.what()});
+        return std::unexpected(
+            ChainApiError{ErrorCode::ResponseParse,
+                          ErrorClass::Extraction,
+                          std::string("response is not valid JSON: ") + e.what()});
     }
 
     // Walk a single segment that may be "name", "name[N]", or "[N]".
     // Returns nullptr on miss.
-    auto walkSegment = [](const json* current,
-                          const std::string& segment) -> const json* {
+    auto walkSegment = [](const json* current, const std::string& segment) -> const json* {
         if (segment.empty()) return current;
 
         const auto bracketPos = segment.find('[');
-        const std::string name = (bracketPos == std::string::npos)
-            ? segment
-            : segment.substr(0, bracketPos);
+        const std::string name =
+            (bracketPos == std::string::npos) ? segment : segment.substr(0, bracketPos);
 
         if (!name.empty()) {
             if (!current->is_object()) return nullptr;
@@ -78,19 +75,20 @@ extractFromJson(const std::string& body,
         std::string segment;
         while (std::getline(ss, segment, '.')) {
             current = walkSegment(current, segment);
-            if (!current) { found = false; break; }
+            if (!current) {
+                found = false;
+                break;
+            }
         }
         if (!found) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::ExtractionFailed,
-                ErrorClass::Extraction,
-                "extract path '" + ext.sourcePath +
-                "' not found in response (variable: " + ext.variableName + ")"});
+            return std::unexpected(
+                ChainApiError{ErrorCode::ExtractionFailed,
+                              ErrorClass::Extraction,
+                              "extract path '" + ext.sourcePath +
+                                  "' not found in response (variable: " + ext.variableName + ")"});
         }
 
-        std::string value = current->is_string()
-            ? current->get<std::string>()
-            : current->dump();
+        std::string value = current->is_string() ? current->get<std::string>() : current->dump();
         values[ext.variableName] = std::move(value);
     }
     return values;

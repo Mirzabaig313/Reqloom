@@ -21,11 +21,11 @@ namespace chainapi::engine {
 
 /// One extraction's verification outcome.
 enum class VerificationStatus {
-    Verified,       ///< JSONPath resolved to a non-null scalar of plausible type
-    Null,           ///< JSONPath structurally valid but produced null or empty
-    NoMatch,        ///< JSONPath did not resolve at all
-    NotEvaluated,   ///< source kind cannot be verified statically (XPath, Regex, Cookie)
-    NoSample,       ///< no sample response was available for verification
+    Verified,      ///< JSONPath resolved to a non-null scalar of plausible type
+    Null,          ///< JSONPath structurally valid but produced null or empty
+    NoMatch,       ///< JSONPath did not resolve at all
+    NotEvaluated,  ///< source kind cannot be verified statically (XPath, Regex, Cookie)
+    NoSample,      ///< no sample response was available for verification
 };
 
 struct VerifiedExtraction {
@@ -59,8 +59,7 @@ struct CaseInsensitiveLess {
 
     bool operator()(std::string_view a, std::string_view b) const noexcept {
         return std::lexicographical_compare(
-            a.begin(), a.end(), b.begin(), b.end(),
-            [](unsigned char x, unsigned char y) {
+            a.begin(), a.end(), b.begin(), b.end(), [](unsigned char x, unsigned char y) {
                 return std::tolower(x) < std::tolower(y);
             });
     }
@@ -89,13 +88,12 @@ public:
     /// Returns `ChainApiError{SchemaInvalid}` only when an extraction source
     /// path is malformed. A path that doesn't match the sample is NOT an
     /// error — it surfaces as `NoMatch`.
-    [[nodiscard]] std::expected<VerificationReport, ChainApiError>
-    verify(const Operation& op, const SampleResponse& sample) const;
+    [[nodiscard]] std::expected<VerificationReport, ChainApiError> verify(
+        const Operation& op, const SampleResponse& sample) const;
 
     /// Verify with an empty sample. Every extraction comes back tagged
     /// `NoSample`. Used when no sample of any kind is available.
-    [[nodiscard]] VerificationReport
-    verifyWithoutSample(const Operation& op) const noexcept;
+    [[nodiscard]] VerificationReport verifyWithoutSample(const Operation& op) const noexcept;
 };
 
 }  // namespace chainapi::engine

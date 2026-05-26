@@ -24,8 +24,7 @@ class ScratchDir {
 public:
     ScratchDir() {
         const auto unique =
-            "chainapi-schema-poll-" + std::to_string(::getpid()) +
-            "-" + std::to_string(counter_++);
+            "chainapi-schema-poll-" + std::to_string(::getpid()) + "-" + std::to_string(counter_++);
         path_ = fs::temp_directory_path() / unique;
         fs::create_directories(path_);
     }
@@ -97,19 +96,17 @@ resources:
 
     ASSERT_TRUE(pay.pollUntil.has_value()) << "poll_until should be parsed";
     EXPECT_EQ(pay.pollUntil->method, ce::HttpMethod::Get);
-    EXPECT_EQ(pay.pollUntil->pathTemplate,
-              "/api/v1/pay/{{payment.payment_id}}/status");
+    EXPECT_EQ(pay.pollUntil->pathTemplate, "/api/v1/pay/{{payment.payment_id}}/status");
     EXPECT_EQ(pay.pollUntil->successWhen, "$.status == 'COMPLETED'");
     ASSERT_TRUE(pay.pollUntil->failWhen.has_value());
     EXPECT_EQ(*pay.pollUntil->failWhen, "$.status in ['FAILED', 'CANCELLED']");
     EXPECT_EQ(pay.pollUntil->interval, std::chrono::milliseconds{500});
-    EXPECT_EQ(pay.pollUntil->timeout,  std::chrono::milliseconds{30'000});
+    EXPECT_EQ(pay.pollUntil->timeout, std::chrono::milliseconds{30'000});
     EXPECT_EQ(pay.pollUntil->maxAttempts, 60);
 
     // expect_status: [200, 202] populates the multi-value list, not the
     // singular field. The executor consults the list when non-empty.
-    EXPECT_EQ(pay.expectStatusList,
-              std::vector<int>({200, 202}));
+    EXPECT_EQ(pay.expectStatusList, std::vector<int>({200, 202}));
     EXPECT_FALSE(pay.expectStatus.has_value());
 }
 
@@ -152,8 +149,7 @@ resources:
     auto result = ce::parseProject(yaml);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
 
-    const auto& submit =
-        result->resources.at(ce::ResourceId{"job"}).operations.at("submit");
+    const auto& submit = result->resources.at(ce::ResourceId{"job"}).operations.at("submit");
 
     ASSERT_TRUE(submit.pollUntil.has_value());
     ASSERT_TRUE(submit.pollUntil->actor.has_value());
@@ -161,7 +157,7 @@ resources:
     ASSERT_TRUE(submit.pollUntil->backoffBase.has_value());
     EXPECT_EQ(*submit.pollUntil->backoffBase, std::chrono::milliseconds{100});
     EXPECT_EQ(submit.pollUntil->backoffMax, std::chrono::milliseconds{5'000});
-    EXPECT_EQ(submit.pollUntil->timeout,    std::chrono::milliseconds{60'000});
+    EXPECT_EQ(submit.pollUntil->timeout, std::chrono::milliseconds{60'000});
 
     // Singular expect_status form remains supported for non-polling ops.
     EXPECT_EQ(submit.expectStatus.value_or(0), 202);
@@ -194,14 +190,12 @@ resources:
     auto result = ce::parseProject(yaml);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
 
-    const auto& get =
-        result->resources.at(ce::ResourceId{"product"}).operations.at("get");
+    const auto& get = result->resources.at(ce::ResourceId{"product"}).operations.at("get");
 
     EXPECT_FALSE(get.pollUntil.has_value());
     EXPECT_TRUE(get.expectStatusList.empty());
     EXPECT_EQ(get.expectStatus.value_or(0), 200);
 }
-
 
 // ─── Slice 4b — Basic auth strategy ─────────────────────────────────────────
 
@@ -242,10 +236,8 @@ resources:
     EXPECT_TRUE(client.authSteps.empty());
     EXPECT_EQ(client.authConfig.at("username"), "Aladdin");
     EXPECT_EQ(client.authConfig.at("password"), "open sesame");
-    EXPECT_EQ(client.inject.headers.at("Authorization"),
-              "Basic {{client.credential}}");
+    EXPECT_EQ(client.inject.headers.at("Authorization"), "Basic {{client.credential}}");
 }
-
 
 // ─── Slice 4c — api_key auth strategy ───────────────────────────────────────
 
@@ -324,10 +316,8 @@ resources:
     EXPECT_EQ(service.authConfig.at("key"), "sk_live_abc");
     EXPECT_FALSE(service.authConfig.contains("location"));
     EXPECT_FALSE(service.authConfig.contains("name"));
-    EXPECT_EQ(service.inject.headers.at("Authorization"),
-              "Bearer {{service.key}}");
+    EXPECT_EQ(service.inject.headers.at("Authorization"), "Bearer {{service.key}}");
 }
-
 
 // ─── Slice 4d — oauth2_client_credentials auth strategy ─────────────────────
 
@@ -366,14 +356,10 @@ resources:
     const auto& service = result->actors.at(ce::ActorId{"service"});
     EXPECT_EQ(service.strategy, ce::AuthStrategy::OAuth2ClientCredentials);
     EXPECT_TRUE(service.authSteps.empty());
-    EXPECT_EQ(service.authConfig.at("token_url"),
-              "{{env.baseUrl}}/oauth/token");
-    EXPECT_EQ(service.authConfig.at("client_id"),
-              "{{secret.OAUTH_CLIENT_ID}}");
-    EXPECT_EQ(service.authConfig.at("client_secret"),
-              "{{secret.OAUTH_CLIENT_SECRET}}");
-    EXPECT_EQ(service.authConfig.at("scope"),
-              "read:orders write:orders");
+    EXPECT_EQ(service.authConfig.at("token_url"), "{{env.baseUrl}}/oauth/token");
+    EXPECT_EQ(service.authConfig.at("client_id"), "{{secret.OAUTH_CLIENT_ID}}");
+    EXPECT_EQ(service.authConfig.at("client_secret"), "{{secret.OAUTH_CLIENT_SECRET}}");
+    EXPECT_EQ(service.authConfig.at("scope"), "read:orders write:orders");
 }
 
 TEST(SchemaParserOAuth2ClientCreds, scope_is_optional) {
@@ -410,7 +396,6 @@ resources:
     EXPECT_EQ(service.strategy, ce::AuthStrategy::OAuth2ClientCredentials);
     EXPECT_FALSE(service.authConfig.contains("scope"));
 }
-
 
 // ─── Slice 4e — oauth2_password auth strategy ───────────────────────────────
 
@@ -450,13 +435,11 @@ resources:
     const auto& user = result->actors.at(ce::ActorId{"user"});
     EXPECT_EQ(user.strategy, ce::AuthStrategy::OAuth2Password);
     EXPECT_TRUE(user.authSteps.empty());
-    EXPECT_EQ(user.authConfig.at("token_url"),
-              "{{env.baseUrl}}/oauth/token");
+    EXPECT_EQ(user.authConfig.at("token_url"), "{{env.baseUrl}}/oauth/token");
     EXPECT_EQ(user.authConfig.at("username"), "alice@example.com");
     EXPECT_EQ(user.authConfig.at("password"), "{{secret.RO_PASS}}");
-    EXPECT_EQ(user.authConfig.at("scope"),    "read:notes");
+    EXPECT_EQ(user.authConfig.at("scope"), "read:notes");
 }
-
 
 // ─── Slice 5a — sibling-file hooks ──────────────────────────────────────────
 //
@@ -502,14 +485,11 @@ resources:
     auto result = ce::parseProject(yaml);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
 
-    const auto& send = result->resources.at(ce::ResourceId{"signed"})
-                            .operations.at("send");
+    const auto& send = result->resources.at(ce::ResourceId{"signed"}).operations.at("send");
     ASSERT_TRUE(send.preRequestScript.has_value());
     EXPECT_NE(send.preRequestScript->find("X-Hook"), std::string::npos)
-        << "expected file content to land in preRequestScript; got: "
-        << *send.preRequestScript;
-    EXPECT_NE(send.preRequestScript->find("export default"),
-              std::string::npos);
+        << "expected file content to land in preRequestScript; got: " << *send.preRequestScript;
+    EXPECT_NE(send.preRequestScript->find("export default"), std::string::npos);
 }
 
 TEST(SchemaParserHooks, loads_post_response_from_file_too) {
@@ -545,11 +525,9 @@ resources:
     auto result = ce::parseProject(yaml);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
 
-    const auto& get = result->resources.at(ce::ResourceId{"encrypted"})
-                           .operations.at("get");
+    const auto& get = result->resources.at(ce::ResourceId{"encrypted"}).operations.at("get");
     ASSERT_TRUE(get.postResponseScript.has_value());
-    EXPECT_NE(get.postResponseScript->find("ctx.response"),
-              std::string::npos);
+    EXPECT_NE(get.postResponseScript->find("ctx.response"), std::string::npos);
 }
 
 TEST(SchemaParserHooks, inline_js_with_braces_falls_through_unchanged) {
@@ -585,11 +563,9 @@ resources:
     auto result = ce::parseProject(yaml);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
 
-    const auto& send = result->resources.at(ce::ResourceId{"one"})
-                            .operations.at("send");
+    const auto& send = result->resources.at(ce::ResourceId{"one"}).operations.at("send");
     ASSERT_TRUE(send.preRequestScript.has_value());
-    EXPECT_NE(send.preRequestScript->find("X-Inline"),
-              std::string::npos);
+    EXPECT_NE(send.preRequestScript->find("X-Inline"), std::string::npos);
 }
 
 TEST(SchemaParserHooks, rejects_path_traversal_outside_project_root) {
@@ -624,8 +600,7 @@ resources:
     auto result = ce::parseProject(yaml);
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
-    EXPECT_NE(result.error().detail.find("escapes"),
-              std::string::npos);
+    EXPECT_NE(result.error().detail.find("escapes"), std::string::npos);
 }
 
 TEST(SchemaParserHooks, rejects_absolute_path) {
@@ -656,8 +631,7 @@ resources:
     auto result = ce::parseProject(yaml);
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
-    EXPECT_NE(result.error().detail.find("must be relative"),
-              std::string::npos);
+    EXPECT_NE(result.error().detail.find("must be relative"), std::string::npos);
 }
 
 TEST(SchemaParserHooks, rejects_missing_hook_file) {
@@ -688,8 +662,7 @@ resources:
     auto result = ce::parseProject(yaml);
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
-    EXPECT_NE(result.error().detail.find("not found"),
-              std::string::npos);
+    EXPECT_NE(result.error().detail.find("not found"), std::string::npos);
 }
 
 TEST(SchemaParserHooks, rejects_oversized_hook_file) {
@@ -730,10 +703,8 @@ resources:
     auto result = ce::parseProject(yaml);
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
-    EXPECT_NE(result.error().detail.find("1 MiB"),
-              std::string::npos);
+    EXPECT_NE(result.error().detail.find("1 MiB"), std::string::npos);
 }
-
 
 // ─── Slice 4f — oauth1 auth strategy ────────────────────────────────────────
 
@@ -772,11 +743,10 @@ resources:
     const auto& tw = result->actors.at(ce::ActorId{"twitter"});
     EXPECT_EQ(tw.strategy, ce::AuthStrategy::OAuth1);
     EXPECT_TRUE(tw.authSteps.empty());
-    EXPECT_EQ(tw.authConfig.at("consumer_key"),    "{{secret.OAUTH_KEY}}");
+    EXPECT_EQ(tw.authConfig.at("consumer_key"), "{{secret.OAUTH_KEY}}");
     EXPECT_EQ(tw.authConfig.at("consumer_secret"), "{{secret.OAUTH_SECRET}}");
-    EXPECT_EQ(tw.authConfig.at("token"),           "{{secret.OAUTH_TOKEN}}");
-    EXPECT_EQ(tw.authConfig.at("token_secret"),
-              "{{secret.OAUTH_TOKEN_SECRET}}");
+    EXPECT_EQ(tw.authConfig.at("token"), "{{secret.OAUTH_TOKEN}}");
+    EXPECT_EQ(tw.authConfig.at("token_secret"), "{{secret.OAUTH_TOKEN_SECRET}}");
     EXPECT_EQ(tw.authConfig.at("realm"), "Photos");
 }
 
@@ -811,7 +781,7 @@ resources:
 
     const auto& app = result->actors.at(ce::ActorId{"app"});
     EXPECT_EQ(app.strategy, ce::AuthStrategy::OAuth1);
-    EXPECT_EQ(app.authConfig.at("consumer_key"),    "ck");
+    EXPECT_EQ(app.authConfig.at("consumer_key"), "ck");
     EXPECT_EQ(app.authConfig.at("consumer_secret"), "cs");
     EXPECT_FALSE(app.authConfig.contains("token"));
     EXPECT_FALSE(app.authConfig.contains("token_secret"));
@@ -856,13 +826,12 @@ resources:
     const auto& aws = result->actors.at(ce::ActorId{"aws"});
     EXPECT_EQ(aws.strategy, ce::AuthStrategy::AwsSigV4);
     EXPECT_TRUE(aws.authSteps.empty());
-    EXPECT_EQ(aws.authConfig.at("access_key"),    "{{secret.AWS_ACCESS_KEY}}");
-    EXPECT_EQ(aws.authConfig.at("secret_key"),    "{{secret.AWS_SECRET_KEY}}");
-    EXPECT_EQ(aws.authConfig.at("region"),        "us-east-1");
-    EXPECT_EQ(aws.authConfig.at("service"),       "iam");
-    EXPECT_EQ(aws.authConfig.at("session_token"),
-              "{{secret.AWS_SESSION_TOKEN}}");
-    EXPECT_EQ(aws.authConfig.at("sign_payload"),  "true");
+    EXPECT_EQ(aws.authConfig.at("access_key"), "{{secret.AWS_ACCESS_KEY}}");
+    EXPECT_EQ(aws.authConfig.at("secret_key"), "{{secret.AWS_SECRET_KEY}}");
+    EXPECT_EQ(aws.authConfig.at("region"), "us-east-1");
+    EXPECT_EQ(aws.authConfig.at("service"), "iam");
+    EXPECT_EQ(aws.authConfig.at("session_token"), "{{secret.AWS_SESSION_TOKEN}}");
+    EXPECT_EQ(aws.authConfig.at("sign_payload"), "true");
 }
 
 TEST(SchemaParserAwsSigV4, optional_fields_are_omitted_when_absent) {

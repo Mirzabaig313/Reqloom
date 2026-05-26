@@ -6,12 +6,12 @@
 #include <thread>
 
 #ifdef _WIN32
-#  include <windows.h>
+#include <windows.h>
 #else
-#  include <fcntl.h>
-#  include <signal.h>
-#  include <sys/wait.h>
-#  include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace chainapi::tests {
@@ -74,9 +74,8 @@ MockSutHarness::MockSutHarness(const std::filesystem::path& routesFile) {
         ::close(pipeFds[1]);
 
         const char* mockPath = CHAINAPI_MOCK_SUT_PATH;
-        ::execl(mockPath, mockPath,
-                "--routes", routesFile.c_str(),
-                static_cast<const char*>(nullptr));
+        ::execl(
+            mockPath, mockPath, "--routes", routesFile.c_str(), static_cast<const char*>(nullptr));
         std::_Exit(127);
     }
 
@@ -102,8 +101,7 @@ MockSutHarness::~MockSutHarness() {
 #else  // _WIN32
 
 MockSutHarness::MockSutHarness(const std::filesystem::path& /*routesFile*/) {
-    throw std::runtime_error(
-        "mock-sut harness: Windows support not yet implemented");
+    throw std::runtime_error("mock-sut harness: Windows support not yet implemented");
 }
 
 MockSutHarness::~MockSutHarness() = default;

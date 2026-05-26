@@ -30,8 +30,7 @@ namespace {
 
 [[nodiscard]] ce::Project loadMarketplace(const std::string& mockBaseUrl) {
     auto project = ce::parseProject(samplesDir() / "marketplace" / "chainapi.yaml");
-    EXPECT_TRUE(project.has_value())
-        << (project ? "" : project.error().detail);
+    EXPECT_TRUE(project.has_value()) << (project ? "" : project.error().detail);
 
     auto& env = project->environments["local"];
     env["baseUrl"] = mockBaseUrl;
@@ -44,8 +43,7 @@ namespace {
 class MarketplaceHappyPath : public ::testing::Test {
 protected:
     void SetUp() override {
-        harness_ = std::make_unique<ct::MockSutHarness>(
-            fixturesDir() / "marketplace-routes.json");
+        harness_ = std::make_unique<ct::MockSutHarness>(fixturesDir() / "marketplace-routes.json");
     }
     void TearDown() override { harness_.reset(); }
 
@@ -58,14 +56,13 @@ TEST_F(MarketplaceHappyPath, RefundApproveResolvesAndExecutes) {
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"refund.approve"}, ctx);
-    ASSERT_TRUE(result.has_value())
-        << (result ? "" : result.error().detail);
+    ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
     EXPECT_TRUE(result->succeeded()) << "outcome was Failed/Cancelled";
 
     for (const auto& step : result->steps) {
         const auto status = step.status;
-        EXPECT_TRUE(status == ce::StepResult::Status::Succeeded
-                    || status == ce::StepResult::Status::Skipped)
+        EXPECT_TRUE(status == ce::StepResult::Status::Succeeded ||
+                    status == ce::StepResult::Status::Skipped)
             << "step " << step.op.value << " ended in unexpected state";
     }
 }
@@ -107,11 +104,16 @@ TEST_F(MarketplaceHappyPath, ChainContainsExpectedOperations) {
 
     for (std::size_t i = 0; i < result->steps.size(); ++i) {
         const auto& step = result->steps[i];
-        if      (step.op.value == "product.create")  sawProductCreate = true;
-        else if (step.op.value == "product.publish") sawProductPublish = true;
-        else if (step.op.value == "order.create")    sawOrderCreate = true;
-        else if (step.op.value == "order.pay")       sawOrderPay = true;
-        else if (step.op.value == "refund.request")  sawRefundRequest = true;
+        if (step.op.value == "product.create")
+            sawProductCreate = true;
+        else if (step.op.value == "product.publish")
+            sawProductPublish = true;
+        else if (step.op.value == "order.create")
+            sawOrderCreate = true;
+        else if (step.op.value == "order.pay")
+            sawOrderPay = true;
+        else if (step.op.value == "refund.request")
+            sawRefundRequest = true;
         else if (step.op.value == "refund.approve" && i == result->steps.size() - 1) {
             targetIsLast = true;
         }

@@ -44,8 +44,7 @@ std::string randomNonce() {
 
 std::string nowUnixSeconds() {
     using namespace std::chrono;
-    const auto secs = duration_cast<seconds>(
-        system_clock::now().time_since_epoch()).count();
+    const auto secs = duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
     return std::to_string(secs);
 }
 
@@ -53,8 +52,8 @@ std::string nowUnixSeconds() {
 /// RFC 5849 §3.4.1.2: the signature base URL excludes the query.
 /// Returns nullopt when the URL is too malformed to find the scheme delimiter.
 struct UrlParts {
-    std::string base;        ///< scheme://host[:port]/path, no query/fragment
-    std::string queryString; ///< everything after the first '?', no leading '?'
+    std::string base;         ///< scheme://host[:port]/path, no query/fragment
+    std::string queryString;  ///< everything after the first '?', no leading '?'
 };
 
 std::optional<UrlParts> splitUrl(std::string_view url) {
@@ -63,7 +62,7 @@ std::optional<UrlParts> splitUrl(std::string_view url) {
 
     const auto pathStart = url.find('/', schemeEnd + 3);
     const auto queryStart = url.find('?', schemeEnd + 3);
-    const auto fragStart  = url.find('#', schemeEnd + 3);
+    const auto fragStart = url.find('#', schemeEnd + 3);
 
     UrlParts out;
     const auto baseEnd = std::min(queryStart, fragStart);
@@ -75,7 +74,7 @@ std::optional<UrlParts> splitUrl(std::string_view url) {
 
     if (pathStart == std::string_view::npos ||
         (queryStart != std::string_view::npos && pathStart > queryStart) ||
-        (fragStart  != std::string_view::npos && pathStart > fragStart)) {
+        (fragStart != std::string_view::npos && pathStart > fragStart)) {
         // No path component — append "/" per RFC 5849 §3.4.1.2 which
         // requires the path with "/" as the default for empty.
         out.base += '/';
@@ -85,43 +84,38 @@ std::optional<UrlParts> splitUrl(std::string_view url) {
         // qEnd is the fragment '#' position, if it comes AFTER the query '?'.
         // If '#' comes before '?' the URL is malformed; take the query string
         // to end-of-URL as the least-surprising fallback.
-        const auto qEnd = (fragStart == std::string_view::npos ||
-                           fragStart < queryStart)
-            ? std::string_view::npos
-            : fragStart;
-        out.queryString = std::string{
-            url.substr(queryStart + 1,
-                       qEnd == std::string_view::npos
-                           ? std::string_view::npos
-                           : qEnd - queryStart - 1)};
+        const auto qEnd = (fragStart == std::string_view::npos || fragStart < queryStart)
+                              ? std::string_view::npos
+                              : fragStart;
+        out.queryString = std::string{url.substr(
+            queryStart + 1,
+            qEnd == std::string_view::npos ? std::string_view::npos : qEnd - queryStart - 1)};
     }
     return out;
 }
 
 /// Parse a query string into name/value pairs. Values are percent-decoded
 /// so they can be re-encoded with the strict OAuth1 alphabet.
-std::vector<std::pair<std::string, std::string>>
-parseQuery(std::string_view qs) {
+std::vector<std::pair<std::string, std::string>> parseQuery(std::string_view qs) {
     std::vector<std::pair<std::string, std::string>> out;
     std::size_t i = 0;
     while (i < qs.size()) {
         const auto amp = qs.find('&', i);
-        const auto piece = qs.substr(
-            i, amp == std::string_view::npos ? std::string_view::npos
-                                              : amp - i);
+        const auto piece =
+            qs.substr(i, amp == std::string_view::npos ? std::string_view::npos : amp - i);
         const auto eq = piece.find('=');
         std::string name;
         std::string value;
         if (eq == std::string_view::npos) {
             name = std::string{piece};
         } else {
-            name  = std::string{piece.substr(0, eq)};
+            name = std::string{piece.substr(0, eq)};
             value = std::string{piece.substr(eq + 1)};
         }
         // Decode then re-encode in the canonicalisation step.
         // urlDecode returns nullopt for malformed %-escapes; keep the
         // encoded form as-is.
-        if (auto d = codecs::urlDecode(name);  d) name  = std::move(*d);
+        if (auto d = codecs::urlDecode(name); d) name = std::move(*d);
         if (auto d = codecs::urlDecode(value); d) value = std::move(*d);
         out.emplace_back(std::move(name), std::move(value));
         if (amp == std::string_view::npos) break;
@@ -142,13 +136,13 @@ bool signOAuth1Request(HttpRequest& req,
         const auto it = session.variables.find(std::string{name});
         return (it == session.variables.end()) ? std::string{} : it->second;
     };
-    const auto consumerKey    = findVar("consumer_key");
+    const auto consumerKey = findVar("consumer_key");
     const auto consumerSecret = findVar("consumer_secret");
     if (consumerKey.empty() || consumerSecret.empty()) return false;
 
-    const auto token       = findVar("token");
+    const auto token = findVar("token");
     const auto tokenSecret = findVar("token_secret");
-    const auto realm       = findVar("realm");
+    const auto realm = findVar("realm");
 
     const auto urlParts = splitUrl(req.url);
     if (!urlParts) return false;
@@ -161,21 +155,18 @@ bool signOAuth1Request(HttpRequest& req,
 
     const auto contentTypeIt = req.headers.find("Content-Type");
     if (contentTypeIt != req.headers.end() &&
-        contentTypeIt->second.starts_with("application/x-www-form-urlencoded") &&
-        req.body) {
+        contentTypeIt->second.starts_with("application/x-www-form-urlencoded") && req.body) {
         auto bodyParams = parseQuery(*req.body);
         for (auto& p : bodyParams) params.push_back(std::move(p));
     }
 
-    const std::string nonce =
-        overrides.nonce.value_or(randomNonce());
-    const std::string timestamp =
-        overrides.timestampSeconds.value_or(nowUnixSeconds());
+    const std::string nonce = overrides.nonce.value_or(randomNonce());
+    const std::string timestamp = overrides.timestampSeconds.value_or(nowUnixSeconds());
 
-    params.emplace_back("oauth_consumer_key",     consumerKey);
+    params.emplace_back("oauth_consumer_key", consumerKey);
     params.emplace_back("oauth_signature_method", "HMAC-SHA1");
-    params.emplace_back("oauth_timestamp",        timestamp);
-    params.emplace_back("oauth_nonce",            nonce);
+    params.emplace_back("oauth_timestamp", timestamp);
+    params.emplace_back("oauth_nonce", nonce);
     // `oauth_version` is OPTIONAL per RFC 5849 §3.1 with default "1.0".
     // Omitting it matches the RFC 5849 §3.4.3 worked example and maximises
     // interop with implementations that follow the RFC vector.
@@ -203,14 +194,12 @@ bool signOAuth1Request(HttpRequest& req,
     // Base string = METHOD & encode(URL) & encode(paramString).
     const std::string method = std::string{methodToString(req.method)};
     const std::string baseString =
-        method + "&" + codecs::urlEncode(urlParts->base) +
-        "&" + codecs::urlEncode(paramString);
+        method + "&" + codecs::urlEncode(urlParts->base) + "&" + codecs::urlEncode(paramString);
 
     // Signing key = encode(consumer_secret) & encode(token_secret).
     // Trailing `&` is required even when token_secret is absent (RFC 5849 §3.4.2).
     const std::string signingKey =
-        codecs::urlEncode(consumerSecret) + "&" +
-        codecs::urlEncode(tokenSecret);
+        codecs::urlEncode(consumerSecret) + "&" + codecs::urlEncode(tokenSecret);
 
     const auto mac = crypto::hmacSha1(signingKey, baseString);
     if (mac.empty()) return false;
@@ -228,11 +217,11 @@ bool signOAuth1Request(HttpRequest& req,
         authHeader += codecs::urlEncode(value);
         authHeader += "\", ";
     };
-    append("oauth_consumer_key",     consumerKey);
+    append("oauth_consumer_key", consumerKey);
     if (!token.empty()) append("oauth_token", token);
     append("oauth_signature_method", "HMAC-SHA1");
-    append("oauth_timestamp",        timestamp);
-    append("oauth_nonce",            nonce);
+    append("oauth_timestamp", timestamp);
+    append("oauth_nonce", nonce);
     authHeader += "oauth_signature=\"" + codecs::urlEncode(signature) + "\"";
 
     req.headers["Authorization"] = std::move(authHeader);
@@ -251,10 +240,9 @@ std::string awsUriEncodePath(std::string_view input) {
     constexpr char hex[] = "0123456789ABCDEF";
     for (const auto byte : input) {
         const auto u = static_cast<unsigned char>(byte);
-        const bool unreserved =
-            (u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') ||
-            (u >= '0' && u <= '9') ||
-            u == '-' || u == '.' || u == '_' || u == '~' || u == '/';
+        const bool unreserved = (u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') ||
+                                (u >= '0' && u <= '9') || u == '-' || u == '.' || u == '_' ||
+                                u == '~' || u == '/';
         if (unreserved) {
             out.push_back(byte);
         } else {
@@ -274,10 +262,9 @@ std::string awsUriEncodeQuery(std::string_view input) {
     constexpr char hex[] = "0123456789ABCDEF";
     for (const auto byte : input) {
         const auto u = static_cast<unsigned char>(byte);
-        const bool unreserved =
-            (u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') ||
-            (u >= '0' && u <= '9') ||
-            u == '-' || u == '.' || u == '_' || u == '~';
+        const bool unreserved = (u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') ||
+                                (u >= '0' && u <= '9') || u == '-' || u == '.' || u == '_' ||
+                                u == '~';
         if (unreserved) {
             out.push_back(byte);
         } else {
@@ -352,14 +339,13 @@ bool signSigV4Request(HttpRequest& req,
         const auto it = session.variables.find(std::string{name});
         return (it == session.variables.end()) ? std::string{} : it->second;
     };
-    const auto accessKey    = findVar("access_key");
-    const auto secretKey    = findVar("secret_key");
-    const auto region       = findVar("region");
-    const auto service      = findVar("service");
+    const auto accessKey = findVar("access_key");
+    const auto secretKey = findVar("secret_key");
+    const auto region = findVar("region");
+    const auto service = findVar("service");
     const auto sessionToken = findVar("session_token");
-    const auto signPayload  = findVar("sign_payload");
-    if (accessKey.empty() || secretKey.empty() ||
-        region.empty()    || service.empty()) {
+    const auto signPayload = findVar("sign_payload");
+    if (accessKey.empty() || secretKey.empty() || region.empty() || service.empty()) {
         return false;
     }
 
@@ -373,8 +359,7 @@ bool signSigV4Request(HttpRequest& req,
     } else {
         // Format: YYYYMMDDTHHMMSSZ (ISO 8601 basic).
         // gmtime is locale-independent for this format.
-        const auto now = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now());
+        const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         std::tm tm{};
 #if defined(_WIN32)
         gmtime_s(&tm, &now);
@@ -382,9 +367,15 @@ bool signSigV4Request(HttpRequest& req,
         gmtime_r(&now, &tm);
 #endif
         char buf[32];
-        std::snprintf(buf, sizeof(buf), "%04d%02d%02dT%02d%02d%02dZ",
-                      tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-                      tm.tm_hour, tm.tm_min, tm.tm_sec);
+        std::snprintf(buf,
+                      sizeof(buf),
+                      "%04d%02d%02dT%02d%02d%02dZ",
+                      tm.tm_year + 1900,
+                      tm.tm_mon + 1,
+                      tm.tm_mday,
+                      tm.tm_hour,
+                      tm.tm_min,
+                      tm.tm_sec);
         amzDate = buf;
     }
     if (amzDate.size() < 8) return false;
@@ -413,7 +404,10 @@ bool signSigV4Request(HttpRequest& req,
     // SigV4 requires Host. Add it from the URL if the caller didn't.
     bool haveHost = false;
     for (const auto& [name, _] : req.headers) {
-        if (toLowerAscii(name) == "host") { haveHost = true; break; }
+        if (toLowerAscii(name) == "host") {
+            haveHost = true;
+            break;
+        }
     }
     if (!haveHost) {
         const auto host = hostFromUrl(req.url);
@@ -441,8 +435,9 @@ bool signSigV4Request(HttpRequest& req,
     for (const auto& [name, value] : req.headers) {
         canonHeaders.emplace_back(toLowerAscii(name), trimAndCollapseWs(value));
     }
-    std::sort(canonHeaders.begin(), canonHeaders.end(),
-              [](const Pair& a, const Pair& b) { return a.first < b.first; });
+    std::sort(canonHeaders.begin(), canonHeaders.end(), [](const Pair& a, const Pair& b) {
+        return a.first < b.first;
+    });
 
     std::string canonicalHeaders;
     std::string signedHeaders;
@@ -457,32 +452,23 @@ bool signSigV4Request(HttpRequest& req,
 
     // ── 4. Canonical request → string-to-sign ────────────────────────────
     const std::string method = std::string{methodToString(req.method)};
-    const std::string canonicalRequest =
-        method + "\n" +
-        canonicalUri + "\n" +
-        canonicalQuery + "\n" +
-        canonicalHeaders + "\n" +
-        signedHeaders + "\n" +
-        payloadHashHex;
+    const std::string canonicalRequest = method + "\n" + canonicalUri + "\n" + canonicalQuery +
+                                         "\n" + canonicalHeaders + "\n" + signedHeaders + "\n" +
+                                         payloadHashHex;
 
     const auto canonicalRequestHash = crypto::sha256(canonicalRequest);
     if (canonicalRequestHash.empty()) return false;
 
-    const std::string credentialScope =
-        dateStamp + "/" + region + "/" + service + "/aws4_request";
-    const std::string stringToSign =
-        "AWS4-HMAC-SHA256\n" +
-        amzDate + "\n" +
-        credentialScope + "\n" +
-        codecs::hexEncode(canonicalRequestHash);
+    const std::string credentialScope = dateStamp + "/" + region + "/" + service + "/aws4_request";
+    const std::string stringToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope +
+                                     "\n" + codecs::hexEncode(canonicalRequestHash);
 
     // ── 5. Signing key derivation (4× HMAC-SHA256 chain) ─────────────────
-    const auto kDate    = crypto::hmacSha256("AWS4" + secretKey, dateStamp);
-    const auto kRegion  = crypto::hmacSha256(kDate,    region);
-    const auto kService = crypto::hmacSha256(kRegion,  service);
+    const auto kDate = crypto::hmacSha256("AWS4" + secretKey, dateStamp);
+    const auto kRegion = crypto::hmacSha256(kDate, region);
+    const auto kService = crypto::hmacSha256(kRegion, service);
     const auto kSigning = crypto::hmacSha256(kService, "aws4_request");
-    if (kDate.empty() || kRegion.empty() ||
-        kService.empty() || kSigning.empty()) {
+    if (kDate.empty() || kRegion.empty() || kService.empty() || kSigning.empty()) {
         return false;
     }
 

@@ -73,24 +73,35 @@ std::size_t headerCallback(char* ptr, std::size_t size, std::size_t nmemb, void*
 
 [[nodiscard]] const char* methodString(HttpMethod method) noexcept {
     switch (method) {
-        case HttpMethod::Get:     return "GET";
-        case HttpMethod::Post:    return "POST";
-        case HttpMethod::Put:     return "PUT";
-        case HttpMethod::Patch:   return "PATCH";
-        case HttpMethod::Delete:  return "DELETE";
-        case HttpMethod::Head:    return "HEAD";
-        case HttpMethod::Options: return "OPTIONS";
+        case HttpMethod::Get:
+            return "GET";
+        case HttpMethod::Post:
+            return "POST";
+        case HttpMethod::Put:
+            return "PUT";
+        case HttpMethod::Patch:
+            return "PATCH";
+        case HttpMethod::Delete:
+            return "DELETE";
+        case HttpMethod::Head:
+            return "HEAD";
+        case HttpMethod::Options:
+            return "OPTIONS";
     }
     return "GET";
 }
 
 [[nodiscard]] ErrorCode classifyCurlError(CURLcode res) noexcept {
     switch (res) {
-        case CURLE_COULDNT_RESOLVE_HOST:    return ErrorCode::NetworkDns;
+        case CURLE_COULDNT_RESOLVE_HOST:
+            return ErrorCode::NetworkDns;
         case CURLE_SSL_CONNECT_ERROR:
-        case CURLE_PEER_FAILED_VERIFICATION: return ErrorCode::NetworkTls;
-        case CURLE_OPERATION_TIMEDOUT:       return ErrorCode::NetworkTimeout;
-        default:                              return ErrorCode::NetworkTimeout;
+        case CURLE_PEER_FAILED_VERIFICATION:
+            return ErrorCode::NetworkTls;
+        case CURLE_OPERATION_TIMEDOUT:
+            return ErrorCode::NetworkTimeout;
+        default:
+            return ErrorCode::NetworkTimeout;
     }
 }
 
@@ -104,14 +115,11 @@ CurlHttpClient::CurlHttpClient() {
 
 CurlHttpClient::~CurlHttpClient() = default;
 
-std::expected<HttpResponse, ChainApiError>
-CurlHttpClient::send(const HttpRequest& request) {
+std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpRequest& request) {
     CurlEasyHandle curl{curl_easy_init()};
     if (!curl) {
         return std::unexpected(ChainApiError{
-            ErrorCode::NetworkTimeout,
-            ErrorClass::Network,
-            "Failed to initialize curl handle"});
+            ErrorCode::NetworkTimeout, ErrorClass::Network, "Failed to initialize curl handle"});
     }
 
     HttpResponse response;
@@ -125,8 +133,7 @@ CurlHttpClient::send(const HttpRequest& request) {
     curl_easy_setopt(curl.get(), CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.get(), CURLOPT_HEADERDATA, &responseHeaders);
     curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS,
-                     static_cast<long>(request.timeout.count()));
+    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, static_cast<long>(request.timeout.count()));
     curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 5000L);
 
     CurlSlistHandle headerList;
@@ -135,9 +142,7 @@ CurlHttpClient::send(const HttpRequest& request) {
         auto* appended = curl_slist_append(headerList.get(), headerLine.c_str());
         if (appended == nullptr) {
             return std::unexpected(ChainApiError{
-                ErrorCode::NetworkTimeout,
-                ErrorClass::Network,
-                "Failed to append header: " + key});
+                ErrorCode::NetworkTimeout, ErrorClass::Network, "Failed to append header: " + key});
         }
         // curl_slist_append returns the updated head — release the old and adopt the new.
         (void)headerList.release();
@@ -148,10 +153,9 @@ CurlHttpClient::send(const HttpRequest& request) {
     }
 
     if (request.body) {
-        curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDSIZE,
-                         static_cast<long>(request.body->size()));
-        curl_easy_setopt(curl.get(), CURLOPT_COPYPOSTFIELDS,
-                         request.body->c_str());
+        curl_easy_setopt(
+            curl.get(), CURLOPT_POSTFIELDSIZE, static_cast<long>(request.body->size()));
+        curl_easy_setopt(curl.get(), CURLOPT_COPYPOSTFIELDS, request.body->c_str());
     }
 
     auto startTime = std::chrono::steady_clock::now();
@@ -159,10 +163,10 @@ CurlHttpClient::send(const HttpRequest& request) {
     auto elapsed = std::chrono::steady_clock::now() - startTime;
 
     if (res != CURLE_OK) {
-        return std::unexpected(ChainApiError{
-            classifyCurlError(res),
-            ErrorClass::Network,
-            std::string("curl error: ") + curl_easy_strerror(res)});
+        return std::unexpected(
+            ChainApiError{classifyCurlError(res),
+                          ErrorClass::Network,
+                          std::string("curl error: ") + curl_easy_strerror(res)});
     }
 
     long httpStatus = 0;

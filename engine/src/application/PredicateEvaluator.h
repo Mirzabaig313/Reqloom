@@ -56,24 +56,22 @@ public:
 
     /// Parse and validate. Returns `ChainApiError{SchemaInvalid}` when the
     /// expression is malformed.
-    [[nodiscard]] std::expected<ParsedPredicate, ChainApiError>
-    parse(std::string_view expression) const;
+    [[nodiscard]] std::expected<ParsedPredicate, ChainApiError> parse(
+        std::string_view expression) const;
 
     /// Evaluate a previously-parsed expression against a JSON document.
     /// Total: never throws, never returns an error.
     ///
     /// `statusCode` is exposed inside expressions as `$.status_code`.
     /// Pass 0 when there is no associated HTTP status.
-    [[nodiscard]] PredicateValue
-    evaluate(const ParsedPredicate& predicate,
-             std::string_view jsonBody,
-             int statusCode = 0) const noexcept;
+    [[nodiscard]] PredicateValue evaluate(const ParsedPredicate& predicate,
+                                          std::string_view jsonBody,
+                                          int statusCode = 0) const noexcept;
 
     /// Convenience: parse and evaluate in one shot.
-    [[nodiscard]] std::expected<PredicateValue, ChainApiError>
-    eval(std::string_view expression,
-         std::string_view jsonBody,
-         int statusCode = 0) const;
+    [[nodiscard]] std::expected<PredicateValue, ChainApiError> eval(std::string_view expression,
+                                                                    std::string_view jsonBody,
+                                                                    int statusCode = 0) const;
 };
 
 }  // namespace chainapi::engine

@@ -3,9 +3,9 @@
 // and caches sessions/extractions for reuse.
 #include <chainapi/engine/ExecutionEngine.h>
 
+#include "../domain/Codecs.h"
 #include "../domain/DependencyResolver.h"
 #include "../domain/VariableResolver.h"
-#include "../domain/Codecs.h"
 #include "../infrastructure/hooks/HookRunner.h"
 #include "../infrastructure/http/HttpClient.h"
 #include "../infrastructure/schema/SchemaParser.h"
@@ -66,7 +66,10 @@ struct ExecutionEngine::Impl {
             snapshot = subscribers;
         }
         for (auto& cb : snapshot) {
-            try { cb(e); } catch (...) { /* never let a subscriber break the engine */ }
+            try {
+                cb(e);
+            } catch (...) { /* never let a subscriber break the engine */
+            }
         }
     }
 
@@ -75,8 +78,10 @@ struct ExecutionEngine::Impl {
     /// Delegates strategy-specific work to an Authenticator; this method owns
     /// the session-cache check, the post-success state flip, and the
     /// expiry-deadline computation.
-    bool ensureSession(const Actor& actor, RunContext& ctx,
-                       const ResolveContext& rctx, RunId /*runId*/) {
+    bool ensureSession(const Actor& actor,
+                       RunContext& ctx,
+                       const ResolveContext& rctx,
+                       RunId /*runId*/) {
         auto existing = ctx.session(actor.id);
         if (existing && existing->state == ActorSession::State::Live) {
             const auto now = std::chrono::steady_clock::now();
@@ -85,8 +90,8 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        auto authenticator = selectAuthenticator(
-            actor, AuthDependencies{deps.http.get(), &varResolver});
+        auto authenticator =
+            selectAuthenticator(actor, AuthDependencies{deps.http.get(), &varResolver});
         if (!authenticator) return false;
 
         auto outcome = authenticator->authenticate(actor, ctx, rctx);
@@ -94,8 +99,7 @@ struct ExecutionEngine::Impl {
 
         ActorSession session = std::move(*outcome);
         session.state = ActorSession::State::Live;
-        session.expiresAt =
-            std::chrono::steady_clock::now() + actor.sessionTtl;
+        session.expiresAt = std::chrono::steady_clock::now() + actor.sessionTtl;
         ctx.putSession(actor.id, std::move(session));
         return true;
     }
@@ -111,40 +115,38 @@ struct ExecutionEngine::Impl {
     ///   - SchemaInvalid:     success_when / fail_when failed to parse
     ///
     /// Cancellation is checked each iteration.
-    std::expected<HttpResponse, ChainApiError>
-    runPollLoop(const Operation& op,
-                const PollUntil& poll,
-                const Project& project,
-                RunContext& ctx,
-                const ResolveContext& rctx,
-                RunId runId,
-                const HttpResponse& /*initialResponse*/,
-                std::vector<StepResult>& attemptRows) {
+    std::expected<HttpResponse, ChainApiError> runPollLoop(const Operation& op,
+                                                           const PollUntil& poll,
+                                                           const Project& project,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx,
+                                                           RunId runId,
+                                                           const HttpResponse& /*initialResponse*/,
+                                                           std::vector<StepResult>& attemptRows) {
         PredicateEvaluator evaluator;
 
         auto successPredicate = evaluator.parse(poll.successWhen);
         if (!successPredicate) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::SchemaInvalid,
-                ErrorClass::Schema,
-                "poll_until.success_when: " + successPredicate.error().detail});
+            return std::unexpected(
+                ChainApiError{ErrorCode::SchemaInvalid,
+                              ErrorClass::Schema,
+                              "poll_until.success_when: " + successPredicate.error().detail});
         }
 
         std::optional<ParsedPredicate> failPredicate;
         if (poll.failWhen) {
             auto parsed = evaluator.parse(*poll.failWhen);
             if (!parsed) {
-                return std::unexpected(ChainApiError{
-                    ErrorCode::SchemaInvalid,
-                    ErrorClass::Schema,
-                    "poll_until.fail_when: " + parsed.error().detail});
+                return std::unexpected(
+                    ChainApiError{ErrorCode::SchemaInvalid,
+                                  ErrorClass::Schema,
+                                  "poll_until.fail_when: " + parsed.error().detail});
             }
             failPredicate = std::move(*parsed);
         }
 
         const auto baseUrlIt = rctx.envVars.find("baseUrl");
-        const std::string baseUrl =
-            baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
+        const std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
 
         const Actor* pollActor = nullptr;
         if (poll.actor) {
@@ -156,9 +158,9 @@ struct ExecutionEngine::Impl {
         }
 
         if (pollActor && !ensureSession(*pollActor, ctx, rctx, runId)) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::SessionRefreshFailed, ErrorClass::Auth,
-                "poll_until: actor session refresh failed"});
+            return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
+                                                 ErrorClass::Auth,
+                                                 "poll_until: actor session refresh failed"});
         }
 
         const auto deadline = std::chrono::steady_clock::now() + poll.timeout;
@@ -167,9 +169,8 @@ struct ExecutionEngine::Impl {
 
         for (int attempt = 0; attempt < poll.maxAttempts; ++attempt) {
             if (isCancelled(runId)) {
-                return std::unexpected(ChainApiError{
-                    ErrorCode::Cancelled, ErrorClass::Run,
-                    "poll_until: cancelled"});
+                return std::unexpected(
+                    ChainApiError{ErrorCode::Cancelled, ErrorClass::Run, "poll_until: cancelled"});
             }
 
             HttpRequest req;
@@ -177,9 +178,9 @@ struct ExecutionEngine::Impl {
             auto resolvedPath = varResolver.resolve(poll.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
                 return std::unexpected(ChainApiError{
-                    ErrorCode::VarUnresolved, ErrorClass::Resolution,
-                    "poll_until: unresolved variable in path: " +
-                    resolvedPath.unresolved.front()});
+                    ErrorCode::VarUnresolved,
+                    ErrorClass::Resolution,
+                    "poll_until: unresolved variable in path: " + resolvedPath.unresolved.front()});
             }
             req.url = baseUrl + resolvedPath.output;
             if (pollActor) {
@@ -198,9 +199,7 @@ struct ExecutionEngine::Impl {
                             if (!qs.empty()) qs += "&";
                             qs += urlEncode(k) + "=" + urlEncode(v);
                         }
-                        req.url += (req.url.find('?') == std::string::npos
-                                        ? "?"
-                                        : "&") + qs;
+                        req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
                     }
                 }
             }
@@ -209,24 +208,22 @@ struct ExecutionEngine::Impl {
             // inject merge so the signer sees the final request shape.
             if (pollActor) {
                 if (auto* session = ctx.session(pollActor->id); session) {
-                    if (session->signingScheme ==
-                            ActorSession::SigningScheme::OAuth1HmacSha1) {
+                    if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
                         if (!signOAuth1Request(req, *session)) {
-                            return std::unexpected(ChainApiError{
-                                ErrorCode::SessionRefreshFailed,
-                                ErrorClass::Auth,
-                                "poll_until: oauth1 signing failed (missing "
-                                "consumer credentials or malformed URL)"});
+                            return std::unexpected(
+                                ChainApiError{ErrorCode::SessionRefreshFailed,
+                                              ErrorClass::Auth,
+                                              "poll_until: oauth1 signing failed (missing "
+                                              "consumer credentials or malformed URL)"});
                         }
-                    } else if (session->signingScheme ==
-                                   ActorSession::SigningScheme::AwsSigV4) {
+                    } else if (session->signingScheme == ActorSession::SigningScheme::AwsSigV4) {
                         if (!signSigV4Request(req, *session)) {
-                            return std::unexpected(ChainApiError{
-                                ErrorCode::SessionRefreshFailed,
-                                ErrorClass::Auth,
-                                "poll_until: aws_sigv4 signing failed "
-                                "(missing access_key/secret_key/region/service "
-                                "or malformed URL)"});
+                            return std::unexpected(
+                                ChainApiError{ErrorCode::SessionRefreshFailed,
+                                              ErrorClass::Auth,
+                                              "poll_until: aws_sigv4 signing failed "
+                                              "(missing access_key/secret_key/region/service "
+                                              "or malformed URL)"});
                         }
                     }
                 }
@@ -245,13 +242,11 @@ struct ExecutionEngine::Impl {
             // outcome separately.
             const auto failMatched =
                 failPredicate &&
-                evaluator.evaluate(*failPredicate, lastResponse.body,
-                                   lastResponse.status) ==
+                evaluator.evaluate(*failPredicate, lastResponse.body, lastResponse.status) ==
                     PredicateValue::True;
             const auto successMatched =
                 !failMatched &&
-                evaluator.evaluate(*successPredicate, lastResponse.body,
-                                   lastResponse.status) ==
+                evaluator.evaluate(*successPredicate, lastResponse.body, lastResponse.status) ==
                     PredicateValue::True;
 
             StepResult attemptRow;
@@ -261,27 +256,28 @@ struct ExecutionEngine::Impl {
             if (failMatched) {
                 attemptRow.status = StepResult::Status::Failed;
                 attemptRow.error = ErrorCode::PollFailPredicate;
-                attemptRow.detail = "fail_when matched (HTTP " +
-                                    std::to_string(lastResponse.status) + ")";
+                attemptRow.detail =
+                    "fail_when matched (HTTP " + std::to_string(lastResponse.status) + ")";
             } else if (successMatched) {
                 attemptRow.status = StepResult::Status::Succeeded;
-                attemptRow.detail = "success_when matched (HTTP " +
-                                    std::to_string(lastResponse.status) + ")";
+                attemptRow.detail =
+                    "success_when matched (HTTP " + std::to_string(lastResponse.status) + ")";
             } else {
                 // Treat in-progress polls as Pending so renderers can show
                 // them as "still working" rather than completed.
                 attemptRow.status = StepResult::Status::Pending;
-                attemptRow.detail = "in_progress (HTTP " +
-                                    std::to_string(lastResponse.status) + ")";
+                attemptRow.detail =
+                    "in_progress (HTTP " + std::to_string(lastResponse.status) + ")";
             }
             ctx.record(attemptRow);
             attemptRows.push_back(std::move(attemptRow));
 
             if (failMatched) {
-                return std::unexpected(ChainApiError{
-                    ErrorCode::PollFailPredicate, ErrorClass::Polling,
-                    "poll_until.fail_when matched (HTTP " +
-                    std::to_string(lastResponse.status) + ")"});
+                return std::unexpected(ChainApiError{ErrorCode::PollFailPredicate,
+                                                     ErrorClass::Polling,
+                                                     "poll_until.fail_when matched (HTTP " +
+                                                         std::to_string(lastResponse.status) +
+                                                         ")"});
             }
             if (successMatched) {
                 return lastResponse;
@@ -304,33 +300,33 @@ struct ExecutionEngine::Impl {
             const auto remaining = deadline - std::chrono::steady_clock::now();
             if (remaining <= std::chrono::milliseconds{0}) {
                 return std::unexpected(ChainApiError{
-                    ErrorCode::PollTimeout, ErrorClass::Polling,
-                    haveLastResponse
-                        ? "poll_until: timeout exceeded — last response: HTTP " +
-                          std::to_string(lastResponse.status)
-                        : "poll_until: timeout exceeded"});
+                    ErrorCode::PollTimeout,
+                    ErrorClass::Polling,
+                    haveLastResponse ? "poll_until: timeout exceeded — last response: HTTP " +
+                                           std::to_string(lastResponse.status)
+                                     : "poll_until: timeout exceeded"});
             }
-            const auto sleepFor = std::min(
-                std::chrono::duration_cast<std::chrono::milliseconds>(remaining),
-                delay);
+            const auto sleepFor =
+                std::min(std::chrono::duration_cast<std::chrono::milliseconds>(remaining), delay);
             std::this_thread::sleep_for(sleepFor);
         }
 
         return std::unexpected(ChainApiError{
-            ErrorCode::PollMaxAttemptsExceeded, ErrorClass::Polling,
+            ErrorCode::PollMaxAttemptsExceeded,
+            ErrorClass::Polling,
             haveLastResponse
-                ? "poll_until: max_attempts (" +
-                  std::to_string(poll.maxAttempts) +
-                  ") exceeded — last response: HTTP " +
-                  std::to_string(lastResponse.status)
-                : "poll_until: max_attempts (" +
-                  std::to_string(poll.maxAttempts) + ") exceeded"});
+                ? "poll_until: max_attempts (" + std::to_string(poll.maxAttempts) +
+                      ") exceeded — last response: HTTP " + std::to_string(lastResponse.status)
+                : "poll_until: max_attempts (" + std::to_string(poll.maxAttempts) + ") exceeded"});
     }
 
     /// Execute a single operation step. Returns the StepResult.
-    StepResult executeStep(const Operation& op, const Project& project,
-                           RunContext& ctx, const ResolveContext& rctx,
-                           RunId runId, std::size_t /*stepIndex*/,
+    StepResult executeStep(const Operation& op,
+                           const Project& project,
+                           RunContext& ctx,
+                           const ResolveContext& rctx,
+                           RunId runId,
+                           std::size_t /*stepIndex*/,
                            std::vector<StepResult>& pollAttemptRows) {
         StepResult result;
         result.op = op.id;
@@ -445,25 +441,25 @@ struct ExecutionEngine::Impl {
             // retry loop so each attempt gets a fresh nonce/timestamp.
             if (!op.actor.value.empty()) {
                 if (auto* session = ctx.session(op.actor); session) {
-                    if (session->signingScheme ==
-                            ActorSession::SigningScheme::OAuth1HmacSha1) {
+                    if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
                         if (!signOAuth1Request(req, *session)) {
                             result.status = StepResult::Status::Failed;
                             result.error = ErrorCode::SessionRefreshFailed;
-                            result.detail = "oauth1 signing failed (missing "
-                                            "consumer credentials or "
-                                            "malformed URL)";
+                            result.detail =
+                                "oauth1 signing failed (missing "
+                                "consumer credentials or "
+                                "malformed URL)";
                             result.attempts = attemptCount;
                             return result;
                         }
-                    } else if (session->signingScheme ==
-                                   ActorSession::SigningScheme::AwsSigV4) {
+                    } else if (session->signingScheme == ActorSession::SigningScheme::AwsSigV4) {
                         if (!signSigV4Request(req, *session)) {
                             result.status = StepResult::Status::Failed;
                             result.error = ErrorCode::SessionRefreshFailed;
-                            result.detail = "aws_sigv4 signing failed "
-                                            "(missing access_key/secret_key/"
-                                            "region/service or malformed URL)";
+                            result.detail =
+                                "aws_sigv4 signing failed "
+                                "(missing access_key/secret_key/"
+                                "region/service or malformed URL)";
                             result.attempts = attemptCount;
                             return result;
                         }
@@ -514,10 +510,9 @@ struct ExecutionEngine::Impl {
             result.error = (httpResp->status >= 500) ? ErrorCode::Http5xx : ErrorCode::Http4xx;
             constexpr std::size_t kBodyExcerpt = 200;
             std::string bodyExcerpt = httpResp->body.size() > kBodyExcerpt
-                ? httpResp->body.substr(0, kBodyExcerpt) + "..."
-                : httpResp->body;
-            result.detail = "HTTP " + std::to_string(httpResp->status)
-                + " — " + bodyExcerpt;
+                                          ? httpResp->body.substr(0, kBodyExcerpt) + "..."
+                                          : httpResp->body;
+            result.detail = "HTTP " + std::to_string(httpResp->status) + " — " + bodyExcerpt;
             auto elapsed = std::chrono::steady_clock::now() - startTime;
             result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
             return result;
@@ -529,16 +524,14 @@ struct ExecutionEngine::Impl {
         // fail_when matches, or a budget fires. Extractions run against
         // the FINAL poll response.
         if (op.pollUntil && httpResp) {
-            const auto pollResult = runPollLoop(op, *op.pollUntil, project,
-                                                ctx, rctx, runId, *httpResp,
-                                                pollAttemptRows);
+            const auto pollResult = runPollLoop(
+                op, *op.pollUntil, project, ctx, rctx, runId, *httpResp, pollAttemptRows);
             if (!pollResult.has_value()) {
                 result.status = StepResult::Status::Failed;
                 result.error = pollResult.error().code;
                 result.detail = pollResult.error().detail;
                 auto elapsed = std::chrono::steady_clock::now() - startTime;
-                result.elapsed = std::chrono::duration_cast<
-                    std::chrono::milliseconds>(elapsed);
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
                 return result;
             }
             httpResp = std::move(*pollResult);
@@ -576,12 +569,10 @@ ExecutionEngine::~ExecutionEngine() = default;
 ExecutionEngine::ExecutionEngine(ExecutionEngine&&) noexcept = default;
 ExecutionEngine& ExecutionEngine::operator=(ExecutionEngine&&) noexcept = default;
 
-std::expected<RunResult, ChainApiError> ExecutionEngine::run(
-    const Project& project,
-    const OperationId& target,
-    RunContext& ctx,
-    const RunOptions& options) {
-
+std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& project,
+                                                             const OperationId& target,
+                                                             RunContext& ctx,
+                                                             const RunOptions& options) {
     impl_->cancelledRunId.store(0, std::memory_order_release);
 
     if (options.resetExtractions) {
@@ -607,8 +598,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
         rctx.envVars = project.environments.at(envName);
     }
 
-    impl_->emit(RunStarted{runId, target, chain.size(), envName,
-                           std::chrono::system_clock::now()});
+    impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});
 
     RunResult result;
     result.runId = runId;
@@ -647,14 +637,19 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
                             break;
                         }
                     }
-                    if (!found) { allPresent = false; break; }
+                    if (!found) {
+                        allPresent = false;
+                        break;
+                    }
                 }
                 if (allPresent) {
                     StepResult skipResult;
                     skipResult.op = opId;
                     skipResult.status = StepResult::Status::Skipped;
                     result.steps.push_back(skipResult);
-                    impl_->emit(StepSkipped{runId, i, opId,
+                    impl_->emit(StepSkipped{runId,
+                                            i,
+                                            opId,
                                             SkipReason::ExtractionCached,
                                             std::chrono::system_clock::now()});
                     continue;
@@ -670,12 +665,10 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
             continue;
         }
 
-        impl_->emit(StepStarted{runId, i, opId, 1,
-                                std::chrono::system_clock::now()});
+        impl_->emit(StepStarted{runId, i, opId, 1, std::chrono::system_clock::now()});
 
         std::vector<StepResult> pollAttemptRows;
-        auto stepResult = impl_->executeStep(op, project, ctx, rctx, runId, i,
-                                             pollAttemptRows);
+        auto stepResult = impl_->executeStep(op, project, ctx, rctx, runId, i, pollAttemptRows);
         // Per-attempt rows precede the parent step row so renderers can
         // group them under the operation that owned the poll loop.
         for (auto& row : pollAttemptRows) {
@@ -685,10 +678,13 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
         ctx.record(stepResult);
 
         if (stepResult.status == StepResult::Status::Failed) {
-            impl_->emit(StepFailed{runId, i, opId,
+            impl_->emit(StepFailed{runId,
+                                   i,
+                                   opId,
                                    stepResult.error.value_or(ErrorCode::Http4xx),
                                    classify(stepResult.error.value_or(ErrorCode::Http4xx)),
-                                   stepResult.attempts, stepResult.detail,
+                                   stepResult.attempts,
+                                   stepResult.detail,
                                    std::chrono::system_clock::now()});
             result.outcome = RunOutcome::Failed;
             for (std::size_t j = i + 1; j < chain.size(); ++j) {
@@ -712,8 +708,8 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
         }
     }
 
-    impl_->emit(RunEnded{runId, result.outcome, std::chrono::milliseconds{0},
-                         std::chrono::system_clock::now()});
+    impl_->emit(RunEnded{
+        runId, result.outcome, std::chrono::milliseconds{0}, std::chrono::system_clock::now()});
     return result;
 }
 

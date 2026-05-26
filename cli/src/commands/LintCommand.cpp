@@ -21,14 +21,14 @@ int lintCommand(const QStringList& args) {
 
     auto yamlPath = projectPath / "chainapi.yaml";
     if (!fs::exists(yamlPath)) {
-        std::println(stderr, "Error: chainapi.yaml not found in {}",
-                     projectPath.string());
+        std::println(stderr, "Error: chainapi.yaml not found in {}", projectPath.string());
         return 1;
     }
 
     auto projectResult = ce::parseProject(yamlPath);
     if (!projectResult) {
-        std::println(stderr, "LINT FAIL [{}]: {}",
+        std::println(stderr,
+                     "LINT FAIL [{}]: {}",
                      std::string(ce::toCodeString(projectResult.error().code)),
                      projectResult.error().detail);
         return 1;
@@ -50,7 +50,8 @@ int lintCommand(const QStringList& args) {
             options.dryRun = true;
             auto result = engine.run(project, op.id, ctx, options);
             if (!result) {
-                std::println(stderr, "  ERROR {}: [{}] {}",
+                std::println(stderr,
+                             "  ERROR {}: [{}] {}",
                              op.id.value,
                              std::string(ce::toCodeString(result.error().code)),
                              result.error().detail);
@@ -61,7 +62,9 @@ int lintCommand(const QStringList& args) {
 
     if (errors == 0) {
         std::println("LINT OK — {} actors, {} resources, {} operations. No errors.",
-                     project.actors.size(), project.resources.size(), totalOps);
+                     project.actors.size(),
+                     project.resources.size(),
+                     totalOps);
         return 0;
     }
 

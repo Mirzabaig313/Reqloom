@@ -23,18 +23,15 @@ ce::Operation makeOp(std::vector<ce::Extraction> exts) {
 }
 
 ce::Extraction jsonPath(std::string name, std::string path) {
-    return ce::Extraction{std::move(name), std::move(path),
-                          ce::Extraction::Source::JsonPath};
+    return ce::Extraction{std::move(name), std::move(path), ce::Extraction::Source::JsonPath};
 }
 
 ce::Extraction header(std::string name, std::string path) {
-    return ce::Extraction{std::move(name), std::move(path),
-                          ce::Extraction::Source::Header};
+    return ce::Extraction{std::move(name), std::move(path), ce::Extraction::Source::Header};
 }
 
 ce::Extraction statusCode(std::string name) {
-    return ce::Extraction{std::move(name), {},
-                          ce::Extraction::Source::StatusCode};
+    return ce::Extraction{std::move(name), {}, ce::Extraction::Source::StatusCode};
 }
 
 }  // namespace
@@ -66,7 +63,7 @@ TEST(Verifier, jsonpath_missing_marks_no_match) {
     auto op = makeOp({jsonPath("product_id", "$.data.id")});
 
     ce::SampleResponse sample;
-    sample.body = R"({"data":{"order":{"id":"prod-123"}}})";   // wrong shape
+    sample.body = R"({"data":{"order":{"id":"prod-123"}}})";  // wrong shape
 
     auto report = v.verify(op, sample);
     ASSERT_TRUE(report);
@@ -99,8 +96,7 @@ TEST(Verifier, jsonpath_resolves_to_empty_string_marks_null) {
     auto report = v.verify(op, sample);
     ASSERT_TRUE(report);
     EXPECT_EQ(report->extractions[0].status, ce::VerificationStatus::Null);
-    EXPECT_NE(report->extractions[0].detail.find("empty string"),
-              std::string::npos);
+    EXPECT_NE(report->extractions[0].detail.find("empty string"), std::string::npos);
 }
 
 TEST(Verifier, jsonpath_resolves_to_empty_array_marks_null) {
@@ -137,8 +133,8 @@ TEST(Verifier, no_sample_body_marks_no_sample_for_jsonpath) {
     auto report = v.verify(op, sample);
     ASSERT_TRUE(report);
     EXPECT_EQ(report->extractions[0].status, ce::VerificationStatus::NoSample);
-    EXPECT_FALSE(report->hasFailures());     // soft state, not a failure
-    EXPECT_FALSE(report->allVerified());     // but not verified either
+    EXPECT_FALSE(report->hasFailures());  // soft state, not a failure
+    EXPECT_FALSE(report->allVerified());  // but not verified either
     EXPECT_TRUE(report->noFailures());
 }
 
@@ -165,7 +161,7 @@ TEST(Verifier, header_present_marks_verified_case_insensitive) {
 
     ce::SampleResponse sample;
     sample.headers = {{"content-type", "application/json"},
-                      {"etag", "\"abc123\""}};   // server returned lowercase
+                      {"etag", "\"abc123\""}};  // server returned lowercase
 
     auto report = v.verify(op, sample);
     ASSERT_TRUE(report);
@@ -206,8 +202,7 @@ TEST(Verifier, header_with_non_standard_path_marks_not_evaluated) {
 
     auto report = v.verify(op, sample);
     ASSERT_TRUE(report);
-    EXPECT_EQ(report->extractions[0].status,
-              ce::VerificationStatus::NotEvaluated);
+    EXPECT_EQ(report->extractions[0].status, ce::VerificationStatus::NotEvaluated);
 }
 
 TEST(Verifier, header_with_no_sample_headers_marks_no_sample) {
@@ -261,8 +256,7 @@ TEST(Verifier, xpath_and_regex_and_cookie_mark_not_evaluated) {
     auto report = v.verify(op, sample);
     ASSERT_TRUE(report);
     for (const auto& ex : report->extractions) {
-        EXPECT_EQ(ex.status, ce::VerificationStatus::NotEvaluated)
-            << "name: " << ex.variableName;
+        EXPECT_EQ(ex.status, ce::VerificationStatus::NotEvaluated) << "name: " << ex.variableName;
     }
     // NotEvaluated is a soft state: verifier doesn't refuse the write,
     // it just records that the importer must surface a warning.
@@ -276,8 +270,8 @@ TEST(Verifier, mixed_outcomes_round_trip_through_aggregate_accessors) {
     ce::Verifier v;
     auto op = makeOp({
         jsonPath("good", "$.x"),
-        jsonPath("bad",  "$.missing"),
-        jsonPath("nul",  "$.y"),
+        jsonPath("bad", "$.missing"),
+        jsonPath("nul", "$.y"),
     });
 
     ce::SampleResponse sample;
@@ -291,7 +285,7 @@ TEST(Verifier, mixed_outcomes_round_trip_through_aggregate_accessors) {
     EXPECT_EQ(report->extractions[2].status, ce::VerificationStatus::Null);
 
     EXPECT_FALSE(report->allVerified());
-    EXPECT_TRUE(report->hasFailures());   // bad + nul both count as failures
+    EXPECT_TRUE(report->hasFailures());  // bad + nul both count as failures
     EXPECT_FALSE(report->noFailures());
 }
 
@@ -331,7 +325,6 @@ TEST(Verifier, verified_detail_truncates_long_values) {
     // implementation detail; assert "much shorter than 500" instead.
     EXPECT_LT(report->extractions[0].detail.size(), 200u);
 }
-
 
 // ─── Review-fix regression tests ────────────────────────────────────────────
 

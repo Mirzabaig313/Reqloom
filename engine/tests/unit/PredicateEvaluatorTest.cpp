@@ -70,57 +70,43 @@ TEST(PredicateEvaluator, status_code_shortcut_resolves_from_int) {
 // ─── In / membership ────────────────────────────────────────────────────────
 
 TEST(PredicateEvaluator, in_operator_matches_any_array_member) {
-    EXPECT_TRUE(eval(
-        "$.status in ['FAILED','CANCELLED','EXPIRED']",
-        R"({"status":"CANCELLED"})"));
-    EXPECT_FALSE(eval(
-        "$.status in ['FAILED','CANCELLED']",
-        R"({"status":"PROCESSING"})"));
+    EXPECT_TRUE(eval("$.status in ['FAILED','CANCELLED','EXPIRED']", R"({"status":"CANCELLED"})"));
+    EXPECT_FALSE(eval("$.status in ['FAILED','CANCELLED']", R"({"status":"PROCESSING"})"));
 }
 
 TEST(PredicateEvaluator, in_operator_works_for_status_code) {
-    EXPECT_TRUE(eval(
-        "$.status_code in [200, 201, 202]", R"({})", 201));
-    EXPECT_FALSE(eval(
-        "$.status_code in [200, 201]", R"({})", 500));
+    EXPECT_TRUE(eval("$.status_code in [200, 201, 202]", R"({})", 201));
+    EXPECT_FALSE(eval("$.status_code in [200, 201]", R"({})", 500));
 }
 
 // ─── Matches / regex ────────────────────────────────────────────────────────
 
 TEST(PredicateEvaluator, matches_uses_regex_search) {
-    EXPECT_TRUE(eval(
-        "$.message matches 'completed.*successfully'",
-        R"({"message":"job completed successfully"})"));
-    EXPECT_FALSE(eval(
-        "$.message matches '^completed$'",
-        R"({"message":"job completed successfully"})"));
+    EXPECT_TRUE(eval("$.message matches 'completed.*successfully'",
+                     R"({"message":"job completed successfully"})"));
+    EXPECT_FALSE(
+        eval("$.message matches '^completed$'", R"({"message":"job completed successfully"})"));
 }
 
 TEST(PredicateEvaluator, matches_with_invalid_regex_is_false_not_error) {
-    EXPECT_FALSE(eval(
-        "$.message matches '['",   // unterminated character class
-        R"({"message":"x"})"));
+    EXPECT_FALSE(eval("$.message matches '['",  // unterminated character class
+                      R"({"message":"x"})"));
 }
 
 // ─── Logical operators ──────────────────────────────────────────────────────
 
 TEST(PredicateEvaluator, and_short_circuits_left_to_right) {
-    EXPECT_TRUE(eval(
-        "$.status == 'COMPLETED' && $.code == 0",
-        R"({"status":"COMPLETED","code":0})"));
-    EXPECT_FALSE(eval(
-        "$.status == 'COMPLETED' && $.code == 0",
-        R"({"status":"COMPLETED","code":1})"));
+    EXPECT_TRUE(
+        eval("$.status == 'COMPLETED' && $.code == 0", R"({"status":"COMPLETED","code":0})"));
+    EXPECT_FALSE(
+        eval("$.status == 'COMPLETED' && $.code == 0", R"({"status":"COMPLETED","code":1})"));
     // First side false → second not consulted (no missing-field error).
-    EXPECT_FALSE(eval(
-        "$.status == 'PENDING' && $.never_referenced == 0",
-        R"({"status":"COMPLETED"})"));
+    EXPECT_FALSE(
+        eval("$.status == 'PENDING' && $.never_referenced == 0", R"({"status":"COMPLETED"})"));
 }
 
 TEST(PredicateEvaluator, or_short_circuits) {
-    EXPECT_TRUE(eval(
-        "$.status == 'OK' || $.code == 200",
-        R"({"code":200})"));
+    EXPECT_TRUE(eval("$.status == 'OK' || $.code == 200", R"({"code":200})"));
 }
 
 // ─── Truthiness (bare jsonpath) ─────────────────────────────────────────────
@@ -149,12 +135,9 @@ TEST(PredicateEvaluator, truthiness_supports_verifier_use_case) {
 // ─── Indexed paths ──────────────────────────────────────────────────────────
 
 TEST(PredicateEvaluator, jsonpath_supports_array_indices) {
-    EXPECT_TRUE(eval("$.items[0].id == 'first'",
-                     R"({"items":[{"id":"first"},{"id":"second"}]})"));
-    EXPECT_TRUE(eval("$.items[1].id == 'second'",
-                     R"({"items":[{"id":"first"},{"id":"second"}]})"));
-    EXPECT_FALSE(eval("$.items[5].id == 'oops'",
-                      R"({"items":[{"id":"first"}]})"));
+    EXPECT_TRUE(eval("$.items[0].id == 'first'", R"({"items":[{"id":"first"},{"id":"second"}]})"));
+    EXPECT_TRUE(eval("$.items[1].id == 'second'", R"({"items":[{"id":"first"},{"id":"second"}]})"));
+    EXPECT_FALSE(eval("$.items[5].id == 'oops'", R"({"items":[{"id":"first"}]})"));
 }
 
 TEST(PredicateEvaluator, jsonpath_supports_quoted_keys) {
@@ -168,7 +151,7 @@ TEST(PredicateEvaluator, malformed_expression_returns_parse_error) {
     auto r = E.parse("$.status ===");
     ASSERT_FALSE(r.has_value());
     EXPECT_EQ(r.error().code, ce::ErrorCode::SchemaInvalid);
-    EXPECT_EQ(r.error().cls,  ce::ErrorClass::Schema);
+    EXPECT_EQ(r.error().cls, ce::ErrorClass::Schema);
 }
 
 TEST(PredicateEvaluator, dangling_bracket_is_parse_error) {
@@ -188,10 +171,8 @@ TEST(PredicateEvaluator, parsed_predicate_can_evaluate_many_bodies) {
     auto parsed = E.parse("$.status == 'COMPLETED'");
     ASSERT_TRUE(parsed.has_value());
 
-    EXPECT_EQ(E.evaluate(*parsed, R"({"status":"PENDING"})"),
-              ce::PredicateValue::False);
-    EXPECT_EQ(E.evaluate(*parsed, R"({"status":"COMPLETED"})"),
-              ce::PredicateValue::True);
+    EXPECT_EQ(E.evaluate(*parsed, R"({"status":"PENDING"})"), ce::PredicateValue::False);
+    EXPECT_EQ(E.evaluate(*parsed, R"({"status":"COMPLETED"})"), ce::PredicateValue::True);
 }
 
 TEST(PredicateEvaluator, malformed_body_does_not_crash_evaluation) {
@@ -199,12 +180,9 @@ TEST(PredicateEvaluator, malformed_body_does_not_crash_evaluation) {
     ASSERT_TRUE(parsed.has_value());
 
     // Body is not JSON; predicate over status_code still works.
-    EXPECT_EQ(E.evaluate(*parsed, "this is not json", 200),
-              ce::PredicateValue::True);
-    EXPECT_EQ(E.evaluate(*parsed, "this is not json", 500),
-              ce::PredicateValue::False);
+    EXPECT_EQ(E.evaluate(*parsed, "this is not json", 200), ce::PredicateValue::True);
+    EXPECT_EQ(E.evaluate(*parsed, "this is not json", 500), ce::PredicateValue::False);
 }
-
 
 // ─── Review-fix regression tests ────────────────────────────────────────────
 
@@ -233,14 +211,11 @@ TEST(PredicateEvaluator, integer_compare_preserves_int64_precision) {
 
     // 9007199254740993 == 2^53 + 1 — first integer not representable
     // exactly as a double.
-    EXPECT_EQ(e.eval("$.id > 9007199254740992",
-                     R"({"id":9007199254740993})").value(),
+    EXPECT_EQ(e.eval("$.id > 9007199254740992", R"({"id":9007199254740993})").value(),
               ce::PredicateValue::True);
-    EXPECT_EQ(e.eval("$.id < 9007199254740994",
-                     R"({"id":9007199254740993})").value(),
+    EXPECT_EQ(e.eval("$.id < 9007199254740994", R"({"id":9007199254740993})").value(),
               ce::PredicateValue::True);
 
     // Same comparison with floats falls back to double — must still work.
-    EXPECT_EQ(e.eval("$.x < 1.5", R"({"x":1.0})").value(),
-              ce::PredicateValue::True);
+    EXPECT_EQ(e.eval("$.x < 1.5", R"({"x":1.0})").value(), ce::PredicateValue::True);
 }

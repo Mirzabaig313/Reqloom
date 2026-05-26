@@ -36,41 +36,54 @@ using codecs::methodToString;
 
 constexpr std::string_view provenanceSourceToString(Provenance::Source s) {
     switch (s) {
-        case Provenance::Source::HandWritten:    return "hand_written";
-        case Provenance::Source::OpenApiImport:  return "openapi_import";
-        case Provenance::Source::PostmanImport:  return "postman_import";
-        case Provenance::Source::BrunoImport:    return "bruno_import";
-        case Provenance::Source::InsomniaImport: return "insomnia_import";
-        case Provenance::Source::HarImport:      return "har_import";
-        case Provenance::Source::AiImport:       return "ai_import";
+        case Provenance::Source::HandWritten:
+            return "hand_written";
+        case Provenance::Source::OpenApiImport:
+            return "openapi_import";
+        case Provenance::Source::PostmanImport:
+            return "postman_import";
+        case Provenance::Source::BrunoImport:
+            return "bruno_import";
+        case Provenance::Source::InsomniaImport:
+            return "insomnia_import";
+        case Provenance::Source::HarImport:
+            return "har_import";
+        case Provenance::Source::AiImport:
+            return "ai_import";
     }
     return "hand_written";
 }
 
 constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v) {
     switch (v) {
-        case Provenance::VerifiedAgainst::None:             return "none";
-        case Provenance::VerifiedAgainst::OpenApiExample:   return "openapi_example";
-        case Provenance::VerifiedAgainst::PostmanResponse:  return "postman_response";
-        case Provenance::VerifiedAgainst::InsomniaResponse: return "insomnia_response";
-        case Provenance::VerifiedAgainst::HarEntry:         return "har_entry";
-        case Provenance::VerifiedAgainst::Synthetic:        return "synthetic";
-        case Provenance::VerifiedAgainst::LiveCapture:      return "live_capture";
+        case Provenance::VerifiedAgainst::None:
+            return "none";
+        case Provenance::VerifiedAgainst::OpenApiExample:
+            return "openapi_example";
+        case Provenance::VerifiedAgainst::PostmanResponse:
+            return "postman_response";
+        case Provenance::VerifiedAgainst::InsomniaResponse:
+            return "insomnia_response";
+        case Provenance::VerifiedAgainst::HarEntry:
+            return "har_entry";
+        case Provenance::VerifiedAgainst::Synthetic:
+            return "synthetic";
+        case Provenance::VerifiedAgainst::LiveCapture:
+            return "live_capture";
     }
     return "none";
 }
 
 // ─── Atomic write helper ─────────────────────────────────────────────────────
 
-std::expected<void, ChainApiError>
-writeAtomic(const fs::path& target, const std::string& content) {
+std::expected<void, ChainApiError> writeAtomic(const fs::path& target, const std::string& content) {
     std::error_code ec;
     fs::create_directories(target.parent_path(), ec);
     if (ec) {
         return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "writer: cannot create dir " + target.parent_path().string() +
-            ": " + ec.message()});
+            ErrorCode::SchemaInvalid,
+            ErrorClass::Schema,
+            "writer: cannot create dir " + target.parent_path().string() + ": " + ec.message()});
     }
 
     auto temp = target;
@@ -78,15 +91,16 @@ writeAtomic(const fs::path& target, const std::string& content) {
     {
         std::ofstream out{temp, std::ios::binary | std::ios::trunc};
         if (!out) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::SchemaInvalid, ErrorClass::Schema,
-                "writer: cannot open temp file " + temp.string()});
+            return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+                                                 ErrorClass::Schema,
+                                                 "writer: cannot open temp file " + temp.string()});
         }
         out << content;
         if (!out) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::SchemaInvalid, ErrorClass::Schema,
-                "writer: failed writing temp file " + temp.string()});
+            return std::unexpected(
+                ChainApiError{ErrorCode::SchemaInvalid,
+                              ErrorClass::Schema,
+                              "writer: failed writing temp file " + temp.string()});
         }
     }
 
@@ -94,30 +108,29 @@ writeAtomic(const fs::path& target, const std::string& content) {
     if (ec) {
         std::error_code _;
         fs::remove(temp, _);
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "writer: cannot rename " + temp.string() + " → " +
-            target.string() + ": " + ec.message()});
+        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+                                             ErrorClass::Schema,
+                                             "writer: cannot rename " + temp.string() + " → " +
+                                                 target.string() + ": " + ec.message()});
     }
     return {};
 }
 
 // ─── Emitter helpers ─────────────────────────────────────────────────────────
 
-void emitStringMap(YAML::Emitter& e,
-                   const std::map<std::string, std::string>& m) {
+void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m) {
     e << YAML::BeginMap;
     std::vector<std::pair<std::string, std::string>> sorted{m.begin(), m.end()};
-    std::sort(sorted.begin(), sorted.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
+        return a.first < b.first;
+    });
     for (const auto& [k, v] : sorted) {
         e << YAML::Key << k << YAML::Value << v;
     }
     e << YAML::EndMap;
 }
 
-void emitExtractions(YAML::Emitter& e,
-                     const std::vector<Extraction>& extractions) {
+void emitExtractions(YAML::Emitter& e, const std::vector<Extraction>& extractions) {
     if (extractions.empty()) return;
     e << YAML::Key << "extract" << YAML::Value << YAML::BeginMap;
     for (const auto& ext : extractions) {
@@ -128,13 +141,12 @@ void emitExtractions(YAML::Emitter& e,
 
 void emitProvenance(YAML::Emitter& e, const Provenance& p) {
     e << YAML::Key << "_provenance" << YAML::Value << YAML::BeginMap;
-    e << YAML::Key << "source" << YAML::Value
-      << std::string{provenanceSourceToString(p.source)};
+    e << YAML::Key << "source" << YAML::Value << std::string{provenanceSourceToString(p.source)};
     if (p.verifiedAgainst != Provenance::VerifiedAgainst::None) {
         e << YAML::Key << "verified_against" << YAML::Value
           << std::string{verifiedAgainstToString(p.verifiedAgainst)};
     }
-    if (p.model)      e << YAML::Key << "model"       << YAML::Value << *p.model;
+    if (p.model) e << YAML::Key << "model" << YAML::Value << *p.model;
     if (p.importedAt) e << YAML::Key << "imported_at" << YAML::Value << *p.importedAt;
     if (!p.evidence.empty()) {
         e << YAML::Key << "evidence" << YAML::Value;
@@ -145,9 +157,8 @@ void emitProvenance(YAML::Emitter& e, const Provenance& p) {
 
 void emitOperation(YAML::Emitter& e, const Operation& op) {
     e << YAML::BeginMap;
-    e << YAML::Key << "method" << YAML::Value
-      << std::string{methodToString(op.method)};
-    e << YAML::Key << "path"   << YAML::Value << op.pathTemplate;
+    e << YAML::Key << "method" << YAML::Value << std::string{methodToString(op.method)};
+    e << YAML::Key << "path" << YAML::Value << op.pathTemplate;
     if (!op.actor.value.empty()) {
         e << YAML::Key << "actor" << YAML::Value << op.actor.value;
     }
@@ -167,41 +178,35 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
         emitStringMap(e, *op.bodyForm);
     }
     if (!op.expectStatusList.empty()) {
-        e << YAML::Key << "expect_status" << YAML::Value
-          << YAML::Flow << YAML::BeginSeq;
+        e << YAML::Key << "expect_status" << YAML::Value << YAML::Flow << YAML::BeginSeq;
         for (int s : op.expectStatusList) e << s;
         e << YAML::EndSeq;
     } else if (op.expectStatus) {
         e << YAML::Key << "expect_status" << YAML::Value << *op.expectStatus;
     }
     if (!op.explicitDependencies.empty()) {
-        e << YAML::Key << "depends_on" << YAML::Value
-          << YAML::Flow << YAML::BeginSeq;
+        e << YAML::Key << "depends_on" << YAML::Value << YAML::Flow << YAML::BeginSeq;
         for (const auto& dep : op.explicitDependencies) e << dep.value;
         e << YAML::EndSeq;
     }
     if (op.preRequestScript) {
-        e << YAML::Key << "pre_request"  << YAML::Value
-          << YAML::Literal << *op.preRequestScript;
+        e << YAML::Key << "pre_request" << YAML::Value << YAML::Literal << *op.preRequestScript;
     }
     if (op.postResponseScript) {
-        e << YAML::Key << "post_response" << YAML::Value
-          << YAML::Literal << *op.postResponseScript;
+        e << YAML::Key << "post_response" << YAML::Value << YAML::Literal << *op.postResponseScript;
     }
     if (op.timeout) {
-        e << YAML::Key << "timeout" << YAML::Value
-          << static_cast<int>(op.timeout->count());
+        e << YAML::Key << "timeout" << YAML::Value << static_cast<int>(op.timeout->count());
     }
     if (op.force) {
         e << YAML::Key << "force" << YAML::Value << true;
     }
     if (op.pollUntil) {
         const auto& p = *op.pollUntil;
-        e << YAML::Key << "poll_until" << YAML::Value << YAML::BeginMap
-          << YAML::Key << "method"       << YAML::Value
-          << std::string{methodToString(p.method)}
-          << YAML::Key << "path"         << YAML::Value << p.pathTemplate
-          << YAML::Key << "success_when" << YAML::Value << p.successWhen;
+        e << YAML::Key << "poll_until" << YAML::Value << YAML::BeginMap << YAML::Key << "method"
+          << YAML::Value << std::string{methodToString(p.method)} << YAML::Key << "path"
+          << YAML::Value << p.pathTemplate << YAML::Key << "success_when" << YAML::Value
+          << p.successWhen;
         if (p.actor) {
             e << YAML::Key << "actor" << YAML::Value << p.actor->value;
         }
@@ -209,20 +214,16 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
             e << YAML::Key << "fail_when" << YAML::Value << *p.failWhen;
         }
         if (p.backoffBase) {
-            e << YAML::Key << "backoff" << YAML::Value << YAML::BeginMap
-              << YAML::Key << "base" << YAML::Value
-              << (std::to_string(p.backoffBase->count()) + "ms")
-              << YAML::Key << "max"  << YAML::Value
-              << (std::to_string(p.backoffMax.count()) + "ms")
+            e << YAML::Key << "backoff" << YAML::Value << YAML::BeginMap << YAML::Key << "base"
+              << YAML::Value << (std::to_string(p.backoffBase->count()) + "ms") << YAML::Key
+              << "max" << YAML::Value << (std::to_string(p.backoffMax.count()) + "ms")
               << YAML::EndMap;
         } else {
             e << YAML::Key << "interval" << YAML::Value
               << (std::to_string(p.interval.count()) + "ms");
         }
-        e << YAML::Key << "timeout" << YAML::Value
-          << (std::to_string(p.timeout.count()) + "ms")
-          << YAML::Key << "max_attempts" << YAML::Value << p.maxAttempts
-          << YAML::EndMap;
+        e << YAML::Key << "timeout" << YAML::Value << (std::to_string(p.timeout.count()) + "ms")
+          << YAML::Key << "max_attempts" << YAML::Value << p.maxAttempts << YAML::EndMap;
     }
     emitExtractions(e, op.extractions);
     if (op.provenance) {
@@ -233,10 +234,9 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
 
 std::string emitResource(const Resource& res) {
     YAML::Emitter e;
-    e << YAML::BeginMap
-      << YAML::Key << "name"        << YAML::Value << res.id.value
-      << YAML::Key << "description" << YAML::Value << res.description
-      << YAML::Key << "operations"  << YAML::Value << YAML::BeginMap;
+    e << YAML::BeginMap << YAML::Key << "name" << YAML::Value << res.id.value << YAML::Key
+      << "description" << YAML::Value << res.description << YAML::Key << "operations" << YAML::Value
+      << YAML::BeginMap;
     std::vector<std::string> opNames;
     opNames.reserve(res.operations.size());
     for (const auto& [k, _] : res.operations) opNames.push_back(k);
@@ -254,9 +254,8 @@ void emitAuthStep(YAML::Emitter& e, const AuthStep& step, bool isChainStep) {
         e << YAML::BeginMap;
         e << YAML::Key << "id" << YAML::Value << step.id;
     }
-    e << YAML::Key << "method" << YAML::Value
-      << std::string{methodToString(step.method)}
-      << YAML::Key << "path"   << YAML::Value << step.pathTemplate;
+    e << YAML::Key << "method" << YAML::Value << std::string{methodToString(step.method)}
+      << YAML::Key << "path" << YAML::Value << step.pathTemplate;
     if (!step.headers.empty()) {
         e << YAML::Key << "headers" << YAML::Value;
         emitStringMap(e, step.headers);
@@ -275,14 +274,13 @@ void emitAuthStep(YAML::Emitter& e, const AuthStep& step, bool isChainStep) {
 
 std::string emitActor(const Actor& actor) {
     YAML::Emitter e;
-    e << YAML::BeginMap
-      << YAML::Key << "name"        << YAML::Value << actor.id.value
-      << YAML::Key << "description" << YAML::Value << actor.description;
+    e << YAML::BeginMap << YAML::Key << "name" << YAML::Value << actor.id.value << YAML::Key
+      << "description" << YAML::Value << actor.description;
 
     e << YAML::Key << "auth" << YAML::Value << YAML::BeginMap;
     if (actor.strategy == AuthStrategy::Chain) {
         e << YAML::Key << "strategy" << YAML::Value << "chain";
-        e << YAML::Key << "steps"    << YAML::Value << YAML::BeginSeq;
+        e << YAML::Key << "steps" << YAML::Value << YAML::BeginSeq;
         for (const auto& step : actor.authSteps) {
             emitAuthStep(e, step, /*isChainStep=*/true);
         }
@@ -316,32 +314,31 @@ std::string emitActor(const Actor& actor) {
         }
     } else if (actor.strategy == AuthStrategy::OAuth2Password) {
         e << YAML::Key << "strategy" << YAML::Value << "oauth2_password";
-        for (const auto* field : {"token_url", "client_id", "client_secret",
-                                  "username", "password", "scope"}) {
+        for (const auto* field :
+             {"token_url", "client_id", "client_secret", "username", "password", "scope"}) {
             if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
                 e << YAML::Key << field << YAML::Value << it->second;
             }
         }
     } else if (actor.strategy == AuthStrategy::OAuth1) {
         e << YAML::Key << "strategy" << YAML::Value << "oauth1";
-        for (const auto* field : {"consumer_key", "consumer_secret",
-                                  "token", "token_secret", "realm"}) {
+        for (const auto* field :
+             {"consumer_key", "consumer_secret", "token", "token_secret", "realm"}) {
             if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
                 e << YAML::Key << field << YAML::Value << it->second;
             }
         }
     } else if (actor.strategy == AuthStrategy::AwsSigV4) {
         e << YAML::Key << "strategy" << YAML::Value << "aws_sigv4";
-        for (const auto* field : {"access_key", "secret_key", "region",
-                                  "service", "session_token"}) {
+        for (const auto* field :
+             {"access_key", "secret_key", "region", "service", "session_token"}) {
             if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
                 e << YAML::Key << field << YAML::Value << it->second;
             }
         }
         if (auto it = actor.authConfig.find("sign_payload"); it != actor.authConfig.end()) {
             // Round-trip as a YAML bool, not a string.
-            e << YAML::Key << "sign_payload" << YAML::Value
-              << (it->second == "true");
+            e << YAML::Key << "sign_payload" << YAML::Value << (it->second == "true");
         }
     } else {
         e << YAML::Key << "strategy" << YAML::Value << "simple";
@@ -351,14 +348,12 @@ std::string emitActor(const Actor& actor) {
     }
     e << YAML::EndMap;
 
-    e << YAML::Key << "session" << YAML::Value << YAML::BeginMap
-      << YAML::Key << "ttl" << YAML::Value
-      << (std::to_string(actor.sessionTtl.count()) + "s");
+    e << YAML::Key << "session" << YAML::Value << YAML::BeginMap << YAML::Key << "ttl"
+      << YAML::Value << (std::to_string(actor.sessionTtl.count()) + "s");
     if (actor.refresh) {
-        e << YAML::Key << "refresh" << YAML::Value << YAML::BeginMap
-          << YAML::Key << "method" << YAML::Value
-          << std::string{methodToString(actor.refresh->method)}
-          << YAML::Key << "path"   << YAML::Value << actor.refresh->pathTemplate;
+        e << YAML::Key << "refresh" << YAML::Value << YAML::BeginMap << YAML::Key << "method"
+          << YAML::Value << std::string{methodToString(actor.refresh->method)} << YAML::Key
+          << "path" << YAML::Value << actor.refresh->pathTemplate;
         if (!actor.refresh->headers.empty()) {
             e << YAML::Key << "headers" << YAML::Value;
             emitStringMap(e, actor.refresh->headers);
@@ -372,8 +367,8 @@ std::string emitActor(const Actor& actor) {
     e << YAML::EndMap;
 
     if (!actor.inject.headers.empty()) {
-        e << YAML::Key << "inject" << YAML::Value << YAML::BeginMap
-          << YAML::Key << "headers" << YAML::Value;
+        e << YAML::Key << "inject" << YAML::Value << YAML::BeginMap << YAML::Key << "headers"
+          << YAML::Value;
         emitStringMap(e, actor.inject.headers);
         e << YAML::EndMap;
     }
@@ -385,8 +380,7 @@ std::string emitActor(const Actor& actor) {
 std::string emitEnvironment(const std::string& name,
                             const std::map<std::string, std::string>& vars) {
     YAML::Emitter e;
-    e << YAML::BeginMap
-      << YAML::Key << "name" << YAML::Value << name;
+    e << YAML::BeginMap << YAML::Key << "name" << YAML::Value << name;
     if (!vars.empty()) {
         e << YAML::Key << "variables" << YAML::Value;
         emitStringMap(e, vars);
@@ -397,17 +391,12 @@ std::string emitEnvironment(const std::string& name,
 
 std::string emitRoot(const Project& project) {
     YAML::Emitter e;
-    e << YAML::BeginMap
-      << YAML::Key << "version" << YAML::Value << 1
-      << YAML::Key << "name"    << YAML::Value << project.name
-      << YAML::Key << "default_environment" << YAML::Value
-      << project.defaultEnvironment
-      << YAML::Key << "imports" << YAML::Value << YAML::BeginSeq
+    e << YAML::BeginMap << YAML::Key << "version" << YAML::Value << 1 << YAML::Key << "name"
+      << YAML::Value << project.name << YAML::Key << "default_environment" << YAML::Value
+      << project.defaultEnvironment << YAML::Key << "imports" << YAML::Value << YAML::BeginSeq
       << "actors/*.yaml"
       << "resources/*.yaml"
-      << "environments/*.yaml"
-      << YAML::EndSeq
-      << YAML::EndMap;
+      << "environments/*.yaml" << YAML::EndSeq << YAML::EndMap;
     return e.c_str();
 }
 
@@ -416,27 +405,27 @@ std::string emitRoot(const Project& project) {
 YamlSchemaWriter::YamlSchemaWriter() = default;
 YamlSchemaWriter::~YamlSchemaWriter() = default;
 
-SchemaWriteResult
-YamlSchemaWriter::write(const fs::path& targetDir,
-                        const Project& project,
-                        bool overwrite) {
+SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
+                                          const Project& project,
+                                          bool overwrite) {
     std::error_code ec;
     if (fs::exists(targetDir) && !overwrite) {
         // Only fail if chainapi.yaml is already there — the directory
         // existing alone is fine (lets the writer slot into an existing project).
         if (fs::exists(targetDir / "chainapi.yaml")) {
-            return std::unexpected(ChainApiError{
-                ErrorCode::SchemaInvalid, ErrorClass::Schema,
-                "writer: chainapi.yaml exists in " + targetDir.string() +
-                " (pass overwrite=true to replace)"});
+            return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+                                                 ErrorClass::Schema,
+                                                 "writer: chainapi.yaml exists in " +
+                                                     targetDir.string() +
+                                                     " (pass overwrite=true to replace)"});
         }
     }
     fs::create_directories(targetDir, ec);
     if (ec) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid, ErrorClass::Schema,
-            "writer: cannot create " + targetDir.string() + ": " +
-            ec.message()});
+        return std::unexpected(
+            ChainApiError{ErrorCode::SchemaInvalid,
+                          ErrorClass::Schema,
+                          "writer: cannot create " + targetDir.string() + ": " + ec.message()});
     }
 
     if (auto r = writeAtomic(targetDir / "chainapi.yaml", emitRoot(project)); !r) {

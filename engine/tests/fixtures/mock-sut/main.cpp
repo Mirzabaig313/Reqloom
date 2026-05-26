@@ -86,9 +86,7 @@ struct Route {
         route.path = r.value("path", "/");
         route.status = r.value("status", 200);
         if (r.contains("body")) {
-            route.body = r["body"].is_string()
-                ? r["body"].get<std::string>()
-                : r["body"].dump();
+            route.body = r["body"].is_string() ? r["body"].get<std::string>() : r["body"].dump();
         }
         if (r.contains("headers")) {
             for (auto it = r["headers"].begin(); it != r["headers"].end(); ++it) {
@@ -100,14 +98,12 @@ struct Route {
                 Route::Step step;
                 step.status = s.value("status", route.status);
                 if (s.contains("body")) {
-                    step.body = s["body"].is_string()
-                        ? s["body"].get<std::string>()
-                        : s["body"].dump();
+                    step.body =
+                        s["body"].is_string() ? s["body"].get<std::string>() : s["body"].dump();
                 }
                 if (s.contains("headers")) {
                     for (auto it = s["headers"].begin(); it != s["headers"].end(); ++it) {
-                        step.headers.emplace_back(it.key(),
-                                                  it.value().get<std::string>());
+                        step.headers.emplace_back(it.key(), it.value().get<std::string>());
                     }
                 }
                 route.sequence.push_back(std::move(step));
@@ -122,11 +118,9 @@ void registerRoute(httplib::Server& server, const Route& route) {
     // Per-route call counter, shared across all copies of the handler lambda.
     auto callCount = std::make_shared<std::atomic<std::size_t>>(0);
 
-    auto handler = [route, callCount](const httplib::Request& /*req*/,
-                                      httplib::Response& res) {
+    auto handler = [route, callCount](const httplib::Request& /*req*/, httplib::Response& res) {
         if (!route.sequence.empty()) {
-            const auto idx = std::min(callCount->fetch_add(1),
-                                      route.sequence.size() - 1);
+            const auto idx = std::min(callCount->fetch_add(1), route.sequence.size() - 1);
             const auto& step = route.sequence[idx];
             for (const auto& [k, v] : step.headers) {
                 res.set_header(k, v);
@@ -151,12 +145,18 @@ void registerRoute(httplib::Server& server, const Route& route) {
         }
     };
 
-    if      (route.method == "GET")    server.Get(route.path, handler);
-    else if (route.method == "POST")   server.Post(route.path, handler);
-    else if (route.method == "PUT")    server.Put(route.path, handler);
-    else if (route.method == "PATCH")  server.Patch(route.path, handler);
-    else if (route.method == "DELETE") server.Delete(route.path, handler);
-    else                                server.Get(route.path, handler);
+    if (route.method == "GET")
+        server.Get(route.path, handler);
+    else if (route.method == "POST")
+        server.Post(route.path, handler);
+    else if (route.method == "PUT")
+        server.Put(route.path, handler);
+    else if (route.method == "PATCH")
+        server.Patch(route.path, handler);
+    else if (route.method == "DELETE")
+        server.Delete(route.path, handler);
+    else
+        server.Get(route.path, handler);
 }
 
 }  // namespace

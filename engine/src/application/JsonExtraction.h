@@ -18,8 +18,7 @@
 
 namespace chainapi::engine {
 
-[[nodiscard]] std::expected<std::map<std::string, std::string>, ChainApiError>
-extractFromJson(const std::string& body,
-                const std::vector<Extraction>& extractions);
+[[nodiscard]] std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson(
+    const std::string& body, const std::vector<Extraction>& extractions);
 
 }  // namespace chainapi::engine

@@ -65,7 +65,10 @@ std::optional<std::string> base64Decode(std::string_view input) {
     buf.reserve(input.size());
     int padding = 0;
     for (const char c : input) {
-        if (c == '=') { ++padding; continue; }
+        if (c == '=') {
+            ++padding;
+            continue;
+        }
         if (padding > 0) return std::nullopt;
         if (kTable[static_cast<std::uint8_t>(c)] == 0xFF) {
             if (c == '\n' || c == '\r' || c == ' ' || c == '\t') continue;
@@ -149,9 +152,8 @@ std::string urlEncode(std::string_view input) {
     out.reserve(input.size());
     for (const char rawChar : input) {
         const auto c = static_cast<unsigned char>(rawChar);
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-            || (c >= '0' && c <= '9')
-            || c == '-' || c == '_' || c == '.' || c == '~') {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~') {
             out.push_back(static_cast<char>(c));
         } else {
             out.push_back('%');
