@@ -78,6 +78,7 @@ add_library(chainapi-engine-application OBJECT
     src/application/Verifier.cpp
     src/application/AuthStrategy.cpp
     src/application/JsonExtraction.cpp
+    src/application/MultipartBuilder.cpp
     src/application/RequestSigners.cpp
 )
 target_include_directories(chainapi-engine-application

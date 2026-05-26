@@ -12,6 +12,7 @@
 #include "../infrastructure/storage/HistoryStore.h"
 #include "AuthStrategy.h"
 #include "JsonExtraction.h"
+#include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
 #include "RequestSigners.h"
 
@@ -387,14 +388,29 @@ struct ExecutionEngine::Impl {
                 req.headers["Content-Type"] = "application/json";
             }
         } else if (op.bodyForm) {
-            std::string formBody;
+            std::map<std::string, std::string> resolvedFields;
             for (const auto& [k, v] : *op.bodyForm) {
-                auto resolved = varResolver.resolve(v, ctx, rctx);
-                if (!formBody.empty()) formBody += "&";
-                formBody += urlEncode(k) + "=" + urlEncode(resolved.output);
+                resolvedFields[k] = varResolver.resolve(v, ctx, rctx).output;
             }
-            req.body = formBody;
-            req.headers["Content-Type"] = "application/x-www-form-urlencoded";
+            const bool routeMultipart = wantsMultipart(op.headers, resolvedFields);
+            auto formBody = buildFormBody(resolvedFields, routeMultipart);
+            if (!formBody) {
+                result.status = StepResult::Status::Failed;
+                result.error = formBody.error().code;
+                result.detail = formBody.error().detail;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+            if (auto* mp = std::get_if<MultipartBody>(&*formBody)) {
+                req.multipart = std::move(mp->parts);
+                // libcurl writes Content-Type with the boundary; drop any
+                // user-supplied value so curl doesn't send two headers.
+                req.headers.erase("Content-Type");
+            } else if (auto* enc = std::get_if<UrlEncodedBody>(&*formBody)) {
+                req.body = std::move(enc->body);
+                req.headers["Content-Type"] = "application/x-www-form-urlencoded";
+            }
         }
 
         if (op.timeout) {

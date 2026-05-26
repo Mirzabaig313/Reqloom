@@ -22,6 +22,10 @@ enum class ErrorCode {
     NetworkTimeout,
     NetworkDns,
     NetworkTls,
+    /// Local file referenced by an `@/path` value in `body_form` could
+    /// not be read (missing, not a regular file, or exceeded the size
+    /// cap). Surfaced from the executor before any HTTP call is made.
+    UploadFileUnreadable,
 
     // HTTP
     Http5xx,
