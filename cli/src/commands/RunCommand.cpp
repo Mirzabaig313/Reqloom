@@ -4,6 +4,7 @@
 #include <chainapi/engine/PublicApi.h>
 
 #include <filesystem>
+#include <map>
 #include <print>
 #include <utility>
 
@@ -61,19 +62,28 @@ int runCommand(const QStringList& args) {
         std::println(stderr, "chainapi run: missing <operation>");
         std::println(stderr,
                      "Usage: chainapi run <resource.operation> "
-                     "[--project <path>] [--env <name>]");
+                     "[--project <path>] [--env <name>] [--var KEY=VALUE]...");
         return 2;
     }
 
     auto targetOp = args.first().toStdString();
     fs::path projectPath = fs::current_path();
     std::string envName;
+    std::map<std::string, std::string> overrides;
 
     for (int i = 1; i < args.size(); ++i) {
         if (args[i] == QStringLiteral("--project") && i + 1 < args.size()) {
             projectPath = args[++i].toStdString();
         } else if (args[i] == QStringLiteral("--env") && i + 1 < args.size()) {
             envName = args[++i].toStdString();
+        } else if (args[i] == QStringLiteral("--var") && i + 1 < args.size()) {
+            const auto kv = args[++i].toStdString();
+            const auto eq = kv.find('=');
+            if (eq == std::string::npos) {
+                std::println(stderr, "chainapi run: --var requires KEY=VALUE, got '{}'", kv);
+                return 2;
+            }
+            overrides[kv.substr(0, eq)] = kv.substr(eq + 1);
         }
     }
 
@@ -93,6 +103,16 @@ int runCommand(const QStringList& args) {
     }
 
     auto& project = *projectResult;
+
+    // Apply per-run --var KEY=VALUE overrides to the chosen environment.
+    if (!overrides.empty()) {
+        const auto envKey = envName.empty() ? project.defaultEnvironment : envName;
+        auto& envVars = project.environments[envKey];
+        for (auto& [k, v] : overrides) {
+            envVars[k] = std::move(v);
+        }
+    }
+
     std::println("Loaded project: {} ({} actors, {} resources)",
                  project.name, project.actors.size(), project.resources.size());
 

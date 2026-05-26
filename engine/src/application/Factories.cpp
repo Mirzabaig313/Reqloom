@@ -6,6 +6,8 @@
 // ExecutionEngine::Dependencies.
 #include <chainapi/engine/Factories.h>
 
+#include "ImportFromOpenApi.h"
+
 #include "../infrastructure/hooks/HookRunner.h"
 #include "../infrastructure/hooks/QuickJsHookRunner.h"
 #include "../infrastructure/http/CurlHttpClient.h"
@@ -95,6 +97,15 @@ emitHookTypings(const std::filesystem::path& targetDir,
                 bool overwrite) {
     StaticHookTypingsEmitter emitter;
     return emitter.emit(targetDir, project, overwrite);
+}
+
+std::expected<OpenApiImportOutcome, ChainApiError>
+importFromOpenApi(const std::filesystem::path& spec) {
+    ImportFromOpenApi importer;
+    auto inner = importer.run(spec);
+    if (!inner) return std::unexpected(inner.error());
+    return OpenApiImportOutcome{std::move(inner->project),
+                                std::move(inner->warnings)};
 }
 
 }  // namespace chainapi::engine
