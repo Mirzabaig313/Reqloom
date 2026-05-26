@@ -1,11 +1,11 @@
 // PredicateEvaluator — see PredicateEvaluator.h for the grammar.
 //
 // Implementation notes:
-//   - Recursive-descent parser. Single-pass tokenizer.
+//   - Recursive-descent parser, single-pass tokenizer.
 //   - AST nodes use std::variant + std::unique_ptr for child links.
 //   - Evaluation is total — every failure path returns `False`.
-//   - JSONPath subset matches what JsonPathEvaluator supports (dot.child +
-//     [index] + ["key"]). Keep the two in lockstep when extending.
+//   - JSONPath subset matches what JsonPathEvaluator supports. Keep the
+//     two in lockstep when extending.
 #include "PredicateEvaluator.h"
 
 #include <nlohmann/json.hpp>
@@ -44,8 +44,7 @@ enum class LogicOp { And, Or };
 
 struct LiteralNode { Json value; };
 struct JsonPathNode {
-    /// Stored as segments so evaluation walks the JSON tree without
-    /// re-tokenising each call.
+    // Stored as segments so evaluation walks the JSON tree without re-tokenising.
     enum class SegKind { Field, Index };
     struct Seg { SegKind kind; std::string field; std::size_t index{}; };
     std::vector<Seg> segments;
@@ -296,8 +295,8 @@ private:
             k == Tok::Eq || k == Tok::Neq || k == Tok::Lt || k == Tok::Le ||
             k == Tok::Gt || k == Tok::Ge || k == Tok::In || k == Tok::Matches;
         if (!isCompareOp) {
-            // Bare term — must be a JSONPath truthiness check. Bare literals
-            // cannot stand on their own as a predicate.
+            // Bare term — must be a JSONPath truthiness check.
+            // Bare literals cannot stand on their own as a predicate.
             const auto* path = std::get_if<JsonPathNode>(&((*lhs)->kind));
             if (!path) {
                 return std::unexpected("expected comparison operator at position " +
@@ -333,8 +332,8 @@ private:
         const auto& t = peek();
         switch (t.kind) {
             case Tok::Dollar:   return parseJsonPath();
-            // Use parens, not braces, on Json constructors. nlohmann::json's
-            // initializer_list constructor would wrap the value in a one-element
+            // Use parens, not braces, on Json constructors — nlohmann's
+            // initializer_list constructor wraps the value in a one-element
             // array, breaking string/bool/null comparisons silently.
             case Tok::String:   return literal(Json(consume().text));
             case Tok::Number:   return parseNumberLiteral();
@@ -511,9 +510,8 @@ bool compareValues(CompareOp op, const Json& lhs, const Json& rhs) {
         case CompareOp::Le:
         case CompareOp::Gt:
         case CompareOp::Ge: {
-            // Integer-vs-integer stays in 64-bit space. Real APIs return IDs
-            // as int64 (Twitter snowflakes, etc.) and double has only 53 bits
-            // of mantissa — coercing to double would lose precision.
+            // Stay in 64-bit integer space when both sides are integers.
+            // Coercing to double loses precision for large IDs (e.g. Twitter snowflakes).
             if (lhs.is_number_integer() && rhs.is_number_integer()) {
                 const auto a = lhs.get<std::int64_t>();
                 const auto b = rhs.get<std::int64_t>();
@@ -653,9 +651,9 @@ PredicateEvaluator::evaluate(const ParsedPredicate& predicate,
             try {
                 body = Json::parse(jsonBody);
             } catch (const std::exception&) {
-                // text/plain bodies on poll endpoints fall through with an
-                // empty object — predicates that only touch $.status_code
-                // still work.
+                
+
+                // text/plain bodies still work for predicates that only touch $.status_code.
                 body = Json::object();
             }
         } else {

@@ -1,5 +1,4 @@
 // SqliteHistoryStore — embedded SQLite-backed run-history persistence.
-// Phase 2 implementation.
 #include "SqliteHistoryStore.h"
 
 namespace chainapi::engine {

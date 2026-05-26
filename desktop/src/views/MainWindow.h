@@ -4,8 +4,8 @@
 
 namespace chainapi::desktop {
 
-/// Shell window. Phase 2 fills in the explorer / request editor / response
-/// viewer / timeline layout per PRD §9.1.
+/// Shell window. Explorer / request editor / response viewer / timeline
+/// layout fills in once the UI panels land.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 

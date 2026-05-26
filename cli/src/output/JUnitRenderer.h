@@ -6,7 +6,7 @@
 
 namespace chainapi::cli {
 
-/// JUnit XML renderer for CI integration. PRD FR-13.3.
+/// JUnit XML renderer for CI integration.
 class JUnitRenderer {
 public:
     explicit JUnitRenderer(std::ostream& out);

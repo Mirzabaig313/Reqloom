@@ -60,9 +60,7 @@ bool isRetryable(ErrorCode code) noexcept {
         case ErrorCode::Http5xx:
             return true;
         default:
-            // Poll outcomes are NOT retryable at the operation level —
-            // the polling loop owns its own retry budget. Once the loop
-            // exits, the parent operation fails definitively.
+            // Poll outcomes are not retryable — the polling loop owns its own retry budget.
             return false;
     }
 }

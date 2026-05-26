@@ -34,10 +34,8 @@ int lintCommand(const QStringList& args) {
         return 1;
     }
 
-    // Build an engine just to access the resolver via run-with-dry-run.
-    // For pure schema validation we'd want a standalone validator helper —
-    // adding that to Factories.h is a follow-up. For now, run dry-run for
-    // every operation and treat resolution errors as lint failures.
+    // Run dry-run for every operation and treat resolution errors as lint failures.
+    // A standalone validator helper in Factories.h would be cleaner — this works for now.
     auto& project = *projectResult;
     int errors = 0;
     std::size_t totalOps = 0;

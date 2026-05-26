@@ -1,16 +1,11 @@
 // Verifier — see Verifier.h for the contract.
 //
-// JSONPath walking duplicates the small subset used by JsonPathEvaluator
-// (infrastructure) and PredicateEvaluator's internal walker. The
-// infrastructure copy is on the wrong layer for the application-layer
-// verifier to depend on; the predicate copy is hidden in an anonymous
-// namespace. Keeping a third tiny walker here is cheaper than restructuring
-// layers, and all three are in lockstep on a deliberately narrow grammar:
-//   $.field
-//   $.nested.field
-//   $.array[0].field
-//   $.field[0]
-// When extending, update all three (and the unit tests that exercise each).
+// JSONPath walking here duplicates the small subset used by JsonPathEvaluator
+// and PredicateEvaluator. The infrastructure copy is on the wrong layer for
+// the application-layer verifier to depend on; the predicate copy is hidden
+// in an anonymous namespace. All three cover the same narrow grammar:
+//   $.field  /  $.nested.field  /  $.array[0].field  /  $.field[0]
+// When extending, update all three.
 #include "Verifier.h"
 
 #include <nlohmann/json.hpp>
@@ -36,10 +31,9 @@ std::string truncate(std::string_view s) {
     return out;
 }
 
-/// Walk the JSONPath subset declared above. Returns nullptr on any structural
-/// miss. Distinguishes "miss" (nullptr) from "hit a null value" (non-null
-/// pointer to a JSON `null`) — the verifier needs that distinction to map
-/// NoMatch vs Null.
+/// Walk the JSONPath subset declared above. Returns nullptr on miss.
+/// Distinguishes "miss" (nullptr) from "hit a null value" (non-null pointer
+/// to a JSON `null`) — the verifier needs that distinction for NoMatch vs Null.
 const Json* walk(const Json& root, std::string_view path) {
     if (!path.starts_with("$")) return nullptr;
     path.remove_prefix(1);
@@ -97,9 +91,8 @@ VerifiedExtraction verifyJsonPath(const Extraction& ext,
         out.detail = "path resolved to null";
         return out;
     }
-    // Empty string / empty array / empty object are indistinguishable in
-    // practice from "field present but unusable for variable substitution".
-    // Surface as `Null` so the review UI flags them.
+    // Empty string / empty array / empty object are treated as Null —
+    // they're not useful for variable substitution.
     if (hit->is_string() && hit->get<std::string>().empty()) {
         out.status = VerificationStatus::Null;
         out.detail = "path resolved to empty string";
@@ -118,8 +111,7 @@ VerifiedExtraction verifyJsonPath(const Extraction& ext,
 }
 
 /// Header extraction paths follow the convention `$.headers.<Name>`.
-/// Anything else is `NotEvaluated`. The header map carries a
-/// case-insensitive comparator (RFC 7230 §3.2).
+/// The header map uses a case-insensitive comparator (RFC 7230 §3.2).
 VerifiedExtraction verifyHeader(
     const Extraction& ext,
     const std::map<std::string, std::string, CaseInsensitiveLess>& headers) {
@@ -206,17 +198,15 @@ Verifier::verify(const Operation& op, const SampleResponse& sample) const {
     VerificationReport report;
     report.extractions.reserve(op.extractions.size());
 
-    // Parse the sample body once. Empty body or non-JSON falls back to an
-    // empty object — JSONPath extractions then come back as NoMatch (or
-    // NoSample if the body was empty).
+    // Parse the sample body once. Empty or non-JSON body falls back to an
+    // empty object — JSONPath extractions come back as NoMatch.
     const bool sampleHasBody = !sample.body.empty();
     Json bodyDoc;
     if (sampleHasBody) {
         try {
             bodyDoc = Json::parse(sample.body);
         } catch (const Json::parse_error&) {
-            // Body was provided but isn't JSON. JSONPath extractions fail
-            // with NoMatch rather than crashing.
+            // Body provided but not JSON — JSONPath extractions fail with NoMatch.
             bodyDoc = Json::object();
         }
     }

@@ -6,7 +6,7 @@
 
 namespace chainapi::cli {
 
-/// Machine-readable JSON renderer. PRD FR-13.3.
+/// Machine-readable JSON renderer.
 class JsonRenderer {
 public:
     explicit JsonRenderer(std::ostream& out);

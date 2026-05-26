@@ -2,10 +2,9 @@
 //
 // Design notes:
 //   - Curl handle and slist are RAII-wrapped.
-//   - Global init/cleanup is process-wide (libcurl docs require ONCE per
-//     process). Multiple CurlHttpClient instances share one global init.
-//   - CURLOPT_COPYPOSTFIELDS is used so the body buffer's lifetime is not
-//     coupled to the request struct's.
+//   - Global init is process-wide (libcurl requires once per process).
+//     Multiple instances share one global init.
+//   - CURLOPT_COPYPOSTFIELDS decouples the body buffer lifetime from the request.
 #include "CurlHttpClient.h"
 
 #include <curl/curl.h>
@@ -41,9 +40,8 @@ void ensureCurlGlobalInit() {
     static std::once_flag flag;
     std::call_once(flag, []() {
         curl_global_init(CURL_GLOBAL_DEFAULT);
-        // Intentionally never call curl_global_cleanup — process exit
-        // reclaims everything. Calling it from a destructor races with
-        // any other CurlHttpClient still alive.
+        // Never call curl_global_cleanup — process exit reclaims everything,
+        // and calling it from a destructor races with other live instances.
     });
 }
 
@@ -141,8 +139,7 @@ CurlHttpClient::send(const HttpRequest& request) {
                 ErrorClass::Network,
                 "Failed to append header: " + key});
         }
-        // curl_slist_append takes ownership of the new node and returns the
-        // updated head — release the old head and adopt the new one.
+        // curl_slist_append returns the updated head — release the old and adopt the new.
         (void)headerList.release();
         headerList.reset(appended);
     }

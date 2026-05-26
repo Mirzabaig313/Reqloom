@@ -2,12 +2,8 @@
 //
 // Lives in the application layer because it must see all infrastructure
 // headers; consumers see only `Factories.h` (which exposes interface types
-// only).
-//
-// Also hosts the out-of-line definitions for ExecutionEngine::Dependencies'
-// special members (destructor / move), so consumers can store and move
-// Dependencies by value without needing the full HttpClient/SchemaParser/
-// etc. definitions.
+// only). Also hosts the out-of-line special members for
+// ExecutionEngine::Dependencies.
 #include <chainapi/engine/Factories.h>
 
 #include "../infrastructure/hooks/HookRunner.h"
@@ -26,7 +22,7 @@
 
 namespace chainapi::engine {
 
-// ─── Dependencies special members (out-of-line for incomplete-type users) ───
+// Dependencies special members (out-of-line for incomplete-type users)
 
 ExecutionEngine::Dependencies::Dependencies() = default;
 
@@ -47,7 +43,7 @@ ExecutionEngine::Dependencies::Dependencies(Dependencies&&) noexcept = default;
 ExecutionEngine::Dependencies&
 ExecutionEngine::Dependencies::operator=(Dependencies&&) noexcept = default;
 
-// ─── Factories ───────────────────────────────────────────────────────────────
+// Factories
 
 std::unique_ptr<HttpClient> makeCurlHttpClient() {
     return std::make_unique<CurlHttpClient>();
