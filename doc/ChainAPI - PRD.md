@@ -1247,7 +1247,7 @@ User opens ChainAPI for the first time. What they see:
 - [ ] BYO API key flow
 - [ ] **Milestone**: Import any well-documented API in under 5 minutes; Postman collection in < 30 min
 
-### 13.5 Phase 4 — Polish & v1 Release (Weeks 9–10)
+### 13.5 Phase 4 — Polish & v0.1.0 Release (Weeks 9–10)
 
 - [ ] Dependency graph visual
 - [ ] Diff view for responses

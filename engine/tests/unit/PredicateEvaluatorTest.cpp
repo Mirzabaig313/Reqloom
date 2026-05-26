@@ -1,5 +1,4 @@
-// Unit tests for PredicateEvaluator. PRD §5.11 polling success/fail
-// expressions, PRD §10.3.1 verifier predicates.
+// Unit tests for PredicateEvaluator — polling and verifier predicates.
 //
 // Each test fails on the parent commit (no PredicateEvaluator existed):
 // the include itself wouldn't resolve.
@@ -125,7 +124,7 @@ TEST(PredicateEvaluator, bare_jsonpath_is_truthy_when_present_and_non_null) {
 }
 
 TEST(PredicateEvaluator, truthiness_supports_verifier_use_case) {
-    // PRD §10.3.1 verification: "is the AI's proposed extract path
+    // Verification: "is the AI's proposed extract path
     // present and non-null in the sample response?" reduces to a
     // bare-jsonpath truthiness check.
     EXPECT_TRUE(eval("$.data.product_id", R"({"data":{"product_id":"prod-123"}})"));

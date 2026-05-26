@@ -1,4 +1,4 @@
-// ExecutionEngine — resolves dependency chains, authenticates actors, executes steps with variable
+// ExecutionEngine — resolves dependency chains, authenticates actors, executes steps.
 
 #include <chainapi/engine/ExecutionEngine.h>
 
@@ -45,7 +45,7 @@ struct ExecutionEngine::Impl {
     std::vector<EventCallback> subscribers;
     std::mutex subscriberMutex;
     std::atomic<std::uint64_t> nextRunId{1};
-    /// 0 = nothing cancelled. Any other value = the run with that id is being cancelled.
+    // 0 = nothing cancelled; any other value = the run with that id is being cancelled.
     std::atomic<std::uint64_t> cancelledRunId{0};
 
     explicit Impl(Dependencies d) : deps(std::move(d)) {}
@@ -56,9 +56,7 @@ struct ExecutionEngine::Impl {
     }
 
     void emit(const RunEvent& e) {
-        // Snapshot subscribers before invoking — avoids re-entrant deadlock
-        // if a callback calls subscribe(), and prevents exception propagation
-        // through the engine's control flow.
+        // Snapshot before invoking — avoids re-entrant deadlock if a callback calls subscribe().
         std::vector<EventCallback> snapshot;
         {
             const std::lock_guard lock(subscriberMutex);
@@ -67,16 +65,12 @@ struct ExecutionEngine::Impl {
         for (auto& cb : snapshot) {
             try {
                 cb(e);
-            } catch (...) { /* never let a subscriber break the engine */
+            } catch (...) { // never let a subscriber break the engine
             }
         }
     }
 
-    /// Authenticate an actor if session is not live. Returns true on success.
-    ///
-    /// Delegates strategy-specific work to an Authenticator; this method owns
-    /// the session-cache check, the post-success state flip, and the
-    /// expiry-deadline computation.
+    // Authenticate an actor if session is not live. Returns true on success.
     bool ensureSession(const Actor& actor,
                        RunContext& ctx,
                        const ResolveContext& rctx,
@@ -103,17 +97,9 @@ struct ExecutionEngine::Impl {
         return true;
     }
 
-    /// Run the polling phase for an operation.
-    ///
-    /// Returns the FINAL poll response on success — the caller substitutes
-    /// it for the initial response so extractions run against the completion
-    /// payload. Returns ChainApiError with a Poll* code on:
-    ///   - PollFailPredicate: fail_when matched a response
-    ///   - PollTimeout:       wall-clock budget exceeded
-    ///   - PollMaxAttemptsExceeded: attempt-count budget exceeded
-    ///   - SchemaInvalid:     success_when / fail_when failed to parse
-    ///
-    /// Cancellation is checked each iteration.
+    // Run the polling phase for an operation. Returns the FINAL poll response on
+    // success. Errors: PollFailPredicate, PollTimeout, PollMaxAttemptsExceeded,
+    // SchemaInvalid. Cancellation is checked each iteration.
     std::expected<HttpResponse, ChainApiError> runPollLoop(const Operation& op,
                                                            const PollUntil& poll,
                                                            const Project& project,
@@ -203,8 +189,7 @@ struct ExecutionEngine::Impl {
                 }
             }
 
-            // Per-request signing (OAuth 1.0a / AWS SigV4). Done AFTER
-            // inject merge so the signer sees the final request shape.
+            // Per-request signing done after inject merge so the signer sees the final shape.
             if (pollActor) {
                 if (auto* session = ctx.session(pollActor->id); session) {
                     if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
@@ -235,7 +220,7 @@ struct ExecutionEngine::Impl {
             lastResponse = std::move(*resp);
             haveLastResponse = true;
 
-            // Per-attempt timeline row. Each poll attempt is visible alongside the parent step.
+            // Each poll attempt is a timeline row alongside the parent step.
             const auto failMatched =
                 failPredicate &&
                 evaluator.evaluate(*failPredicate, lastResponse.body, lastResponse.status) ==
@@ -259,8 +244,7 @@ struct ExecutionEngine::Impl {
                 attemptRow.detail =
                     "success_when matched (HTTP " + std::to_string(lastResponse.status) + ")";
             } else {
-                // Treat in-progress polls as Pending so renderers can show
-                // them as "still working" rather than completed.
+                // Treat in-progress polls as Pending so renderers show "still working".
                 attemptRow.status = StepResult::Status::Pending;
                 attemptRow.detail =
                     "in_progress (HTTP " + std::to_string(lastResponse.status) + ")";
@@ -279,8 +263,7 @@ struct ExecutionEngine::Impl {
                 return lastResponse;
             }
 
-            // Compute next-attempt delay: fixed interval or exponential
-            // backoff — never both.
+            // Next-attempt delay: fixed interval or exponential backoff.
             std::chrono::milliseconds delay = poll.interval;
             if (poll.backoffBase) {
                 const auto shift = std::min(attempt, 20);
@@ -288,8 +271,7 @@ struct ExecutionEngine::Impl {
                 delay = (raw < poll.backoffMax) ? raw : poll.backoffMax;
             }
 
-            // Floor the inter-poll delay so a misconfigured `interval: 0ms`
-            // doesn't busy-loop the SUT until maxAttempts.
+            // Floor delay to avoid busy-looping on `interval: 0ms`.
             constexpr auto kMinPollDelay = std::chrono::milliseconds{50};
             if (delay < kMinPollDelay) delay = kMinPollDelay;
 
@@ -316,14 +298,9 @@ struct ExecutionEngine::Impl {
                 : "poll_until: max_attempts (" + std::to_string(poll.maxAttempts) + ") exceeded"});
     }
 
-    /// Execute a single operation step. Returns the StepResult.
-    ///
-    /// `pollAttemptRows` is an out-parameter rather than baked into
-    /// `StepResult` because each row in the run timeline is its own
-    /// `StepResult` — a parent step can't carry a `vector<StepResult>`
-    /// without making the type recursive. The run loop pushes the rows
-    /// onto `RunResult::steps` ahead of the parent. Empty for ops that
-    /// do not poll.
+    // Execute a single operation step. pollAttemptRows is an out-parameter since
+    // each timeline row is a separate StepResult (a parent can't carry a
+    // vector<StepResult> without making the type recursive).
     StepResult executeStep(const Operation& op,
                            const Project& project,
                            RunContext& ctx,
@@ -372,8 +349,7 @@ struct ExecutionEngine::Impl {
                     auto resolved = varResolver.resolve(v, ctx, rctx);
                     req.headers[k] = resolved.output;
                 }
-                // Session-level inject. Session wins on key collision,
-                // mirroring the header-inject precedence.
+                // Session-level inject wins on key collision.
                 if (auto* session = ctx.session(op.actor); session) {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
@@ -382,8 +358,7 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        // Query params — session-level injects folded in alongside static
-        // params; session values win on key collision.
+        // Session-level injects folded in, winning on key collision.
         std::map<std::string, std::string> queryParams;
         for (const auto& [k, v] : op.queryParams) {
             auto resolved = varResolver.resolve(v, ctx, rctx);

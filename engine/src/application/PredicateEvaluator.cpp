@@ -21,7 +21,7 @@ namespace {
 
 using Json = nlohmann::json;
 
-// ─── AST ─────────────────────────────────────────────────────────────────────
+// AST
 
 struct LiteralNode;
 struct JsonPathNode;
@@ -76,7 +76,7 @@ struct ParsedPredicate::Node {
 
 namespace {
 
-// ─── Tokenizer ───────────────────────────────────────────────────────────────
+// Tokenizer
 
 enum class Tok {
     End,
@@ -306,7 +306,7 @@ private:
     std::size_t pos_{0};
 };
 
-// ─── Parser ──────────────────────────────────────────────────────────────────
+// Parser
 
 class Parser {
 public:
@@ -530,7 +530,7 @@ private:
     std::size_t idx_{0};
 };
 
-// ─── Evaluator ───────────────────────────────────────────────────────────────
+// Evaluator
 
 std::optional<Json> walk(const Json& root, const JsonPathNode& path) {
     const Json* cur = &root;
@@ -704,7 +704,7 @@ bool evalNode(const ParsedPredicate::Node& node, const Json& body, int statusCod
 
 }  // namespace
 
-// ─── ParsedPredicate ─────────────────────────────────────────────────────────
+// ParsedPredicate
 
 ParsedPredicate::ParsedPredicate() = default;
 ParsedPredicate::~ParsedPredicate() = default;
@@ -712,7 +712,7 @@ ParsedPredicate::ParsedPredicate(ParsedPredicate&&) noexcept = default;
 ParsedPredicate& ParsedPredicate::operator=(ParsedPredicate&&) noexcept = default;
 ParsedPredicate::ParsedPredicate(std::unique_ptr<Node> root) : root_(std::move(root)) {}
 
-// ─── Public API ──────────────────────────────────────────────────────────────
+// Public API
 
 PredicateEvaluator::PredicateEvaluator() = default;
 PredicateEvaluator::~PredicateEvaluator() = default;

@@ -1,13 +1,4 @@
-// Unit tests for the VariableResolver grammar upgrade. PRD §5.7.
-//
-// Each test fails on the pre-2a commit:
-//   - resolves_now_plus_offset           → $.now+5m was treated as unresolved
-//   - resolves_now_minus_offset          → $.now-1h was treated as unresolved
-//   - now_offset_with_whitespace         → leading whitespace in the offset broke parsing
-//   - rejects_malformed_duration         → "$.now+5x" should remain unresolved, not throw
-//   - preserves_uuid_and_now_behavior    → regression guard for the refactor
-//   - preserves_indexed_resource_lookup  → regression guard for the refactor
-//   - preserves_secret_resolution        → regression guard for the refactor
+// Unit tests for the VariableResolver grammar upgrade.
 #include "domain/VariableResolver.h"
 
 #include <chainapi/engine/RunContext.h>

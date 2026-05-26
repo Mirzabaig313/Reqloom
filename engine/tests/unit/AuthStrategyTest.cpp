@@ -1,6 +1,4 @@
-// Unit tests for the Authenticator interface and selectAuthenticator
-// dispatch. Uses fakes for HttpClient and the VariableResolver from
-// the domain layer directly, so no mock SUT process is required.
+// Unit tests for the Authenticator interface and dispatch.
 #include "application/AuthStrategy.h"
 
 #include "domain/VariableResolver.h"

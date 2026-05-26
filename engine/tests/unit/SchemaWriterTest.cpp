@@ -1,4 +1,4 @@
-// Unit tests for YamlSchemaWriter. PRD §10.3.6 importer-side persistence.
+// Unit tests for YamlSchemaWriter — importer-side persistence.
 //
 // The strongest test for a writer paired with an existing parser is a
 // round-trip: build a Project in memory → write → re-parse → compare.

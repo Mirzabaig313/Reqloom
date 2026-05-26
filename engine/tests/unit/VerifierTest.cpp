@@ -85,7 +85,7 @@ TEST(Verifier, jsonpath_resolves_to_explicit_null_marks_null) {
 }
 
 TEST(Verifier, jsonpath_resolves_to_empty_string_marks_null) {
-    // PRD §10.3.5 wants empty-string extractions surfaced the same way
+    // Empty-string extractions surfaced the same way
     // as nulls — they're indistinguishable from a usability standpoint.
     ce::Verifier v;
     auto op = makeOp({jsonPath("product_id", "$.data.id")});

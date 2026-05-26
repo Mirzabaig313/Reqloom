@@ -1,10 +1,4 @@
 // Hook typings emitter tests.
-//
-// The emitted body is static today, so the tests assert on its
-// structural shape (declares the right top-level types, references
-// the codec/crypto helper namespaces, refuses to overwrite without
-// permission). When per-project specialisation lands, these tests
-// stay valid as the static-shape baseline.
 #include <chainapi/engine/Factories.h>
 #include <chainapi/engine/PublicApi.h>
 

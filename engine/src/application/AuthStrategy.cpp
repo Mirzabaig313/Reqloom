@@ -20,12 +20,8 @@ namespace {
 
 using namespace codecs;
 
-/// Implements `AuthStrategy::Simple` and `AuthStrategy::Chain`. Walks
-/// `actor.authSteps` in order; each step's response can extract variables
-/// that subsequent steps (or the actor's `inject` block) reference.
-///
-/// All auth failures surface as `SessionRefreshFailed` regardless of root
-/// cause — integration tests assert on that single code.
+// Implements AuthStrategy::Simple and AuthStrategy::Chain. Walks actor.authSteps
+// in order; each step's response can extract variables for subsequent steps.
 class ChainAuthenticator final : public Authenticator {
 public:
     explicit ChainAuthenticator(AuthDependencies deps) : deps_(deps) {}
@@ -111,9 +107,8 @@ private:
     AuthDependencies deps_;
 };
 
-/// Implements `AuthStrategy::Basic`. RFC 7617 HTTP Basic auth: pre-computes
-/// `base64(username:password)` and exposes it as `session.variables["credential"]`.
-/// No HTTP call is made.
+// Implements AuthStrategy::Basic (RFC 7617). Pre-computes base64(username:password)
+// and exposes it as session.variables["credential"]. No HTTP call is made.
 class BasicAuthenticator final : public Authenticator {
 public:
     explicit BasicAuthenticator(AuthDependencies deps) : deps_(deps) {}
@@ -354,13 +349,10 @@ std::expected<std::string, ChainApiError> resolveAuthConfigOptional(const Actor&
     return resolved.output;
 }
 
-/// Implements `AuthStrategy::OAuth2ClientCredentials` (RFC 6749 §4.4).
-/// POSTs `grant_type=client_credentials` to `token_url`, extracts
-/// `access_token`, and auto-injects `Authorization: Bearer <token>`.
-///
-/// Reads from `actor.authConfig`:
-///   - `token_url`, `client_id`, `client_secret` (required)
-///   - `scope` (optional)
+// Implements AuthStrategy::OAuth2ClientCredentials (RFC 6749 §4.4).
+// POSTs grant_type=client_credentials to token_url, extracts access_token,
+// auto-injects Authorization: Bearer. Reads token_url/client_id/client_secret
+// from actor.authConfig; scope is optional.
 class OAuth2ClientCredentialsAuthenticator final : public Authenticator {
 public:
     explicit OAuth2ClientCredentialsAuthenticator(AuthDependencies deps) : deps_(deps) {}
@@ -406,17 +398,10 @@ private:
     AuthDependencies deps_;
 };
 
-/// Implements `AuthStrategy::OAuth2Password` (RFC 6749 §4.3 — resource
-/// owner password credentials grant). Same wire shape as
-/// `oauth2_client_credentials` but uses `grant_type=password` and
-/// includes the resource-owner's `username`/`password`.
-///
-/// Reads from `actor.authConfig`:
-///   - `token_url`, `client_id`, `client_secret`, `username`, `password` (required)
-///   - `scope` (optional)
-///
-/// RFC 6749 §4.3 requires high trust between client and authorization
-/// server; prefer the authorization-code flow where possible.
+// Implements AuthStrategy::OAuth2Password (RFC 6749 §4.3). Same wire shape
+// as client_credentials but uses grant_type=password with username/password.
+// Reads token_url/client_id/client_secret/username/password from authConfig;
+// scope is optional.
 class OAuth2PasswordAuthenticator final : public Authenticator {
 public:
     explicit OAuth2PasswordAuthenticator(AuthDependencies deps) : deps_(deps) {}
@@ -469,17 +454,11 @@ private:
     AuthDependencies deps_;
 };
 
-/// Implements `AuthStrategy::OAuth1` (RFC 5849, two-legged HMAC-SHA1).
-/// Unlike OAuth2/Basic/API key, OAuth1 signs per-request. This authenticator:
-///   1. Resolves credential fields from `actor.authConfig`.
-///   2. Stashes them on the session.
-///   3. Sets `session.signingScheme = OAuth1HmacSha1` so the executor
-///      calls `signOAuth1Request` before each outbound request.
-///
-/// Reads from `actor.authConfig`:
-///   - `consumer_key`, `consumer_secret` (required)
-///   - `token`, `token_secret` (optional, must come as a pair)
-///   - `realm` (optional)
+// Implements AuthStrategy::OAuth1 (RFC 5849, two-legged HMAC-SHA1).
+// Stashes credentials on the session and sets signingScheme = OAuth1HmacSha1
+// so the executor calls signOAuth1Request before each outbound request.
+// Reads consumer_key/consumer_secret from authConfig; token/token_secret and
+// realm are optional.
 class OAuth1Authenticator final : public Authenticator {
 public:
     explicit OAuth1Authenticator(AuthDependencies deps) : deps_(deps) {}
@@ -536,17 +515,12 @@ private:
     AuthDependencies deps_;
 };
 
-/// Implements `AuthStrategy::AwsSigV4`. Like OAuth1, AWS SigV4 signs
-/// per-request — the signature depends on the URL, method, headers,
-/// and body. The authenticator stashes credentials on the session and
-/// flips the signing scheme; the executor calls `signSigV4Request`
-/// before each outbound HTTP send.
-///
-/// Reads from `actor.authConfig`:
-///   - `access_key`, `secret_key`, `region`, `service` (required)
-///   - `session_token` (optional, for STS temporary credentials)
-///
-/// Per the IAM Best Practices guide, prefer environment-injected
+// Implements AuthStrategy::AwsSigV4. Signs per-request — stashes credentials
+// on the session and sets signingScheme = AwsSigV4 so the executor calls
+// signSigV4Request before each outbound HTTP send.
+// Reads access_key/secret_key/region/service from authConfig; session_token
+// is optional (for STS temporary credentials).
+// Per the IAM Best Practices guide, prefer environment-injected
 /// short-lived credentials over long-lived access keys committed to
 /// chainapi.yaml. The {{X.y}} resolver lets you pull credentials from
 /// secret stores at run time.
