@@ -1,11 +1,24 @@
+// `chainapi run <op>` — load a project, resolve a chain, execute,
+// and emit results through the requested renderer (text / json / junit).
+
 #include "RunCommand.h"
+
+#include "../output/JUnitRenderer.h"
+#include "../output/JsonRenderer.h"
+#include "../output/TextRenderer.h"
 
 #include <chainapi/engine/Factories.h>
 #include <chainapi/engine/PublicApi.h>
 
+#include <expected>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <map>
+#include <memory>
+#include <ostream>
 #include <print>
+#include <string>
 #include <utility>
 
 namespace fs = std::filesystem;
@@ -15,90 +28,119 @@ namespace chainapi::cli {
 
 namespace {
 
-void renderEvent(const ce::RunEvent& event) {
-    std::visit(
-        [](const auto& e) {
-            using T = std::decay_t<decltype(e)>;
-            if constexpr (std::is_same_v<T, ce::RunStarted>) {
-                std::println("Running: {} (chain of {} steps, env={})",
-                             e.target.value,
-                             e.chainSize,
-                             e.envName);
-            } else if constexpr (std::is_same_v<T, ce::StepStarted>) {
-                std::println(
-                    "  [{}] Running: {} (attempt {})", e.stepIndex + 1, e.op.value, e.attempt);
-            } else if constexpr (std::is_same_v<T, ce::StepSkipped>) {
-                std::println("  [{}] Skipped: {} (cached)", e.stepIndex + 1, e.op.value);
-            } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
-                std::println(
-                    stderr, "  [{}] FAILED: {} — {}", e.stepIndex + 1, e.op.value, e.detail);
-            } else if constexpr (std::is_same_v<T, ce::RunEnded>) {
-                const char* outcome = e.outcome == ce::RunOutcome::Succeeded ? "SUCCEEDED"
-                                      : e.outcome == ce::RunOutcome::Failed  ? "FAILED"
-                                                                             : "CANCELLED";
-                std::println("\nResult: {}", outcome);
-            }
-        },
-        event);
+enum class Format { Text, Json, JUnit };
+
+struct RunArgs {
+    std::string targetOp;
+    fs::path projectPath{fs::current_path()};
+    std::string envName;
+    std::map<std::string, std::string> overrides;
+    Format format{Format::Text};
+    fs::path outputPath;  ///< empty = stdout
+    bool quiet{false};
+};
+
+void printUsage(std::ostream& os) {
+    std::println(os,
+                 "Usage: chainapi run <resource.operation> [options]\n"
+                 "Options:\n"
+                 "  --project <path>     Project directory (default: cwd)\n"
+                 "  --env <name>         Environment to run against\n"
+                 "  --var KEY=VALUE      Override an environment variable (repeatable)\n"
+                 "  --format <fmt>       Output format: text (default), json, junit\n"
+                 "  --output <file>      Write rendered output to <file> (default: stdout)\n"
+                 "  --quiet              Suppress live progress on stdout (failures still go\n"
+                 "                       to stderr). Implied by --format json|junit.\n"
+                 "Exit codes: 0 success, 1 run/schema failure, 2 invalid arguments.");
 }
 
-[[nodiscard]] const char* statusGlyph(ce::StepResult::Status status) noexcept {
-    switch (status) {
-        case ce::StepResult::Status::Succeeded:
-            return "OK";
-        case ce::StepResult::Status::Skipped:
-            return "SK";
-        case ce::StepResult::Status::Failed:
-            return "FAIL";
-        case ce::StepResult::Status::Cancelled:
-            return "CANCEL";
-        case ce::StepResult::Status::Blocked:
-            return "BLOCK";
-        default:
-            return "?";
+[[nodiscard]] std::expected<Format, std::string> parseFormat(const std::string& token) {
+    if (token == "text") return Format::Text;
+    if (token == "json") return Format::Json;
+    if (token == "junit") return Format::JUnit;
+    return std::unexpected("--format must be one of text, json, junit (got '" + token + "')");
+}
+
+[[nodiscard]] std::expected<RunArgs, int> parseArgs(const QStringList& args) {
+    if (args.isEmpty()) {
+        std::println(stderr, "chainapi run: missing <operation>");
+        printUsage(std::cerr);
+        return std::unexpected(2);
     }
+    if (args.first() == QStringLiteral("--help") || args.first() == QStringLiteral("-h")) {
+        printUsage(std::cout);
+        return std::unexpected(0);
+    }
+
+    RunArgs out;
+    out.targetOp = args.first().toStdString();
+
+    for (int i = 1; i < args.size(); ++i) {
+        const auto flag = args[i];
+        if (flag == QStringLiteral("--project") && i + 1 < args.size()) {
+            out.projectPath = args[++i].toStdString();
+        } else if (flag == QStringLiteral("--env") && i + 1 < args.size()) {
+            out.envName = args[++i].toStdString();
+        } else if (flag == QStringLiteral("--var") && i + 1 < args.size()) {
+            const auto kv = args[++i].toStdString();
+            const auto eq = kv.find('=');
+            if (eq == std::string::npos) {
+                std::println(stderr, "chainapi run: --var requires KEY=VALUE, got '{}'", kv);
+                return std::unexpected(2);
+            }
+            out.overrides[kv.substr(0, eq)] = kv.substr(eq + 1);
+        } else if (flag == QStringLiteral("--format") && i + 1 < args.size()) {
+            auto parsed = parseFormat(args[++i].toStdString());
+            if (!parsed) {
+                std::println(stderr, "chainapi run: {}", parsed.error());
+                return std::unexpected(2);
+            }
+            out.format = *parsed;
+        } else if (flag == QStringLiteral("--output") && i + 1 < args.size()) {
+            out.outputPath = args[++i].toStdString();
+        } else if (flag == QStringLiteral("--quiet")) {
+            out.quiet = true;
+        } else if (flag == QStringLiteral("--help") || flag == QStringLiteral("-h")) {
+            printUsage(std::cout);
+            return std::unexpected(0);
+        } else {
+            std::println(stderr, "chainapi run: unknown argument '{}'", flag.toStdString());
+            printUsage(std::cerr);
+            return std::unexpected(2);
+        }
+    }
+
+    // Machine-readable formats imply --quiet because their output contract
+    // is a single document on stdout. Mixing live event noise into a JSON
+    // document would corrupt the parse on the consumer side.
+    if (out.format == Format::Json || out.format == Format::JUnit) {
+        out.quiet = true;
+    }
+    return out;
 }
 
-[[nodiscard]] std::string errorCodeName(const ce::StepResult& step) {
-    if (!step.error) return "—";
-    return std::string(ce::toCodeString(*step.error));
+[[nodiscard]] std::ostream& renderTarget(std::ostream& fallback,
+                                         const fs::path& path,
+                                         std::unique_ptr<std::ofstream>& owned) {
+    if (path.empty()) return fallback;
+    owned = std::make_unique<std::ofstream>(path);
+    if (!*owned) {
+        std::println(stderr, "chainapi run: cannot open --output file '{}'", path.string());
+        return fallback;  // best-effort fallback; the caller checks owned->good()
+    }
+    return *owned;
 }
 
 }  // namespace
 
 int runCommand(const QStringList& args) {
-    if (args.isEmpty()) {
-        std::println(stderr, "chainapi run: missing <operation>");
-        std::println(stderr,
-                     "Usage: chainapi run <resource.operation> "
-                     "[--project <path>] [--env <name>] [--var KEY=VALUE]...");
-        return 2;
-    }
+    auto parsed = parseArgs(args);
+    if (!parsed) return parsed.error();
+    auto& cfg = *parsed;
 
-    auto targetOp = args.first().toStdString();
-    fs::path projectPath = fs::current_path();
-    std::string envName;
-    std::map<std::string, std::string> overrides;
-
-    for (int i = 1; i < args.size(); ++i) {
-        if (args[i] == QStringLiteral("--project") && i + 1 < args.size()) {
-            projectPath = args[++i].toStdString();
-        } else if (args[i] == QStringLiteral("--env") && i + 1 < args.size()) {
-            envName = args[++i].toStdString();
-        } else if (args[i] == QStringLiteral("--var") && i + 1 < args.size()) {
-            const auto kv = args[++i].toStdString();
-            const auto eq = kv.find('=');
-            if (eq == std::string::npos) {
-                std::println(stderr, "chainapi run: --var requires KEY=VALUE, got '{}'", kv);
-                return 2;
-            }
-            overrides[kv.substr(0, eq)] = kv.substr(eq + 1);
-        }
-    }
-
-    auto yamlPath = projectPath / "chainapi.yaml";
+    auto yamlPath = cfg.projectPath / "chainapi.yaml";
     if (!fs::exists(yamlPath)) {
-        std::println(stderr, "Error: chainapi.yaml not found in {}", projectPath.string());
+        std::println(stderr, "Error: chainapi.yaml not found in {}", cfg.projectPath.string());
         return 1;
     }
 
@@ -110,31 +152,47 @@ int runCommand(const QStringList& args) {
                      projectResult.error().detail);
         return 1;
     }
-
     auto& project = *projectResult;
 
-    // Apply per-run --var KEY=VALUE overrides to the chosen environment.
-    if (!overrides.empty()) {
-        const auto envKey = envName.empty() ? project.defaultEnvironment : envName;
+    if (!cfg.overrides.empty()) {
+        const auto envKey = cfg.envName.empty() ? project.defaultEnvironment : cfg.envName;
         auto& envVars = project.environments[envKey];
-        for (auto& [k, v] : overrides) {
+        for (auto& [k, v] : cfg.overrides) {
             envVars[k] = std::move(v);
         }
     }
 
-    std::println("Loaded project: {} ({} actors, {} resources)",
-                 project.name,
-                 project.actors.size(),
-                 project.resources.size());
+    // Decide where rendered output goes. `--output` redirects the renderer's
+    // sink; live progress (when not quiet) always goes to stdout/stderr so
+    // CI tail logs still see the run unfold.
+    std::unique_ptr<std::ofstream> ownedSink;
+    std::ostream& sink = renderTarget(std::cout, cfg.outputPath, ownedSink);
+    if (ownedSink && !ownedSink->good()) {
+        return 1;
+    }
+
+    // Text mode in quiet mode would be silent; keep the project preamble
+    // off when the user wants machine-readable output. The summary always
+    // goes to `sink` (stdout or `--output`), live progress to stdout/stderr.
+    TextRenderer textRenderer(sink, std::cout, std::cerr, cfg.quiet);
+    if (cfg.format == Format::Text && !cfg.quiet) {
+        textRenderer.printProjectPreamble(
+            project.name, project.actors.size(), project.resources.size());
+    }
 
     ce::ExecutionEngine engine(ce::makeDefaultDependencies());
     ce::RunContext ctx;
     ce::RunOptions options;
-    if (!envName.empty()) options.environment = std::move(envName);
+    if (!cfg.envName.empty()) options.environment = cfg.envName;
 
-    engine.subscribe(renderEvent);
+    if (cfg.format == Format::Text) {
+        engine.subscribe([&textRenderer](const ce::RunEvent& e) { textRenderer.onEvent(e); });
+    }
 
-    auto result = engine.run(project, ce::OperationId{targetOp}, ctx, options);
+    const ce::OperationId target{cfg.targetOp};
+    auto resolvedEnv = cfg.envName.empty() ? project.defaultEnvironment : cfg.envName;
+
+    auto result = engine.run(project, target, ctx, options);
     if (!result) {
         std::println(stderr,
                      "Engine error [{}]: {}",
@@ -143,15 +201,19 @@ int runCommand(const QStringList& args) {
         return 1;
     }
 
-    std::println("\n--- Chain Summary ---");
-    for (const auto& step : result->steps) {
-        std::println("  {:<6} {} ({}ms) err={}",
-                     statusGlyph(step.status),
-                     step.op.value,
-                     step.elapsed.count(),
-                     errorCodeName(step));
-        if (!step.detail.empty()) {
-            std::println("         {}", step.detail);
+    switch (cfg.format) {
+        case Format::Text:
+            textRenderer.render(target, resolvedEnv, *result);
+            break;
+        case Format::Json: {
+            JsonRenderer renderer(sink);
+            renderer.render(target, resolvedEnv, *result);
+            break;
+        }
+        case Format::JUnit: {
+            JUnitRenderer renderer(sink);
+            renderer.render(target, resolvedEnv, *result);
+            break;
         }
     }
 
