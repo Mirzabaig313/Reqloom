@@ -1,5 +1,5 @@
 // ImportFromOpenApi — direct (non-LLM) parser that produces a Project from
-// an OpenAPI 3.x document. Slice 6c-1: skeleton path/method walker.
+// an OpenAPI 3.x document.
 #pragma once
 
 #include <chainapi/engine/ErrorCodes.h>
@@ -24,15 +24,18 @@ public:
 
     /// Parse `spec` (YAML or JSON, OpenAPI 3.0.x or 3.1.x) into a Project.
     ///
-    /// Path containment: the file must be either an absolute path or
-    /// a path inside the current working directory. `..` traversal that
-    /// resolves outside the cwd is rejected.
+    /// Path containment: the spec must resolve to a regular file under
+    /// `projectRoot`. The importer rejects anything outside that root —
+    /// blocks `--spec /etc/passwd` style invocations and `..` traversal
+    /// out of the project. CLI/desktop callers typically pass the
+    /// directory that will hold the generated `chainapi.yaml`; tests
+    /// pass a scratch dir.
     ///
     /// Returns `SchemaInvalid` for malformed input (not a YAML map, missing
-    /// `openapi` field, no `paths`, etc.) or `IoError` for file-system
-    /// problems.
+    /// `openapi` field, no `paths`, etc.) or `YamlParse` for a YAML/JSON
+    /// syntax error.
     [[nodiscard]] std::expected<Outcome, ChainApiError> run(
-        const std::filesystem::path& spec) const;
+        const std::filesystem::path& spec, const std::filesystem::path& projectRoot) const;
 };
 
 }  // namespace chainapi::engine

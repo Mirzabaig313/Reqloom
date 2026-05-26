@@ -347,10 +347,6 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             if (auth["session_token"]) {
                 actor.authConfig["session_token"] = auth["session_token"].as<std::string>();
             }
-            if (auth["sign_payload"]) {
-                actor.authConfig["sign_payload"] =
-                    auth["sign_payload"].as<bool>() ? "true" : "false";
-            }
         } else {
             AuthStep step;
             step.id = "login";

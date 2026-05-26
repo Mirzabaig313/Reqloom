@@ -492,7 +492,7 @@ TEST(SchemaWriter, oauth1_round_trips_two_legged) {
     EXPECT_FALSE(reload.authConfig.contains("realm"));
 }
 
-TEST(SchemaWriter, aws_sigv4_round_trips_with_session_token_and_sign_payload) {
+TEST(SchemaWriter, aws_sigv4_round_trips_with_session_token) {
     ScratchDir scratch;
 
     ce::Project original;
@@ -509,7 +509,6 @@ TEST(SchemaWriter, aws_sigv4_round_trips_with_session_token_and_sign_payload) {
         {"region", "us-east-1"},
         {"service", "iam"},
         {"session_token", "{{secret.AWS_SESSION_TOKEN}}"},
-        {"sign_payload", "true"},
     };
     original.actors[aws.id] = std::move(aws);
 
@@ -526,7 +525,6 @@ TEST(SchemaWriter, aws_sigv4_round_trips_with_session_token_and_sign_payload) {
     EXPECT_EQ(reload.authConfig.at("region"), "us-east-1");
     EXPECT_EQ(reload.authConfig.at("service"), "iam");
     EXPECT_EQ(reload.authConfig.at("session_token"), "{{secret.AWS_SESSION_TOKEN}}");
-    EXPECT_EQ(reload.authConfig.at("sign_payload"), "true");
 }
 
 TEST(SchemaWriter, aws_sigv4_round_trips_minimal_actor) {
@@ -557,5 +555,4 @@ TEST(SchemaWriter, aws_sigv4_round_trips_minimal_actor) {
     const auto& reload = reloaded->actors.at(ce::ActorId{"s3"});
     EXPECT_EQ(reload.strategy, ce::AuthStrategy::AwsSigV4);
     EXPECT_FALSE(reload.authConfig.contains("session_token"));
-    EXPECT_FALSE(reload.authConfig.contains("sign_payload"));
 }

@@ -321,6 +321,13 @@ struct ExecutionEngine::Impl {
     }
 
     /// Execute a single operation step. Returns the StepResult.
+    ///
+    /// `pollAttemptRows` is an out-parameter rather than baked into
+    /// `StepResult` because each row in the run timeline is its own
+    /// `StepResult` — a parent step can't carry a `vector<StepResult>`
+    /// without making the type recursive. The run loop pushes the rows
+    /// onto `RunResult::steps` ahead of the parent. Empty for ops that
+    /// do not poll.
     StepResult executeStep(const Operation& op,
                            const Project& project,
                            RunContext& ctx,

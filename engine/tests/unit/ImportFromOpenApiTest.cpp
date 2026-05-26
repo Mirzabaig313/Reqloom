@@ -1,10 +1,5 @@
-// Slice 6c-1 — direct OpenAPI 3.x importer skeleton.
-//
-// Each test fails on the parent commit (importer was a stub returning
-// SchemaInvalid). The verification pass arrives in 6c-3 — these tests
-// pin only the structural side: paths → resources/operations, methods
-// → op-name heuristics, provenance tagging, warnings for unlinked path
-// params.
+// Direct (non-LLM) OpenAPI 3.x importer tests. Each test fails on the
+// parent commit (importer was a stub returning SchemaInvalid).
 
 #include <chainapi/engine/Factories.h>
 
@@ -60,7 +55,7 @@ paths:
     get: { responses: { "200": { description: ok } } }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("OpenAPI 3.x"), std::string::npos);
 }
@@ -73,7 +68,7 @@ info: { title: Empty }
 paths: {}
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("paths"), std::string::npos);
 }
@@ -83,7 +78,7 @@ TEST(ImportFromOpenApi, surfaces_yaml_parse_errors_with_YamlParse_code) {
     // Tab in a place yaml-cpp does not tolerate.
     const auto spec = scratch.write("broken.yaml", "openapi: 3.0.3\ninfo:\n\ttitle: tabbed\n");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_FALSE(outcome.has_value());
     EXPECT_EQ(outcome.error().code, ce::ErrorCode::YamlParse);
 }
@@ -105,7 +100,7 @@ paths:
     delete: { responses: { "204": { description: del  } } }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     const auto& project = outcome->project;
 
@@ -146,7 +141,7 @@ paths:
         "200": { description: ok }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
 
     const auto& op = outcome->project.resources.at(ce::ResourceId{"widget"}).operations.at("list");
@@ -169,7 +164,7 @@ paths:
       responses: { "200": { description: ok } }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
 
     // One warning per rewritten parameter, naming the variable the user
@@ -193,7 +188,7 @@ paths:
     get: { responses: { "200": { description: ok } } }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value());
     EXPECT_TRUE(outcome->warnings.empty())
         << "no parameters → no warnings, got: " << outcome->warnings;
@@ -215,7 +210,7 @@ paths:
         "201": { description: made }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value());
     const auto& op = outcome->project.resources.at(ce::ResourceId{"job"}).operations.at("create");
     // "201" comes before "202" in the YAML map only by ordering, so we
@@ -239,7 +234,7 @@ paths:
     get: { responses: { "200": { description: get } } }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, specDir.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
 
     ScratchDir writeDir;
@@ -271,12 +266,12 @@ TEST(ImportFromOpenApi, parses_inline_json_input) {
 }
 )JSON");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     EXPECT_TRUE(outcome->project.resources.contains(ce::ResourceId{"thing"}));
 }
 
-// ─── Slice 6c-3 — extraction inference + verification ───────────────────────
+// ─── extraction inference + verification ───────────────────────────────────
 
 TEST(ImportFromOpenApi, infers_extractions_from_top_level_scalar_schema) {
     ScratchDir scratch;
@@ -300,7 +295,7 @@ paths:
                   nested:    { type: object }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     const auto& op = outcome->project.resources.at(ce::ResourceId{"widget"}).operations.at("get");
 
@@ -336,7 +331,7 @@ paths:
                       balance:    { type: number }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     const auto& op = outcome->project.resources.at(ce::ResourceId{"account"}).operations.at("get");
     ASSERT_EQ(op.extractions.size(), 2u);
@@ -368,7 +363,7 @@ paths:
                 name: Rex
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     const auto& op = outcome->project.resources.at(ce::ResourceId{"pet"}).operations.at("get");
 
@@ -401,7 +396,7 @@ paths:
                 id: pet-123
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     EXPECT_NE(outcome->warnings.find("did not match"), std::string::npos);
 
@@ -428,11 +423,50 @@ paths:
                   name: { type: string }
 )YAML");
 
-    auto outcome = ce::importFromOpenApi(spec);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     EXPECT_NE(outcome->warnings.find("no response example"), std::string::npos)
         << "actual warnings: " << outcome->warnings;
 
     const auto& op = outcome->project.resources.at(ce::ResourceId{"pet"}).operations.at("get");
     EXPECT_EQ(op.provenance->verifiedAgainst, ce::Provenance::VerifiedAgainst::None);
+}
+
+TEST(ImportFromOpenApi, rejects_spec_outside_project_root) {
+    // Write the spec in one scratch dir, point the importer at an
+    // unrelated dir as projectRoot. Mirrors the security check applied
+    // to hook-script paths in YamlSchemaParser.
+    ScratchDir specDir;
+    ScratchDir otherRoot;
+    const auto spec = specDir.write("offlimits.yaml", R"YAML(
+openapi: "3.0.3"
+info: { title: Outside }
+paths:
+  /things:
+    get: { responses: { "200": { description: ok } } }
+)YAML");
+
+    auto outcome = ce::importFromOpenApi(spec, otherRoot.path());
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_NE(outcome.error().detail.find("outside the project root"), std::string::npos);
+}
+
+TEST(ImportFromOpenApi, rejects_oversized_spec) {
+    ScratchDir scratch;
+    // 9 MiB of valid-shaped YAML — legal OpenAPI structure but too big
+    // for the 8 MiB cap.
+    std::string giant = R"(openapi: "3.0.3"
+info: { title: TooBig }
+paths:
+)";
+    constexpr std::size_t kPad = 9 * 1024 * 1024;
+    giant.reserve(giant.size() + kPad + 256);
+    giant.append("  /things:\n    get:\n      summary: \"");
+    giant.append(kPad, 'a');
+    giant.append("\"\n      responses: { \"200\": { description: ok } }\n");
+
+    const auto spec = scratch.write("huge.yaml", giant);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_NE(outcome.error().detail.find("8 MiB"), std::string::npos);
 }

@@ -344,7 +344,6 @@ bool signSigV4Request(HttpRequest& req,
     const auto region = findVar("region");
     const auto service = findVar("service");
     const auto sessionToken = findVar("session_token");
-    const auto signPayload = findVar("sign_payload");
     if (accessKey.empty() || secretKey.empty() || region.empty() || service.empty()) {
         return false;
     }
@@ -352,13 +351,16 @@ bool signSigV4Request(HttpRequest& req,
     const auto urlParts = splitUrl(req.url);
     if (!urlParts) return false;
 
+    // Stage all header mutations on a local copy. We only commit them
+    // back onto `req` at the very end, so any failure mid-flight leaves
+    // the caller's request untouched (per RequestSigners.h contract).
+    std::map<std::string, std::string> stagedHeaders = req.headers;
+
     // ── 1. Timestamp + date scope ────────────────────────────────────────
     std::string amzDate;
     if (overrides.amzDate) {
         amzDate = *overrides.amzDate;
     } else {
-        // Format: YYYYMMDDTHHMMSSZ (ISO 8601 basic).
-        // gmtime is locale-independent for this format.
         const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         std::tm tm{};
 #if defined(_WIN32)
@@ -403,7 +405,7 @@ bool signSigV4Request(HttpRequest& req,
     // ── 3. Headers we sign ───────────────────────────────────────────────
     // SigV4 requires Host. Add it from the URL if the caller didn't.
     bool haveHost = false;
-    for (const auto& [name, _] : req.headers) {
+    for (const auto& [name, _] : stagedHeaders) {
         if (toLowerAscii(name) == "host") {
             haveHost = true;
             break;
@@ -412,36 +414,43 @@ bool signSigV4Request(HttpRequest& req,
     if (!haveHost) {
         const auto host = hostFromUrl(req.url);
         if (host.empty()) return false;
-        req.headers["Host"] = host;
+        stagedHeaders["Host"] = host;
     }
-    req.headers["x-amz-date"] = amzDate;
+    stagedHeaders["x-amz-date"] = amzDate;
     if (!sessionToken.empty()) {
-        req.headers["x-amz-security-token"] = sessionToken;
+        stagedHeaders["x-amz-security-token"] = sessionToken;
     }
 
-    // Payload hash: sha256(body) hex. Empty body has the well-known hash.
+    // Payload hash: sha256(body) hex. Empty body has the well-known
+    // empty-string hash. The header is required by S3 and harmless for
+    // other services, so we always emit it.
     const std::string body = req.body.value_or(std::string{});
     const auto payloadHashRaw = crypto::sha256(body);
     if (payloadHashRaw.empty()) return false;
     const std::string payloadHashHex = codecs::hexEncode(payloadHashRaw);
-
-    if (signPayload == "true") {
-        req.headers["x-amz-content-sha256"] = payloadHashHex;
-    }
+    stagedHeaders["x-amz-content-sha256"] = payloadHashHex;
 
     // Build the sorted lowercased header list.
-    std::vector<Pair> canonHeaders;
-    canonHeaders.reserve(req.headers.size());
-    for (const auto& [name, value] : req.headers) {
-        canonHeaders.emplace_back(toLowerAscii(name), trimAndCollapseWs(value));
+    //
+    // SigV4 §3 requires every signed header name to be lowercase. Two
+    // headers with the same case-insensitive name (`Host` and `host`)
+    // collapse into one canonical entry; their values are merged into a
+    // comma-separated list per RFC 7230 §3.2.2 multi-value header rules.
+    std::map<std::string, std::string> mergedHeaders;
+    for (const auto& [name, value] : stagedHeaders) {
+        const auto key = toLowerAscii(name);
+        const auto trimmed = trimAndCollapseWs(value);
+        if (auto it = mergedHeaders.find(key); it != mergedHeaders.end()) {
+            it->second += ',';
+            it->second += trimmed;
+        } else {
+            mergedHeaders.emplace(key, trimmed);
+        }
     }
-    std::sort(canonHeaders.begin(), canonHeaders.end(), [](const Pair& a, const Pair& b) {
-        return a.first < b.first;
-    });
 
     std::string canonicalHeaders;
     std::string signedHeaders;
-    for (const auto& [n, v] : canonHeaders) {
+    for (const auto& [n, v] : mergedHeaders) {
         canonicalHeaders += n;
         canonicalHeaders.push_back(':');
         canonicalHeaders += v;
@@ -485,8 +494,10 @@ bool signSigV4Request(HttpRequest& req,
     authHeader += signedHeaders;
     authHeader += ", Signature=";
     authHeader += signatureHex;
+    stagedHeaders["Authorization"] = std::move(authHeader);
 
-    req.headers["Authorization"] = std::move(authHeader);
+    // Atomic commit. Up to this point any failure left `req` untouched.
+    req.headers = std::move(stagedHeaders);
     return true;
 }
 

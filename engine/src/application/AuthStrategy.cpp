@@ -545,8 +545,6 @@ private:
 /// Reads from `actor.authConfig`:
 ///   - `access_key`, `secret_key`, `region`, `service` (required)
 ///   - `session_token` (optional, for STS temporary credentials)
-///   - `sign_payload`  (optional, "true" to add `x-amz-content-sha256`;
-///                     S3 requires it, most others don't care)
 ///
 /// Per the IAM Best Practices guide, prefer environment-injected
 /// short-lived credentials over long-lived access keys committed to
@@ -583,9 +581,6 @@ public:
         const auto sessionToken = resolveAuthConfigOptional(
             actor, ctx, rctx, *deps_.varResolver, kLabel, "session_token");
         if (!sessionToken) return std::unexpected(sessionToken.error());
-        const auto signPayload =
-            resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "sign_payload");
-        if (!signPayload) return std::unexpected(signPayload.error());
 
         ActorSession session;
         session.state = ActorSession::State::Authenticating;
@@ -595,9 +590,6 @@ public:
         session.variables["service"] = *service;
         if (!sessionToken->empty()) {
             session.variables["session_token"] = *sessionToken;
-        }
-        if (!signPayload->empty()) {
-            session.variables["sign_payload"] = *signPayload;
         }
         session.signingScheme = ActorSession::SigningScheme::AwsSigV4;
         return session;
