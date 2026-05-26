@@ -1,9 +1,4 @@
-// Factories.cpp — concrete-implementation factory entry points.
-//
-// Lives in the application layer because it must see all infrastructure
-// headers; consumers see only `Factories.h` (which exposes interface types
-// only). Also hosts the out-of-line special members for
-// ExecutionEngine::Dependencies.
+// Factories — concrete-implementation factory entry points.
 #include <chainapi/engine/Factories.h>
 
 #include "ImportFromOpenApi.h"

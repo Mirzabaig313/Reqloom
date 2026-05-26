@@ -1,6 +1,4 @@
-// Crypto — see header. OpenSSL 3.x EVP APIs (EVP_MAC for HMAC, EVP_MD for
-// plain hashes). The legacy `HMAC()` and `SHA256()` functions still work
-// but are deprecated in 3.x — using the EVP family keeps us forward-compatible.
+// Crypto — OpenSSL 3.x EVP APIs for HMAC and hashes.
 #include "Crypto.h"
 
 #include "../../domain/Codecs.h"

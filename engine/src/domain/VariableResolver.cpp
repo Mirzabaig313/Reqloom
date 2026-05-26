@@ -1,20 +1,5 @@
-// VariableResolver — substitutes {{X.y}} references.
-//
-// Resolution order (first match wins):
-//   1. Builtins ($.now, $.now±Nu, $.uuid, $.faker.*, $.env.*,
-//                $.base64.*, $.hex.*, $.url.*)
-//   2. Actor sessions
-//   3. Resource extractions (most-recent or indexed)
-//   4. Environment variables (env.X)
-//   5. Secrets (secret.X)
-//
-// Reference grammar:
-//   ref       := builtin | dotted | indexed
-//   builtin   := '$.' name ('.' name)? ('(' arg ')')? (offset)?
-//   offset    := '+' duration | '-' duration
-//   duration  := digits ('s' | 'm' | 'h' | 'd')
-//   dotted    := name '.' name        // env.X, secret.X, actor.var, resource.var
-//   indexed   := name '[' digits ']' '.' name   // resource[N].var
+// VariableResolver — substitutes {{X.y}} references. Resolution order: builtins, sessions,
+// extractions, env, secrets.
 #include "VariableResolver.h"
 
 #include "Codecs.h"

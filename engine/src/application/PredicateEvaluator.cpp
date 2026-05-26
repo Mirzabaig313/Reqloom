@@ -1,11 +1,4 @@
-// PredicateEvaluator — see PredicateEvaluator.h for the grammar.
-//
-// Implementation notes:
-//   - Recursive-descent parser, single-pass tokenizer.
-//   - AST nodes use std::variant + std::unique_ptr for child links.
-//   - Evaluation is total — every failure path returns `False`.
-//   - JSONPath subset matches what JsonPathEvaluator supports. Keep the
-//     two in lockstep when extending.
+// PredicateEvaluator — recursive-descent parser with total evaluation (returns False on failure).
 #include "PredicateEvaluator.h"
 
 #include <nlohmann/json.hpp>

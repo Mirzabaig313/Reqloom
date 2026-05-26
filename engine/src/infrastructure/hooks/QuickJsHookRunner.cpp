@@ -1,4 +1,4 @@
-// QuickJsHookRunner — sandboxed JS execution via QuickJS. Stub implementation.
+// QuickJsHookRunner — sandboxed JS execution via QuickJS.
 #include "QuickJsHookRunner.h"
 
 namespace chainapi::engine {

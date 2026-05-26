@@ -1,6 +1,5 @@
-// ExecutionEngine — resolves the dependency chain, authenticates actors,
-// executes each step with variable substitution, extracts response values,
-// and caches sessions/extractions for reuse.
+// ExecutionEngine — resolves dependency chains, authenticates actors, executes steps with variable
+
 #include <chainapi/engine/ExecutionEngine.h>
 
 #include "../domain/Codecs.h"
@@ -236,10 +235,7 @@ struct ExecutionEngine::Impl {
             lastResponse = std::move(*resp);
             haveLastResponse = true;
 
-            // Per-attempt timeline row. PRD §5.11 requires every poll attempt
-            // be visible alongside the parent step. Status mirrors the
-            // predicate verdict; the parent step still records the overall
-            // outcome separately.
+            // Per-attempt timeline row. Each poll attempt is visible alongside the parent step.
             const auto failMatched =
                 failPredicate &&
                 evaluator.evaluate(*failPredicate, lastResponse.body, lastResponse.status) ==
@@ -525,11 +521,7 @@ struct ExecutionEngine::Impl {
             return result;
         }
 
-        // ── Polling phase ────────────────────────────────────────────────
-        // When poll_until is declared, the initial response is a launch
-        // acknowledgement; the engine polls until success_when matches,
-        // fail_when matches, or a budget fires. Extractions run against
-        // the FINAL poll response.
+        // Polling phase — engine polls until success_when/fail_when matches or budget fires.
         if (op.pollUntil && httpResp) {
             const auto pollResult = runPollLoop(
                 op, *op.pollUntil, project, ctx, rctx, runId, *httpResp, pollAttemptRows);

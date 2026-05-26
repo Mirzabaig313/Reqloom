@@ -1,7 +1,4 @@
 // YamlSchemaParser — yaml-cpp-backed schema parser.
-//
-// Parses chainapi.yaml + imported sub-files into a validated Project.
-// Validates schema version, detects cycles, and resolves undefined refs.
 #include "YamlSchemaParser.h"
 
 #include <yaml-cpp/yaml.h>
