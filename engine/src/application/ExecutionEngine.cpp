@@ -118,7 +118,8 @@ struct ExecutionEngine::Impl {
                 RunContext& ctx,
                 const ResolveContext& rctx,
                 RunId runId,
-                const HttpResponse& /*initialResponse*/) {
+                const HttpResponse& /*initialResponse*/,
+                std::vector<StepResult>& attemptRows) {
         PredicateEvaluator evaluator;
 
         auto successPredicate = evaluator.parse(poll.successWhen);
@@ -204,18 +205,29 @@ struct ExecutionEngine::Impl {
                 }
             }
 
-            // Per-request signing (OAuth 1.0a). Done AFTER inject merge
-            // so the signer sees the final request shape.
+            // Per-request signing (OAuth 1.0a / AWS SigV4). Done AFTER
+            // inject merge so the signer sees the final request shape.
             if (pollActor) {
-                if (auto* session = ctx.session(pollActor->id);
-                    session && session->signingScheme ==
-                                   ActorSession::SigningScheme::OAuth1HmacSha1) {
-                    if (!signOAuth1Request(req, *session)) {
-                        return std::unexpected(ChainApiError{
-                            ErrorCode::SessionRefreshFailed,
-                            ErrorClass::Auth,
-                            "poll_until: oauth1 signing failed (missing "
-                            "consumer credentials or malformed URL)"});
+                if (auto* session = ctx.session(pollActor->id); session) {
+                    if (session->signingScheme ==
+                            ActorSession::SigningScheme::OAuth1HmacSha1) {
+                        if (!signOAuth1Request(req, *session)) {
+                            return std::unexpected(ChainApiError{
+                                ErrorCode::SessionRefreshFailed,
+                                ErrorClass::Auth,
+                                "poll_until: oauth1 signing failed (missing "
+                                "consumer credentials or malformed URL)"});
+                        }
+                    } else if (session->signingScheme ==
+                                   ActorSession::SigningScheme::AwsSigV4) {
+                        if (!signSigV4Request(req, *session)) {
+                            return std::unexpected(ChainApiError{
+                                ErrorCode::SessionRefreshFailed,
+                                ErrorClass::Auth,
+                                "poll_until: aws_sigv4 signing failed "
+                                "(missing access_key/secret_key/region/service "
+                                "or malformed URL)"});
+                        }
                     }
                 }
             }
@@ -227,19 +239,51 @@ struct ExecutionEngine::Impl {
             lastResponse = std::move(*resp);
             haveLastResponse = true;
 
-            // fail_when wins over success_when when both match.
-            if (failPredicate &&
+            // Per-attempt timeline row. PRD §5.11 requires every poll attempt
+            // be visible alongside the parent step. Status mirrors the
+            // predicate verdict; the parent step still records the overall
+            // outcome separately.
+            const auto failMatched =
+                failPredicate &&
                 evaluator.evaluate(*failPredicate, lastResponse.body,
                                    lastResponse.status) ==
-                    PredicateValue::True) {
+                    PredicateValue::True;
+            const auto successMatched =
+                !failMatched &&
+                evaluator.evaluate(*successPredicate, lastResponse.body,
+                                   lastResponse.status) ==
+                    PredicateValue::True;
+
+            StepResult attemptRow;
+            attemptRow.op = op.id;
+            attemptRow.pollAttempt = attempt + 1;
+            attemptRow.attempts = 1;
+            if (failMatched) {
+                attemptRow.status = StepResult::Status::Failed;
+                attemptRow.error = ErrorCode::PollFailPredicate;
+                attemptRow.detail = "fail_when matched (HTTP " +
+                                    std::to_string(lastResponse.status) + ")";
+            } else if (successMatched) {
+                attemptRow.status = StepResult::Status::Succeeded;
+                attemptRow.detail = "success_when matched (HTTP " +
+                                    std::to_string(lastResponse.status) + ")";
+            } else {
+                // Treat in-progress polls as Pending so renderers can show
+                // them as "still working" rather than completed.
+                attemptRow.status = StepResult::Status::Pending;
+                attemptRow.detail = "in_progress (HTTP " +
+                                    std::to_string(lastResponse.status) + ")";
+            }
+            ctx.record(attemptRow);
+            attemptRows.push_back(std::move(attemptRow));
+
+            if (failMatched) {
                 return std::unexpected(ChainApiError{
                     ErrorCode::PollFailPredicate, ErrorClass::Polling,
                     "poll_until.fail_when matched (HTTP " +
                     std::to_string(lastResponse.status) + ")"});
             }
-            if (evaluator.evaluate(*successPredicate, lastResponse.body,
-                                   lastResponse.status) ==
-                    PredicateValue::True) {
+            if (successMatched) {
                 return lastResponse;
             }
 
@@ -286,7 +330,8 @@ struct ExecutionEngine::Impl {
     /// Execute a single operation step. Returns the StepResult.
     StepResult executeStep(const Operation& op, const Project& project,
                            RunContext& ctx, const ResolveContext& rctx,
-                           RunId runId, std::size_t /*stepIndex*/) {
+                           RunId runId, std::size_t /*stepIndex*/,
+                           std::vector<StepResult>& pollAttemptRows) {
         StepResult result;
         result.op = op.id;
         result.attempts = 1;
@@ -396,20 +441,32 @@ struct ExecutionEngine::Impl {
                 return result;
             }
 
-            // Per-request signing (OAuth 1.0a). Inside the retry loop so
-            // each attempt gets a fresh nonce + timestamp.
+            // Per-request signing (OAuth 1.0a / AWS SigV4). Inside the
+            // retry loop so each attempt gets a fresh nonce/timestamp.
             if (!op.actor.value.empty()) {
-                if (auto* session = ctx.session(op.actor);
-                    session && session->signingScheme ==
-                                   ActorSession::SigningScheme::OAuth1HmacSha1) {
-                    if (!signOAuth1Request(req, *session)) {
-                        result.status = StepResult::Status::Failed;
-                        result.error = ErrorCode::SessionRefreshFailed;
-                        result.detail = "oauth1 signing failed (missing "
-                                        "consumer credentials or "
-                                        "malformed URL)";
-                        result.attempts = attemptCount;
-                        return result;
+                if (auto* session = ctx.session(op.actor); session) {
+                    if (session->signingScheme ==
+                            ActorSession::SigningScheme::OAuth1HmacSha1) {
+                        if (!signOAuth1Request(req, *session)) {
+                            result.status = StepResult::Status::Failed;
+                            result.error = ErrorCode::SessionRefreshFailed;
+                            result.detail = "oauth1 signing failed (missing "
+                                            "consumer credentials or "
+                                            "malformed URL)";
+                            result.attempts = attemptCount;
+                            return result;
+                        }
+                    } else if (session->signingScheme ==
+                                   ActorSession::SigningScheme::AwsSigV4) {
+                        if (!signSigV4Request(req, *session)) {
+                            result.status = StepResult::Status::Failed;
+                            result.error = ErrorCode::SessionRefreshFailed;
+                            result.detail = "aws_sigv4 signing failed "
+                                            "(missing access_key/secret_key/"
+                                            "region/service or malformed URL)";
+                            result.attempts = attemptCount;
+                            return result;
+                        }
                     }
                 }
             }
@@ -473,7 +530,8 @@ struct ExecutionEngine::Impl {
         // the FINAL poll response.
         if (op.pollUntil && httpResp) {
             const auto pollResult = runPollLoop(op, *op.pollUntil, project,
-                                                ctx, rctx, runId, *httpResp);
+                                                ctx, rctx, runId, *httpResp,
+                                                pollAttemptRows);
             if (!pollResult.has_value()) {
                 result.status = StepResult::Status::Failed;
                 result.error = pollResult.error().code;
@@ -615,7 +673,14 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
         impl_->emit(StepStarted{runId, i, opId, 1,
                                 std::chrono::system_clock::now()});
 
-        auto stepResult = impl_->executeStep(op, project, ctx, rctx, runId, i);
+        std::vector<StepResult> pollAttemptRows;
+        auto stepResult = impl_->executeStep(op, project, ctx, rctx, runId, i,
+                                             pollAttemptRows);
+        // Per-attempt rows precede the parent step row so renderers can
+        // group them under the operation that owned the poll loop.
+        for (auto& row : pollAttemptRows) {
+            result.steps.push_back(std::move(row));
+        }
         result.steps.push_back(stepResult);
         ctx.record(stepResult);
 

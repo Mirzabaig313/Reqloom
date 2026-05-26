@@ -330,6 +330,19 @@ std::string emitActor(const Actor& actor) {
                 e << YAML::Key << field << YAML::Value << it->second;
             }
         }
+    } else if (actor.strategy == AuthStrategy::AwsSigV4) {
+        e << YAML::Key << "strategy" << YAML::Value << "aws_sigv4";
+        for (const auto* field : {"access_key", "secret_key", "region",
+                                  "service", "session_token"}) {
+            if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
+                e << YAML::Key << field << YAML::Value << it->second;
+            }
+        }
+        if (auto it = actor.authConfig.find("sign_payload"); it != actor.authConfig.end()) {
+            // Round-trip as a YAML bool, not a string.
+            e << YAML::Key << "sign_payload" << YAML::Value
+              << (it->second == "true");
+        }
     } else {
         e << YAML::Key << "strategy" << YAML::Value << "simple";
         if (!actor.authSteps.empty()) {

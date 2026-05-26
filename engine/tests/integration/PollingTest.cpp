@@ -523,3 +523,162 @@ resources:
     ASSERT_FALSE(pings.empty());
     EXPECT_EQ(pings.back().variables.at("ping_id"), "bearer-1");
 }
+
+// ─── Slice 3g — per-poll-attempt timeline visibility ────────────────────────
+//
+// PRD §5.11: "Each poll attempt is recorded as a step in the run timeline."
+// Before this slice, only the parent step row was recorded; the timeline
+// hid every poll request behind a single elapsed-time bar. These tests
+// fail on the parent commit (zero per-attempt rows in `result->steps`).
+
+TEST_F(PollingFixture, success_records_one_step_per_poll_attempt) {
+    // The payment-status sequence in polling-routes.json returns
+    // PENDING → PROCESSING → COMPLETED, so we expect exactly three
+    // per-attempt rows plus the parent step.
+    PollingScratchProject project(R"YAML(
+version: 1
+name: PollAttemptTimeline
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@example.test" }
+      extract: { token: $.data.accessToken }
+    inject:
+      headers: { Authorization: "Bearer {{user.token}}" }
+
+resources:
+  payment:
+    operations:
+      pay:
+        method: POST
+        path: /api/v1/payments
+        actor: user
+        body: { method: "card" }
+        expect_status: [200, 202]
+        poll_until:
+          method: GET
+          path: /api/v1/payments/pay-42/status
+          success_when: "$.status == 'COMPLETED'"
+          fail_when:    "$.status in ['FAILED', 'CANCELLED']"
+          interval: 50ms
+          timeout: 5s
+          max_attempts: 20
+        extract:
+          payment_id: $.id
+)YAML");
+
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"payment.pay"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_TRUE(result->succeeded());
+
+    std::vector<const ce::StepResult*> attempts;
+    const ce::StepResult* parent = nullptr;
+    for (const auto& s : result->steps) {
+        if (s.op.value != "payment.pay") continue;
+        if (s.pollAttempt) attempts.push_back(&s);
+        else               parent = &s;
+    }
+
+    ASSERT_NE(parent, nullptr);
+    ASSERT_EQ(attempts.size(), 3u);
+
+    // Order of attempts is the order they were recorded — sequence-route
+    // returns PENDING, PROCESSING, COMPLETED in that order.
+    EXPECT_EQ(attempts[0]->pollAttempt.value(), 1);
+    EXPECT_EQ(attempts[0]->status, ce::StepResult::Status::Pending);
+    EXPECT_NE(attempts[0]->detail.find("in_progress"), std::string::npos);
+
+    EXPECT_EQ(attempts[1]->pollAttempt.value(), 2);
+    EXPECT_EQ(attempts[1]->status, ce::StepResult::Status::Pending);
+    EXPECT_NE(attempts[1]->detail.find("in_progress"), std::string::npos);
+
+    EXPECT_EQ(attempts[2]->pollAttempt.value(), 3);
+    EXPECT_EQ(attempts[2]->status, ce::StepResult::Status::Succeeded);
+    EXPECT_NE(attempts[2]->detail.find("success_when"), std::string::npos);
+
+    // Parent step still landed and its summary is independent of the
+    // per-attempt rows.
+    EXPECT_EQ(parent->status, ce::StepResult::Status::Succeeded);
+    EXPECT_FALSE(parent->pollAttempt.has_value());
+}
+
+TEST_F(PollingFixture, fail_predicate_records_attempt_with_PollFailPredicate) {
+    // The job-status sequence is QUEUED → FAILED, so attempt 1 is
+    // in-progress and attempt 2 trips fail_when.
+    PollingScratchProject project(R"YAML(
+version: 1
+name: PollFailTimeline
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@example.test" }
+      extract: { token: $.data.accessToken }
+    inject:
+      headers: { Authorization: "Bearer {{user.token}}" }
+
+resources:
+  job:
+    operations:
+      submit:
+        method: POST
+        path: /api/v1/jobs
+        actor: user
+        body: { kind: "rebuild" }
+        expect_status: [200, 202]
+        poll_until:
+          method: GET
+          path: /api/v1/jobs/job-99/status
+          success_when: "$.status == 'COMPLETED'"
+          fail_when:    "$.status == 'FAILED'"
+          interval: 50ms
+          timeout: 5s
+          max_attempts: 20
+        extract:
+          job_id: $.data.id
+)YAML");
+
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"job.submit"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->succeeded());
+
+    const ce::StepResult* failedAttempt = nullptr;
+    int attemptCount = 0;
+    for (const auto& s : result->steps) {
+        if (s.op.value != "job.submit" || !s.pollAttempt) continue;
+        ++attemptCount;
+        if (s.error && *s.error == ce::ErrorCode::PollFailPredicate) {
+            failedAttempt = &s;
+        }
+    }
+
+    EXPECT_GE(attemptCount, 1) << "expected at least one per-attempt row";
+    ASSERT_NE(failedAttempt, nullptr) << "no attempt row carried PollFailPredicate";
+    EXPECT_EQ(failedAttempt->status, ce::StepResult::Status::Failed);
+    EXPECT_NE(failedAttempt->detail.find("fail_when"), std::string::npos);
+}

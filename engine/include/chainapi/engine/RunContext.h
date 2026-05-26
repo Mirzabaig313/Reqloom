@@ -21,9 +21,10 @@ struct ActorSession {
 
     /// Per-request signing scheme. Most strategies leave this as `None`
     /// and rely on `injectHeaders` for static auth values. OAuth 1.0a
-    /// is the exception — its signature depends on the request URL/method/params,
-    /// so the executor calls a signer right before each send.
-    enum class SigningScheme { None, OAuth1HmacSha1 };
+    /// and AWS SigV4 are the exceptions — their signature depends on the
+    /// request URL / method / params / body, so the executor calls a
+    /// signer right before each send.
+    enum class SigningScheme { None, OAuth1HmacSha1, AwsSigV4 };
 
     State state{State::None};
     std::map<std::string, std::string> variables;  ///< token, user_id, etc.
@@ -60,6 +61,11 @@ struct StepResult {
     /// Human-readable context for this step's outcome — HTTP status,
     /// response body excerpt, missing variable name, etc.
     std::string detail;
+
+    /// Set when this row is one poll attempt within a `poll_until` loop
+    /// (1-based). Parent operation rows leave this empty. Renderers can
+    /// indent or group these under the parent step row.
+    std::optional<int> pollAttempt;
 };
 
 /// The mutable state of a single run.
