@@ -336,10 +336,6 @@ std::string emitActor(const Actor& actor) {
                 e << YAML::Key << field << YAML::Value << it->second;
             }
         }
-        if (auto it = actor.authConfig.find("sign_payload"); it != actor.authConfig.end()) {
-            // Round-trip as a YAML bool, not a string.
-            e << YAML::Key << "sign_payload" << YAML::Value << (it->second == "true");
-        }
     } else {
         e << YAML::Key << "strategy" << YAML::Value << "simple";
         if (!actor.authSteps.empty()) {

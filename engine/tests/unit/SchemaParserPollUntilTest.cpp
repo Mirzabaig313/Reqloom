@@ -809,7 +809,6 @@ actors:
       region: "us-east-1"
       service: "iam"
       session_token: "{{secret.AWS_SESSION_TOKEN}}"
-      sign_payload: true
 
 resources:
   list:
@@ -831,7 +830,6 @@ resources:
     EXPECT_EQ(aws.authConfig.at("region"), "us-east-1");
     EXPECT_EQ(aws.authConfig.at("service"), "iam");
     EXPECT_EQ(aws.authConfig.at("session_token"), "{{secret.AWS_SESSION_TOKEN}}");
-    EXPECT_EQ(aws.authConfig.at("sign_payload"), "true");
 }
 
 TEST(SchemaParserAwsSigV4, optional_fields_are_omitted_when_absent) {
@@ -868,5 +866,4 @@ resources:
     const auto& s3 = result->actors.at(ce::ActorId{"s3"});
     EXPECT_EQ(s3.strategy, ce::AuthStrategy::AwsSigV4);
     EXPECT_FALSE(s3.authConfig.contains("session_token"));
-    EXPECT_FALSE(s3.authConfig.contains("sign_payload"));
 }

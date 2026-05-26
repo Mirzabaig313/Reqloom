@@ -1059,8 +1059,7 @@ ce::Actor makeAwsActor(std::string accessKey,
                        std::string secretKey,
                        std::string region,
                        std::string service,
-                       std::optional<std::string> sessionToken = std::nullopt,
-                       std::optional<bool> signPayload = std::nullopt) {
+                       std::optional<std::string> sessionToken = std::nullopt) {
     ce::Actor actor;
     actor.id = ce::ActorId{"aws"};
     actor.strategy = ce::AuthStrategy::AwsSigV4;
@@ -1070,9 +1069,6 @@ ce::Actor makeAwsActor(std::string accessKey,
     actor.authConfig["service"] = std::move(service);
     if (sessionToken) {
         actor.authConfig["session_token"] = std::move(*sessionToken);
-    }
-    if (signPayload) {
-        actor.authConfig["sign_payload"] = *signPayload ? "true" : "false";
     }
     return actor;
 }
@@ -1107,8 +1103,7 @@ TEST(AuthStrategy, aws_sigv4_optional_session_token_is_recorded_when_present) {
     FakeHttpClient http;
     ce::VariableResolver resolver;
 
-    auto actor =
-        makeAwsActor("AKID", "secret", "us-west-2", "s3", std::string{"FwoGZXIvYXdzEJP"}, true);
+    auto actor = makeAwsActor("AKID", "secret", "us-west-2", "s3", std::string{"FwoGZXIvYXdzEJP"});
 
     ce::AuthDependencies deps{&http, &resolver};
     auto authn = ce::selectAuthenticator(actor, deps);
@@ -1116,7 +1111,6 @@ TEST(AuthStrategy, aws_sigv4_optional_session_token_is_recorded_when_present) {
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->variables.at("session_token"), "FwoGZXIvYXdzEJP");
-    EXPECT_EQ(result->variables.at("sign_payload"), "true");
 }
 
 TEST(AuthStrategy, aws_sigv4_rejects_missing_access_key) {
@@ -1153,25 +1147,23 @@ TEST(AuthStrategy, aws_sigv4_resolves_secret_credentials) {
     EXPECT_EQ(result->variables.at("secret_key"), "secret-from-store");
 }
 
-// ─── signSigV4Request — aws-sigv4-test-suite get-vanilla-query reference ────
+// ─── signSigV4Request — AWS-canonical reference vector ─────────────────────
 //
 // Pinned scenario:
 //   GET https://example.amazonaws.com/?Param2=value2&Param1=value1
-//   Headers: Host, X-Amz-Date
+//   Headers: Host, X-Amz-Date, X-Amz-Content-Sha256
 //   access_key:   AKIDEXAMPLE
 //   secret_key:   wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY
 //   region:       us-east-1
 //   service:      service
 //   amz-date:     20150830T123600Z
 //
-// Expected signature (recomputed against the AWS reference vector):
-//   b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500
-//
-// This is exactly the canonical example from the AWS SigV4 docs and the
-// `aws-sigv4-test-suite` `get-vanilla-query` test case — same behaviour the
-// AWS SDK and botocore exercise.
+// Builds on the AWS `aws-sigv4-test-suite get-vanilla-query` shape; differs
+// only in that we always emit and sign `x-amz-content-sha256` (S3 requires
+// it; other services tolerate it). Signature recomputed under the AWS
+// SigV4 algorithm against this exact canonical request.
 
-TEST(SigV4Signer, matches_aws_sigv4_test_suite_get_vanilla_query) {
+TEST(SigV4Signer, matches_aws_canonical_reference_vector) {
     ce::ActorSession session;
     session.variables["access_key"] = "AKIDEXAMPLE";
     session.variables["secret_key"] = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
@@ -1191,12 +1183,15 @@ TEST(SigV4Signer, matches_aws_sigv4_test_suite_get_vanilla_query) {
 
     const auto auth = req.headers.at("Authorization");
     EXPECT_EQ(req.headers.at("x-amz-date"), "20150830T123600Z");
+    // Empty-body SHA-256.
+    EXPECT_EQ(req.headers.at("x-amz-content-sha256"),
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     EXPECT_NE(auth.find("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"
                         "20150830/us-east-1/service/aws4_request"),
               std::string::npos);
-    EXPECT_NE(auth.find("SignedHeaders=host;x-amz-date"), std::string::npos);
-    EXPECT_NE(auth.find("Signature=b97d918cfa904a5beff61c982a1b6f458b7"
-                        "99221646efd99d3219ec94cdf2500"),
+    EXPECT_NE(auth.find("SignedHeaders=host;x-amz-content-sha256;x-amz-date"), std::string::npos);
+    EXPECT_NE(auth.find("Signature=311c7f58b10b06de8540bb5a27f441ee0"
+                        "609f1d5ad7b191e68d7ea87d90e3d6b"),
               std::string::npos)
         << "auth header was: " << auth;
 }
@@ -1222,13 +1217,12 @@ TEST(SigV4Signer, adds_x_amz_security_token_header_when_session_token_present) {
     EXPECT_NE(req.headers.at("Authorization").find("x-amz-security-token"), std::string::npos);
 }
 
-TEST(SigV4Signer, sign_payload_flag_adds_x_amz_content_sha256) {
+TEST(SigV4Signer, always_emits_x_amz_content_sha256_header) {
     ce::ActorSession session;
     session.variables["access_key"] = "AKID";
     session.variables["secret_key"] = "secret";
     session.variables["region"] = "us-east-1";
     session.variables["service"] = "s3";
-    session.variables["sign_payload"] = "true";
 
     ce::HttpRequest req;
     req.method = ce::HttpMethod::Put;
@@ -1269,8 +1263,33 @@ TEST(SigV4Signer, refuses_to_sign_malformed_url_without_scheme) {
     ce::HttpRequest req;
     req.method = ce::HttpMethod::Get;
     req.url = "no-scheme-here/path";  // no `://`
+    req.headers["X-Custom"] = "preserved";
 
     EXPECT_FALSE(ce::signSigV4Request(req, session));
+    ASSERT_EQ(req.headers.size(), 1u);
+    EXPECT_EQ(req.headers.at("X-Custom"), "preserved");
+}
+
+TEST(SigV4Signer, leaves_request_untouched_when_credentials_missing) {
+    // Atomicity-on-failure: any partial header writes from an earlier
+    // version of this code would surface here. A user-supplied X-Custom
+    // header survives unchanged; no AWS-specific headers are added.
+    ce::ActorSession session;
+    session.variables["region"] = "us-east-1";
+    session.variables["service"] = "s3";  // no access_key / secret_key
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = "https://s3.amazonaws.com/bucket";
+    req.headers["X-Custom"] = "preserved";
+
+    EXPECT_FALSE(ce::signSigV4Request(req, session));
+    ASSERT_EQ(req.headers.size(), 1u);
+    EXPECT_EQ(req.headers.at("X-Custom"), "preserved");
+    EXPECT_FALSE(req.headers.contains("x-amz-date"));
+    EXPECT_FALSE(req.headers.contains("x-amz-content-sha256"));
+    EXPECT_FALSE(req.headers.contains("Host"));
+    EXPECT_FALSE(req.headers.contains("Authorization"));
 }
 
 TEST(SigV4Signer, regenerates_distinct_signatures_across_distinct_timestamps) {

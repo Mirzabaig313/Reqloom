@@ -54,7 +54,7 @@ bool signOAuth1Request(HttpRequest& req,
 /// per https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html
 /// then writes:
 ///   - `x-amz-date`
-///   - `x-amz-content-sha256` (always set; required for S3 and harmless elsewhere)
+///   - `x-amz-content-sha256` (always set; required for S3, harmless elsewhere)
 ///   - `x-amz-security-token` (when `session_token` present)
 ///   - `Authorization: AWS4-HMAC-SHA256 Credential=..., SignedHeaders=..., Signature=...`
 ///
@@ -62,8 +62,9 @@ bool signOAuth1Request(HttpRequest& req,
 /// with SHA-256 and folded into the canonical request; an empty body
 /// hashes to the well-known empty-string SHA-256.
 ///
-/// Returns false on failure (missing required variable, malformed URL,
-/// OpenSSL failure) and leaves `req` unmodified.
+/// Atomic on failure: when this returns false, `req` is left exactly as
+/// the caller passed it. Failure causes are missing required variable,
+/// malformed URL, or OpenSSL hash failure.
 bool signSigV4Request(HttpRequest& req,
                       const ActorSession& session,
                       const SigV4TestOverrides& overrides = {});

@@ -1,13 +1,6 @@
-// ImportFromOpenApi — Slice 6c.
-//
-// Walks an OpenAPI 3.x document and produces a Project skeleton. One
-// resource per path stem, one operation per (path, method) pair, all
-// tagged with Provenance::Source::OpenApiImport.
-//
-// 6c-1 — structural walk + path-method heuristics.
-// 6c-2 — `{paramName}` rewrites to `{{<resource>.paramName}}` references.
-// 6c-3 — extraction inference from response schemas + verification pass
-//        against the response example (when one is present).
+// ImportFromOpenApi — direct OpenAPI 3.x → Project parser. Walks paths ×
+// methods, infers extractions from response schemas, verifies them against
+// the response example when one is present.
 #include "ImportFromOpenApi.h"
 
 #include "Verifier.h"
@@ -17,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -37,10 +31,13 @@ ChainApiError invalid(std::string detail) {
     return ChainApiError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
 }
 
-/// Reject anything that resolves outside the current working directory
-/// unless the user passed an absolute path. Mirrors the rule applied to
-/// hook-script paths in YamlSchemaParser.cpp.
-std::expected<fs::path, ChainApiError> canonicalSpecPath(const fs::path& spec) {
+/// Containment check matching the hook-script policy in YamlSchemaParser.cpp:
+/// the resolved path must live under `projectRoot`, with a path-separator
+/// boundary so `/home/user/proj` does not admit a sibling
+/// `/home/user/proj-evil/spec.yaml`. Both relative and absolute spec paths
+/// must satisfy this — a `--spec /etc/passwd` invocation gets rejected.
+std::expected<fs::path, ChainApiError> canonicalSpecPath(const fs::path& spec,
+                                                         const fs::path& projectRoot) {
     std::error_code ec;
     auto canonical = fs::weakly_canonical(spec, ec);
     if (ec) {
@@ -52,18 +49,24 @@ std::expected<fs::path, ChainApiError> canonicalSpecPath(const fs::path& spec) {
             invalid("openapi import: spec is not a regular file: " + canonical.string()));
     }
 
-    if (spec.is_absolute()) return canonical;
+    auto root = fs::weakly_canonical(projectRoot, ec);
+    if (ec) {
+        return std::unexpected(
+            invalid("openapi import: cannot canonicalise project root: " + ec.message()));
+    }
 
-    auto cwd = fs::weakly_canonical(fs::current_path(), ec);
-    if (ec) return canonical;
+    const auto canonStr = canonical.lexically_normal().string();
+    const auto rootStr = root.lexically_normal().string();
+    const bool contained = canonStr.size() >= rootStr.size() &&
+                           canonStr.substr(0, rootStr.size()) == rootStr &&
+                           (canonStr.size() == rootStr.size() || canonStr[rootStr.size()] == '/' ||
+                            canonStr[rootStr.size()] == fs::path::preferred_separator);
+    if (!contained) {
+        return std::unexpected(invalid(
+            "openapi import: spec path resolves outside the project root (" + rootStr + ")"));
+    }
 
-    auto cwdStr = cwd.string();
-    auto canonStr = canonical.string();
-    if (canonStr.starts_with(cwdStr)) return canonical;
-
-    return std::unexpected(
-        invalid("openapi import: spec path resolves outside the current working "
-                "directory; pass an absolute path to opt in"));
+    return canonical;
 }
 
 std::string toLowerAscii(std::string_view s) {
@@ -77,19 +80,29 @@ std::string toLowerAscii(std::string_view s) {
 /// Strip a trailing 's' / 'es' / 'ies' for the most common English plurals.
 /// OpenAPI conventions are inconsistent enough that we treat anything we
 /// can't pluralise cleanly as already-singular.
-std::string singularise(std::string_view word) {
+///
+/// Returns {derived, wasModified}. `wasModified == false` means the input
+/// looked already-singular (or didn't match any rule); the importer can
+/// emit derivation evidence when the heuristic fired so users see why a
+/// resource ended up named the way it did.
+struct SingulariseResult {
+    std::string value;
+    bool modified{false};
+};
+
+SingulariseResult singulariseDetailed(std::string_view word) {
     if (word.size() > 3 && word.ends_with("ies")) {
-        return std::string{word.substr(0, word.size() - 3)} + "y";
+        return {std::string{word.substr(0, word.size() - 3)} + "y", true};
     }
     if (word.size() > 2 && word.ends_with("es") &&
         (word.ends_with("ches") || word.ends_with("shes") || word.ends_with("xes") ||
          word.ends_with("ses"))) {
-        return std::string{word.substr(0, word.size() - 2)};
+        return {std::string{word.substr(0, word.size() - 2)}, true};
     }
     if (word.size() > 1 && word.ends_with("s") && !word.ends_with("ss")) {
-        return std::string{word.substr(0, word.size() - 1)};
+        return {std::string{word.substr(0, word.size() - 1)}, true};
     }
-    return std::string{word};
+    return {std::string{word}, false};
 }
 
 /// Split a path into segments, dropping empty entries.
@@ -111,13 +124,21 @@ std::vector<std::string> splitPathSegments(std::string_view path) {
 /// takes the first non-parameter segment, singularised. Returns an empty
 /// string when the path contains only path parameters (rare; we name the
 /// resource "root" in that case).
-std::string deriveResourceId(std::string_view path) {
+struct ResourceDerivation {
+    std::string id;
+    std::string fromSegment;  ///< original segment that produced `id`
+    bool singularised{false};
+};
+
+ResourceDerivation deriveResourceIdDetailed(std::string_view path) {
     const auto segments = splitPathSegments(path);
     for (auto it = segments.rbegin(); it != segments.rend(); ++it) {
         if (it->starts_with("{") || it->starts_with(":")) continue;
-        return singularise(toLowerAscii(*it));
+        const auto lowered = toLowerAscii(*it);
+        const auto sing = singulariseDetailed(lowered);
+        return {sing.value, *it, sing.modified};
     }
-    return "root";
+    return {"root", "", false};
 }
 
 /// Translate (method, path) into a short operation name. Heuristics:
@@ -346,10 +367,13 @@ std::vector<std::pair<std::string, std::string>> inferExtractionsFromSchema(
 
 /// Recursive YAML-to-JSON converter. yaml-cpp's Emitter does not produce
 /// JSON-compatible output (flow-style YAML omits quoting on keys), so we
-/// walk the node tree directly. Number scalars are detected via
-/// stoll / stod; everything that isn't recognisably bool/null/number stays
-/// a string.
-nlohmann::json yamlToJson(const YAML::Node& node) {
+/// walk the node tree directly.
+///
+/// `depth` guards against pathological specs with very deep alias chains.
+constexpr int kMaxYamlToJsonDepth = 64;
+
+nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
+    if (depth > kMaxYamlToJsonDepth) return nlohmann::json{nullptr};
     if (!node || node.IsNull()) return nlohmann::json{nullptr};
 
     if (node.IsScalar()) {
@@ -358,19 +382,19 @@ nlohmann::json yamlToJson(const YAML::Node& node) {
         if (raw == "false") return nlohmann::json(false);
         if (raw == "null" || raw == "~") return nlohmann::json{nullptr};
 
-        // Try integer first, then floating point, fall back to string.
         if (!raw.empty()) {
-            try {
-                std::size_t pos = 0;
-                const auto asInt = std::stoll(raw, &pos);
-                if (pos == raw.size()) return nlohmann::json(asInt);
-            } catch (...) { /* fall through */
+            // from_chars is locale-independent, unlike stoll / stod.
+            const auto* first = raw.data();
+            const auto* last = first + raw.size();
+            long long asInt = 0;
+            if (auto fc = std::from_chars(first, last, asInt);
+                fc.ec == std::errc{} && fc.ptr == last) {
+                return nlohmann::json(asInt);
             }
-            try {
-                std::size_t pos = 0;
-                const auto asDouble = std::stod(raw, &pos);
-                if (pos == raw.size()) return nlohmann::json(asDouble);
-            } catch (...) { /* fall through */
+            double asDouble = 0.0;
+            if (auto fc = std::from_chars(first, last, asDouble);
+                fc.ec == std::errc{} && fc.ptr == last) {
+                return nlohmann::json(asDouble);
             }
         }
         return nlohmann::json(raw);
@@ -378,14 +402,14 @@ nlohmann::json yamlToJson(const YAML::Node& node) {
 
     if (node.IsSequence()) {
         nlohmann::json arr = nlohmann::json::array();
-        for (const auto& item : node) arr.push_back(yamlToJson(item));
+        for (const auto& item : node) arr.push_back(yamlToJson(item, depth + 1));
         return arr;
     }
 
     if (node.IsMap()) {
         nlohmann::json obj = nlohmann::json::object();
         for (const auto& kv : node) {
-            obj[kv.first.as<std::string>("")] = yamlToJson(kv.second);
+            obj[kv.first.as<std::string>("")] = yamlToJson(kv.second, depth + 1);
         }
         return obj;
     }
@@ -396,9 +420,23 @@ nlohmann::json yamlToJson(const YAML::Node& node) {
 }  // namespace
 
 std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
-    const fs::path& spec) const {
-    auto canonical = canonicalSpecPath(spec);
+    const fs::path& spec, const fs::path& projectRoot) const {
+    auto canonical = canonicalSpecPath(spec, projectRoot);
     if (!canonical) return std::unexpected(canonical.error());
+
+    // 8 MiB cap. Real-world OpenAPI specs (Stripe, GitHub) clock in around
+    // 5 MiB; anything bigger is almost certainly an attack or a runaway
+    // generator. yaml-cpp will happily allocate gigabytes if we let it.
+    constexpr std::uintmax_t kMaxSpecBytes = 8 * 1024 * 1024;
+    std::error_code sizeEc;
+    const auto specSize = fs::file_size(*canonical, sizeEc);
+    if (sizeEc) {
+        return std::unexpected(invalid("openapi import: cannot stat spec: " + sizeEc.message()));
+    }
+    if (specSize > kMaxSpecBytes) {
+        return std::unexpected(invalid("openapi import: spec exceeds 8 MiB cap (got " +
+                                       std::to_string(specSize) + " bytes)"));
+    }
 
     std::ifstream in(*canonical);
     if (!in) {
@@ -451,7 +489,8 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
         const auto& pathItem = pathKv.second;
         if (pathTemplate.empty() || !pathItem || !pathItem.IsMap()) continue;
 
-        const auto resourceId = deriveResourceId(pathTemplate);
+        const auto derivation = deriveResourceIdDetailed(pathTemplate);
+        const auto& resourceId = derivation.id;
         auto& resource = outcome.project.resources[ResourceId{resourceId}];
         if (resource.id.value.empty()) resource.id = ResourceId{resourceId};
 
@@ -486,6 +525,11 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             prov.source = Provenance::Source::OpenApiImport;
             prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
             prov.importedAt = importedAt;
+            if (derivation.singularised && !derivation.fromSegment.empty()) {
+                prov.evidence["resource_derivation"] = "singularised path segment '" +
+                                                       derivation.fromSegment + "' to '" +
+                                                       resourceId + "'";
+            }
             if (const auto opSummary = opNode["summary"].as<std::string>(""); !opSummary.empty()) {
                 prov.evidence["summary"] = opSummary;
             }
@@ -501,11 +545,9 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
                                                        param;
             }
 
-            // 6c-3: extraction inference + verification.
-            //
             // Top-level scalar response fields become candidate extractions.
-            // When an example payload is present, run the verifier and
-            // record per-extraction status into provenance evidence.
+            // When an example payload is present, the verifier confirms
+            // each candidate path; results land in provenance evidence.
             const auto schemaNode = firstJsonResponseSchema(opNode);
             const auto exampleNode = firstJsonResponseExample(opNode);
             const auto candidates = inferExtractionsFromSchema(schemaNode);

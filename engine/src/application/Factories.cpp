@@ -94,9 +94,9 @@ std::expected<std::filesystem::path, ChainApiError> emitHookTypings(
 }
 
 std::expected<OpenApiImportOutcome, ChainApiError> importFromOpenApi(
-    const std::filesystem::path& spec) {
+    const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
     ImportFromOpenApi importer;
-    auto inner = importer.run(spec);
+    auto inner = importer.run(spec, projectRoot);
     if (!inner) return std::unexpected(inner.error());
     return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
 }
