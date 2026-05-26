@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -131,7 +132,7 @@ std::string deriveOperationName(std::string_view methodLower, std::string_view p
         !segments.empty() && (segments.back().starts_with("{") || segments.back().starts_with(":"));
 
     if (methodLower == "get") return endsWithParam ? "get" : "list";
-    if (methodLower == "post") return endsWithParam ? "create" : "create";
+    if (methodLower == "post") return "create";
     if (methodLower == "put") return "update";
     if (methodLower == "patch") return "patch";
     if (methodLower == "delete") return "delete";
@@ -180,17 +181,13 @@ std::string nowIso8601Utc() {
 #else
     gmtime_r(&now, &tm);
 #endif
-    char buf[32];
-    std::snprintf(buf,
-                  sizeof(buf),
-                  "%04d-%02d-%02dT%02d:%02d:%02dZ",
-                  tm.tm_year + 1900,
-                  tm.tm_mon + 1,
-                  tm.tm_mday,
-                  tm.tm_hour,
-                  tm.tm_min,
-                  tm.tm_sec);
-    return buf;
+    return std::format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+                       tm.tm_year + 1900,
+                       tm.tm_mon + 1,
+                       tm.tm_mday,
+                       tm.tm_hour,
+                       tm.tm_min,
+                       tm.tm_sec);
 }
 
 /// Server URL → environment baseUrl. Only `servers[0]` is consumed; later
