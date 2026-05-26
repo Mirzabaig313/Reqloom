@@ -415,6 +415,8 @@ operations:
 
 ### 5.7 Variable Resolution Rules
 
+Templates are resolved at request-build time, before any structured request body exists. The resolver therefore exposes only the subset of helpers that operate on strings and identifiers — codecs, timestamps, identifiers, environment, secrets. Crypto operations and content-aware helpers (HMAC, JWT, hash, `json.stringify`) are exposed on the **hook `ctx` object** (§5.10), where the request body is available as structured data and the OpenSSL dependency is acceptable.
+
 | Reference | Resolves To |
 |-----------|-------------|
 | `{{env.baseUrl}}` | Environment variable |
@@ -427,15 +429,20 @@ operations:
 | `{{$.uuid}}` | Built-in (generates a UUID v4) |
 | `{{$.faker.email}}` | Built-in (fake data — Faker.js style) |
 | `{{$.env.HOSTNAME}}` | OS environment variable |
-| `{{$.base64.encode(body)}}` / `{{$.base64.decode(...)}}` | Built-in (base64 codec) |
+| `{{$.base64.encode(env.PAIR)}}` / `{{$.base64.decode(...)}}` | Built-in (base64 codec; arg is a literal `"..."` or a reference) |
 | `{{$.hex.encode(...)}}` / `{{$.hex.decode(...)}}` | Built-in (hex codec) |
-| `{{$.hmac.sha256(secret.HMAC_KEY, body)}}` | Built-in (HMAC; `sha1`, `sha256`, `sha512` supported) |
-| `{{$.hash.sha256(body)}}` | Built-in (one-shot hash; `md5`, `sha1`, `sha256`, `sha512`) |
-| `{{$.jwt.sign({sub: customer.id, exp: $.now+1h}, secret.JWT_KEY)}}` | Built-in (JWT signing — HS256, HS512, RS256) |
 | `{{$.url.encode(...)}}` / `{{$.url.decode(...)}}` | Built-in (URL component codec) |
-| `{{$.json.stringify(body)}}` | Built-in (canonicalised JSON for signing) |
 
-The intent is that the **built-in function library covers the 80% of cases** where users would otherwise reach for a JS hook (HMAC signing, JWT generation, base64-wrapping, relative timestamps). Hooks (§5.10) remain available for the genuine long tail.
+**Available on hook `ctx` only** (§5.10) — these need request-body access and link OpenSSL on the engine, so they live in the hook sandbox where both are appropriate:
+
+| Hook helper | Purpose |
+|-----------|-------------|
+| `ctx.hmac.{sha1,sha256,sha512}(key, message)` | HMAC over a string or canonicalised body |
+| `ctx.hash.{md5,sha1,sha256,sha512}(message)` | One-shot hash |
+| `ctx.jwt.sign(claims, key, alg)` | JWT signing — HS256, HS512, RS256 |
+| `ctx.json.stringify(obj)` | Canonicalised JSON for signing (sorted keys, no whitespace) |
+
+The intent is that the **template-level builtins cover the 80% of cases** where users would otherwise reach for a hook (basic-auth header construction, URL-encoding query values, relative timestamps, opaque IDs). Hooks (§5.10) take over the moment the operation needs to sign a body or transform structured data.
 
 ### 5.8 Dependency Resolution Algorithm
 
@@ -500,7 +507,8 @@ operations:
 ```js
 // hooks/sign-payment.js
 // ctx.request is mutable; ctx.env / ctx.secret / ctx.actors are read-only.
-// All §5.7 built-ins are exposed on ctx (ctx.hmac, ctx.jwt, ctx.base64, …).
+// String codecs from §5.7 (ctx.base64, ctx.hex, ctx.url) and crypto helpers
+// (ctx.hmac, ctx.jwt, ctx.hash, ctx.json) are pre-bound on the ctx object.
 export default function (ctx) {
   const canonical = ctx.json.stringify(ctx.request.body);
   ctx.request.headers['X-Signature'] =
@@ -1469,7 +1477,7 @@ The system prompt template, few-shot examples, and post-processing logic will li
 - **Decision**: Promote the three most common pain points to first-class schema citizens:
   1. Polling becomes `poll_until` on operations (§5.11), not a hook
   2. Common signed-auth schemes (OAuth2, AWS SigV4, OAuth1, API key, Basic) are named strategies (§5.10.1), not hooks
-  3. Dynamic-payload primitives (HMAC, JWT, base64, relative timestamps) are built-in template functions (§5.7), not hooks
+  3. Dynamic-payload primitives split by scope: string codecs (base64, hex, url) and relative-time math become template builtins (§5.7); HMAC, JWT signing, hashing, and JSON canonicalisation are pre-bound on the hook `ctx` object (§5.10), where the request body is reachable as structured data and the OpenSSL dependency is appropriate
 - **Rationale**:
   - Each promotion eliminates a category of "you need to write JS to test our API" friction
   - The declarative form is reviewable by tooling — extractions, retries, and signing can be linted, diffed, and AI-imported. Hooks are opaque

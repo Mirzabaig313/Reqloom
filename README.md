@@ -2,6 +2,8 @@
 
 > **A workflow-aware API testing tool that auto-resolves request dependency chains.**
 
+📖 **Documentation: [chainapi.github.io](https://chainapi.github.io/)** (or the project-pages URL after first deploy)
+
 ChainAPI treats your API as a graph of resources, actors, and dependencies.
 Define each actor (auth flow) and each resource (endpoints + dependencies)
 once. Then click any endpoint and ChainAPI auto-resolves the entire chain —
@@ -138,15 +140,42 @@ runs automatically on `git push`. Bypass when justified with
 
 ## Status
 
-Skeleton scaffolding complete. Next up is **Phase 0 validation** per PRD §13.1:
+Phase 0 (validation) and Phase 1 (engine + CLI) complete. The engine runs
+the marketplace sample and the GiGwala backend (174 endpoints, 5 actors,
+29 resources) end-to-end with auto-resolved dependency chains. 188 tests
+green across unit + integration suites.
 
-- Validate the schema spec against three real-world APIs
-- Hand-author the MarketplaceAPI sample to 30 endpoints
-- Recruit design partners
-- Run the AI importer feasibility test
+Next up: **Phase 2** (desktop UI) per PRD §13.3.
 
-Then **Phase 1** (engine + CLI), **Phase 2** (Qt desktop UI), and so on
-through the roadmap in PRD §13.
+---
+
+## Documentation index
+
+For the AI importer:
+
+- **[`prompts/import/README.md`](prompts/import/README.md)** — multi-stage prompt suite overview
+- **[`prompts/import/01-discover.md`](prompts/import/01-discover.md)** through **`06-fix-lint-errors.md`** — individual stage prompts
+
+For working with the bundled samples:
+
+- **[`samples/marketplace/`](samples/marketplace/)** — 30-endpoint marketplace sample project. Try `chainapi run refund.approve --project samples/marketplace`.
+
+## Documentation site
+
+The user-facing docs live at **`docs-site/`** as an Astro Starlight
+project. Build and run locally:
+
+```bash
+cd docs-site
+npm install
+npm run dev   # → http://localhost:4321
+```
+
+Pushes to `main` that touch `docs-site/`, `doc/`, or `prompts/import/`
+auto-deploy to GitHub Pages via `.github/workflows/deploy-docs.yml`.
+The workflow auto-detects org-page vs project-page repo type, so it
+works for both `chainapi.github.io` and any `<owner>.github.io/<repo>/`
+URL.
 
 ---
 
