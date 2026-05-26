@@ -8,8 +8,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -352,9 +354,13 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
                 fc.ec == std::errc{} && fc.ptr == last) {
                 return nlohmann::json(asInt);
             }
-            double asDouble = 0.0;
-            if (auto fc = std::from_chars(first, last, asDouble);
-                fc.ec == std::errc{} && fc.ptr == last) {
+            // libc++ on Apple Clang 16 / Xcode 16.4 has not yet implemented
+            // std::from_chars for floating-point types. Use std::strtod for
+            // portability; raw is a std::string and therefore null-terminated.
+            char* end = nullptr;
+            errno = 0;
+            const double asDouble = std::strtod(raw.c_str(), &end);
+            if (errno == 0 && end == raw.c_str() + raw.size()) {
                 return nlohmann::json(asDouble);
             }
         }
