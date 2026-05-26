@@ -16,7 +16,7 @@ REM run `cmake --preset windows-debug`.
 setlocal enabledelayedexpansion
 
 if "%QT_VERSION%"=="" set QT_VERSION=6.8.3
-if "%AQT_VERSION%"=="" set AQT_VERSION=3.1.18
+if "%AQT_VERSION%"=="" set AQT_VERSION=3.3.0
 if "%QT_DIR%"=="" set QT_DIR=C:\Qt
 
 set QT_PREFIX=%QT_DIR%\%QT_VERSION%\msvc2022_64

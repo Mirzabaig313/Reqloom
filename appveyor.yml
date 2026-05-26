@@ -31,7 +31,7 @@ shallow_clone: true
 environment:
   VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
   QT_VERSION: 6.8.3
-  AQT_VERSION: 3.1.18
+  AQT_VERSION: 3.3.0
 
 # --------------------------------------------------------------------------
 # Cache strategy:
@@ -46,8 +46,8 @@ cache:
   - vcpkg -> vcpkg.json, appveyor.yml
   - C:\vcpkg-bincache -> vcpkg.json, appveyor.yml
   - /home/appveyor/vcpkg-bincache -> vcpkg.json, appveyor.yml
-  - C:\Qt -> appveyor.yml
-  - /home/appveyor/Qt -> appveyor.yml
+  - C:\Qt -> appveyor.yml, vcpkg.json
+  - /home/appveyor/Qt -> appveyor.yml, vcpkg.json
 
 # --------------------------------------------------------------------------
 # Build matrix: Linux + Windows × (debug | release). The preset is chosen at
@@ -90,10 +90,13 @@ install:
       export PATH="$HOME/.local/bin:$PATH"
       cmake --version
 
-      # Install Qt 6.8 desktop (Core, GUI, QML) into ~/Qt if not already
-      # cached. aqtinstall prints "already installed" cheaply if present.
+      # Install Qt 6.8 desktop into ~/Qt if not already cached. Check for
+      # qconfig.pri specifically so a partial install (e.g. interrupted by
+      # a previous aqtinstall metadata bug) doesn't masquerade as cached.
       mkdir -p "$HOME/Qt"
-      if [[ ! -d "$HOME/Qt/${QT_VERSION}/gcc_64" ]]; then
+      qt_marker="$HOME/Qt/${QT_VERSION}/gcc_64/mkspecs/qconfig.pri"
+      if [[ ! -f "$qt_marker" ]]; then
+        rm -rf "$HOME/Qt/${QT_VERSION}"
         aqt install-qt linux desktop "${QT_VERSION}" linux_gcc_64 \
           --outputdir "$HOME/Qt"
       else
@@ -131,8 +134,12 @@ install:
       REM aqtinstall — pin via pip so cache invalidation is predictable.
       python -m pip install --upgrade --quiet "aqtinstall==%AQT_VERSION%" || exit /b
 
-      REM Install Qt 6.8 for MSVC 2022 64-bit if not already cached.
-      if exist "C:\Qt\%QT_VERSION%\msvc2022_64" goto :qt_cached
+      REM Install Qt 6.8 for MSVC 2022 64-bit if not already cached. Check
+      REM for the qconfig.pri marker specifically so a partial install
+      REM doesn't masquerade as cached.
+      set "QT_MARKER=C:\Qt\%QT_VERSION%\msvc2022_64\mkspecs\qconfig.pri"
+      if exist "%QT_MARKER%" goto :qt_cached
+      if exist "C:\Qt\%QT_VERSION%" rmdir /s /q "C:\Qt\%QT_VERSION%"
       aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 --outputdir C:\Qt
       if errorlevel 1 exit /b 1
       goto :qt_done
