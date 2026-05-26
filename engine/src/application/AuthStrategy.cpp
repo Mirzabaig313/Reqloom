@@ -545,6 +545,77 @@ private:
     AuthDependencies deps_;
 };
 
+/// Implements `AuthStrategy::AwsSigV4`. Like OAuth1, AWS SigV4 signs
+/// per-request — the signature depends on the URL, method, headers,
+/// and body. The authenticator stashes credentials on the session and
+/// flips the signing scheme; the executor calls `signSigV4Request`
+/// before each outbound HTTP send.
+///
+/// Reads from `actor.authConfig`:
+///   - `access_key`, `secret_key`, `region`, `service` (required)
+///   - `session_token` (optional, for STS temporary credentials)
+///   - `sign_payload`  (optional, "true" to add `x-amz-content-sha256`;
+///                     S3 requires it, most others don't care)
+///
+/// Per the IAM Best Practices guide, prefer environment-injected
+/// short-lived credentials over long-lived access keys committed to
+/// chainapi.yaml. The {{X.y}} resolver lets you pull credentials from
+/// secret stores at run time.
+class AwsSigV4Authenticator final : public Authenticator {
+public:
+    explicit AwsSigV4Authenticator(AuthDependencies deps) : deps_(deps) {}
+
+    std::expected<ActorSession, ChainApiError>
+    authenticate(const Actor& actor,
+                 const RunContext& ctx,
+                 const ResolveContext& rctx) override {
+        if (!deps_.varResolver) {
+            return std::unexpected(ChainApiError{
+                ErrorCode::SessionRefreshFailed, ErrorClass::Auth,
+                "auth: aws_sigv4 authenticator wired without resolver"});
+        }
+        constexpr std::string_view kLabel = "aws_sigv4";
+
+        const auto accessKey = resolveAuthConfigField(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "access_key");
+        if (!accessKey) return std::unexpected(accessKey.error());
+        const auto secretKey = resolveAuthConfigField(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "secret_key");
+        if (!secretKey) return std::unexpected(secretKey.error());
+        const auto region = resolveAuthConfigField(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "region");
+        if (!region) return std::unexpected(region.error());
+        const auto service = resolveAuthConfigField(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "service");
+        if (!service) return std::unexpected(service.error());
+
+        const auto sessionToken = resolveAuthConfigOptional(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "session_token");
+        if (!sessionToken) return std::unexpected(sessionToken.error());
+        const auto signPayload = resolveAuthConfigOptional(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "sign_payload");
+        if (!signPayload) return std::unexpected(signPayload.error());
+
+        ActorSession session;
+        session.state = ActorSession::State::Authenticating;
+        session.variables["access_key"] = *accessKey;
+        session.variables["secret_key"] = *secretKey;
+        session.variables["region"]     = *region;
+        session.variables["service"]    = *service;
+        if (!sessionToken->empty()) {
+            session.variables["session_token"] = *sessionToken;
+        }
+        if (!signPayload->empty()) {
+            session.variables["sign_payload"] = *signPayload;
+        }
+        session.signingScheme = ActorSession::SigningScheme::AwsSigV4;
+        return session;
+    }
+
+private:
+    AuthDependencies deps_;
+};
+
 }  // namespace
 
 std::unique_ptr<Authenticator>
@@ -563,6 +634,8 @@ selectAuthenticator(const Actor& actor, AuthDependencies deps) {
             return std::make_unique<OAuth2PasswordAuthenticator>(deps);
         case AuthStrategy::OAuth1:
             return std::make_unique<OAuth1Authenticator>(deps);
+        case AuthStrategy::AwsSigV4:
+            return std::make_unique<AwsSigV4Authenticator>(deps);
     }
     return nullptr;
 }

@@ -184,7 +184,7 @@ bool signOAuth1Request(HttpRequest& req,
     }
 
     // Encode each name/value, then sort lexicographically by encoded name
-    // then by encoded value (RFC 5849 §3.4.1.3.2).
+    // then by encoded value (RFC 5849 ).
     std::vector<Pair> encoded;
     encoded.reserve(params.size());
     for (const auto& [n, v] : params) {
@@ -234,6 +234,271 @@ bool signOAuth1Request(HttpRequest& req,
     append("oauth_timestamp",        timestamp);
     append("oauth_nonce",            nonce);
     authHeader += "oauth_signature=\"" + codecs::urlEncode(signature) + "\"";
+
+    req.headers["Authorization"] = std::move(authHeader);
+    return true;
+}
+
+// ─── AWS Signature Version 4 (RFC 5234-ish — see AWS docs) ──────────────────
+
+namespace {
+
+/// AWS-flavoured URI encoding for path segments.
+/// Does NOT encode `/`, `~`, `-`, `.`, `_`. Encodes `+`, `=`, `&`, etc.
+std::string awsUriEncodePath(std::string_view input) {
+    std::string out;
+    out.reserve(input.size());
+    constexpr char hex[] = "0123456789ABCDEF";
+    for (const auto byte : input) {
+        const auto u = static_cast<unsigned char>(byte);
+        const bool unreserved =
+            (u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') ||
+            (u >= '0' && u <= '9') ||
+            u == '-' || u == '.' || u == '_' || u == '~' || u == '/';
+        if (unreserved) {
+            out.push_back(byte);
+        } else {
+            out.push_back('%');
+            out.push_back(hex[u >> 4]);
+            out.push_back(hex[u & 0xF]);
+        }
+    }
+    return out;
+}
+
+/// AWS-flavoured URI encoding for query keys and values.
+/// Stricter than `awsUriEncodePath`: `/` is also encoded.
+std::string awsUriEncodeQuery(std::string_view input) {
+    std::string out;
+    out.reserve(input.size());
+    constexpr char hex[] = "0123456789ABCDEF";
+    for (const auto byte : input) {
+        const auto u = static_cast<unsigned char>(byte);
+        const bool unreserved =
+            (u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') ||
+            (u >= '0' && u <= '9') ||
+            u == '-' || u == '.' || u == '_' || u == '~';
+        if (unreserved) {
+            out.push_back(byte);
+        } else {
+            out.push_back('%');
+            out.push_back(hex[u >> 4]);
+            out.push_back(hex[u & 0xF]);
+        }
+    }
+    return out;
+}
+
+/// Lowercase ASCII in-place. AWS canonicalisation uses lowercased
+/// header names; locale-independent behaviour is required so we do
+/// it byte-by-byte rather than via `std::tolower`.
+std::string toLowerAscii(std::string_view s) {
+    std::string out{s};
+    for (auto& c : out) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+    }
+    return out;
+}
+
+/// Trim leading/trailing ASCII whitespace and collapse interior runs of
+/// whitespace into single spaces — AWS spec for canonical header values.
+std::string trimAndCollapseWs(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    bool inWs = true;  // skip leading whitespace
+    for (const auto c : s) {
+        if (c == ' ' || c == '\t') {
+            if (!inWs) {
+                out.push_back(' ');
+                inWs = true;
+            }
+        } else {
+            out.push_back(c);
+            inWs = false;
+        }
+    }
+    if (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
+/// Extract host[:port] from a URL. Empty string when unparseable.
+std::string hostFromUrl(std::string_view url) {
+    const auto schemeEnd = url.find("://");
+    if (schemeEnd == std::string_view::npos) return {};
+    const auto hostStart = schemeEnd + 3;
+    auto hostEnd = url.find_first_of("/?#", hostStart);
+    if (hostEnd == std::string_view::npos) hostEnd = url.size();
+    return std::string{url.substr(hostStart, hostEnd - hostStart)};
+}
+
+/// Extract the path component (incl. leading `/`) from a URL. Returns
+/// `/` when the URL has no path.
+std::string pathFromUrl(std::string_view url) {
+    const auto schemeEnd = url.find("://");
+    if (schemeEnd == std::string_view::npos) return "/";
+    const auto pathStart = url.find('/', schemeEnd + 3);
+    if (pathStart == std::string_view::npos) return "/";
+    auto pathEnd = url.find_first_of("?#", pathStart);
+    if (pathEnd == std::string_view::npos) pathEnd = url.size();
+    return std::string{url.substr(pathStart, pathEnd - pathStart)};
+}
+
+}  // namespace
+
+bool signSigV4Request(HttpRequest& req,
+                      const ActorSession& session,
+                      const SigV4TestOverrides& overrides) {
+    const auto findVar = [&](std::string_view name) -> std::string {
+        const auto it = session.variables.find(std::string{name});
+        return (it == session.variables.end()) ? std::string{} : it->second;
+    };
+    const auto accessKey    = findVar("access_key");
+    const auto secretKey    = findVar("secret_key");
+    const auto region       = findVar("region");
+    const auto service      = findVar("service");
+    const auto sessionToken = findVar("session_token");
+    const auto signPayload  = findVar("sign_payload");
+    if (accessKey.empty() || secretKey.empty() ||
+        region.empty()    || service.empty()) {
+        return false;
+    }
+
+    const auto urlParts = splitUrl(req.url);
+    if (!urlParts) return false;
+
+    // ── 1. Timestamp + date scope ────────────────────────────────────────
+    std::string amzDate;
+    if (overrides.amzDate) {
+        amzDate = *overrides.amzDate;
+    } else {
+        // Format: YYYYMMDDTHHMMSSZ (ISO 8601 basic).
+        // gmtime is locale-independent for this format.
+        const auto now = std::chrono::system_clock::to_time_t(
+            std::chrono::system_clock::now());
+        std::tm tm{};
+#if defined(_WIN32)
+        gmtime_s(&tm, &now);
+#else
+        gmtime_r(&now, &tm);
+#endif
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%04d%02d%02dT%02d%02d%02dZ",
+                      tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                      tm.tm_hour, tm.tm_min, tm.tm_sec);
+        amzDate = buf;
+    }
+    if (amzDate.size() < 8) return false;
+    const std::string dateStamp = amzDate.substr(0, 8);
+
+    // ── 2. Canonical URI + canonical query string ────────────────────────
+    const std::string canonicalUri = awsUriEncodePath(pathFromUrl(req.url));
+
+    using Pair = std::pair<std::string, std::string>;
+    auto rawQuery = parseQuery(urlParts->queryString);
+    std::vector<Pair> encQuery;
+    encQuery.reserve(rawQuery.size());
+    for (const auto& [n, v] : rawQuery) {
+        encQuery.emplace_back(awsUriEncodeQuery(n), awsUriEncodeQuery(v));
+    }
+    std::sort(encQuery.begin(), encQuery.end());
+    std::string canonicalQuery;
+    for (const auto& [n, v] : encQuery) {
+        if (!canonicalQuery.empty()) canonicalQuery.push_back('&');
+        canonicalQuery += n;
+        canonicalQuery.push_back('=');
+        canonicalQuery += v;
+    }
+
+    // ── 3. Headers we sign ───────────────────────────────────────────────
+    // SigV4 requires Host. Add it from the URL if the caller didn't.
+    bool haveHost = false;
+    for (const auto& [name, _] : req.headers) {
+        if (toLowerAscii(name) == "host") { haveHost = true; break; }
+    }
+    if (!haveHost) {
+        const auto host = hostFromUrl(req.url);
+        if (host.empty()) return false;
+        req.headers["Host"] = host;
+    }
+    req.headers["x-amz-date"] = amzDate;
+    if (!sessionToken.empty()) {
+        req.headers["x-amz-security-token"] = sessionToken;
+    }
+
+    // Payload hash: sha256(body) hex. Empty body has the well-known hash.
+    const std::string body = req.body.value_or(std::string{});
+    const auto payloadHashRaw = crypto::sha256(body);
+    if (payloadHashRaw.empty()) return false;
+    const std::string payloadHashHex = codecs::hexEncode(payloadHashRaw);
+
+    if (signPayload == "true") {
+        req.headers["x-amz-content-sha256"] = payloadHashHex;
+    }
+
+    // Build the sorted lowercased header list.
+    std::vector<Pair> canonHeaders;
+    canonHeaders.reserve(req.headers.size());
+    for (const auto& [name, value] : req.headers) {
+        canonHeaders.emplace_back(toLowerAscii(name), trimAndCollapseWs(value));
+    }
+    std::sort(canonHeaders.begin(), canonHeaders.end(),
+              [](const Pair& a, const Pair& b) { return a.first < b.first; });
+
+    std::string canonicalHeaders;
+    std::string signedHeaders;
+    for (const auto& [n, v] : canonHeaders) {
+        canonicalHeaders += n;
+        canonicalHeaders.push_back(':');
+        canonicalHeaders += v;
+        canonicalHeaders.push_back('\n');
+        if (!signedHeaders.empty()) signedHeaders.push_back(';');
+        signedHeaders += n;
+    }
+
+    // ── 4. Canonical request → string-to-sign ────────────────────────────
+    const std::string method = std::string{methodToString(req.method)};
+    const std::string canonicalRequest =
+        method + "\n" +
+        canonicalUri + "\n" +
+        canonicalQuery + "\n" +
+        canonicalHeaders + "\n" +
+        signedHeaders + "\n" +
+        payloadHashHex;
+
+    const auto canonicalRequestHash = crypto::sha256(canonicalRequest);
+    if (canonicalRequestHash.empty()) return false;
+
+    const std::string credentialScope =
+        dateStamp + "/" + region + "/" + service + "/aws4_request";
+    const std::string stringToSign =
+        "AWS4-HMAC-SHA256\n" +
+        amzDate + "\n" +
+        credentialScope + "\n" +
+        codecs::hexEncode(canonicalRequestHash);
+
+    // ── 5. Signing key derivation (4× HMAC-SHA256 chain) ─────────────────
+    const auto kDate    = crypto::hmacSha256("AWS4" + secretKey, dateStamp);
+    const auto kRegion  = crypto::hmacSha256(kDate,    region);
+    const auto kService = crypto::hmacSha256(kRegion,  service);
+    const auto kSigning = crypto::hmacSha256(kService, "aws4_request");
+    if (kDate.empty() || kRegion.empty() ||
+        kService.empty() || kSigning.empty()) {
+        return false;
+    }
+
+    const auto signatureRaw = crypto::hmacSha256(kSigning, stringToSign);
+    if (signatureRaw.empty()) return false;
+    const std::string signatureHex = codecs::hexEncode(signatureRaw);
+
+    // ── 6. Authorization header ──────────────────────────────────────────
+    std::string authHeader = "AWS4-HMAC-SHA256 Credential=";
+    authHeader += accessKey;
+    authHeader += '/';
+    authHeader += credentialScope;
+    authHeader += ", SignedHeaders=";
+    authHeader += signedHeaders;
+    authHeader += ", Signature=";
+    authHeader += signatureHex;
 
     req.headers["Authorization"] = std::move(authHeader);
     return true;

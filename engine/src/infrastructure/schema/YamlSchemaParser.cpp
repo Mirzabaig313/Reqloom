@@ -269,6 +269,8 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             actor.strategy = AuthStrategy::OAuth2Password;
         } else if (strategy == "oauth1") {
             actor.strategy = AuthStrategy::OAuth1;
+        } else if (strategy == "aws_sigv4") {
+            actor.strategy = AuthStrategy::AwsSigV4;
         } else {
             actor.strategy = AuthStrategy::Simple;
         }
@@ -326,6 +328,20 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             if (auth["token"])        actor.authConfig["token"]        = auth["token"].as<std::string>();
             if (auth["token_secret"]) actor.authConfig["token_secret"] = auth["token_secret"].as<std::string>();
             if (auth["realm"])        actor.authConfig["realm"]        = auth["realm"].as<std::string>();
+        } else if (actor.strategy == AuthStrategy::AwsSigV4) {
+            // AWS SigV4 (AWS4-HMAC-SHA256). Long-lived keys are discouraged;
+            // prefer {{X.y}} references that pull from a secret store.
+            actor.authConfig["access_key"] = auth["access_key"].as<std::string>("");
+            actor.authConfig["secret_key"] = auth["secret_key"].as<std::string>("");
+            actor.authConfig["region"]     = auth["region"].as<std::string>("");
+            actor.authConfig["service"]    = auth["service"].as<std::string>("");
+            if (auth["session_token"]) {
+                actor.authConfig["session_token"] = auth["session_token"].as<std::string>();
+            }
+            if (auth["sign_payload"]) {
+                actor.authConfig["sign_payload"] =
+                    auth["sign_payload"].as<bool>() ? "true" : "false";
+            }
         } else {
             AuthStep step;
             step.id = "login";

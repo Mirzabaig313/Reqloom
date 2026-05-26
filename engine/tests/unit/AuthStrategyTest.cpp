@@ -1125,3 +1125,258 @@ TEST(OAuth1Signer, includes_realm_in_header_when_present) {
     const auto& auth = req.headers.at("Authorization");
     EXPECT_NE(auth.find(R"(realm="Photos")"), std::string::npos);
 }
+
+// ─── Slice 4g — AWS Signature Version 4 (AWS4-HMAC-SHA256) ──────────────────
+
+namespace {
+
+ce::Actor makeAwsActor(std::string accessKey,
+                       std::string secretKey,
+                       std::string region,
+                       std::string service,
+                       std::optional<std::string> sessionToken = std::nullopt,
+                       std::optional<bool> signPayload = std::nullopt) {
+    ce::Actor actor;
+    actor.id = ce::ActorId{"aws"};
+    actor.strategy = ce::AuthStrategy::AwsSigV4;
+    actor.authConfig["access_key"] = std::move(accessKey);
+    actor.authConfig["secret_key"] = std::move(secretKey);
+    actor.authConfig["region"]     = std::move(region);
+    actor.authConfig["service"]    = std::move(service);
+    if (sessionToken) {
+        actor.authConfig["session_token"] = std::move(*sessionToken);
+    }
+    if (signPayload) {
+        actor.authConfig["sign_payload"] = *signPayload ? "true" : "false";
+    }
+    return actor;
+}
+
+}  // namespace
+
+TEST(AuthStrategy, aws_sigv4_authenticator_populates_session_and_marks_signing) {
+    FakeHttpClient http;  // empty — SigV4 makes no auth call
+    ce::VariableResolver resolver;
+
+    auto actor = makeAwsActor("AKIDEXAMPLE",
+                              "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+                              "us-east-1", "iam");
+
+    ce::AuthDependencies deps{&http, &resolver};
+    auto authn = ce::selectAuthenticator(actor, deps);
+    ASSERT_NE(authn, nullptr);
+
+    ce::RunContext ctx;
+    ce::ResolveContext rctx;
+    auto result = authn->authenticate(actor, ctx, rctx);
+
+    ASSERT_TRUE(result.has_value()) << "authenticate failed: "
+                                    << result.error().detail;
+    EXPECT_EQ(result->variables.at("access_key"), "AKIDEXAMPLE");
+    EXPECT_EQ(result->variables.at("secret_key"),
+              "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY");
+    EXPECT_EQ(result->variables.at("region"),  "us-east-1");
+    EXPECT_EQ(result->variables.at("service"), "iam");
+    EXPECT_EQ(result->signingScheme,
+              ce::ActorSession::SigningScheme::AwsSigV4);
+    EXPECT_TRUE(http.recorded().empty()) << "SigV4 must make no HTTP call";
+}
+
+TEST(AuthStrategy, aws_sigv4_optional_session_token_is_recorded_when_present) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    auto actor = makeAwsActor("AKID", "secret", "us-west-2", "s3",
+                              std::string{"FwoGZXIvYXdzEJP"}, true);
+
+    ce::AuthDependencies deps{&http, &resolver};
+    auto authn = ce::selectAuthenticator(actor, deps);
+    auto result = authn->authenticate(actor, ce::RunContext{},
+                                      ce::ResolveContext{});
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->variables.at("session_token"), "FwoGZXIvYXdzEJP");
+    EXPECT_EQ(result->variables.at("sign_payload"),  "true");
+}
+
+TEST(AuthStrategy, aws_sigv4_rejects_missing_access_key) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    auto actor = makeAwsActor("", "secret", "us-east-1", "iam");
+
+    ce::AuthDependencies deps{&http, &resolver};
+    auto authn = ce::selectAuthenticator(actor, deps);
+    auto result = authn->authenticate(actor, ce::RunContext{},
+                                      ce::ResolveContext{});
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("access_key"), std::string::npos);
+}
+
+TEST(AuthStrategy, aws_sigv4_resolves_secret_credentials) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    auto actor = makeAwsActor("{{secret.AWS_ACCESS_KEY}}",
+                              "{{secret.AWS_SECRET_KEY}}",
+                              "eu-west-1", "execute-api");
+
+    ce::AuthDependencies deps{&http, &resolver};
+    auto authn = ce::selectAuthenticator(actor, deps);
+    ce::ResolveContext rctx;
+    rctx.secrets["AWS_ACCESS_KEY"] = "AKIA-from-secret";
+    rctx.secrets["AWS_SECRET_KEY"] = "secret-from-store";
+    auto result = authn->authenticate(actor, ce::RunContext{}, rctx);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->variables.at("access_key"), "AKIA-from-secret");
+    EXPECT_EQ(result->variables.at("secret_key"), "secret-from-store");
+}
+
+// ─── signSigV4Request — aws-sigv4-test-suite get-vanilla-query reference ────
+//
+// Pinned scenario:
+//   GET https://example.amazonaws.com/?Param2=value2&Param1=value1
+//   Headers: Host, X-Amz-Date
+//   access_key:   AKIDEXAMPLE
+//   secret_key:   wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY
+//   region:       us-east-1
+//   service:      service
+//   amz-date:     20150830T123600Z
+//
+// Expected signature (recomputed against the AWS reference vector):
+//   b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500
+//
+// This is exactly the canonical example from the AWS SigV4 docs and the
+// `aws-sigv4-test-suite` `get-vanilla-query` test case — same behaviour the
+// AWS SDK and botocore exercise.
+
+TEST(SigV4Signer, matches_aws_sigv4_test_suite_get_vanilla_query) {
+    ce::ActorSession session;
+    session.variables["access_key"] = "AKIDEXAMPLE";
+    session.variables["secret_key"] = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
+    session.variables["region"]     = "us-east-1";
+    session.variables["service"]    = "service";
+    session.signingScheme = ce::ActorSession::SigningScheme::AwsSigV4;
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    // Reverse-order query params confirm we sort them in the canonical request.
+    req.url = "https://example.amazonaws.com/?Param2=value2&Param1=value1";
+
+    ce::SigV4TestOverrides overrides;
+    overrides.amzDate = "20150830T123600Z";
+
+    ASSERT_TRUE(ce::signSigV4Request(req, session, overrides));
+
+    const auto auth = req.headers.at("Authorization");
+    EXPECT_EQ(req.headers.at("x-amz-date"), "20150830T123600Z");
+    EXPECT_NE(auth.find("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"
+                        "20150830/us-east-1/service/aws4_request"),
+              std::string::npos);
+    EXPECT_NE(auth.find("SignedHeaders=host;x-amz-date"),
+              std::string::npos);
+    EXPECT_NE(auth.find("Signature=b97d918cfa904a5beff61c982a1b6f458b7"
+                        "99221646efd99d3219ec94cdf2500"),
+              std::string::npos)
+        << "auth header was: " << auth;
+}
+
+TEST(SigV4Signer, adds_x_amz_security_token_header_when_session_token_present) {
+    ce::ActorSession session;
+    session.variables["access_key"]    = "AKID";
+    session.variables["secret_key"]    = "secret";
+    session.variables["region"]        = "us-east-1";
+    session.variables["service"]       = "s3";
+    session.variables["session_token"] = "STS-TOKEN-VALUE";
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url    = "https://s3.amazonaws.com/my-bucket";
+
+    ce::SigV4TestOverrides overrides;
+    overrides.amzDate = "20260101T000000Z";
+
+    ASSERT_TRUE(ce::signSigV4Request(req, session, overrides));
+    EXPECT_EQ(req.headers.at("x-amz-security-token"), "STS-TOKEN-VALUE");
+    // session_token must end up in SignedHeaders so AWS validates it.
+    EXPECT_NE(req.headers.at("Authorization").find("x-amz-security-token"),
+              std::string::npos);
+}
+
+TEST(SigV4Signer, sign_payload_flag_adds_x_amz_content_sha256) {
+    ce::ActorSession session;
+    session.variables["access_key"]   = "AKID";
+    session.variables["secret_key"]   = "secret";
+    session.variables["region"]       = "us-east-1";
+    session.variables["service"]      = "s3";
+    session.variables["sign_payload"] = "true";
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Put;
+    req.url    = "https://s3.amazonaws.com/bucket/key";
+    req.body   = std::string{"hello world"};
+
+    ce::SigV4TestOverrides overrides;
+    overrides.amzDate = "20260101T000000Z";
+
+    ASSERT_TRUE(ce::signSigV4Request(req, session, overrides));
+    // SHA-256("hello world") =
+    //   b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+    EXPECT_EQ(req.headers.at("x-amz-content-sha256"),
+              "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+}
+
+TEST(SigV4Signer, refuses_to_sign_when_required_credentials_missing) {
+    ce::ActorSession session;
+    // No access_key / secret_key.
+    session.variables["region"]  = "us-east-1";
+    session.variables["service"] = "s3";
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url    = "https://s3.amazonaws.com/";
+
+    EXPECT_FALSE(ce::signSigV4Request(req, session));
+    EXPECT_EQ(req.headers.find("Authorization"), req.headers.end());
+}
+
+TEST(SigV4Signer, refuses_to_sign_malformed_url_without_scheme) {
+    ce::ActorSession session;
+    session.variables["access_key"] = "AKID";
+    session.variables["secret_key"] = "secret";
+    session.variables["region"]     = "us-east-1";
+    session.variables["service"]    = "s3";
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url    = "no-scheme-here/path";  // no `://`
+
+    EXPECT_FALSE(ce::signSigV4Request(req, session));
+}
+
+TEST(SigV4Signer, regenerates_distinct_signatures_across_distinct_timestamps) {
+    ce::ActorSession session;
+    session.variables["access_key"] = "AKID";
+    session.variables["secret_key"] = "secret";
+    session.variables["region"]     = "us-east-1";
+    session.variables["service"]    = "s3";
+
+    ce::HttpRequest reqA;
+    reqA.method = ce::HttpMethod::Get;
+    reqA.url    = "https://s3.amazonaws.com/bucket";
+
+    ce::HttpRequest reqB = reqA;
+
+    ce::SigV4TestOverrides a;
+    a.amzDate = "20260101T000000Z";
+    ce::SigV4TestOverrides b;
+    b.amzDate = "20260101T000001Z";
+
+    ASSERT_TRUE(ce::signSigV4Request(reqA, session, a));
+    ASSERT_TRUE(ce::signSigV4Request(reqB, session, b));
+    EXPECT_NE(reqA.headers.at("Authorization"),
+              reqB.headers.at("Authorization"));
+}

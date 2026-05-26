@@ -817,3 +817,87 @@ resources:
     EXPECT_FALSE(app.authConfig.contains("token_secret"));
     EXPECT_FALSE(app.authConfig.contains("realm"));
 }
+
+// ─── Slice 4g — aws_sigv4 auth strategy ─────────────────────────────────────
+
+TEST(SchemaParserAwsSigV4, parses_full_options) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: AwsSample
+default_environment: local
+
+environment:
+  baseUrl: https://iam.amazonaws.com
+
+actors:
+  aws:
+    auth:
+      strategy: aws_sigv4
+      access_key: "{{secret.AWS_ACCESS_KEY}}"
+      secret_key: "{{secret.AWS_SECRET_KEY}}"
+      region: "us-east-1"
+      service: "iam"
+      session_token: "{{secret.AWS_SESSION_TOKEN}}"
+      sign_payload: true
+
+resources:
+  list:
+    operations:
+      run:
+        method: GET
+        path: /?Action=ListUsers&Version=2010-05-08
+        actor: aws
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& aws = result->actors.at(ce::ActorId{"aws"});
+    EXPECT_EQ(aws.strategy, ce::AuthStrategy::AwsSigV4);
+    EXPECT_TRUE(aws.authSteps.empty());
+    EXPECT_EQ(aws.authConfig.at("access_key"),    "{{secret.AWS_ACCESS_KEY}}");
+    EXPECT_EQ(aws.authConfig.at("secret_key"),    "{{secret.AWS_SECRET_KEY}}");
+    EXPECT_EQ(aws.authConfig.at("region"),        "us-east-1");
+    EXPECT_EQ(aws.authConfig.at("service"),       "iam");
+    EXPECT_EQ(aws.authConfig.at("session_token"),
+              "{{secret.AWS_SESSION_TOKEN}}");
+    EXPECT_EQ(aws.authConfig.at("sign_payload"),  "true");
+}
+
+TEST(SchemaParserAwsSigV4, optional_fields_are_omitted_when_absent) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: AwsMinimal
+default_environment: local
+
+environment:
+  baseUrl: https://s3.amazonaws.com
+
+actors:
+  s3:
+    auth:
+      strategy: aws_sigv4
+      access_key: "AKIAEXAMPLE"
+      secret_key: "secret"
+      region: "us-east-1"
+      service: "s3"
+
+resources:
+  bucket:
+    operations:
+      list:
+        method: GET
+        path: /
+        actor: s3
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& s3 = result->actors.at(ce::ActorId{"s3"});
+    EXPECT_EQ(s3.strategy, ce::AuthStrategy::AwsSigV4);
+    EXPECT_FALSE(s3.authConfig.contains("session_token"));
+    EXPECT_FALSE(s3.authConfig.contains("sign_payload"));
+}

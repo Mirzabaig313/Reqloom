@@ -520,3 +520,74 @@ TEST(SchemaWriter, oauth1_round_trips_two_legged) {
     EXPECT_FALSE(reload.authConfig.contains("token"));
     EXPECT_FALSE(reload.authConfig.contains("realm"));
 }
+
+TEST(SchemaWriter, aws_sigv4_round_trips_with_session_token_and_sign_payload) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "AwsRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://iam.amazonaws.com"}};
+
+    ce::Actor aws;
+    aws.id = ce::ActorId{"aws"};
+    aws.strategy = ce::AuthStrategy::AwsSigV4;
+    aws.authConfig = {
+        {"access_key",    "{{secret.AWS_ACCESS_KEY}}"},
+        {"secret_key",    "{{secret.AWS_SECRET_KEY}}"},
+        {"region",        "us-east-1"},
+        {"service",       "iam"},
+        {"session_token", "{{secret.AWS_SESSION_TOKEN}}"},
+        {"sign_payload",  "true"},
+    };
+    original.actors[aws.id] = std::move(aws);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"aws"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::AwsSigV4);
+    EXPECT_EQ(reload.authConfig.at("access_key"),
+              "{{secret.AWS_ACCESS_KEY}}");
+    EXPECT_EQ(reload.authConfig.at("secret_key"),
+              "{{secret.AWS_SECRET_KEY}}");
+    EXPECT_EQ(reload.authConfig.at("region"),  "us-east-1");
+    EXPECT_EQ(reload.authConfig.at("service"), "iam");
+    EXPECT_EQ(reload.authConfig.at("session_token"),
+              "{{secret.AWS_SESSION_TOKEN}}");
+    EXPECT_EQ(reload.authConfig.at("sign_payload"), "true");
+}
+
+TEST(SchemaWriter, aws_sigv4_round_trips_minimal_actor) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "AwsMinimalRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://s3.amazonaws.com"}};
+
+    ce::Actor s3;
+    s3.id = ce::ActorId{"s3"};
+    s3.strategy = ce::AuthStrategy::AwsSigV4;
+    s3.authConfig = {
+        {"access_key", "AKIAEXAMPLE"},
+        {"secret_key", "secret"},
+        {"region",     "us-east-1"},
+        {"service",    "s3"},
+    };
+    original.actors[s3.id] = std::move(s3);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value());
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value());
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"s3"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::AwsSigV4);
+    EXPECT_FALSE(reload.authConfig.contains("session_token"));
+    EXPECT_FALSE(reload.authConfig.contains("sign_payload"));
+}
