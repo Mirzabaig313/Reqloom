@@ -17,6 +17,8 @@ add_executable(chainapi-engine-unit-tests
     unit/VerifierTest.cpp
     unit/SchemaWriterTest.cpp
     unit/AuthStrategyTest.cpp
+    unit/CryptoTest.cpp
+    unit/HookTypingsEmitterTest.cpp
 )
 target_include_directories(chainapi-engine-unit-tests
     PRIVATE ${CMAKE_SOURCE_DIR}/engine/src

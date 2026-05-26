@@ -14,8 +14,8 @@ class SecretStore {
 public:
     virtual ~SecretStore() = default;
 
-    /// Read a named secret. Returns nullopt if not present in the
-    /// keychain; returns `ChainApiError` on backend failure.
+    /// Read a named secret. Returns nullopt if not present in the keychain;
+    /// returns `ChainApiError` on backend failure.
     virtual std::expected<std::optional<std::string>, ChainApiError> read(
         const std::string& name) = 0;
 

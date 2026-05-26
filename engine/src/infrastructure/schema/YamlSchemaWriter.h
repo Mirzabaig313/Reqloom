@@ -1,5 +1,5 @@
 // YamlSchemaWriter — yaml-cpp-backed implementation of SchemaWriter.
-// PRD §10.3.6: importers persist their Project here; provenance round-trips.
+// Importers persist their Project here; provenance round-trips intact.
 #pragma once
 
 #include "SchemaWriter.h"

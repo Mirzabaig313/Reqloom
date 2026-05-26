@@ -1,15 +1,13 @@
-// Authenticator — 
-
+// Authenticator — strategy dispatch and concrete implementations.
 #include "AuthStrategy.h"
 #include "JsonExtraction.h"
 
+#include "../domain/Codecs.h"
 #include "../domain/VariableResolver.h"
 #include "../infrastructure/http/HttpClient.h"
 
 #include <chainapi/engine/Actor.h>
 
-#include <cstdint>
-#include <cstdio>
 #include <expected>
 #include <string>
 #include <string_view>
@@ -20,83 +18,14 @@ namespace chainapi::engine {
 
 namespace {
 
-// ─── base64 (RFC 4648, standard alphabet, with padding) ─────────────────────
-//
-// TODO: this duplicates `base64Encode` in
-// engine/src/domain/VariableResolver.cpp. The same urlEncode helper
-// below is also a third copy of code in `ExecutionEngine.cpp` and
-// `VariableResolver.cpp`. Slice 5b will introduce a shared
-// `engine/src/util/Codecs.{h,cpp}` and these three call sites will
-// migrate together (no behaviour change, just consolidation).
-constexpr std::string_view kBase64Alphabet =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-std::string base64Encode(std::string_view input) {
-    std::string out;
-    out.reserve(((input.size() + 2) / 3) * 4);
-
-    std::size_t i = 0;
-    while (i + 3 <= input.size()) {
-        const auto b0 = static_cast<std::uint8_t>(input[i]);
-        const auto b1 = static_cast<std::uint8_t>(input[i + 1]);
-        const auto b2 = static_cast<std::uint8_t>(input[i + 2]);
-        out.push_back(kBase64Alphabet[(b0 >> 2) & 0x3F]);
-        out.push_back(kBase64Alphabet[((b0 << 4) | (b1 >> 4)) & 0x3F]);
-        out.push_back(kBase64Alphabet[((b1 << 2) | (b2 >> 6)) & 0x3F]);
-        out.push_back(kBase64Alphabet[b2 & 0x3F]);
-        i += 3;
-    }
-    if (i < input.size()) {
-        const auto b0 = static_cast<std::uint8_t>(input[i]);
-        out.push_back(kBase64Alphabet[(b0 >> 2) & 0x3F]);
-        if (i + 1 == input.size()) {
-            out.push_back(kBase64Alphabet[(b0 << 4) & 0x3F]);
-            out.push_back('=');
-            out.push_back('=');
-        } else {
-            const auto b1 = static_cast<std::uint8_t>(input[i + 1]);
-            out.push_back(kBase64Alphabet[((b0 << 4) | (b1 >> 4)) & 0x3F]);
-            out.push_back(kBase64Alphabet[(b1 << 2) & 0x3F]);
-            out.push_back('=');
-        }
-    }
-    return out;
-}
-
-/// RFC 3986 unreserved characters pass through; everything else is
-/// %HH-encoded. Used to build form bodies and query strings for
-/// OAuth2 token requests. (See TODO at top of file re consolidation.)
-std::string urlEncode(std::string_view in) {
-    std::string out;
-    out.reserve(in.size());
-    for (const char rawChar : in) {
-        const auto c = static_cast<unsigned char>(rawChar);
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-            || (c >= '0' && c <= '9')
-            || c == '-' || c == '_' || c == '.' || c == '~') {
-            out.push_back(static_cast<char>(c));
-        } else {
-            char buf[4];
-            std::snprintf(buf, sizeof(buf), "%%%02X", c);
-            out.append(buf, 3);
-        }
-    }
-    return out;
-}
+using namespace codecs;
 
 /// Implements `AuthStrategy::Simple` and `AuthStrategy::Chain`. Walks
-/// `actor.authSteps` in order; each step's response can extract
-/// variables that subsequent steps (or the actor's `inject` block)
-/// reference.
+/// `actor.authSteps` in order; each step's response can extract variables
+/// that subsequent steps (or the actor's `inject` block) reference.
 ///
-/// Failure semantics match the pre-refactor `ensureSession`:
-///   - unresolved variable in path  → SessionRefreshFailed
-///   - HTTP error                   → SessionRefreshFailed (with detail)
-///   - status-code mismatch         → SessionRefreshFailed (with detail)
-///   - extraction failure           → SessionRefreshFailed (with detail)
-///
-/// The single error code is preserved deliberately: integration tests
-/// assert on `SessionRefreshFailed` for any auth failure.
+/// All auth failures surface as `SessionRefreshFailed` regardless of root
+/// cause — integration tests assert on that single code.
 class ChainAuthenticator final : public Authenticator {
 public:
     explicit ChainAuthenticator(AuthDependencies deps) : deps_(deps) {}
@@ -105,9 +34,8 @@ public:
     authenticate(const Actor& actor,
                  const RunContext& ctx,
                  const ResolveContext& rctx) override {
-        // Defensive: deps must be wired by selectAuthenticator. nullptr
-        // here means a programming error in the engine, not a runtime
-        // condition the user could trigger.
+        // nullptr here means a programming error in the engine, not a
+        // user-triggerable condition.
         if (!deps_.http || !deps_.varResolver) {
             return std::unexpected(ChainApiError{
                 ErrorCode::SessionRefreshFailed, ErrorClass::Auth,
@@ -184,16 +112,9 @@ private:
     AuthDependencies deps_;
 };
 
-/// Implements `AuthStrategy::Basic`. RFC 7617 HTTP Basic auth: pre-
-/// computes `base64(username:password)` and exposes it as the session
-/// variable `credential`. The actor's `inject:` block typically sets
-/// `Authorization: "Basic {{<actor>.credential}}"` so the encoded
-/// value flows automatically into every operation owned by the actor.
-///
-/// No HTTP call is made — the strategy is pure compute. `username` and
-/// `password` come from `actor.authConfig` and are resolved through
-/// the variable resolver so secrets and env references work
-/// (`username: "{{secret.API_USER}}"`).
+/// Implements `AuthStrategy::Basic`. RFC 7617 HTTP Basic auth: pre-computes
+/// `base64(username:password)` and exposes it as `session.variables["credential"]`.
+/// No HTTP call is made.
 class BasicAuthenticator final : public Authenticator {
 public:
     explicit BasicAuthenticator(AuthDependencies deps) : deps_(deps) {}
@@ -246,25 +167,16 @@ private:
     AuthDependencies deps_;
 };
 
-/// Implements `AuthStrategy::ApiKey` (PRD §5.10.1). Pure compute — no
-/// HTTP call. Reads three keys from `actor.authConfig`:
+/// Implements `AuthStrategy::ApiKey`. Pure compute — no HTTP call.
+/// Reads from `actor.authConfig`:
 ///   - `key`      (required) — the secret token, may contain {{X.y}}
 ///   - `location` (optional) — "header" | "query" | "cookie"
 ///   - `name`     (optional, required when `location` set) — sink name
-///                e.g. "X-API-Key" or "api_key"
 ///
-/// Hybrid behaviour:
-///   - The resolved key is always stored as `session.variables["key"]`,
-///     so a fully-explicit config (manual `inject:` block) keeps working.
-///   - When `location` and `name` are both set, the strategy ALSO
-///     populates the session's `injectHeaders` / `injectQueryParams`
-///     so the engine merges the value into every request automatically.
-///     One-liner config is enough for the common case; explicit inject
-///     remains the escape hatch for non-standard shapes.
-///
-/// Cookie location is rejected for now — a proper cookie jar is
-/// post-MVP. Users with cookie-based API keys can fall through to the
-/// manual variable-only form and set `Cookie:` themselves via inject.
+/// The resolved key is always stored as `session.variables["key"]`.
+/// When `location` and `name` are both set, also populates
+/// `injectHeaders` / `injectQueryParams` for automatic injection.
+/// Cookie location is rejected — cookie jar is post-MVP.
 class ApiKeyAuthenticator final : public Authenticator {
 public:
     explicit ApiKeyAuthenticator(AuthDependencies deps) : deps_(deps) {}
@@ -298,9 +210,8 @@ public:
         session.state = ActorSession::State::Authenticating;
         session.variables["key"] = resolvedKey.output;
 
-        // Auto-inject branch: only fires when the user opted in by
-        // setting both `location` and `name`. Either is missing → no
-        // auto-inject, user is expected to wire `inject:` manually.
+        // Auto-inject only fires when the user opted in by setting both
+        // `location` and `name`.
         const auto locIt  = actor.authConfig.find("location");
         const auto nameIt = actor.authConfig.find("name");
         if (locIt != actor.authConfig.end() &&
@@ -330,39 +241,9 @@ private:
     AuthDependencies deps_;
 };
 
-/// Implements `AuthStrategy::OAuth2ClientCredentials` (RFC 6749 §4.4).
-/// POSTs `grant_type=client_credentials` (plus client_id, client_secret,
-/// optional scope) to `token_url` as `application/x-www-form-urlencoded`,
-/// extracts `access_token` from the JSON response, stores it as
-/// `session.variables["access_token"]`, and auto-injects
-/// `Authorization: Bearer <token>` into every operation owned by the
-/// actor.
-///
-/// Reads from `actor.authConfig`:
-///   - `token_url`     (required) — full URL to the token endpoint
-///   - `client_id`     (required) — may contain {{X.y}}
-///   - `client_secret` (required) — may contain {{X.y}}
-///   - `scope`         (optional) — space-separated scope list
-///
-/// Failure modes (all surface as `SessionRefreshFailed`):
-///   - missing required field
-///   - unresolved variable in any field
-///   - HTTP error from token endpoint
-///   - non-2xx response from token endpoint
-///   - response body isn't valid JSON
-///   - response JSON missing `access_token`
 /// Shared OAuth2 token-endpoint flow used by `OAuth2ClientCredentials`
-/// and `OAuth2Password`. Both grants speak the same wire format; the
-/// authenticators differ only in which form fields they put in the body.
-/// Centralising the POST → JSON extract → session populate → Bearer
-/// auto-inject path keeps semantics consistent and prevents subtle
-/// divergence between the two classes.
-///
-/// `formBody` is the already-built `application/x-www-form-urlencoded`
-/// payload (caller responsibility — different grants want different
-/// fields). `strategyLabel` is folded into error messages so the user
-/// sees `oauth2_password token endpoint returned HTTP 400 ...` rather
-/// than a generic OAuth2 error.
+/// and `OAuth2Password`. `formBody` is the already-built
+/// `application/x-www-form-urlencoded` payload.
 std::expected<ActorSession, ChainApiError>
 executeOAuth2TokenRequest(HttpClient& http,
                           const std::string& tokenUrl,
@@ -383,9 +264,7 @@ executeOAuth2TokenRequest(HttpClient& http,
             response.error().detail});
     }
     if (response->status < 200 || response->status >= 300) {
-        // RFC 6749 §5.2 token-endpoint error responses use 400 with an
-        // `error` field. Surface enough of the body to debug
-        // misconfigured credentials / wrong scope / etc.
+        // Surface enough of the body to debug misconfigured credentials.
         constexpr std::size_t kBodyExcerpt = 200;
         std::string excerpt = response->body.size() > kBodyExcerpt
             ? response->body.substr(0, kBodyExcerpt) + "..."
@@ -397,8 +276,6 @@ executeOAuth2TokenRequest(HttpClient& http,
             std::to_string(response->status) + " — " + excerpt});
     }
 
-    // Required: access_token. Reuses extractFromJson so error semantics
-    // match Simple/Chain.
     std::vector<Extraction> wanted;
     wanted.push_back({"access_token", "$.access_token",
                       Extraction::Source::JsonPath});
@@ -416,9 +293,7 @@ executeOAuth2TokenRequest(HttpClient& http,
     session.variables["access_token"] = accessToken;
 
     // Optional fields — captured one-at-a-time so a missing `expires_in`
-    // doesn't suppress `token_type`. Refresh-token capture is the
-    // foundation for future TTL-aware refresh handling (a session.ttl
-    // shorter than the token's expires_in is the contract today).
+    // doesn't suppress `token_type`.
     for (const auto* optionalField :
          {"expires_in", "token_type", "scope", "refresh_token"}) {
         std::vector<Extraction> opt;
@@ -430,14 +305,12 @@ executeOAuth2TokenRequest(HttpClient& http,
         }
     }
 
-    // Auto-inject Bearer token. Same channel as api_key (Slice 4c).
     session.injectHeaders["Authorization"] = "Bearer " + accessToken;
     return session;
 }
 
 /// Resolve `authConfig[fieldName]` through the variable resolver.
-/// Empty strings are treated as missing — the user gets a clean error
-/// before the strategy ever calls the token endpoint.
+/// Empty strings are treated as missing.
 std::expected<std::string, ChainApiError>
 resolveAuthConfigField(const Actor& actor,
                        const RunContext& ctx,
@@ -463,8 +336,7 @@ resolveAuthConfigField(const Actor& actor,
     return resolved.output;
 }
 
-/// Resolve an optional config field. Returns empty string when the
-/// field is absent or empty; surfaces resolver errors when present.
+/// Resolve an optional config field. Returns empty string when absent.
 std::expected<std::string, ChainApiError>
 resolveAuthConfigOptional(const Actor& actor,
                           const RunContext& ctx,
@@ -487,6 +359,13 @@ resolveAuthConfigOptional(const Actor& actor,
     return resolved.output;
 }
 
+/// Implements `AuthStrategy::OAuth2ClientCredentials` (RFC 6749 §4.4).
+/// POSTs `grant_type=client_credentials` to `token_url`, extracts
+/// `access_token`, and auto-injects `Authorization: Bearer <token>`.
+///
+/// Reads from `actor.authConfig`:
+///   - `token_url`, `client_id`, `client_secret` (required)
+///   - `scope` (optional)
 class OAuth2ClientCredentialsAuthenticator final : public Authenticator {
 public:
     explicit OAuth2ClientCredentialsAuthenticator(AuthDependencies deps)
@@ -536,26 +415,15 @@ private:
 
 /// Implements `AuthStrategy::OAuth2Password` (RFC 6749 §4.3 — resource
 /// owner password credentials grant). Same wire shape as
-/// `oauth2_client_credentials` but the form body uses
-/// `grant_type=password` and includes the resource-owner's
-/// `username`/`password` alongside the client credentials.
+/// `oauth2_client_credentials` but uses `grant_type=password` and
+/// includes the resource-owner's `username`/`password`.
 ///
 /// Reads from `actor.authConfig`:
-///   - `token_url`     (required)
-///   - `client_id`     (required) — resolved via {{X.y}}
-///   - `client_secret` (required) — resolved via {{X.y}}
-///   - `username`      (required) — the resource-owner identity
-///   - `password`      (required) — resource-owner password (resolve
-///                                  via `{{secret.X}}` in practice)
-///   - `scope`         (optional)
+///   - `token_url`, `client_id`, `client_secret`, `username`, `password` (required)
+///   - `scope` (optional)
 ///
-/// Same auto-injection behaviour as client_credentials (Bearer header)
-/// and same error surface.
-///
-/// SECURITY NOTE: §4.3 requires "the client and authorization server
-/// have a high degree of trust"; the grant exists primarily for
-/// migrating legacy auth schemes. Modern apps should prefer the
-/// authorization-code flow (Slice 4h, deferred) where possible.
+/// RFC 6749 §4.3 requires high trust between client and authorization
+/// server; prefer the authorization-code flow where possible.
 class OAuth2PasswordAuthenticator final : public Authenticator {
 public:
     explicit OAuth2PasswordAuthenticator(AuthDependencies deps)
@@ -611,6 +479,72 @@ private:
     AuthDependencies deps_;
 };
 
+/// Implements `AuthStrategy::OAuth1` (RFC 5849, two-legged HMAC-SHA1).
+/// Unlike OAuth2/Basic/API key, OAuth1 signs per-request. This authenticator:
+///   1. Resolves credential fields from `actor.authConfig`.
+///   2. Stashes them on the session.
+///   3. Sets `session.signingScheme = OAuth1HmacSha1` so the executor
+///      calls `signOAuth1Request` before each outbound request.
+///
+/// Reads from `actor.authConfig`:
+///   - `consumer_key`, `consumer_secret` (required)
+///   - `token`, `token_secret` (optional, must come as a pair)
+///   - `realm` (optional)
+class OAuth1Authenticator final : public Authenticator {
+public:
+    explicit OAuth1Authenticator(AuthDependencies deps) : deps_(deps) {}
+
+    std::expected<ActorSession, ChainApiError>
+    authenticate(const Actor& actor,
+                 const RunContext& ctx,
+                 const ResolveContext& rctx) override {
+        if (!deps_.varResolver) {
+            return std::unexpected(ChainApiError{
+                ErrorCode::SessionRefreshFailed, ErrorClass::Auth,
+                "auth: oauth1 authenticator wired without resolver"});
+        }
+        constexpr std::string_view kLabel = "oauth1";
+
+        const auto consumerKey = resolveAuthConfigField(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "consumer_key");
+        if (!consumerKey) return std::unexpected(consumerKey.error());
+        const auto consumerSecret = resolveAuthConfigField(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "consumer_secret");
+        if (!consumerSecret) return std::unexpected(consumerSecret.error());
+
+        const auto token = resolveAuthConfigOptional(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "token");
+        if (!token) return std::unexpected(token.error());
+        const auto tokenSecret = resolveAuthConfigOptional(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "token_secret");
+        if (!tokenSecret) return std::unexpected(tokenSecret.error());
+        const auto realm = resolveAuthConfigOptional(
+            actor, ctx, rctx, *deps_.varResolver, kLabel, "realm");
+        if (!realm) return std::unexpected(realm.error());
+
+        // Token + token_secret must come as a pair (RFC 5849 §3.1).
+        if (token->empty() != tokenSecret->empty()) {
+            return std::unexpected(ChainApiError{
+                ErrorCode::SessionRefreshFailed, ErrorClass::Auth,
+                "auth: oauth1 requires `token` and `token_secret` to be "
+                "set together (or both omitted for two-legged signing)"});
+        }
+
+        ActorSession session;
+        session.state = ActorSession::State::Authenticating;
+        session.variables["consumer_key"]    = *consumerKey;
+        session.variables["consumer_secret"] = *consumerSecret;
+        if (!token->empty())       session.variables["token"]        = *token;
+        if (!tokenSecret->empty()) session.variables["token_secret"] = *tokenSecret;
+        if (!realm->empty())       session.variables["realm"]        = *realm;
+        session.signingScheme = ActorSession::SigningScheme::OAuth1HmacSha1;
+        return session;
+    }
+
+private:
+    AuthDependencies deps_;
+};
+
 }  // namespace
 
 std::unique_ptr<Authenticator>
@@ -627,10 +561,9 @@ selectAuthenticator(const Actor& actor, AuthDependencies deps) {
             return std::make_unique<OAuth2ClientCredentialsAuthenticator>(deps);
         case AuthStrategy::OAuth2Password:
             return std::make_unique<OAuth2PasswordAuthenticator>(deps);
+        case AuthStrategy::OAuth1:
+            return std::make_unique<OAuth1Authenticator>(deps);
     }
-    // Future strategies (PRD §5.10.1) extend the AuthStrategy enum and
-    // get a case here. The engine surfaces an unmatched value as
-    // SessionRefreshFailed via the nullptr return.
     return nullptr;
 }
 

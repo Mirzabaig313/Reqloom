@@ -1,7 +1,5 @@
 // ImportFromOpenApi — direct (non-LLM) parser that produces a Project from
-// an OpenAPI 3.x document. PRD §10 / FR-9.1.
-//
-// Skeleton: real implementation in Phase 3.
+// an OpenAPI 3.x document. Phase 3 implementation.
 #include "ImportFromOpenApi.h"
 
 namespace chainapi::engine {

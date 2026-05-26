@@ -49,7 +49,7 @@ stages:
       - job: lint
         displayName: Boundary + clang-format
         pool:
-          vmImage: ubuntu-24.04
+          vmImage: ubuntu-latest
         steps:
           - checkout: self
             fetchDepth: 1
@@ -90,7 +90,7 @@ stages:
       - job: build
         displayName: macos-14
         pool:
-          vmImage: macOS-14
+          vmImage: macOS-latest
         timeoutInMinutes: 90
         variables:
           # Branch-conditional preset. dev → macos-debug, main → macos-release.

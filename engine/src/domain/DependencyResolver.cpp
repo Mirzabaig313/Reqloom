@@ -1,8 +1,7 @@
-// DependencyResolver — Engine Requirement §3.1.
+// DependencyResolver — builds the execution chain for a target operation.
 //
-// Builds the execution chain for a target operation using topological sort
-// (Kahn's algorithm) with deterministic lexicographic tie-break (AC-3.1.3).
-// Detects cycles (AC-3.1.4) and undefined references (AC-3.1.6).
+// Uses Kahn's topological sort (O(V+E)) with deterministic lexicographic
+// tie-break. Detects cycles and undefined references.
 #include "DependencyResolver.h"
 
 #include <queue>
@@ -21,7 +20,6 @@ std::vector<OperationId> inferImplicitDeps(
     const Operation& op,
     const Project& project) {
 
-    // Collect all template strings from the operation.
     std::vector<std::string> templates;
     templates.push_back(op.pathTemplate);
     if (op.bodyTemplate) templates.push_back(*op.bodyTemplate);
@@ -31,9 +29,8 @@ std::vector<OperationId> inferImplicitDeps(
         for (const auto& [_, v] : *op.bodyForm) templates.push_back(v);
     }
 
-    // Find all {{X.y}} or {{X[N].y}} references.
-    // The first capture group is the resource name (without index brackets);
-    // optional `[N]` is consumed but not captured for dependency purposes.
+    // Find all {{X.y}} or {{X[N].y}} references. The first capture group
+    // is the resource name (without index brackets).
     static const std::regex refPattern(R"(\{\{(\w+)(?:\[\d+\])?\.(\w+)\}\})");
     std::set<OperationId> deps;
 
@@ -44,12 +41,10 @@ std::vector<OperationId> inferImplicitDeps(
             auto refResource = (*it)[1].str();
             auto refVar = (*it)[2].str();
 
-            // Skip builtins ($.uuid, $.now, $.faker.*, $.env.*)
             if (refResource == "$") continue;
-            // Skip env references
             if (refResource == "env" || refResource == "secret") continue;
 
-            // Check if this is an actor reference (e.g. {{vendor.token}})
+            // Actor deps are handled by the session system, not the chain.
             bool isActor = false;
             for (const auto& [actorId, _] : project.actors) {
                 if (actorId.value == refResource) {
@@ -57,17 +52,15 @@ std::vector<OperationId> inferImplicitDeps(
                     break;
                 }
             }
-            if (isActor) continue;  // Actor deps are handled by session system, not chain.
+            if (isActor) continue;
 
-            // It's a resource reference. Find which operation produces this variable.
             auto resIt = project.resources.find(ResourceId{refResource});
-            if (resIt == project.resources.end()) continue;  // Undefined; caught by validator.
+            if (resIt == project.resources.end()) continue;
 
             for (const auto& [opName, resOp] : resIt->second.operations) {
                 for (const auto& ext : resOp.extractions) {
                     if (ext.variableName == refVar) {
                         auto depId = OperationId{refResource + "." + opName};
-                        // Don't add self-dep
                         if (depId.value != op.id.value) {
                             deps.insert(depId);
                         }
@@ -91,7 +84,7 @@ DependencyResolver::resolve(const Project& project,
                             const OperationId& target) const {
     // 1. Build the full dependency graph (explicit + implicit edges) for the
     //    transitive closure of `target`.
-    std::map<OperationId, std::vector<OperationId>> graph;  // node → its dependencies
+    std::map<OperationId, std::vector<OperationId>> graph;
     std::set<OperationId> visited;
     std::queue<OperationId> worklist;
     worklist.push(target);
@@ -103,7 +96,6 @@ DependencyResolver::resolve(const Project& project,
         if (visited.contains(current)) continue;
         visited.insert(current);
 
-        // Find the Operation in the project.
         auto dotPos = current.value.find('.');
         if (dotPos == std::string::npos) {
             return std::unexpected(ChainApiError{
@@ -132,7 +124,6 @@ DependencyResolver::resolve(const Project& project,
 
         const auto& op = opIt->second;
 
-        // Gather all deps (explicit + implicit).
         std::set<OperationId> allDeps(op.explicitDependencies.begin(),
                                       op.explicitDependencies.end());
         auto implicitDeps = inferImplicitDeps(op, project);
@@ -147,14 +138,11 @@ DependencyResolver::resolve(const Project& project,
         }
     }
 
-    // 2. Topological sort (Kahn's) with lexicographic tie-break (AC-3.1.3).
+    // 2. Topological sort (Kahn's) with lexicographic tie-break.
     //    Graph edges are "current depends on dep", so the sort order is
     //    dependencies first, target last.
-
-    // Build in-degree map (how many things depend on each node).
-    // We need the reverse: for Kahn's, edges go from dependency→dependent.
     std::map<OperationId, int> inDegree;
-    std::map<OperationId, std::vector<OperationId>> dependents;  // dep → who depends on it
+    std::map<OperationId, std::vector<OperationId>> dependents;
 
     for (const auto& [node, deps] : graph) {
         if (!inDegree.contains(node)) inDegree[node] = 0;
@@ -165,9 +153,8 @@ DependencyResolver::resolve(const Project& project,
         }
     }
 
-    // Priority queue with lexicographic ordering (smallest first = deterministic).
     auto cmp = [](const OperationId& a, const OperationId& b) {
-        return a.value > b.value;  // min-heap
+        return a.value > b.value;  // min-heap for lexicographic order
     };
     std::priority_queue<OperationId, std::vector<OperationId>, decltype(cmp)> ready(cmp);
 
@@ -197,7 +184,6 @@ DependencyResolver::resolve(const Project& project,
 
     // 3. Cycle detection: if sorted.size() < graph.size(), there's a cycle.
     if (sorted.size() < graph.size()) {
-        // Identify cycle members (nodes not in sorted output).
         std::set<OperationId> sortedSet(sorted.begin(), sorted.end());
         std::string cycleOps;
         for (const auto& [node, _] : graph) {

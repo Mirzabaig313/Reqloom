@@ -1,9 +1,8 @@
 // KeychainSecretStore — OS-keychain-backed secret storage via QtKeychain.
-// PRD §5.1 / NFR-3.2.
 //
-// Implementation is gated on CHAINAPI_HAS_QTKEYCHAIN; if QtKeychain is not
-// available at configure time the store falls back to a placeholder that
-// refuses writes (so the absence is loud, not silent).
+// Gated on CHAINAPI_HAS_QTKEYCHAIN; if QtKeychain is not available at
+// configure time the store falls back to a placeholder that refuses writes
+// so the absence is loud, not silent.
 #include "KeychainSecretStore.h"
 
 namespace chainapi::engine {

@@ -1,12 +1,11 @@
-// ExecutionEngine 
-//
-// Resolves the dependency chain, authenticates actors as needed, executes
-// each step with variable substitution, extracts response values, and
-// caches sessions/extractions for reuse.
+// ExecutionEngine — resolves the dependency chain, authenticates actors,
+// executes each step with variable substitution, extracts response values,
+// and caches sessions/extractions for reuse.
 #include <chainapi/engine/ExecutionEngine.h>
 
 #include "../domain/DependencyResolver.h"
 #include "../domain/VariableResolver.h"
+#include "../domain/Codecs.h"
 #include "../infrastructure/hooks/HookRunner.h"
 #include "../infrastructure/http/HttpClient.h"
 #include "../infrastructure/schema/SchemaParser.h"
@@ -15,12 +14,12 @@
 #include "AuthStrategy.h"
 #include "JsonExtraction.h"
 #include "PredicateEvaluator.h"
+#include "RequestSigners.h"
 
 #include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <chrono>
-#include <cstdio>
 #include <ctime>
 #include <mutex>
 #include <sstream>
@@ -36,24 +35,7 @@ using json = nlohmann::json;
 
 namespace {
 
-/// RFC 3986 unreserved characters pass through; everything else is %-encoded.
-std::string urlEncode(std::string_view in) {
-    std::string out;
-    out.reserve(in.size());
-    for (char rawChar : in) {
-        const auto c = static_cast<unsigned char>(rawChar);
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-            || (c >= '0' && c <= '9')
-            || c == '-' || c == '_' || c == '.' || c == '~') {
-            out.push_back(static_cast<char>(c));
-        } else {
-            char buf[4];
-            std::snprintf(buf, sizeof(buf), "%%%02X", c);
-            out.append(buf, 3);
-        }
-    }
-    return out;
-}
+using namespace codecs;
 
 }  // namespace
 
@@ -65,7 +47,6 @@ struct ExecutionEngine::Impl {
     std::mutex subscriberMutex;
     std::atomic<std::uint64_t> nextRunId{1};
     /// 0 = nothing cancelled. Any other value = the run with that id is being cancelled.
-    /// Set via cancel(RunId), read by the executing run loop.
     std::atomic<std::uint64_t> cancelledRunId{0};
 
     explicit Impl(Dependencies d) : deps(std::move(d)) {}
@@ -76,9 +57,9 @@ struct ExecutionEngine::Impl {
     }
 
     void emit(const RunEvent& e) {
-        // Snapshot subscribers, then invoke without holding the lock — avoids
-        // re-entrant deadlock if a callback calls subscribe(), and avoids
-        // exception propagation through the engine's control flow.
+        // Snapshot subscribers before invoking — avoids re-entrant deadlock
+        // if a callback calls subscribe(), and prevents exception propagation
+        // through the engine's control flow.
         std::vector<EventCallback> snapshot;
         {
             const std::lock_guard lock(subscriberMutex);
@@ -91,9 +72,8 @@ struct ExecutionEngine::Impl {
 
     /// Authenticate an actor if session is not live. Returns true on success.
     ///
-    ///  the strategy-specific work to an Authenticator
-    /// (`engine/src/application/AuthStrategy.h`); this method owns the
-    /// session-cache check, the post-success state flip, and the
+    /// Delegates strategy-specific work to an Authenticator; this method owns
+    /// the session-cache check, the post-success state flip, and the
     /// expiry-deadline computation.
     bool ensureSession(const Actor& actor, RunContext& ctx,
                        const ResolveContext& rctx, RunId /*runId*/) {
@@ -101,7 +81,7 @@ struct ExecutionEngine::Impl {
         if (existing && existing->state == ActorSession::State::Live) {
             const auto now = std::chrono::steady_clock::now();
             if (now < existing->expiresAt) {
-                return true;  // Cache hit
+                return true;
             }
         }
 
@@ -126,15 +106,11 @@ struct ExecutionEngine::Impl {
     /// it for the initial response so extractions run against the completion
     /// payload. Returns ChainApiError with a Poll* code on:
     ///   - PollFailPredicate: fail_when matched a response
-    ///   - PollTimeout:        wall-clock budget exceeded
+    ///   - PollTimeout:       wall-clock budget exceeded
     ///   - PollMaxAttemptsExceeded: attempt-count budget exceeded
-    ///   - SchemaInvalid:      success_when / fail_when failed to parse
-    ///                          (caught at run time only — schema-time
-    ///                          parsing is a Slice 3d concern)
+    ///   - SchemaInvalid:     success_when / fail_when failed to parse
     ///
-    /// Cancellation: the loop checks isCancelled() each iteration and
-    /// returns Cancelled cleanly so the parent step can mark itself
-    /// Cancelled instead of Failed.
+    /// Cancellation is checked each iteration.
     std::expected<HttpResponse, ChainApiError>
     runPollLoop(const Operation& op,
                 const PollUntil& poll,
@@ -165,13 +141,10 @@ struct ExecutionEngine::Impl {
             failPredicate = std::move(*parsed);
         }
 
-        // Resolve the polling URL once per attempt — the response from
-        // attempt N may influence attempt N+1's URL (rare, but allowed).
         const auto baseUrlIt = rctx.envVars.find("baseUrl");
         const std::string baseUrl =
             baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
 
-        // Determine which actor's inject headers to use.
         const Actor* pollActor = nullptr;
         if (poll.actor) {
             auto it = project.actors.find(*poll.actor);
@@ -181,7 +154,6 @@ struct ExecutionEngine::Impl {
             if (it != project.actors.end()) pollActor = &it->second;
         }
 
-        // Ensure the polling actor has a live session.
         if (pollActor && !ensureSession(*pollActor, ctx, rctx, runId)) {
             return std::unexpected(ChainApiError{
                 ErrorCode::SessionRefreshFailed, ErrorClass::Auth,
@@ -214,17 +186,11 @@ struct ExecutionEngine::Impl {
                     auto resolved = varResolver.resolve(v, ctx, rctx);
                     req.headers[k] = resolved.output;
                 }
-                // Session-level inject . Same precedence
-                // rule as the executor: session wins on collision.
+                // Session-level inject. Session wins on key collision.
                 if (auto* session = ctx.session(pollActor->id); session) {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
                     }
-                    // The polling URL is built from `pathTemplate`
-                    // alone today; query-param injects on the parent
-                    // actor would silently miss the poll endpoint.
-                    // Append them explicitly so api_key + query-form
-                    // auth carries through to the status fetch.
                     if (!session->injectQueryParams.empty()) {
                         std::string qs;
                         for (const auto& [k, v] : session->injectQueryParams) {
@@ -238,10 +204,24 @@ struct ExecutionEngine::Impl {
                 }
             }
 
+            // Per-request signing (OAuth 1.0a). Done AFTER inject merge
+            // so the signer sees the final request shape.
+            if (pollActor) {
+                if (auto* session = ctx.session(pollActor->id);
+                    session && session->signingScheme ==
+                                   ActorSession::SigningScheme::OAuth1HmacSha1) {
+                    if (!signOAuth1Request(req, *session)) {
+                        return std::unexpected(ChainApiError{
+                            ErrorCode::SessionRefreshFailed,
+                            ErrorClass::Auth,
+                            "poll_until: oauth1 signing failed (missing "
+                            "consumer credentials or malformed URL)"});
+                    }
+                }
+            }
+
             auto resp = deps.http->send(req);
             if (!resp) {
-                // Network error during polling — treat the same as the
-                // initial-request retry policy: bail with the network code.
                 return std::unexpected(resp.error());
             }
             lastResponse = std::move(*resp);
@@ -263,8 +243,8 @@ struct ExecutionEngine::Impl {
                 return lastResponse;
             }
 
-            // Compute next-attempt delay. Either fixed interval or
-            // exponential backoff with jitter — never both.
+            // Compute next-attempt delay: fixed interval or exponential
+            // backoff — never both.
             std::chrono::milliseconds delay = poll.interval;
             if (poll.backoffBase) {
                 const auto shift = std::min(attempt, 20);
@@ -272,13 +252,11 @@ struct ExecutionEngine::Impl {
                 delay = (raw < poll.backoffMax) ? raw : poll.backoffMax;
             }
 
-            // Floor the inter-poll delay at a small but non-zero minimum
-            // so a misconfigured poll (`interval: 0ms`, no backoff) does
-            // not busy-loop the SUT until maxAttempts. 
+            // Floor the inter-poll delay so a misconfigured `interval: 0ms`
+            // doesn't busy-loop the SUT until maxAttempts.
             constexpr auto kMinPollDelay = std::chrono::milliseconds{50};
             if (delay < kMinPollDelay) delay = kMinPollDelay;
 
-            // Honour the wall-clock deadline: never sleep past it.
             const auto remaining = deadline - std::chrono::steady_clock::now();
             if (remaining <= std::chrono::milliseconds{0}) {
                 return std::unexpected(ChainApiError{
@@ -314,11 +292,9 @@ struct ExecutionEngine::Impl {
         result.attempts = 1;
         auto startTime = std::chrono::steady_clock::now();
 
-        // Ensure actor session if needed.
         if (!op.actor.value.empty()) {
             auto actorIt = project.actors.find(op.actor);
             if (actorIt != project.actors.end()) {
-                // Apply actor inject headers later.
                 if (!ensureSession(actorIt->second, ctx, rctx, runId)) {
                     result.status = StepResult::Status::Failed;
                     result.error = ErrorCode::SessionRefreshFailed;
@@ -327,7 +303,6 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        // Resolve the request.
         auto resolvedPath = varResolver.resolve(op.pathTemplate, ctx, rctx);
         if (!resolvedPath.unresolved.empty()) {
             result.status = StepResult::Status::Failed;
@@ -341,13 +316,11 @@ struct ExecutionEngine::Impl {
         std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
         req.url = baseUrl + resolvedPath.output;
 
-        // Operation headers.
         for (const auto& [k, v] : op.headers) {
             auto resolved = varResolver.resolve(v, ctx, rctx);
             req.headers[k] = resolved.output;
         }
 
-        // Actor inject headers.
         if (!op.actor.value.empty()) {
             auto actorIt = project.actors.find(op.actor);
             if (actorIt != project.actors.end()) {
@@ -355,11 +328,8 @@ struct ExecutionEngine::Impl {
                     auto resolved = varResolver.resolve(v, ctx, rctx);
                     req.headers[k] = resolved.output;
                 }
-                // Session-level inject .
-                // Strategies like api_key auto-populate these; we apply
-                // them after the static inject block so the strategy's
-                // resolved values win on key collision. Already-resolved
-                // — no `varResolver.resolve` call needed.
+                // Session-level inject. Session wins on key collision,
+                // mirroring the header-inject precedence.
                 if (auto* session = ctx.session(op.actor); session) {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
@@ -368,10 +338,8 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        // Query params → append to URL.
-        // Session-level injects  are folded in
-        // alongside the operation's static query params; session values
-        // win on key collision, mirroring the header-inject precedence.
+        // Query params — session-level injects folded in alongside static
+        // params; session values win on key collision.
         std::map<std::string, std::string> queryParams;
         for (const auto& [k, v] : op.queryParams) {
             auto resolved = varResolver.resolve(v, ctx, rctx);
@@ -393,7 +361,6 @@ struct ExecutionEngine::Impl {
             req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
         }
 
-        // Body.
         if (op.bodyTemplate) {
             auto resolved = varResolver.resolve(*op.bodyTemplate, ctx, rctx);
             req.body = resolved.output;
@@ -415,7 +382,6 @@ struct ExecutionEngine::Impl {
             req.timeout = *op.timeout;
         }
 
-        // Send with retry. Track real attempt count for the result.
         const int maxAttempts = op.retry.maxAttempts;
         std::optional<HttpResponse> httpResp;
         ChainApiError lastError{};
@@ -430,6 +396,24 @@ struct ExecutionEngine::Impl {
                 return result;
             }
 
+            // Per-request signing (OAuth 1.0a). Inside the retry loop so
+            // each attempt gets a fresh nonce + timestamp.
+            if (!op.actor.value.empty()) {
+                if (auto* session = ctx.session(op.actor);
+                    session && session->signingScheme ==
+                                   ActorSession::SigningScheme::OAuth1HmacSha1) {
+                    if (!signOAuth1Request(req, *session)) {
+                        result.status = StepResult::Status::Failed;
+                        result.error = ErrorCode::SessionRefreshFailed;
+                        result.detail = "oauth1 signing failed (missing "
+                                        "consumer credentials or "
+                                        "malformed URL)";
+                        result.attempts = attemptCount;
+                        return result;
+                    }
+                }
+            }
+
             auto resp = deps.http->send(req);
             if (resp) {
                 httpResp = std::move(*resp);
@@ -442,8 +426,8 @@ struct ExecutionEngine::Impl {
                 result.attempts = attemptCount;
                 return result;
             }
-            // Exponential backoff with bounded shift to avoid signed-overflow UB
-            // on large maxAttempts values. Cap the shift at 20 (≈ 1M ms multiplier).
+            // Exponential backoff. Cap the shift at 20 to avoid signed-overflow
+            // UB on large maxAttempts values.
             const auto shift = std::min(attempt, 20);
             auto delay = op.retry.baseBackoff * (std::uint32_t{1} << shift);
             if (delay > op.retry.maxBackoff) delay = op.retry.maxBackoff;
@@ -452,12 +436,11 @@ struct ExecutionEngine::Impl {
 
         result.attempts = attemptCount;
 
-        // Status check. when expectStatusList is non-empty
-        // (e.g. `expect_status: [200, 202]`) it takes precedence over
-        // the singular expectStatus field; the latter is the legacy
-        // single-value form and only consulted when the list is empty.
+        // When expectStatusList is non-empty it takes precedence over the
+        // singular expectStatus field; the latter is the legacy single-value
+        // form consulted only when the list is empty.
         const auto statusMatches = [&]() -> bool {
-            if (!httpResp) return true;  // network failure already handled
+            if (!httpResp) return true;
             if (!op.expectStatusList.empty()) {
                 return std::find(op.expectStatusList.begin(),
                                  op.expectStatusList.end(),
@@ -466,14 +449,12 @@ struct ExecutionEngine::Impl {
             if (op.expectStatus) {
                 return httpResp->status == *op.expectStatus;
             }
-            return true;  // no expectation declared
+            return true;
         }();
 
         if (!statusMatches) {
             result.status = StepResult::Status::Failed;
             result.error = (httpResp->status >= 500) ? ErrorCode::Http5xx : ErrorCode::Http4xx;
-            // Capture HTTP status + a short body excerpt so the user can
-            // see exactly what the server said.
             constexpr std::size_t kBodyExcerpt = 200;
             std::string bodyExcerpt = httpResp->body.size() > kBodyExcerpt
                 ? httpResp->body.substr(0, kBodyExcerpt) + "..."
@@ -485,13 +466,11 @@ struct ExecutionEngine::Impl {
             return result;
         }
 
-        // ── Polling phase ────────────────────────────────
-        // When the operation declares poll_until, the initial response
-        // is treated as a launch acknowledgement; the engine polls a
-        // status endpoint until success_when matches (then extractions
-        // run against the FINAL poll response) or fail_when matches
-        // (the step fails with PollFailPredicate) or one of the budgets
-        // fires (PollTimeout / PollMaxAttemptsExceeded).
+        // ── Polling phase ────────────────────────────────────────────────
+        // When poll_until is declared, the initial response is a launch
+        // acknowledgement; the engine polls until success_when matches,
+        // fail_when matches, or a budget fires. Extractions run against
+        // the FINAL poll response.
         if (op.pollUntil && httpResp) {
             const auto pollResult = runPollLoop(op, *op.pollUntil, project,
                                                 ctx, rctx, runId, *httpResp);
@@ -504,12 +483,9 @@ struct ExecutionEngine::Impl {
                     std::chrono::milliseconds>(elapsed);
                 return result;
             }
-            // Replace the response we extract from with the final poll
-            // response. Subsequent extraction logic is unchanged.
             httpResp = std::move(*pollResult);
         }
 
-        // Extract variables — surfaces ResponseParse / ExtractionFailed
         if (httpResp && !op.extractions.empty()) {
             auto values = extractFromJson(httpResp->body, op.extractions);
             if (!values) {
@@ -550,19 +526,15 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
 
     impl_->cancelledRunId.store(0, std::memory_order_release);
 
-    // Handle reset options.
     if (options.resetExtractions) {
         ctx.clearExtractions();
     }
     if (options.resetSessions) {
-        // "Send Cleanly" — clear sessions only. Extractions are independent
-
         for (const auto& [actorId, _] : project.actors) {
             ctx.invalidateSession(actorId);
         }
     }
 
-    // Resolve the chain.
     auto chainResult = impl_->resolver.resolve(project, target);
     if (!chainResult) {
         return std::unexpected(chainResult.error());
@@ -571,14 +543,12 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
     const auto& chain = *chainResult;
     auto runId = RunId{impl_->nextRunId.fetch_add(1)};
 
-    // Build resolve context from environment.
     ResolveContext rctx;
     auto envName = options.environment.empty() ? project.defaultEnvironment : options.environment;
     if (project.environments.contains(envName)) {
         rctx.envVars = project.environments.at(envName);
     }
 
-    // Emit RunStarted.
     impl_->emit(RunStarted{runId, target, chain.size(), envName,
                            std::chrono::system_clock::now()});
 
@@ -586,11 +556,9 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
     result.runId = runId;
     result.outcome = RunOutcome::Succeeded;
 
-    // Execute each step.
     for (std::size_t i = 0; i < chain.size(); ++i) {
         const auto& opId = chain[i];
 
-        // Find the operation.
         auto dotPos = opId.value.find('.');
         auto resName = opId.value.substr(0, dotPos);
         auto opName = opId.value.substr(dotPos + 1);
@@ -609,11 +577,9 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
         const auto& op = opIt->second;
         const bool isTarget = (opId.value == target.value);
 
-
         if (!isTarget && !op.force && !op.extractions.empty()) {
             const auto& instances = ctx.instances(op.resource);
             if (!instances.empty()) {
-                // Check if all required extractions are already present.
                 bool allPresent = true;
                 for (const auto& ext : op.extractions) {
                     bool found = false;
@@ -638,7 +604,6 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
             }
         }
 
-        // Dry run: don't execute.
         if (options.dryRun) {
             StepResult dryResult;
             dryResult.op = opId;
@@ -661,7 +626,6 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(
                                    stepResult.attempts, stepResult.detail,
                                    std::chrono::system_clock::now()});
             result.outcome = RunOutcome::Failed;
-            // Mark remaining as blocked.
             for (std::size_t j = i + 1; j < chain.size(); ++j) {
                 StepResult blocked;
                 blocked.op = chain[j];

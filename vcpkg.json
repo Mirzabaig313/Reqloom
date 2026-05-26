@@ -8,6 +8,7 @@
   "dependencies": [
     "yaml-cpp",
     "curl",
+    "openssl",
     "sqlite3",
     "nlohmann-json",
     "cpp-httplib",

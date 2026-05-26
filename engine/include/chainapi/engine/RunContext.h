@@ -15,24 +15,31 @@
 
 namespace chainapi::engine {
 
-/// One actor session, lifecycled per Engine 
+/// One actor session, lifecycled per run.
 struct ActorSession {
     enum class State { None, Authenticating, Live, Refreshing };
+
+    /// Per-request signing scheme. Most strategies leave this as `None`
+    /// and rely on `injectHeaders` for static auth values. OAuth 1.0a
+    /// (RFC 5849) is the exception — its signature depends on the request
+    /// URL/method/params, so the executor calls a strategy-specific signer
+    /// right before each send.
+    enum class SigningScheme { None, OAuth1HmacSha1 };
 
     State state{State::None};
     std::map<std::string, std::string> variables;  ///< token, user_id, etc.
 
-    /// Strategy-populated request augmentations. 
-    /// auth: strategies may pre-resolve and stash request mutations
-    /// here so the engine adds them to every operation owned by the
-    /// actor without the user having to write an explicit `inject:`
-    /// block. Empty maps are the no-op default — the existing static
-    /// `Actor::inject.headers` continues to work alongside these.
-    ///
-    /// Values stored here are already variable-resolved; the engine
-    /// does NOT re-resolve them when merging into a request.
+    /// Strategy-populated request augmentations. Auth strategies may
+    /// pre-resolve and stash request mutations here so the engine adds
+    /// them to every operation owned by the actor without requiring an
+    /// explicit `inject:` block. Values are already variable-resolved;
+    /// the engine does NOT re-resolve them when merging into a request.
     std::map<std::string, std::string> injectHeaders;
     std::map<std::string, std::string> injectQueryParams;
+
+    /// When non-`None`, the executor calls the matching signer (e.g.
+    /// `signOAuth1Request`) after inject merging but before `HttpClient::send`.
+    SigningScheme signingScheme{SigningScheme::None};
 
     std::chrono::steady_clock::time_point expiresAt{};
 };
@@ -42,7 +49,7 @@ struct ResourceInstance {
     std::map<std::string, std::string> variables;
 };
 
-/// Status of a single step in a chain. Engine Req §4.1.
+/// Status of a single step in a chain.
 struct StepResult {
     enum class Status { Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked };
 
@@ -68,18 +75,18 @@ public:
     RunContext(RunContext&&) noexcept;
     RunContext& operator=(RunContext&&) noexcept;
 
-    // Session cache — per actor.
+    // ─── Session cache — per actor ───────────────────────────────────────
     [[nodiscard]] const ActorSession* session(const ActorId& actor) const noexcept;
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
 
-    // Extraction cache — list of instances per resource (for `{{R[k].x}}`).
+    // ─── Extraction cache — list of instances per resource ───────────────
     [[nodiscard]] const std::vector<ResourceInstance>& instances(
         const ResourceId& resource) const noexcept;
     void appendInstance(const ResourceId& resource, ResourceInstance instance);
     void clearExtractions();
 
-    // Step recording.
+    // ─── Step recording ──────────────────────────────────────────────────
     void record(StepResult step);
     [[nodiscard]] const std::vector<StepResult>& steps() const noexcept;
 

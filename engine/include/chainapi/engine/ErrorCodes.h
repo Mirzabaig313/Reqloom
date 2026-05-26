@@ -1,5 +1,4 @@
-// Error taxonomy from Engine Requirement §5. Codes are stable; UI/CLI
-// render them; QA asserts on them.
+// Error taxonomy. Codes are stable; UI/CLI render them; QA asserts on them.
 #pragma once
 
 #include <string>
@@ -40,7 +39,7 @@ enum class ErrorCode {
     ExtractionFailed,
     ResponseParse,
 
-    // Polling (PRD §5.11)
+    // Polling
     PollTimeout,             ///< wall-clock budget exceeded
     PollMaxAttemptsExceeded, ///< attempt-count budget exceeded
     PollFailPredicate,       ///< fail_when matched a poll response
@@ -66,15 +65,15 @@ enum class ErrorClass {
 std::string_view toCodeString(ErrorCode code) noexcept;
 
 /// Whether a step that fails with this code should be retried per the
-/// per-operation RetryPolicy. Engine spec §3.5.
+/// per-operation RetryPolicy.
 bool isRetryable(ErrorCode code) noexcept;
 
 ErrorClass classify(ErrorCode code) noexcept;
 
-/// Application-layer error type. The infrastructure and application layers
-/// return `std::expected<T, ChainApiError>` rather than throwing. Engine
-/// spec §5 treats `ErrorCode` as the stable identifier; `detail` carries
-/// human-readable context (file:line, response excerpt, etc.).
+/// Application-layer error type. Infrastructure and application layers
+/// return `std::expected<T, ChainApiError>` rather than throwing.
+/// `ErrorCode` is the stable identifier; `detail` carries human-readable
+/// context (file:line, response excerpt, etc.).
 struct ChainApiError {
     ErrorCode code{ErrorCode::SchemaInvalid};
     ErrorClass cls{ErrorClass::Schema};

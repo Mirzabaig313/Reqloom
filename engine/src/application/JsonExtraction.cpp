@@ -1,6 +1,4 @@
-// JsonExtraction — see header. Implementation moved verbatim from
-// ExecutionEngine.cpp so behaviour is identical 
-// state (same error codes, same JSONPath subset, same edge cases).
+// JsonExtraction — see header.
 #include "JsonExtraction.h"
 
 #include <nlohmann/json.hpp>
@@ -31,8 +29,8 @@ extractFromJson(const std::string& body,
             std::string("response is not valid JSON: ") + e.what()});
     }
 
-    // Walk a single segment that may be either "name", "name[N]", or "[N]".
-    // Returns nullptr on miss; otherwise the new current pointer.
+    // Walk a single segment that may be "name", "name[N]", or "[N]".
+    // Returns nullptr on miss.
     auto walkSegment = [](const json* current,
                           const std::string& segment) -> const json* {
         if (segment.empty()) return current;
@@ -49,7 +47,7 @@ extractFromJson(const std::string& body,
             current = &(*it);
         }
 
-        // Apply each [N] index in turn. There can be multiple, e.g. data[0][1].
+        // Apply each [N] index in turn (e.g. data[0][1]).
         std::size_t pos = bracketPos;
         while (pos != std::string::npos) {
             const auto closePos = segment.find(']', pos);

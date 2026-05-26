@@ -456,3 +456,364 @@ resources:
     EXPECT_EQ(user.authConfig.at("password"), "{{secret.RO_PASS}}");
     EXPECT_EQ(user.authConfig.at("scope"),    "read:notes");
 }
+
+
+// ─── Slice 5a — sibling-file hooks ──────────────────────────────────────────
+//
+// PRD §5.10: hook scripts can live in a sibling `.js` file referenced
+// by relative path. The parser detects path-shaped values, validates
+// containment under the project root, caps file size at 1 MiB, and
+// loads the content into Operation::preRequestScript /
+// postResponseScript. Inline JS continues to work — anything that
+// doesn't look like a path falls through unchanged.
+
+TEST(SchemaParserHooks, loads_sibling_js_file_for_pre_request) {
+    ScratchDir scratch;
+    // Write the hook file first so the parser can resolve it.
+    std::ofstream hookOut{scratch.path() / "hooks-sign.js"};
+    hookOut << "export default function (ctx) {\n"
+            << "  ctx.request.headers['X-Hook'] = 'fired';\n"
+            << "}\n";
+    hookOut.close();
+
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: HookFromFile
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { t: $.t } }
+    inject: { headers: { Authorization: "Bearer {{user.t}}" } }
+
+resources:
+  signed:
+    operations:
+      send:
+        method: POST
+        path: /api/v1/signed
+        actor: user
+        pre_request: ./hooks-sign.js
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& send = result->resources.at(ce::ResourceId{"signed"})
+                            .operations.at("send");
+    ASSERT_TRUE(send.preRequestScript.has_value());
+    EXPECT_NE(send.preRequestScript->find("X-Hook"), std::string::npos)
+        << "expected file content to land in preRequestScript; got: "
+        << *send.preRequestScript;
+    EXPECT_NE(send.preRequestScript->find("export default"),
+              std::string::npos);
+}
+
+TEST(SchemaParserHooks, loads_post_response_from_file_too) {
+    ScratchDir scratch;
+    fs::create_directories(scratch.path() / "hooks");
+    std::ofstream hookOut{scratch.path() / "hooks" / "decrypt.js"};
+    hookOut << "export default function (ctx) { return ctx.response; }\n";
+    hookOut.close();
+
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: HookPostResponseFromFile
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { t: $.t } }
+    inject: { headers: { Authorization: "Bearer {{user.t}}" } }
+
+resources:
+  encrypted:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/blob
+        actor: user
+        post_response: hooks/decrypt.js
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& get = result->resources.at(ce::ResourceId{"encrypted"})
+                           .operations.at("get");
+    ASSERT_TRUE(get.postResponseScript.has_value());
+    EXPECT_NE(get.postResponseScript->find("ctx.response"),
+              std::string::npos);
+}
+
+TEST(SchemaParserHooks, inline_js_with_braces_falls_through_unchanged) {
+    // Anything containing `{`, `(`, `=`, or a newline is treated as
+    // inline JS regardless of suffix — protects users who happen to
+    // write something like `const x = 1; // foo.js` from being
+    // mis-parsed as a path.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: HookInline
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { t: $.t } }
+    inject: { headers: { Authorization: "Bearer {{user.t}}" } }
+
+resources:
+  one:
+    operations:
+      send:
+        method: POST
+        path: /api/v1/x
+        actor: user
+        pre_request: |
+          ctx.request.headers['X-Inline'] = 'yes';
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& send = result->resources.at(ce::ResourceId{"one"})
+                            .operations.at("send");
+    ASSERT_TRUE(send.preRequestScript.has_value());
+    EXPECT_NE(send.preRequestScript->find("X-Inline"),
+              std::string::npos);
+}
+
+TEST(SchemaParserHooks, rejects_path_traversal_outside_project_root) {
+    // Containment check fires on `../../etc/passwd`-style patterns
+    // even when the canonicalised target exists. PRD §5.10 +
+    // AGENTS.md "Reading user input" §"Path inputs".
+    ScratchDir scratch;
+
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: HookEscape
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { t: $.t } }
+    inject: { headers: { Authorization: "Bearer {{user.t}}" } }
+
+resources:
+  one:
+    operations:
+      send:
+        method: POST
+        path: /api/v1/x
+        actor: user
+        pre_request: ../../../etc/passwd.js
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
+    EXPECT_NE(result.error().detail.find("escapes"),
+              std::string::npos);
+}
+
+TEST(SchemaParserHooks, rejects_absolute_path) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: HookAbsolute
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { t: $.t } }
+    inject: { headers: { Authorization: "Bearer {{user.t}}" } }
+
+resources:
+  one:
+    operations:
+      send:
+        method: POST
+        path: /api/v1/x
+        actor: user
+        pre_request: /etc/passwd.js
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
+    EXPECT_NE(result.error().detail.find("must be relative"),
+              std::string::npos);
+}
+
+TEST(SchemaParserHooks, rejects_missing_hook_file) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: HookMissing
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { t: $.t } }
+    inject: { headers: { Authorization: "Bearer {{user.t}}" } }
+
+resources:
+  one:
+    operations:
+      send:
+        method: POST
+        path: /api/v1/x
+        actor: user
+        pre_request: ./does-not-exist.js
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
+    EXPECT_NE(result.error().detail.find("not found"),
+              std::string::npos);
+}
+
+TEST(SchemaParserHooks, rejects_oversized_hook_file) {
+    // 1 MiB cap. Write 1 MiB + 1 of `x` and confirm the parser refuses.
+    ScratchDir scratch;
+    const fs::path hookPath = scratch.path() / "huge.js";
+    {
+        std::ofstream out{hookPath, std::ios::binary};
+        std::string filler(1024, 'x');
+        for (std::size_t i = 0; i < 1024 + 1; ++i) {  // 1 MiB + 1 KiB
+            out << filler;
+        }
+    }
+
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: HookOversized
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { t: $.t } }
+    inject: { headers: { Authorization: "Bearer {{user.t}}" } }
+
+resources:
+  one:
+    operations:
+      send:
+        method: POST
+        path: /api/v1/x
+        actor: user
+        pre_request: ./huge.js
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
+    EXPECT_NE(result.error().detail.find("1 MiB"),
+              std::string::npos);
+}
+
+
+// ─── Slice 4f — oauth1 auth strategy ────────────────────────────────────────
+
+TEST(SchemaParserOAuth1, parses_three_legged_with_full_options) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: OAuth1Sample
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  twitter:
+    auth:
+      strategy: oauth1
+      consumer_key: "{{secret.OAUTH_KEY}}"
+      consumer_secret: "{{secret.OAUTH_SECRET}}"
+      token: "{{secret.OAUTH_TOKEN}}"
+      token_secret: "{{secret.OAUTH_TOKEN_SECRET}}"
+      realm: "Photos"
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: twitter
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& tw = result->actors.at(ce::ActorId{"twitter"});
+    EXPECT_EQ(tw.strategy, ce::AuthStrategy::OAuth1);
+    EXPECT_TRUE(tw.authSteps.empty());
+    EXPECT_EQ(tw.authConfig.at("consumer_key"),    "{{secret.OAUTH_KEY}}");
+    EXPECT_EQ(tw.authConfig.at("consumer_secret"), "{{secret.OAUTH_SECRET}}");
+    EXPECT_EQ(tw.authConfig.at("token"),           "{{secret.OAUTH_TOKEN}}");
+    EXPECT_EQ(tw.authConfig.at("token_secret"),
+              "{{secret.OAUTH_TOKEN_SECRET}}");
+    EXPECT_EQ(tw.authConfig.at("realm"), "Photos");
+}
+
+TEST(SchemaParserOAuth1, parses_two_legged_minimal) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: OAuth1TwoLegged
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  app:
+    auth:
+      strategy: oauth1
+      consumer_key: "ck"
+      consumer_secret: "cs"
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: app
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& app = result->actors.at(ce::ActorId{"app"});
+    EXPECT_EQ(app.strategy, ce::AuthStrategy::OAuth1);
+    EXPECT_EQ(app.authConfig.at("consumer_key"),    "ck");
+    EXPECT_EQ(app.authConfig.at("consumer_secret"), "cs");
+    EXPECT_FALSE(app.authConfig.contains("token"));
+    EXPECT_FALSE(app.authConfig.contains("token_secret"));
+    EXPECT_FALSE(app.authConfig.contains("realm"));
+}
