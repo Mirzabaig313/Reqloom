@@ -104,7 +104,10 @@ install:
       fi
 
       QT_PREFIX="$HOME/Qt/${QT_VERSION}/gcc_64"
-      ls -1 "$QT_PREFIX/lib/cmake/Qt6" | head -3
+      [[ -f "$QT_PREFIX/lib/cmake/Qt6/Qt6Config.cmake" ]] || {
+        echo "error: Qt6Config.cmake missing under $QT_PREFIX" >&2
+        exit 1
+      }
 
       # vcpkg binary cache lives outside vcpkg/ so the vcpkg tree cache
       # doesn't churn it.

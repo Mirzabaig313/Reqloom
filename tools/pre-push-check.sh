@@ -60,8 +60,25 @@ ok() {
 #    static-checks job in azure-pipelines.yml / appveyor.yml. If CI would
 #    reject the push for formatting drift, this catches it locally.
 step "1/5  clang-format check"
-if ! command -v clang-format >/dev/null 2>&1; then
-  fail "clang-format not on PATH. Install via 'brew install llvm@18' (macOS) or 'apt install clang-format-18' (Ubuntu), then ensure the binary is on PATH. Override with SKIP_FORMAT=1 if you must (CI will still reject)."
+
+# Pin to clang-format-18 in the same order tools/format.sh does, so local
+# and CI never use different versions (which silently introduces drift).
+clang_format=""
+if [[ -n "${CLANG_FORMAT:-}" ]] && command -v "$CLANG_FORMAT" >/dev/null 2>&1; then
+  clang_format="$CLANG_FORMAT"
+elif command -v clang-format-18 >/dev/null 2>&1; then
+  clang_format="clang-format-18"
+elif [[ -x /opt/homebrew/opt/llvm@18/bin/clang-format ]]; then
+  clang_format="/opt/homebrew/opt/llvm@18/bin/clang-format"
+elif [[ -x /usr/local/opt/llvm@18/bin/clang-format ]]; then
+  clang_format="/usr/local/opt/llvm@18/bin/clang-format"
+elif command -v clang-format >/dev/null 2>&1; then
+  clang_format="clang-format"
+  yellow "  using \$(which clang-format), not pinned to v18 — CI may disagree"
+fi
+
+if [[ -z "$clang_format" ]]; then
+  fail "clang-format not on PATH. Install clang-format 18 (brew install llvm@18 on macOS, apt install clang-format-18 on Ubuntu) and ensure it's reachable. Override with SKIP_FORMAT=1 if you must (CI will still reject)."
 fi
 
 if [[ "${SKIP_FORMAT:-0}" == "1" ]]; then
@@ -83,8 +100,8 @@ else
   else
     # Don't pipe through `head` — that swallows clang-format's non-zero exit.
     # Instead capture output, print first 50 lines, then fail on non-zero.
-    if format_output="$(clang-format --dry-run --Werror "${cpp_files[@]}" 2>&1)"; then
-      ok "no clang-format drift across ${#cpp_files[@]} files"
+    if format_output="$("$clang_format" --dry-run --Werror "${cpp_files[@]}" 2>&1)"; then
+      ok "no clang-format drift across ${#cpp_files[@]} files (using $("$clang_format" --version | head -n1))"
     else
       printf '%s\n' "$format_output" | head -50
       fail "clang-format drift detected. Run tools/format.sh, commit, then re-push."
