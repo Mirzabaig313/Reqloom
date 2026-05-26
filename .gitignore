@@ -64,8 +64,8 @@ validation/github/findings.md
 validation/stripe/findings.md
 validation/discourse/findings.md
 
-
 # local 
 .kiro/hooks
 doc/local
 chainapi/
+doc/adr
