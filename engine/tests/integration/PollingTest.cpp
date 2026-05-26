@@ -518,7 +518,7 @@ resources:
 
 // ─── Slice 3g — per-poll-attempt timeline visibility ────────────────────────
 //
-    // Each poll attempt is recorded as a step in the run timeline.
+// Each poll attempt is recorded as a step in the run timeline.
 // Before this slice, only the parent step row was recorded; the timeline
 // hid every poll request behind a single elapsed-time bar. These tests
 // fail on the parent commit (zero per-attempt rows in `result->steps`).

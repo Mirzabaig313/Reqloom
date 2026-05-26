@@ -65,7 +65,7 @@ struct ExecutionEngine::Impl {
         for (auto& cb : snapshot) {
             try {
                 cb(e);
-            } catch (...) { // never let a subscriber break the engine
+            } catch (...) {  // never let a subscriber break the engine
             }
         }
     }
