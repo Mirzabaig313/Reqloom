@@ -218,23 +218,18 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
                                   ErrorClass::Network,
                                   "curl_mime_name failed for part: " + part.name});
             }
-            if (part.isFile()) {
-                if (curl_mime_filedata(mp, part.filePath->c_str()) != CURLE_OK) {
-                    return std::unexpected(
-                        ChainApiError{ErrorCode::NetworkTimeout,
-                                      ErrorClass::Network,
-                                      "curl_mime_filedata failed: " + *part.filePath});
-                }
-                if (part.filename) {
-                    curl_mime_filename(mp, part.filename->c_str());
-                }
-            } else {
-                if (curl_mime_data(mp, part.value.c_str(), part.value.size()) != CURLE_OK) {
-                    return std::unexpected(
-                        ChainApiError{ErrorCode::NetworkTimeout,
-                                      ErrorClass::Network,
-                                      "curl_mime_data failed for part: " + part.name});
-                }
+            // Both text and file parts ship via curl_mime_data — the
+            // file bytes were pre-loaded by MultipartBuilder so libcurl
+            // never re-opens the path. That's the TOCTOU fix; see
+            // MultipartBuilder.cpp's prologue for the full rationale.
+            if (curl_mime_data(mp, part.value.data(), part.value.size()) != CURLE_OK) {
+                return std::unexpected(
+                    ChainApiError{ErrorCode::NetworkTimeout,
+                                  ErrorClass::Network,
+                                  "curl_mime_data failed for part: " + part.name});
+            }
+            if (part.isFile() && part.filename) {
+                curl_mime_filename(mp, part.filename->c_str());
             }
             if (part.contentType) {
                 curl_mime_type(mp, part.contentType->c_str());
