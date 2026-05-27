@@ -158,9 +158,7 @@ void setIntProp(JSContext* ctx, JSValueConst obj, const char* name, int32_t valu
         if (key == nullptr) continue;
 
         JSValue v = JS_GetProperty(ctx, obj, tab[i].atom);
-        // Skip non-string values silently — hook output keys must all be
-        // strings; arrays/objects in headers would be a usage error and
-        // we'd rather drop them than coerce to "[object Object]".
+
         if (JS_IsString(v)) {
             out.emplace(key, toCppString(ctx, v));
         }
@@ -337,9 +335,8 @@ void installHelper(
         JS_SetPropertyStr(ctx, root, "actors", actors);
     }
 
-    // env / secret are flat maps
     JS_SetPropertyStr(ctx, root, "env", makeStringMap(ctx, hctx.env));
-    JS_SetPropertyStr(ctx, root, "secret", makeStringMap(ctx, {}));  // populated later
+    JS_SetPropertyStr(ctx, root, "secret", makeStringMap(ctx, hctx.secrets));
 
     // helpers
     {
@@ -470,15 +467,7 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
 // keyword, treat it as (a). Otherwise (b).
 
 [[nodiscard]] bool looksLikeModule(std::string_view script) {
-    // Module hooks use `export default ...` per the project's hook
-    // authoring guide. Detect via heuristic on the script's first
-    // non-whitespace token, which is robust to indented files but
-    // doesn't fight back when a script-style hook contains the word
-    // `export` inside a comment or string. JS_DetectModule (the real
-    // lexer) is too permissive — it returns true for non-strict
-    // classic scripts that happen to parse as a module — so we'd
-    // route inline bodies through the module path and fail with
-    // "module did not export a default function".
+
     while (!script.empty() && std::isspace(static_cast<unsigned char>(script.front()))) {
         script.remove_prefix(1);
     }
@@ -525,12 +514,6 @@ constexpr std::size_t kStackSize = 8 * 1024 * 1024;  // 8 MiB
     JSValue global = JS_GetGlobalObject(c);
     JsValueGuard globalGuard{c, global};
     JS_SetPropertyStr(c, global, "__chainapi_ctx", JS_DupValue(c, hookCtxObj));
-    // RAII-wrap our local reference. JS_SetPropertyStr above takes
-    // ownership of the duplicated handle stored on the global; we
-    // still hold the original (used after the script runs to read
-    // mutations back). Wrapping in JsValueGuard ensures every return
-    // path frees it without a manual `release()` lambda — easier to
-    // keep correct as future edits add more error paths.
     JsValueGuard hookCtxGuard{c, hookCtxObj};
 
     auto fail = [&](ErrorCode code, std::string detail) {
@@ -560,9 +543,7 @@ constexpr std::size_t kStackSize = 8 * 1024 * 1024;  // 8 MiB
         }
         JS_FreeValue(c, evalOk);
 
-        // We don't have a clean module-resolver hook installed, so call
-        // the default export by re-eval'ing a tiny driver that imports
-        // the same module. This works because compiled modules in
+
         // QuickJS are cached by name.
         const std::string driver =
             "import fn from 'hook.mjs';\n"

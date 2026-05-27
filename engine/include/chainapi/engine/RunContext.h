@@ -65,11 +65,7 @@ struct StepResult {
     std::optional<int> pollAttempt;
 };
 
-/// One extraction's runtime outcome, recorded by the executor each time
-/// it evaluates an `extract:` entry. Powers the timeline UI.
-/// and the AI-importer diagnostic loop — when an inferred extraction
-/// resolves to `null` at runtime, the user can see it without re-running
-/// against the schema.
+
 struct ExtractionTrace {
     enum class Outcome {
         Resolved,     ///< Source path resolved to a non-null value.
@@ -90,6 +86,7 @@ struct ExtractionTrace {
 };
 
 /// The mutable state of a single run.
+
 class RunContext {
 public:
     RunContext();
@@ -104,13 +101,7 @@ public:
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
 
-    // Cookie jar — per actor, populated from response Set-Cookie headers
-    // and emitted as a single `Cookie:` request header on subsequent
-    // operations performed by the same actor. The jar is intentionally
-    // simple: name → value, no domain / path / expiry tracking. We are
-    // not a full HTTP user-agent, just a chain runner; partner schemas
-    // that need full RFC 6265 semantics can opt out by setting their
-    // own `Cookie:` header on the operation (which wins on collision).
+
 
     /// Snapshot of the actor's current cookies. Empty when no jar.
     [[nodiscard]] std::map<std::string, std::string> cookies(const ActorId& actor) const;
