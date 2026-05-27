@@ -84,7 +84,6 @@ struct SampleResponse {
 class Verifier {
 public:
     Verifier();
-    ~Verifier();
 
     /// Returns `ChainApiError{SchemaInvalid}` only when an extraction source
     /// path is malformed. A path that doesn't match the sample is NOT an

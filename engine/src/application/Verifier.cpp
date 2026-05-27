@@ -179,7 +179,6 @@ bool VerificationReport::noFailures() const noexcept {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 Verifier::Verifier() = default;
-Verifier::~Verifier() = default;
 
 std::expected<VerificationReport, ChainApiError> Verifier::verify(
     const Operation& op, const SampleResponse& sample) const {

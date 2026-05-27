@@ -53,7 +53,6 @@ private:
 class PredicateEvaluator {
 public:
     PredicateEvaluator();
-    ~PredicateEvaluator();
 
     /// Parse and validate. Returns `ChainApiError{SchemaInvalid}` when the
     /// expression is malformed.

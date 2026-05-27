@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -182,7 +183,7 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
         if (!request.multipart.empty() && key == "Content-Type") {
             continue;
         }
-        auto headerLine = key + ": " + value;
+        auto headerLine = std::format("{}: {}", key, value);
         auto* appended = curl_slist_append(headerList.get(), headerLine.c_str());
         if (appended == nullptr) {
             return std::unexpected(ChainApiError{
@@ -247,9 +248,8 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
         // _LARGE variant takes curl_off_t (64-bit) — the plain
         // CURLOPT_POSTFIELDSIZE is `long` and silently truncates bodies
         // larger than 2 GiB on Windows.
-        curl_easy_setopt(curl.get(),
-                         CURLOPT_POSTFIELDSIZE_LARGE,
-                         static_cast<curl_off_t>(request.body->size()));
+        curl_easy_setopt(
+            curl.get(), CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(request.body->size()));
         curl_easy_setopt(curl.get(), CURLOPT_COPYPOSTFIELDS, request.body->c_str());
     }
 

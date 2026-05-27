@@ -143,6 +143,7 @@ bool signOAuth1Request(HttpRequest& req,
     std::vector<Pair> params;
 
     auto queryParams = parseQuery(urlParts->queryString);
+    params.reserve(queryParams.size());
     for (auto& p : queryParams) params.push_back(std::move(p));
 
     const auto contentTypeIt = req.headers.find("Content-Type");

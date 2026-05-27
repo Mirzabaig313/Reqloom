@@ -2,6 +2,7 @@
 // undefined refs.
 #include "DependencyResolver.h"
 
+#include <format>
 #include <queue>
 #include <regex>
 #include <set>
@@ -55,7 +56,7 @@ std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& p
             for (const auto& [opName, resOp] : resIt->second.operations) {
                 for (const auto& ext : resOp.extractions) {
                     if (ext.variableName == refVar) {
-                        auto depId = OperationId{refResource + "." + opName};
+                        auto depId = OperationId{std::format("{}.{}", refResource, opName)};
                         if (depId.value != op.id.value) {
                             deps.insert(depId);
                         }
@@ -72,7 +73,6 @@ std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& p
 }  // namespace
 
 DependencyResolver::DependencyResolver() = default;
-DependencyResolver::~DependencyResolver() = default;
 
 std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resolve(
     const Project& project, const OperationId& target) const {

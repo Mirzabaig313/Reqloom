@@ -715,7 +715,6 @@ ParsedPredicate::ParsedPredicate(std::unique_ptr<Node> root) : root_(std::move(r
 // Public API
 
 PredicateEvaluator::PredicateEvaluator() = default;
-PredicateEvaluator::~PredicateEvaluator() = default;
 
 std::expected<ParsedPredicate, ChainApiError> PredicateEvaluator::parse(
     std::string_view expression) const {

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <optional>
 #include <set>
@@ -508,7 +509,7 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
         const auto& opNode = kv.second;
 
         Operation op;
-        op.id = OperationId{resourceId + "." + opName};
+        op.id = OperationId{std::format("{}.{}", resourceId, opName)};
         op.resource = ResourceId{resourceId};
         op.method = parseMethod(opNode["method"].as<std::string>("GET"));
         op.pathTemplate = opNode["path"].as<std::string>("");

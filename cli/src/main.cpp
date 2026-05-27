@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
             return args.size() < 2 ? 1 : 0;
         }
 
-        const QString verb = args.at(1);
+        const QString& verb = args.at(1);
         if (verb == QStringLiteral("run")) {
             return chainapi::cli::runCommand(args.mid(2));
         }

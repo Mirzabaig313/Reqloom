@@ -467,7 +467,6 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
 // keyword, treat it as (a). Otherwise (b).
 
 [[nodiscard]] bool looksLikeModule(std::string_view script) {
-
     while (!script.empty() && std::isspace(static_cast<unsigned char>(script.front()))) {
         script.remove_prefix(1);
     }
@@ -542,7 +541,6 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
             return fail(ErrorCode::HookFailure, "hook failed: " + err);
         }
         JS_FreeValue(c, evalOk);
-
 
         // QuickJS are cached by name.
         const std::string driver =

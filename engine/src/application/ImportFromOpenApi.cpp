@@ -268,7 +268,7 @@ std::optional<YAML::Node> firstJsonResponseExample(const YAML::Node& opNode) {
         if (!content || !content.IsMap()) continue;
         const auto& json = content["application/json"];
         if (!json || !json.IsMap()) continue;
-        if (const auto example = json["example"]; example.IsDefined() && !example.IsNull()) {
+        if (auto example = json["example"]; example.IsDefined() && !example.IsNull()) {
             return example;
         }
         if (const auto examples = json["examples"];
@@ -343,7 +343,7 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
     if (!node || node.IsNull()) return nlohmann::json{nullptr};
 
     if (node.IsScalar()) {
-        const auto raw = node.Scalar();
+        const auto& raw = node.Scalar();
         if (raw == "true") return nlohmann::json(true);
         if (raw == "false") return nlohmann::json(false);
         if (raw == "null" || raw == "~") return nlohmann::json{nullptr};
@@ -476,13 +476,13 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             std::string uniqueName = opName;
             int suffix = 2;
             while (resource.operations.contains(uniqueName) ||
-                   seenOpIds.contains(resourceId + "." + uniqueName)) {
-                uniqueName = opName + "_" + std::to_string(suffix++);
+                   seenOpIds.contains(std::format("{}.{}", resourceId, uniqueName))) {
+                uniqueName = std::format("{}_{}", opName, suffix++);
             }
-            seenOpIds.insert(resourceId + "." + uniqueName);
+            seenOpIds.insert(std::format("{}.{}", resourceId, uniqueName));
 
             Operation op;
-            op.id = OperationId{resourceId + "." + uniqueName};
+            op.id = OperationId{std::format("{}.{}", resourceId, uniqueName)};
             op.resource = ResourceId{resourceId};
             op.method = parseHttpMethod(methodLower);
 
@@ -495,9 +495,8 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
             prov.importedAt = importedAt;
             if (derivation.singularised && !derivation.fromSegment.empty()) {
-                prov.evidence["resource_derivation"] = "singularised path segment '" +
-                                                       derivation.fromSegment + "' to '" +
-                                                       resourceId + "'";
+                prov.evidence["resource_derivation"] = std::format(
+                    "singularised path segment '{}' to '{}'", derivation.fromSegment, resourceId);
             }
             if (const auto opSummary = opNode["summary"].as<std::string>(""); !opSummary.empty()) {
                 prov.evidence["summary"] = opSummary;
@@ -507,11 +506,12 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
                 prov.evidence["operationId"] = opIdSpec;
             }
             for (const auto& param : pathRewrite.paramNames) {
-                prov.evidence["path_param." + param] = "rewritten to {{" + resourceId + "." +
-                                                       param +
-                                                       "}}; "
-                                                       "ensure an upstream operation extracts " +
-                                                       param;
+                prov.evidence["path_param." + param] = std::format(
+                    "rewritten to {{{{{}.{}}}}}; "
+                    "ensure an upstream operation extracts {}",
+                    resourceId,
+                    param,
+                    param);
             }
 
             // Top-level scalar response fields become candidate extractions.
@@ -566,20 +566,22 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
                         prov.verifiedAgainst = Provenance::VerifiedAgainst::OpenApiExample;
                     }
                     if (anyFailure) {
-                        warnings.push_back("operation " + op.id.value +
-                                           ": one or more inferred extractions did not "
-                                           "match the response example — review before "
-                                           "running");
+                        warnings.push_back(
+                            std::format("operation {}: one or more inferred extractions did not "
+                                        "match the response example — review before running",
+                                        op.id.value));
                     }
                 } else {
-                    warnings.push_back("operation " + op.id.value + ": verifier rejected sample (" +
-                                       report.error().detail + ")");
+                    warnings.push_back(std::format("operation {}: verifier rejected sample ({})",
+                                                   op.id.value,
+                                                   report.error().detail));
                 }
             } else if (!op.extractions.empty()) {
-                warnings.push_back("operation " + op.id.value + ": " +
-                                   std::to_string(op.extractions.size()) +
-                                   " extraction(s) inferred from schema but no response "
-                                   "example was available to verify them");
+                warnings.push_back(std::format(
+                    "operation {}: {} extraction(s) inferred from schema but no response "
+                    "example was available to verify them",
+                    op.id.value,
+                    op.extractions.size()));
             }
 
             op.provenance = std::move(prov);
@@ -587,10 +589,15 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             // Each rewritten path parameter shows up as one warning so the
             // user's review loop sees exactly what needs to be linked.
             for (const auto& param : pathRewrite.paramNames) {
-                warnings.push_back("operation " + op.id.value + ": path parameter `" + param +
-                                   "` resolves to {{" + resourceId + "." + param +
-                                   "}} — wire an upstream operation that extracts `" + param +
-                                   "` into resource `" + resourceId + "`");
+                warnings.push_back(std::format(
+                    "operation {}: path parameter `{}` resolves to {{{{{}.{}}}}} — wire an "
+                    "upstream operation that extracts `{}` into resource `{}`",
+                    op.id.value,
+                    param,
+                    resourceId,
+                    param,
+                    param,
+                    resourceId));
             }
 
             resource.operations.emplace(uniqueName, std::move(op));
