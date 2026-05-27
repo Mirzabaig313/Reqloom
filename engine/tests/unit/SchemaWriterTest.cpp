@@ -556,3 +556,91 @@ TEST(SchemaWriter, aws_sigv4_round_trips_minimal_actor) {
     EXPECT_EQ(reload.strategy, ce::AuthStrategy::AwsSigV4);
     EXPECT_FALSE(reload.authConfig.contains("session_token"));
 }
+
+// ─── session.refresh.expect_status round-trip ──────────────────────────────
+
+namespace {
+
+ce::Project makeProjectWithRefresh() {
+    ce::Project p;
+    p.name = "RefreshExpectStatusRoundTrip";
+    p.defaultEnvironment = "local";
+    p.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    ce::Actor user;
+    user.id = ce::ActorId{"user"};
+    user.strategy = ce::AuthStrategy::Simple;
+
+    ce::AuthStep login;
+    login.id = "login";
+    login.method = ce::HttpMethod::Post;
+    login.pathTemplate = "/api/v1/auth/login";
+    login.bodyTemplate = R"({email: "u@t.test"})";
+    login.expectStatus = 200;
+    login.extractions.push_back({"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
+    login.extractions.push_back(
+        {"refresh_token", "$.data.refreshToken", ce::Extraction::Source::JsonPath});
+    user.authSteps.push_back(std::move(login));
+
+    ce::SessionRefresh refresh;
+    refresh.method = ce::HttpMethod::Post;
+    refresh.pathTemplate = "/api/v1/auth/refresh";
+    refresh.bodyTemplate = R"({refresh_token: "{{user.refresh_token}}"})";
+    refresh.extractions.push_back(
+        {"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
+    user.refresh = std::move(refresh);
+
+    user.inject.headers["Authorization"] = "Bearer {{user.token}}";
+    p.actors[user.id] = std::move(user);
+    return p;
+}
+
+}  // namespace
+
+TEST(SchemaWriter, session_refresh_expect_status_scalar_round_trips) {
+    ScratchDir scratch;
+    auto original = makeProjectWithRefresh();
+    original.actors.at(ce::ActorId{"user"}).refresh->expectStatus = 204;
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& refresh = *reloaded->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_EQ(refresh.expectStatus, 204);
+    EXPECT_TRUE(refresh.expectStatusList.empty());
+}
+
+TEST(SchemaWriter, session_refresh_expect_status_list_round_trips) {
+    ScratchDir scratch;
+    auto original = makeProjectWithRefresh();
+    original.actors.at(ce::ActorId{"user"}).refresh->expectStatusList = {200, 202, 204};
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& refresh = *reloaded->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_FALSE(refresh.expectStatus.has_value());
+    EXPECT_EQ(refresh.expectStatusList, (std::vector<int>{200, 202, 204}));
+}
+
+TEST(SchemaWriter, session_refresh_without_expect_status_round_trips_cleanly) {
+    // Backwards-compat guarantee: pre-existing schemas with no
+    // `expect_status:` on the refresh block continue to round-trip
+    // without acquiring a stray field.
+    ScratchDir scratch;
+    auto original = makeProjectWithRefresh();
+    EXPECT_FALSE(original.actors.at(ce::ActorId{"user"}).refresh->expectStatus.has_value());
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& refresh = *reloaded->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_FALSE(refresh.expectStatus.has_value());
+    EXPECT_TRUE(refresh.expectStatusList.empty());
+}

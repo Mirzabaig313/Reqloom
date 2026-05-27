@@ -118,15 +118,45 @@ struct ExecutionEngine::Impl {
     }
 
     // Authenticate an actor if session is not live. Returns true on success.
+    //
+    // When TTL has expired and the actor declares a `session.refresh:`
+    // block, attempt the refresh first — it's lighter than a full
+    // re-login and preserves any session variables the refresh response
+    // doesn't re-extract. Refresh failure falls through to full re-auth
+    // so the chain still has a chance to succeed.
     bool ensureSession(const Actor& actor,
                        RunContext& ctx,
                        const ResolveContext& rctx,
-                       RunId /*runId*/) {
-        auto existing = ctx.session(actor.id);
+                       RunId runId) {
+        const auto* existing = ctx.session(actor.id);
         if (existing && existing->state == ActorSession::State::Live) {
             const auto now = std::chrono::steady_clock::now();
             if (now < existing->expiresAt) {
                 return true;
+            }
+            // Expired — try `refresh:` first if the actor declares one
+            // and the existing session still holds the credential it
+            // needs (refresh_token / equivalent). The variable resolver
+            // reads from `ctx.session(actor)`, which still points at the
+            // old session here, so `{{actor.refresh_token}}` resolves.
+            if (actor.refresh) {
+                auto refreshed =
+                    runRefresh(actor, ctx, rctx, AuthDependencies{deps.http.get(), &varResolver});
+                if (refreshed) {
+                    ActorSession updated = *existing;
+                    for (auto& [k, v] : *refreshed) {
+                        updated.variables[k] = std::move(v);
+                    }
+                    updated.state = ActorSession::State::Live;
+                    updated.expiresAt = std::chrono::steady_clock::now() + actor.sessionTtl;
+                    ctx.putSession(actor.id, std::move(updated));
+                    emit(SessionRefreshed{runId,
+                                          actor.id,
+                                          SessionRefreshed::Trigger::Expiry,
+                                          std::chrono::system_clock::now()});
+                    return true;
+                }
+                // Refresh failed — fall through to full re-auth.
             }
         }
 
@@ -548,6 +578,70 @@ struct ExecutionEngine::Impl {
         }
 
         result.attempts = attemptCount;
+
+        // 401-recovery: if the response says "your session is no longer
+        // valid", try re-authenticating once and retry the operation.
+        // Only fires when:
+        //   - the op has an actor (otherwise there's nothing to refresh)
+        //   - the response is a real HTTP 401 (not a redirected 200)
+        //   - the user's `expect_status:` doesn't already include 401
+        //     (some flows test 401 explicitly — don't fight them)
+        // Emits SessionRefreshed{Trigger::Unauthorized} so subscribers
+        // can surface this in the timeline UI.
+        const auto userExpects401 = [&]() {
+            if (!op.expectStatusList.empty()) {
+                return std::find(op.expectStatusList.begin(), op.expectStatusList.end(), 401) !=
+                       op.expectStatusList.end();
+            }
+            return op.expectStatus.has_value() && *op.expectStatus == 401;
+        }();
+
+        if (httpResp && httpResp->status == 401 && !op.actor.value.empty() && !userExpects401) {
+            auto actorIt = project.actors.find(op.actor);
+            if (actorIt != project.actors.end()) {
+                ctx.invalidateSession(op.actor);
+                if (ensureSession(actorIt->second, ctx, rctx, runId)) {
+                    emit(SessionRefreshed{runId,
+                                          op.actor,
+                                          SessionRefreshed::Trigger::Unauthorized,
+                                          std::chrono::system_clock::now()});
+
+                    // Rebuild the actor-injected headers with the new
+                    // session. Op-declared headers are re-resolved too —
+                    // `Authorization: Bearer {{user.token}}` referenced
+                    // the OLD token in the first attempt's req.
+                    for (const auto& [k, v] : op.headers) {
+                        req.headers[k] = varResolver.resolve(v, ctx, rctx).output;
+                    }
+                    for (const auto& [k, v] : actorIt->second.inject.headers) {
+                        req.headers[k] = varResolver.resolve(v, ctx, rctx).output;
+                    }
+                    if (auto* session = ctx.session(op.actor); session) {
+                        for (const auto& [k, v] : session->injectHeaders) {
+                            req.headers[k] = v;
+                        }
+                    }
+
+                    auto retryResp = deps.http->send(req);
+                    ++attemptCount;
+                    result.attempts = attemptCount;
+                    if (retryResp) {
+                        httpResp = std::move(*retryResp);
+                    } else {
+                        // Network error on the retry — surface the new
+                        // error rather than the original 401 so users
+                        // see what changed.
+                        result.status = StepResult::Status::Failed;
+                        result.error = retryResp.error().code;
+                        result.detail = retryResp.error().detail;
+                        auto elapsed = std::chrono::steady_clock::now() - startTime;
+                        result.elapsed =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                        return result;
+                    }
+                }
+            }
+        }
 
         // When expectStatusList is non-empty it takes precedence over the
         // singular expectStatus field; the latter is the legacy single-value

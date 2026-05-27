@@ -367,6 +367,19 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             if (r["body"]) {
                 refresh.bodyTemplate = nodeToJsonString(r["body"]);
             }
+            // expect_status accepts a scalar or an array — same surface
+            // as Operation's field. When unset, runRefresh treats any
+            // 2xx as success (backwards-compatible default).
+            if (r["expect_status"]) {
+                const auto& es = r["expect_status"];
+                if (es.IsSequence()) {
+                    for (const auto& s : es) {
+                        refresh.expectStatusList.push_back(s.as<int>());
+                    }
+                } else if (es.IsScalar()) {
+                    refresh.expectStatus = es.as<int>();
+                }
+            }
             refresh.extractions = parseExtractions(r["extract"]);
             actor.refresh = std::move(refresh);
         }

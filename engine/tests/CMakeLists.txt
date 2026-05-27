@@ -55,6 +55,7 @@ add_executable(chainapi-engine-integration-tests
     integration/PollingTest.cpp
     integration/RunOptionsTest.cpp
     integration/MultipartTest.cpp
+    integration/SessionRefreshTest.cpp
 )
 target_link_libraries(chainapi-engine-integration-tests
     PRIVATE

@@ -41,13 +41,25 @@ struct AuthStep {
     std::vector<Extraction> extractions;
 };
 
-/// Optional refresh block.
+/// Optional refresh block. Used when the actor's session expires; the
+/// engine sends this single request and merges its extractions into the
+/// existing session, sidestepping a full re-login.
 struct SessionRefresh {
     HttpMethod method{HttpMethod::Post};
     std::string pathTemplate;
     std::map<std::string, std::string> headers;
     std::optional<std::string> bodyTemplate;
     std::vector<Extraction> extractions;
+
+    /// Singular `expect_status:` value. Used only when
+    /// `expectStatusList` is empty.
+    std::optional<int> expectStatus;
+
+    /// Multi-value `expect_status: [200, 204]`. When non-empty takes
+    /// precedence over `expectStatus`. When both are unset, runRefresh
+    /// accepts any 2xx as success — backwards-compatible with schemas
+    /// that predate this field.
+    std::vector<int> expectStatusList;
 };
 
 /// Headers (and other request artifacts) injected into every operation

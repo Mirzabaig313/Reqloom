@@ -351,6 +351,15 @@ std::string emitActor(const Actor& actor) {
         if (actor.refresh->bodyTemplate) {
             e << YAML::Key << "body" << YAML::Value << *actor.refresh->bodyTemplate;
         }
+        // List form takes precedence over scalar — same convention as
+        // operation-level expect_status.
+        if (!actor.refresh->expectStatusList.empty()) {
+            e << YAML::Key << "expect_status" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+            for (int s : actor.refresh->expectStatusList) e << s;
+            e << YAML::EndSeq;
+        } else if (actor.refresh->expectStatus) {
+            e << YAML::Key << "expect_status" << YAML::Value << *actor.refresh->expectStatus;
+        }
         emitExtractions(e, actor.refresh->extractions);
         e << YAML::EndMap;
     }
