@@ -48,6 +48,7 @@ target_include_directories(chainapi-engine-infrastructure
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 find_package(OpenSSL REQUIRED)
+find_package(qjs CONFIG REQUIRED)
 target_link_libraries(chainapi-engine-infrastructure
     PUBLIC  chainapi-engine-domain
     PRIVATE
@@ -57,6 +58,7 @@ target_link_libraries(chainapi-engine-infrastructure
         SQLite3::SQLite3
         nlohmann_json::nlohmann_json
         OpenSSL::Crypto
+        qjs
 )
 if(TARGET Qt6Keychain::Qt6Keychain)
     target_link_libraries(chainapi-engine-infrastructure

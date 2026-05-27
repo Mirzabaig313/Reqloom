@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -70,6 +71,9 @@ struct CapturedRequest {
     std::string method;
     std::string contentType;
     std::string rawBody;
+    /// All non-built-in request headers as a JSON object, lower-cased
+    /// keys to defang case-sensitivity assertions in the test.
+    nlohmann::json headers = nlohmann::json::object();
     /// One entry per multipart part. `filename` is empty for text fields.
     nlohmann::json parts = nlohmann::json::array();
 };
@@ -147,6 +151,12 @@ void registerRoute(httplib::Server& server, const Route& route, CaptureStore& ca
             auto ctIt = req.headers.find("Content-Type");
             if (ctIt != req.headers.end()) cap.contentType = ctIt->second;
             cap.rawBody = req.body;
+            for (const auto& [k, v] : req.headers) {
+                std::string key = k;
+                for (auto& ch : key)
+                    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                cap.headers[key] = v;
+            }
             for (const auto& [name, fd] : req.form.fields) {
                 nlohmann::json part;
                 part["name"] = name;
@@ -253,7 +263,9 @@ int main(int argc, char** argv) {
                        out["found"] = true;
                        out["method"] = it->second.method;
                        out["content_type"] = it->second.contentType;
+                       out["raw_body"] = it->second.rawBody;
                        out["raw_body_size"] = it->second.rawBody.size();
+                       out["headers"] = it->second.headers;
                        out["parts"] = it->second.parts;
                    }
                    res.status = 200;

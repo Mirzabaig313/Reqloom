@@ -37,6 +37,52 @@ namespace {
 
 using namespace codecs;
 
+/// Build a HookContext snapshot from current run state. Per AGENTS.md
+/// hooks get read-only access to actor variables; we copy them so the
+/// hook can't reach back into RunContext via reference.
+[[nodiscard]] HookContext buildHookContext(const HttpRequest& req,
+                                           const RunContext& ctx,
+                                           const ResolveContext& rctx,
+                                           const Project& project) {
+    HookContext out;
+    out.request.method = req.method;
+    out.request.url = req.url;
+    out.request.headers = req.headers;
+    out.request.body = req.body;
+
+    for (const auto& [actorId, _] : project.actors) {
+        if (auto* sess = ctx.session(actorId); sess) {
+            out.variables[actorId.value] = sess->variables;
+        }
+    }
+    out.env = rctx.envVars;
+    return out;
+}
+
+/// Convert HttpResponse's vector<pair> headers (curl preserves order
+/// and casing) into the map<string,string> the hook surface expects.
+[[nodiscard]] std::map<std::string, std::string> headersToMap(
+    const std::vector<std::pair<std::string, std::string>>& headers) {
+    std::map<std::string, std::string> out;
+    for (const auto& [k, v] : headers) {
+        out[k] = v;
+    }
+    return out;
+}
+
+/// Convert a hook-mutated header map back into vector<pair> form so the
+/// downstream pipeline (extraction, response viewer) sees the same shape
+/// it would have seen without the hook.
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> headersToVector(
+    const std::map<std::string, std::string>& headers) {
+    std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(headers.size());
+    for (const auto& [k, v] : headers) {
+        out.emplace_back(k, v);
+    }
+    return out;
+}
+
 }  // namespace
 
 struct ExecutionEngine::Impl {
@@ -417,6 +463,26 @@ struct ExecutionEngine::Impl {
             req.timeout = *op.timeout;
         }
 
+        // pre_request hook: runs after the request is fully built but
+        // before any signing or send. Hooks may mutate url/headers/body.
+        // Method is locked once the operation type-selects it; signing
+        // strategies that depend on method see the post-hook value.
+        if (op.preRequestScript && deps.hooks) {
+            auto hctx = buildHookContext(req, ctx, rctx, project);
+            auto outcome = deps.hooks->runPreRequest(*op.preRequestScript, std::move(hctx));
+            if (!outcome) {
+                result.status = StepResult::Status::Failed;
+                result.error = outcome.error().code;
+                result.detail = outcome.error().detail;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+            req.url = std::move(outcome->mutatedRequest.url);
+            req.headers = std::move(outcome->mutatedRequest.headers);
+            req.body = std::move(outcome->mutatedRequest.body);
+        }
+
         const int maxAttempts = op.retry.maxAttempts;
         std::optional<HttpResponse> httpResp;
         ChainApiError lastError{};
@@ -525,6 +591,34 @@ struct ExecutionEngine::Impl {
                 return result;
             }
             httpResp = std::move(*pollResult);
+        }
+
+        // post_response hook: runs after the final response (post-poll if
+        // applicable) but before extraction. Hooks may mutate
+        // status/headers/body — extractions then see the mutated body.
+        // Useful for decrypting / unwrapping vendor envelopes.
+        if (httpResp && op.postResponseScript && deps.hooks) {
+            auto hctx = buildHookContext(req, ctx, rctx, project);
+            HookResponseView respView;
+            respView.status = httpResp->status;
+            respView.headers = headersToMap(httpResp->headers);
+            respView.body = httpResp->body;
+            hctx.response = std::move(respView);
+
+            auto outcome = deps.hooks->runPostResponse(*op.postResponseScript, std::move(hctx));
+            if (!outcome) {
+                result.status = StepResult::Status::Failed;
+                result.error = outcome.error().code;
+                result.detail = outcome.error().detail;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+            if (outcome->mutatedResponse) {
+                httpResp->status = outcome->mutatedResponse->status;
+                httpResp->headers = headersToVector(outcome->mutatedResponse->headers);
+                httpResp->body = std::move(outcome->mutatedResponse->body);
+            }
         }
 
         if (httpResp && !op.extractions.empty()) {
