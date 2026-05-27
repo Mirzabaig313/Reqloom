@@ -25,6 +25,7 @@ add_executable(chainapi-engine-unit-tests
     unit/TopologyTest.cpp
     unit/DependencyResolverTest.cpp
     unit/CodecsTest.cpp
+    unit/CookiesTest.cpp
     unit/MultipartBuilderTest.cpp
     unit/QuickJsHookRunnerTest.cpp
     unit/SchemaParserMultiFileTest.cpp
@@ -56,6 +57,8 @@ add_executable(chainapi-engine-integration-tests
     integration/RunOptionsTest.cpp
     integration/MultipartTest.cpp
     integration/SessionRefreshTest.cpp
+    integration/ExtractionSourcesTest.cpp
+    integration/CookieJarTest.cpp
 )
 target_link_libraries(chainapi-engine-integration-tests
     PRIVATE

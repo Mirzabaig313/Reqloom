@@ -110,8 +110,23 @@ struct CaptureStore {
             route.body = r["body"].is_string() ? r["body"].get<std::string>() : r["body"].dump();
         }
         if (r.contains("headers")) {
-            for (auto it = r["headers"].begin(); it != r["headers"].end(); ++it) {
-                route.headers.emplace_back(it.key(), it.value().get<std::string>());
+            // Two accepted shapes:
+            //   - Object {"Name": "value"} — one header per name (default).
+            //   - Array of [name, value] pairs — duplicate names allowed,
+            //     used by tests that need the server to emit multiple
+            //     Set-Cookie headers in one response.
+            const auto& h = r["headers"];
+            if (h.is_array()) {
+                for (const auto& pair : h) {
+                    if (pair.is_array() && pair.size() == 2) {
+                        route.headers.emplace_back(pair[0].get<std::string>(),
+                                                   pair[1].get<std::string>());
+                    }
+                }
+            } else if (h.is_object()) {
+                for (auto it = h.begin(); it != h.end(); ++it) {
+                    route.headers.emplace_back(it.key(), it.value().get<std::string>());
+                }
             }
         }
         if (r.contains("sequence") && r["sequence"].is_array()) {
@@ -123,8 +138,18 @@ struct CaptureStore {
                         s["body"].is_string() ? s["body"].get<std::string>() : s["body"].dump();
                 }
                 if (s.contains("headers")) {
-                    for (auto it = s["headers"].begin(); it != s["headers"].end(); ++it) {
-                        step.headers.emplace_back(it.key(), it.value().get<std::string>());
+                    const auto& sh = s["headers"];
+                    if (sh.is_array()) {
+                        for (const auto& pair : sh) {
+                            if (pair.is_array() && pair.size() == 2) {
+                                step.headers.emplace_back(pair[0].get<std::string>(),
+                                                          pair[1].get<std::string>());
+                            }
+                        }
+                    } else if (sh.is_object()) {
+                        for (auto it = sh.begin(); it != sh.end(); ++it) {
+                            step.headers.emplace_back(it.key(), it.value().get<std::string>());
+                        }
                     }
                 }
                 route.sequence.push_back(std::move(step));

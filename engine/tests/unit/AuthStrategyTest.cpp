@@ -1105,7 +1105,8 @@ TEST(AuthStrategy, aws_sigv4_optional_session_token_is_recorded_when_present) {
 
     ce::AuthDependencies deps{&http, &resolver};
     auto authn = ce::selectAuthenticator(actor, deps);
-    auto result = authn->authenticate(actor, ce::RunContext{}, ce::ResolveContext{});
+    ce::RunContext ctx;
+    auto result = authn->authenticate(actor, ctx, ce::ResolveContext{});
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->variables.at("session_token"), "FwoGZXIvYXdzEJP");
@@ -1119,7 +1120,8 @@ TEST(AuthStrategy, aws_sigv4_rejects_missing_access_key) {
 
     ce::AuthDependencies deps{&http, &resolver};
     auto authn = ce::selectAuthenticator(actor, deps);
-    auto result = authn->authenticate(actor, ce::RunContext{}, ce::ResolveContext{});
+    ce::RunContext ctx;
+    auto result = authn->authenticate(actor, ctx, ce::ResolveContext{});
 
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
@@ -1138,7 +1140,8 @@ TEST(AuthStrategy, aws_sigv4_resolves_secret_credentials) {
     ce::ResolveContext rctx;
     rctx.secrets["AWS_ACCESS_KEY"] = "AKIA-from-secret";
     rctx.secrets["AWS_SECRET_KEY"] = "secret-from-store";
-    auto result = authn->authenticate(actor, ce::RunContext{}, rctx);
+    ce::RunContext ctx;
+    auto result = authn->authenticate(actor, ctx, rctx);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->variables.at("access_key"), "AKIA-from-secret");

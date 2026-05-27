@@ -79,6 +79,7 @@ add_library(chainapi-engine-application OBJECT
     src/application/PredicateEvaluator.cpp
     src/application/Verifier.cpp
     src/application/AuthStrategy.cpp
+    src/application/Cookies.cpp
     src/application/JsonExtraction.cpp
     src/application/MultipartBuilder.cpp
     src/application/RequestSigners.cpp

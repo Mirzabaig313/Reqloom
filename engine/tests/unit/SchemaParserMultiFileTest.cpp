@@ -1001,3 +1001,133 @@ TEST(SchemaParserVersion, missing_file_returns_yaml_parse_error) {
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::YamlParse);
 }
+
+// ─── Extraction source auto-detection ──────────────────────────────────────
+//
+// The parser tags an Extraction's source kind based on its `sourcePath`
+// prefix. Hand-written schemas don't carry an explicit `source:` field
+// today, so this convention is the only way headers / cookies / status
+// codes light up.
+
+TEST(SchemaParserExtractionSource, jsonpath_is_the_default) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: ExtSrcDefault
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/thing
+        actor: user
+        extract:
+          id: $.data.id
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& ext =
+        result->resources.at(ce::ResourceId{"thing"}).operations.at("get").extractions[0];
+    EXPECT_EQ(ext.source, ce::Extraction::Source::JsonPath);
+    EXPECT_EQ(ext.sourcePath, "$.data.id");
+}
+
+TEST(SchemaParserExtractionSource, dollar_headers_prefix_tags_header_source) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: ExtSrcHeader
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/thing
+        actor: user
+        extract:
+          location: $.headers.Location
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& ext =
+        result->resources.at(ce::ResourceId{"thing"}).operations.at("get").extractions[0];
+    EXPECT_EQ(ext.source, ce::Extraction::Source::Header);
+    EXPECT_EQ(ext.sourcePath, "$.headers.Location");
+}
+
+TEST(SchemaParserExtractionSource, dollar_cookies_prefix_tags_cookie_source) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: ExtSrcCookie
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/thing
+        actor: user
+        extract:
+          session: $.cookies.SESSIONID
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& ext =
+        result->resources.at(ce::ResourceId{"thing"}).operations.at("get").extractions[0];
+    EXPECT_EQ(ext.source, ce::Extraction::Source::Cookie);
+    EXPECT_EQ(ext.sourcePath, "$.cookies.SESSIONID");
+}
+
+TEST(SchemaParserExtractionSource, exact_dollar_status_code_tags_status_code_source) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: ExtSrcStatus
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/thing
+        actor: user
+        extract:
+          last_status: $.status_code
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& ext =
+        result->resources.at(ce::ResourceId{"thing"}).operations.at("get").extractions[0];
+    EXPECT_EQ(ext.source, ce::Extraction::Source::StatusCode);
+}
