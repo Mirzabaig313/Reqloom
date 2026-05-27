@@ -119,7 +119,7 @@ public:
         std::vector<Token> out;
         while (pos_ < src_.size()) {
             const char c = src_[pos_];
-            if (std::isspace(static_cast<unsigned char>(c))) {
+            if (std::isspace(static_cast<unsigned char>(c)) != 0) {
                 ++pos_;
                 continue;
             }
@@ -163,15 +163,15 @@ public:
                 } else {
                     return std::unexpected(std::move(t).error());
                 }
-            } else if (std::isdigit(static_cast<unsigned char>(c)) ||
+            } else if ((std::isdigit(static_cast<unsigned char>(c)) != 0) ||
                        (c == '-' && pos_ + 1 < src_.size() &&
-                        std::isdigit(static_cast<unsigned char>(src_[pos_ + 1])))) {
+                        (std::isdigit(static_cast<unsigned char>(src_[pos_ + 1])) != 0))) {
                 if (auto t = readNumber(); t) {
                     out.push_back(std::move(*t));
                 } else {
                     return std::unexpected(std::move(t).error());
                 }
-            } else if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+            } else if ((std::isalpha(static_cast<unsigned char>(c)) != 0) || c == '_') {
                 out.push_back(readIdentOrKeyword());
             } else {
                 return std::unexpected("unexpected character at position " + std::to_string(pos_));
@@ -267,7 +267,7 @@ private:
         bool sawDot = false;
         while (pos_ < src_.size()) {
             const char c = src_[pos_];
-            if (std::isdigit(static_cast<unsigned char>(c))) {
+            if (std::isdigit(static_cast<unsigned char>(c)) != 0) {
                 sawDigit = true;
                 ++pos_;
             } else if (c == '.' && !sawDot) {
@@ -287,7 +287,7 @@ private:
         const auto start = pos_;
         while (pos_ < src_.size()) {
             const char c = src_[pos_];
-            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
+            if ((std::isalnum(static_cast<unsigned char>(c)) != 0) || c == '_') {
                 ++pos_;
             } else {
                 break;
@@ -390,7 +390,7 @@ private:
             // Bare term — must be a JSONPath truthiness check.
             // Bare literals cannot stand on their own as a predicate.
             const auto* path = std::get_if<JsonPathNode>(&((*lhs)->kind));
-            if (!path) {
+            if (path == nullptr) {
                 return std::unexpected("expected comparison operator at position " +
                                        std::to_string(peek().pos));
             }
@@ -555,7 +555,7 @@ private:
         return out;
     }
 
-    const Token& peek() const { return toks_[idx_]; }
+    [[nodiscard]] const Token& peek() const { return toks_[idx_]; }
     Token consume() { return toks_[idx_++]; }
 
     std::vector<Token> toks_;

@@ -1,6 +1,7 @@
 // Authenticator — strategy dispatch and concrete implementations.
 #include "AuthStrategy.h"
 #include "Cookies.h"
+#include "HeaderMasking.h"
 #include "JsonExtraction.h"
 
 #include "../domain/Codecs.h"
@@ -8,7 +9,9 @@
 #include "../infrastructure/http/HttpClient.h"
 
 #include <chainapi/engine/Actor.h>
+#include <chainapi/engine/Events.h>
 
+#include <chrono>
 #include <expected>
 #include <string>
 #include <string_view>
@@ -21,6 +24,33 @@ namespace {
 
 using namespace codecs;
 
+// Build a vector<pair> view of a request's header map for emission into
+// the event stream. Inline rather than shared with ExecutionEngine.cpp
+// so the two callers stay independent — auth events tag against the
+// parent step's runId via the bound EventSink, not the executor's
+// internal helpers.
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> snapshotMaskedRequestHeaders(
+    const HttpRequest& req) {
+    auto masked = maskHeaders(req.headers);
+    std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(masked.size());
+    for (const auto& [k, v] : masked) {
+        out.emplace_back(k, v);
+    }
+    return out;
+}
+
+[[nodiscard]] std::size_t requestBodySize(const HttpRequest& req) noexcept {
+    if (!req.multipart.empty()) {
+        std::size_t total = 0;
+        for (const auto& part : req.multipart) {
+            total += part.value.size();
+        }
+        return total;
+    }
+    return req.body ? req.body->size() : 0U;
+}
+
 // Implements AuthStrategy::Simple and AuthStrategy::Chain. Walks actor.authSteps
 // in order; each step's response can extract variables for subsequent steps.
 class ChainAuthenticator final : public Authenticator {
@@ -32,7 +62,7 @@ public:
                                                             const ResolveContext& rctx) override {
         // nullptr here means a programming error in the engine, not a
         // user-triggerable condition.
-        if (!deps_.http || !deps_.varResolver) {
+        if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
             return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
                                                  ErrorClass::Auth,
                                                  "auth: authenticator wired without dependencies"});
@@ -70,12 +100,36 @@ public:
                 }
             }
 
+            if (deps_.emit) {
+                // The runId / stepIndex were stamped into AuthDependencies
+                // by the executor; auth-side events ride on the parent
+                // step's index so the desktop timeline groups them under
+                // the operation that triggered the auth.
+                deps_.emit(RequestPrepared{deps_.runId,
+                                           deps_.stepIndex,
+                                           req.method,
+                                           req.url,
+                                           snapshotMaskedRequestHeaders(req),
+                                           requestBodySize(req),
+                                           std::chrono::system_clock::now()});
+            }
+
             auto response = deps_.http->send(req);
             if (!response) {
                 return std::unexpected(
                     ChainApiError{ErrorCode::SessionRefreshFailed,
                                   ErrorClass::Auth,
                                   "auth: network error during step '" + step.id + "'"});
+            }
+
+            if (deps_.emit) {
+                deps_.emit(ResponseReceived{deps_.runId,
+                                            deps_.stepIndex,
+                                            response->status,
+                                            maskHeaders(response->headers),
+                                            response->body.size(),
+                                            response->elapsed,
+                                            std::chrono::system_clock::now()});
             }
 
             // Absorb Set-Cookie headers from the auth response into the
@@ -127,7 +181,7 @@ public:
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
                                                             const ResolveContext& rctx) override {
-        if (!deps_.varResolver) {
+        if (deps_.varResolver == nullptr) {
             return std::unexpected(
                 ChainApiError{ErrorCode::SessionRefreshFailed,
                               ErrorClass::Auth,
@@ -187,7 +241,7 @@ public:
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
                                                             const ResolveContext& rctx) override {
-        if (!deps_.varResolver) {
+        if (deps_.varResolver == nullptr) {
             return std::unexpected(
                 ChainApiError{ErrorCode::SessionRefreshFailed,
                               ErrorClass::Auth,
@@ -373,7 +427,7 @@ public:
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
                                                             const ResolveContext& rctx) override {
-        if (!deps_.http || !deps_.varResolver) {
+        if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
             return std::unexpected(
                 ChainApiError{ErrorCode::SessionRefreshFailed,
                               ErrorClass::Auth,
@@ -431,7 +485,7 @@ public:
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
                                                             const ResolveContext& rctx) override {
-        if (!deps_.http || !deps_.varResolver) {
+        if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
             return std::unexpected(
                 ChainApiError{ErrorCode::SessionRefreshFailed,
                               ErrorClass::Auth,
@@ -501,7 +555,7 @@ public:
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
                                                             const ResolveContext& rctx) override {
-        if (!deps_.varResolver) {
+        if (deps_.varResolver == nullptr) {
             return std::unexpected(
                 ChainApiError{ErrorCode::SessionRefreshFailed,
                               ErrorClass::Auth,
@@ -582,7 +636,7 @@ public:
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
                                                             const ResolveContext& rctx) override {
-        if (!deps_.varResolver) {
+        if (deps_.varResolver == nullptr) {
             return std::unexpected(
                 ChainApiError{ErrorCode::SessionRefreshFailed,
                               ErrorClass::Auth,
@@ -665,7 +719,7 @@ std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
             ErrorClass::Auth,
             "refresh: actor '" + actor.id.value + "' has no `session.refresh:` block defined"});
     }
-    if (!deps.http || !deps.varResolver) {
+    if ((deps.http == nullptr) || (deps.varResolver == nullptr)) {
         return std::unexpected(ChainApiError{
             ErrorCode::SessionRefreshFailed, ErrorClass::Auth, "refresh: dependencies not wired"});
     }
@@ -698,11 +752,31 @@ std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
         }
     }
 
+    if (deps.emit) {
+        deps.emit(RequestPrepared{deps.runId,
+                                  deps.stepIndex,
+                                  req.method,
+                                  req.url,
+                                  snapshotMaskedRequestHeaders(req),
+                                  requestBodySize(req),
+                                  std::chrono::system_clock::now()});
+    }
+
     auto response = deps.http->send(req);
     if (!response) {
         return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
                                              ErrorClass::Auth,
                                              "refresh: network error: " + response.error().detail});
+    }
+
+    if (deps.emit) {
+        deps.emit(ResponseReceived{deps.runId,
+                                   deps.stepIndex,
+                                   response->status,
+                                   maskHeaders(response->headers),
+                                   response->body.size(),
+                                   response->elapsed,
+                                   std::chrono::system_clock::now()});
     }
 
     // Absorb Set-Cookie headers from the refresh response — same

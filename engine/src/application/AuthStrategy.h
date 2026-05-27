@@ -4,9 +4,11 @@
 
 #include <chainapi/engine/Actor.h>
 #include <chainapi/engine/ErrorCodes.h>
+#include <chainapi/engine/Events.h>
 #include <chainapi/engine/RunContext.h>
 
 #include <expected>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -17,11 +19,29 @@ class HttpClient;        // forward — defined in infrastructure
 class VariableResolver;  // forward — defined in domain
 struct ResolveContext;   // forward — defined in domain (VariableResolver.h)
 
+/// Sink for engine-side observability events emitted from inside auth
+/// strategies and the refresh path. The executor binds a closure that
+/// dispatches into the engine's emit loop. Empty (default) sink means
+/// "drop the event"; tests that don't care about events leave it
+/// default-constructed.
+using EventSink = std::function<void(const RunEvent&)>;
+
 /// Common dependencies every authenticator needs. Non-owning — must not
 /// outlive the engine that created it.
 struct AuthDependencies {
     HttpClient* http{nullptr};
     VariableResolver* varResolver{nullptr};
+    /// Emit observability events from inside the auth flow. Header
+    /// values are masked by the auth strategy before reaching the
+    /// sink — same contract as the executor's main path.
+    EventSink emit{};
+    /// runId / stepIndex to stamp on auth-side RequestPrepared and
+    /// ResponseReceived events. The desktop timeline groups by these
+    /// fields, so auth events ride on the parent step's index — they
+    /// surface as additional rows under the operation that triggered
+    /// the auth flow.
+    RunId runId{};
+    std::size_t stepIndex{0};
 };
 
 class Authenticator {

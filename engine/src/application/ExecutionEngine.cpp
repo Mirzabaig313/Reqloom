@@ -98,7 +98,7 @@ using namespace codecs;
         }
         return total;
     }
-    return req.body ? req.body->size() : 0u;
+    return req.body ? req.body->size() : 0U;
 }
 
 }  // namespace
@@ -161,17 +161,25 @@ struct ExecutionEngine::Impl {
     bool ensureSession(const Actor& actor,
                        RunContext& ctx,
                        const ResolveContext& rctx,
-                       RunId runId) {
+                       RunId runId,
+                       std::size_t stepIndex) {
+        // EventSink closure passed into auth strategies. Captures `this`
+        // by reference so the closure forwards into Impl::emit, which
+        // dispatches to subscribers under the existing snapshot lock.
+        auto sink = [this](const RunEvent& ev) {
+            this->emit(ev);
+        };
+
         const auto* existing = ctx.session(actor.id);
-        if (existing && existing->state == ActorSession::State::Live) {
+        if ((existing != nullptr) && existing->state == ActorSession::State::Live) {
             const auto now = std::chrono::steady_clock::now();
             if (now < existing->expiresAt) {
                 return true;
             }
 
             if (actor.refresh) {
-                auto refreshed =
-                    runRefresh(actor, ctx, rctx, AuthDependencies{deps.http.get(), &varResolver});
+                AuthDependencies refreshDeps{deps.http.get(), &varResolver, sink, runId, stepIndex};
+                auto refreshed = runRefresh(actor, ctx, rctx, refreshDeps);
                 if (refreshed) {
                     ActorSession updated = *existing;
                     for (auto& [k, v] : *refreshed) {
@@ -190,8 +198,8 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        auto authenticator =
-            selectAuthenticator(actor, AuthDependencies{deps.http.get(), &varResolver});
+        AuthDependencies authDeps{deps.http.get(), &varResolver, sink, runId, stepIndex};
+        auto authenticator = selectAuthenticator(actor, std::move(authDeps));
         if (!authenticator) {
             return false;
         }
@@ -258,7 +266,7 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        if (pollActor && !ensureSession(*pollActor, ctx, rctx, runId)) {
+        if ((pollActor != nullptr) && !ensureSession(*pollActor, ctx, rctx, runId, stepIndex)) {
             return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
                                                  ErrorClass::Auth,
                                                  "poll_until: actor session refresh failed"});
@@ -285,7 +293,7 @@ struct ExecutionEngine::Impl {
                     "poll_until: unresolved variable in path: " + resolvedPath.unresolved.front()});
             }
             req.url = baseUrl + resolvedPath.output;
-            if (pollActor) {
+            if (pollActor != nullptr) {
                 for (const auto& [k, v] : pollActor->inject.headers) {
                     auto resolved = varResolver.resolve(v, ctx, rctx);
                     req.headers[k] = resolved.output;
@@ -320,7 +328,7 @@ struct ExecutionEngine::Impl {
             }
 
             // Per-request signing done after inject merge so the signer sees the final shape.
-            if (pollActor) {
+            if (pollActor != nullptr) {
                 if (const auto* session = ctx.session(pollActor->id); session) {
                     if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
                         if (!signOAuth1Request(req, *session)) {
@@ -369,7 +377,7 @@ struct ExecutionEngine::Impl {
             // Pollers that issue stateful status checks (rare but real)
             // can rotate session cookies — without absorbing them here
             // a follow-up op would send a stale cookie.
-            if (pollActor) {
+            if (pollActor != nullptr) {
                 absorbResponseCookies(lastResponse.headers, pollActor->id, ctx);
             }
 
@@ -471,7 +479,7 @@ struct ExecutionEngine::Impl {
         if (!op.actor.value.empty()) {
             auto actorIt = project.actors.find(op.actor);
             if (actorIt != project.actors.end()) {
-                if (!ensureSession(actorIt->second, ctx, rctx, runId)) {
+                if (!ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
                     result.status = StepResult::Status::Failed;
                     result.error = ErrorCode::SessionRefreshFailed;
                     return result;
@@ -718,7 +726,7 @@ struct ExecutionEngine::Impl {
             auto actorIt = project.actors.find(op.actor);
             if (actorIt != project.actors.end()) {
                 ctx.invalidateSession(op.actor);
-                if (ensureSession(actorIt->second, ctx, rctx, runId)) {
+                if (ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
                     emit(SessionRefreshed{runId,
                                           op.actor,
                                           SessionRefreshed::Trigger::Unauthorized,
