@@ -77,3 +77,15 @@ resources:
         headers:
           Cookie: "manual=override"
         expect_status: 200
+
+      # Same explicit Cookie, but the mock SUT first returns 401 to
+      # force a 401-recovery. After re-auth, the retry must STILL
+      # carry `manual=override` (not a jar-derived cookie). Pre-fix
+      # the recovery block erased and re-emitted Cookie from the jar.
+      send_with_recovery:
+        method: GET
+        path: /api/v1/manual-401
+        actor: alice
+        headers:
+          Cookie: "manual=override"
+        expect_status: 200

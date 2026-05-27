@@ -155,3 +155,48 @@ TEST_F(CookieJarFixture, user_set_cookie_header_wins_over_jar) {
     EXPECT_EQ(cookieHeader, "manual=override")
         << "user-set Cookie header should be sent verbatim; full Cookie header: " << cookieHeader;
 }
+
+TEST_F(CookieJarFixture, user_set_cookie_survives_401_recovery) {
+    // Regression test for an issue where the 401-recovery path in
+    // ExecutionEngine erased and re-emitted the Cookie header from the
+    // jar, clobbering an explicit `headers.Cookie:` on the operation.
+    // The first-attempt path correctly guarded with
+    // `if (!req.headers.contains("Cookie"))`; the recovery path did
+    // not. Mirror the precedence: user-set Cookie wins on the retry too.
+    auto project = loadProject(harness_->baseUrl());
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+
+    // Populate alice's jar so there's a real choice between jar and
+    // user-set Cookie. Without a populated jar the bug would be
+    // invisible — the retry would happen to send `manual=override`
+    // because the jar was empty.
+    auto created = engine.run(project, ce::OperationId{"widget.create"}, ctx);
+    ASSERT_TRUE(created.has_value()) << (created ? "" : created.error().detail);
+    ASSERT_TRUE(created->succeeded());
+
+    auto recovered = engine.run(project, ce::OperationId{"manual_cookie.send_with_recovery"}, ctx);
+    ASSERT_TRUE(recovered.has_value()) << (recovered ? "" : recovered.error().detail);
+    ASSERT_TRUE(recovered->succeeded()) << "401-recovery did not produce a successful retry";
+
+    // The mock SUT served 401 then 200 — confirm we got the second
+    // response (post-recovery payload).
+    bool sawTwoAttempts = false;
+    for (const auto& step : recovered->steps) {
+        if (step.op.value == "manual_cookie.send_with_recovery" && !step.pollAttempt) {
+            EXPECT_EQ(step.attempts, 2);
+            sawTwoAttempts = true;
+        }
+    }
+    EXPECT_TRUE(sawTwoAttempts);
+
+    // The retry's Cookie header must still be exactly `manual=override`.
+    // Pre-fix, the recovery code erased Cookie and emitted from the jar
+    // (which contained alice's auth_marker, session, csrf...).
+    auto cap = fetchLastRequest(harness_->baseUrl(), "/api/v1/manual-401");
+    ASSERT_TRUE(cap["found"].get<bool>());
+    const std::string cookieHeader = cap["headers"]["cookie"].get<std::string>();
+    EXPECT_EQ(cookieHeader, "manual=override")
+        << "401-recovery clobbered user-set Cookie with jar contents; full Cookie: "
+        << cookieHeader;
+}

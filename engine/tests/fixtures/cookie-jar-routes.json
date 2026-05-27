@@ -77,6 +77,26 @@
                     "ok": true
                 }
             }
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/manual-401",
+            "sequence": [
+                {
+                    "status": 401,
+                    "body": {
+                        "error": "expired"
+                    }
+                },
+                {
+                    "status": 200,
+                    "body": {
+                        "data": {
+                            "ok": "after-recovery"
+                        }
+                    }
+                }
+            ]
         }
     ]
 }
