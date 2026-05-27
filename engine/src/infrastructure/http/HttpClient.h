@@ -17,14 +17,11 @@ namespace chainapi::engine {
 
 /// One part of a multipart/form-data request body.
 ///
-/// `value` carries the in-memory bytes for text fields (name = "qty",
-/// value = "5"). `filePath` carries an absolute filesystem path for file
-/// parts. When `filePath` is set, libcurl reads the file directly via
-/// `curl_mime_filedata` — we never pre-load file bytes into memory.
+
 struct MultipartPart {
     std::string name;
     std::string value;
-    std::optional<std::string> filePath;
+    std::optional<std::string> filePath;     ///< diagnostic; presence implies file part
     std::optional<std::string> filename;     ///< explicit filename override
     std::optional<std::string> contentType;  ///< MIME type override
 

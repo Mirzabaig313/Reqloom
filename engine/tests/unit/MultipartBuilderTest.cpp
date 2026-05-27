@@ -155,6 +155,30 @@ TEST(MultipartBuilder, returns_upload_unreadable_when_at_prefix_has_empty_path) 
     EXPECT_EQ(body.error().code, ce::ErrorCode::UploadFileUnreadable);
 }
 
+TEST(MultipartBuilder, file_part_carries_preloaded_bytes) {
+    // Regression: file uploads used to be deferred to libcurl via
+    // curl_mime_filedata, which re-opened the path during send and
+    // exposed a TOCTOU window between MultipartBuilder's stat and
+    // libcurl's open. The fix loads bytes into MultipartPart::value at
+    // build time so the wire layer never re-touches the path. This
+    // test pins that behaviour: a file part now has both a filePath
+    // (informational) AND its bytes already in `value`.
+    TempFile tmp{"toctou-fixture-bytes-12345"};
+    std::map<std::string, std::string> fields{{"document", "@" + tmp.path().string()}};
+
+    auto body = ce::buildFormBody(fields, /*routeMultipart=*/true);
+    ASSERT_TRUE(body.has_value()) << (body ? "" : body.error().detail);
+
+    const auto* mb = std::get_if<ce::MultipartBody>(&*body);
+    ASSERT_NE(mb, nullptr);
+    ASSERT_EQ(mb->parts.size(), 1U);
+
+    const auto& p = mb->parts[0];
+    EXPECT_TRUE(p.isFile());
+    EXPECT_EQ(p.value, "toctou-fixture-bytes-12345")
+        << "file bytes must be pre-loaded into MultipartPart::value at build time";
+}
+
 TEST(MultipartBuilder, error_code_string_is_stable) {
     EXPECT_EQ(ce::toCodeString(ce::ErrorCode::UploadFileUnreadable), "E_UPLOAD_FILE_UNREADABLE");
 }
