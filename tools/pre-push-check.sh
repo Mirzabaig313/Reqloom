@@ -13,6 +13,7 @@
 #   5. boundary-check.sh (architectural firewall)
 #
 # Skip steps with environment variables when iterating:
+#   SKIP_FORMAT=1      skip the clang-format dry-run (CI still enforces)
 #   SKIP_CONFIGURE=1   skip the cmake --preset step (assume already configured)
 #   SKIP_TESTS=1       skip ctest
 #   SKIP_BOUNDARY=1    skip the boundary-check grep
@@ -54,29 +55,58 @@ ok() {
   green "✓ $*"
 }
 
-# 1. clang-format check (only on staged/changed C++ files)
+# 1. clang-format check — runs the same dry-run --Werror that CI runs, over
+#    every C++ source under engine/, cli/, desktop/, ipc/. This mirrors the
+#    static-checks job in azure-pipelines.yml / appveyor.yml. If CI would
+#    reject the push for formatting drift, this catches it locally.
 step "1/5  clang-format check"
-if command -v clang-format >/dev/null 2>&1; then
-  changed_files="$(git diff --name-only --cached --diff-filter=ACMR \
-    -- '*.cpp' '*.cc' '*.cxx' '*.h' '*.hpp')"
-  if [[ -n "$changed_files" ]]; then
-    drift=0
-    while IFS= read -r f; do
-      [[ -f "$f" ]] || continue
-      if ! diff -q "$f" <(clang-format "$f") >/dev/null 2>&1; then
-        echo "  drift: $f"
-        drift=1
-      fi
-    done <<< "$changed_files"
-    if [[ $drift -eq 1 ]]; then
-      fail "clang-format drift detected. Run tools/format.sh"
-    fi
-    ok "no clang-format drift"
-  else
-    ok "no staged C++ changes"
-  fi
+
+# Pin to clang-format-18 in the same order tools/format.sh does, so local
+# and CI never use different versions (which silently introduces drift).
+clang_format=""
+if [[ -n "${CLANG_FORMAT:-}" ]] && command -v "$CLANG_FORMAT" >/dev/null 2>&1; then
+  clang_format="$CLANG_FORMAT"
+elif command -v clang-format-18 >/dev/null 2>&1; then
+  clang_format="clang-format-18"
+elif [[ -x /opt/homebrew/opt/llvm@18/bin/clang-format ]]; then
+  clang_format="/opt/homebrew/opt/llvm@18/bin/clang-format"
+elif [[ -x /usr/local/opt/llvm@18/bin/clang-format ]]; then
+  clang_format="/usr/local/opt/llvm@18/bin/clang-format"
+elif command -v clang-format >/dev/null 2>&1; then
+  clang_format="clang-format"
+  yellow "  using \$(which clang-format), not pinned to v18 — CI may disagree"
+fi
+
+if [[ -z "$clang_format" ]]; then
+  fail "clang-format not on PATH. Install clang-format 18 (brew install llvm@18 on macOS, apt install clang-format-18 on Ubuntu) and ensure it's reachable. Override with SKIP_FORMAT=1 if you must (CI will still reject)."
+fi
+
+if [[ "${SKIP_FORMAT:-0}" == "1" ]]; then
+  yellow "  SKIP_FORMAT=1 — skipped (CI will still enforce formatting)"
 else
-  yellow "  clang-format not on PATH — skipped"
+  # Portable file collection (no `mapfile` — bash 3.2 on macOS lacks it).
+  cpp_files=()
+  while IFS= read -r line; do
+    cpp_files+=("$line")
+  done < <(
+    find engine cli desktop ipc \
+      \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' \) \
+      -not -path '*/build/*' \
+      2>/dev/null
+  )
+
+  if [[ ${#cpp_files[@]} -eq 0 ]]; then
+    ok "no C++ files to check"
+  else
+    # Don't pipe through `head` — that swallows clang-format's non-zero exit.
+    # Instead capture output, print first 50 lines, then fail on non-zero.
+    if format_output="$("$clang_format" --dry-run --Werror "${cpp_files[@]}" 2>&1)"; then
+      ok "no clang-format drift across ${#cpp_files[@]} files (using $("$clang_format" --version | head -n1))"
+    else
+      printf '%s\n' "$format_output" | head -50
+      fail "clang-format drift detected. Run tools/format.sh, commit, then re-push."
+    fi
+  fi
 fi
 
 # 2. CMake configure (skipped if SKIP_CONFIGURE=1)

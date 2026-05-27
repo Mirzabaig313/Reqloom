@@ -1,0 +1,87 @@
+name: Deploy Docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs-site/**"
+      - "doc/**"
+      - "prompts/import/**"
+      - ".github/workflows/deploy-docs.yml"
+
+  # Allow manual trigger from the Actions tab
+  workflow_dispatch:
+
+# Required for GitHub Pages deployment via Actions
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one in-flight deploy per branch; later pushes cancel earlier ones
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install
+        working-directory: docs-site
+        run: |
+          if [[ -f package-lock.json ]]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Determine site URL
+        id: site
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          if [[ "${REPO_NAME}" == "${REPO_OWNER}.github.io" ]]; then
+            # Org / user pages — served from the root.
+            echo "site=https://${REPO_OWNER}.github.io"   >> "$GITHUB_OUTPUT"
+            echo "base=/"                                  >> "$GITHUB_OUTPUT"
+          else
+            # Project pages — served under /<repo-name>/.
+            echo "site=https://${REPO_OWNER}.github.io"   >> "$GITHUB_OUTPUT"
+            echo "base=/${REPO_NAME}/"                     >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        working-directory: docs-site
+        env:
+          SITE: ${{ steps.site.outputs.site }}
+          BASE: ${{ steps.site.outputs.base }}
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,4 +1,4 @@
-// Resource — a domain entity exposed via API (PRD §4.2).
+// Resource — a domain entity exposed via API.
 #pragma once
 
 #include <chainapi/engine/Operation.h>

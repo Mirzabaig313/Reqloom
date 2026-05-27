@@ -4,42 +4,17 @@
   "description": "Workflow-aware API testing tool with auto-resolved dependency chains",
   "homepage": "https://github.com/chainapi/chainapi",
   "builtin-baseline": "aa40adda5352e87655b8583cfb2451d5e9e276fd",
+  "$qt-comment": "Qt 6.8 LTS is installed out-of-band (Qt online installer locally, aqtinstall in CI). Building qtbase from source via vcpkg adds 45-90 minutes per cold-cache CI run, which exceeded AppVeyor's 60-min-per-job cap. Pre-built Qt drops the cold cache to ~10-15 min total. CMAKE_PREFIX_PATH is set per-environment (see CMakePresets.json + tools/setup-qt.* / CI YAML).",
   "dependencies": [
-    {
-      "name": "qtbase",
-      "default-features": false,
-      "features": ["concurrent", "network", "sql"],
-      "platform": "!osx"
-    },
     "yaml-cpp",
     "curl",
+    "openssl",
     "sqlite3",
     "nlohmann-json",
-    {
-      "name": "qtkeychain",
-      "platform": "!osx"
-    },
+    "cpp-httplib",
     {
       "name": "gtest",
       "version>=": "1.14.0"
     }
-  ],
-  "features": {
-    "desktop": {
-      "description": "Build the Qt desktop UI",
-      "dependencies": [
-        {
-          "name": "qtbase",
-          "default-features": false,
-          "features": ["gui", "widgets"],
-          "platform": "!osx"
-        },
-        {
-          "name": "qtdeclarative",
-          "default-features": false,
-          "platform": "!osx"
-        }
-      ]
-    }
-  }
+  ]
 }

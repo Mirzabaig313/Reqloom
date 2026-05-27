@@ -2,6 +2,8 @@
 
 > **A workflow-aware API testing tool that auto-resolves request dependency chains.**
 
+📖 **Documentation: [chainapi.github.io](https://chainapi.github.io/)** (or the project-pages URL after first deploy)
+
 ChainAPI treats your API as a graph of resources, actors, and dependencies.
 Define each actor (auth flow) and each resource (endpoints + dependencies)
 once. Then click any endpoint and ChainAPI auto-resolves the entire chain —
@@ -44,13 +46,14 @@ boundary is mechanically enforced in three places:
 1. **CMake link guards** (`cmake/ChainApiBoundaryGuards.cmake`) — fail
    the configure step if the engine or CLI transitively links Qt
    Widgets / Gui / Quick / QScintilla.
-2. **CI grep job** (`.github/workflows/boundary-check.yml`) — catches
-   `#include` regressions before they land.
+2. **CI grep job** (`tools/ci/boundary-check.sh`, run by both
+   `appveyor.yml` and the static-checks stage of `azure-pipelines.yml`) —
+   catches `#include` regressions before they land.
 3. **Public header surface** (`engine/include/chainapi/engine/`) — pImpl
    + value types only, no Qt UI types appear.
 
 This keeps the future Phase B option open: extracting the engine into a
-separate process or a Rust rewrite becomes a build-system change rather
+separate process or a rewrite becomes a build-system change rather
 than a rewrite. See PRD §8.6 / ADR-002.
 
 ---
@@ -61,33 +64,40 @@ than a rewrite. See PRD §8.6 / ADR-002.
 
 - **CMake** 4.0+
 - **C++23** compiler (Apple Clang 16+ / Clang 18+ / GCC 14+ / MSVC 19.40+)
-- **Qt 6.8 LTS+**
-- **vcpkg** (CI uses full vcpkg; local macOS uses Homebrew Qt — see below)
+- **Qt 6.8 LTS** (installed via `tools/setup-qt.sh` — see below)
+- **clang-format 18** (matches CI; from `brew install llvm@18` on macOS or `apt install clang-format-18` on Linux)
+- **vcpkg** for the non-Qt deps (curl, sqlite3, yaml-cpp, nlohmann-json, gtest)
 
-### macOS first-time setup (recommended path)
+### First-time setup
 
-CI builds Qt from source via vcpkg for reproducibility. Locally on macOS,
-that takes ~2 hours and ~15 GB of disk on the first run. The supported
-local workflow uses **Homebrew's Qt** instead, with vcpkg only for the
-small non-Qt deps:
+Qt is installed out-of-band via [`aqtinstall`](https://github.com/miurahr/aqtinstall),
+not vcpkg, because building qtbase from source took 45-90 minutes per
+cold-cache CI run and exceeded AppVeyor's 60-minute job cap. The
+helper script downloads pre-built Qt from the official Qt mirror —
+same artifacts the Qt online installer uses:
 
 ```bash
-# 1. Build prerequisites
-brew install ninja autoconf autoconf-archive automake libtool pkg-config qt@6
+# 1. System build prerequisites (macOS)
+brew install ninja autoconf autoconf-archive automake libtool pkg-config llvm@18
 
 # 2. vcpkg (one-time)
 git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 ~/vcpkg/bootstrap-vcpkg.sh
 echo 'export VCPKG_ROOT="$HOME/vcpkg"' >> ~/.zshrc
+
+# 3. Qt 6.8 LTS via aqtinstall
+./tools/setup-qt.sh
+echo 'export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"' >> ~/.zshrc
+echo 'export PATH="/opt/homebrew/opt/llvm@18/bin:$PATH"' >> ~/.zshrc
 exec zsh
 
-# 3. Enable the project's git hooks
+# 4. Enable the project's git hooks
 git config core.hooksPath tools/git-hooks
 ```
 
-The macOS presets (`macos-debug`, `macos-release`) point `CMAKE_PREFIX_PATH` at
-`/opt/homebrew/opt/qt@6` and tell vcpkg to skip `qtbase`. Linux and Windows
-presets continue to use vcpkg-built Qt — that's how CI runs.
+On Linux substitute `apt-get install ...` and the `gcc_64` Qt subdir
+(`$HOME/Qt/6.8.3/gcc_64`). On Windows use `tools\setup-qt.cmd` and
+`C:\Qt\6.8.3\msvc2022_64`.
 
 ### Configure & build
 
@@ -111,17 +121,49 @@ Other presets: `macos-release`, `linux-debug`, `linux-release`,
 
 ### Before pushing
 
+Run the full pre-push smoke check (format + configure + build + tests + boundary):
+
 ```bash
 ./tools/pre-push-check.sh
 ```
 
-Runs clang-format check, configure, build, tests, and the boundary check
-in order. Stops at the first failure. Skip individual steps with
-`SKIP_CONFIGURE=1` / `SKIP_TESTS=1` / `SKIP_BOUNDARY=1` while iterating.
-
-If you ran `git config core.hooksPath tools/git-hooks` (above), this also
+If you ran `git config core.hooksPath tools/git-hooks` above, this also
 runs automatically on `git push`. Bypass when justified with
 `git push --no-verify`.
+
+#### Just the format check
+
+CI fails the whole pipeline on a single misformatted line. Mirror that
+check locally before pushing. CI uses **clang-format 18** specifically —
+match that version or the local check may pass while CI fails.
+
+```bash
+# Check (read-only — exits non-zero on drift). Pin to v18 explicitly so
+# a newer clang-format on PATH doesn't disagree with CI.
+CLANG_FORMAT="${CLANG_FORMAT:-clang-format-18}"
+find engine cli desktop ipc \
+    \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cc' \) \
+    -not -path '*/build/*' \
+    -print0 \
+  | xargs -0 "$CLANG_FORMAT" --dry-run --Werror
+
+# Fix (rewrites files in place; uses the same v18 binary)
+./tools/format.sh
+```
+
+If `clang-format-18` isn't on PATH, install it:
+
+```bash
+# macOS
+brew install llvm@18
+export PATH="/opt/homebrew/opt/llvm@18/bin:$PATH"
+
+# Ubuntu / Debian
+sudo apt-get install -y clang-format-18
+```
+
+The first command is exactly what runs in `appveyor.yml` and
+`azure-pipelines.yml`. If it exits 0, CI's static-checks job will pass.
 
 ### Build options
 
@@ -138,15 +180,42 @@ runs automatically on `git push`. Bypass when justified with
 
 ## Status
 
-Skeleton scaffolding complete. Next up is **Phase 0 validation** per PRD §13.1:
+Phase 0 (validation) and Phase 1 (engine + CLI) complete. The engine runs
+the marketplace sample and the GiGwala backend (174 endpoints, 5 actors,
+29 resources) end-to-end with auto-resolved dependency chains. 188 tests
+green across unit + integration suites.
 
-- Validate the schema spec against three real-world APIs
-- Hand-author the MarketplaceAPI sample to 30 endpoints
-- Recruit design partners
-- Run the AI importer feasibility test
+Next up: **Phase 2** (desktop UI) per PRD §13.3.
 
-Then **Phase 1** (engine + CLI), **Phase 2** (Qt desktop UI), and so on
-through the roadmap in PRD §13.
+---
+
+## Documentation index
+
+For the AI importer:
+
+- **[`prompts/import/README.md`](prompts/import/README.md)** — multi-stage prompt suite overview
+- **[`prompts/import/01-discover.md`](prompts/import/01-discover.md)** through **`06-fix-lint-errors.md`** — individual stage prompts
+
+For working with the bundled samples:
+
+- **[`samples/marketplace/`](samples/marketplace/)** — 30-endpoint marketplace sample project. Try `chainapi run refund.approve --project samples/marketplace`.
+
+## Documentation site
+
+The user-facing docs live at **`docs-site/`** as an Astro Starlight
+project. Build and run locally:
+
+```bash
+cd docs-site
+npm install
+npm run dev   # → http://localhost:4321
+```
+
+Pushes to `main` that touch `docs-site/`, `doc/`, or `prompts/import/`
+auto-deploy to GitHub Pages via `.github/workflows/deploy-docs.yml`.
+The workflow auto-detects org-page vs project-page repo type, so it
+works for both `chainapi.github.io` and any `<owner>.github.io/<repo>/`
+URL.
 
 ---
 

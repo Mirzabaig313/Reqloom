@@ -7,15 +7,55 @@ operations:
     path: /api/v1/vendors/{{vendor.vendor_id}}/products
     actor: vendor
     body:
-      name: "Demo Product"
+      name: "Demo Product {{$.uuid}}"
       price: 999
       stock: 50
+      description: "Sample product created by ChainAPI"
     expect_status: 201
     extract:
       product_id: $.data.id
+
+  list:
+    method: GET
+    path: /api/v1/products
+    actor: customer
+    query_params:
+      limit: "20"
+    expect_status: 200
+
+  get:
+    method: GET
+    path: /api/v1/products/{{product.product_id}}
+    actor: customer
+    depends_on: [product.create]
+    expect_status: 200
+
+  update:
+    method: PATCH
+    path: /api/v1/products/{{product.product_id}}
+    actor: vendor
+    depends_on: [product.create]
+    body:
+      price: 1099
+    expect_status: 200
 
   publish:
     method: POST
     path: /api/v1/products/{{product.product_id}}/publish
     actor: vendor
     depends_on: [product.create]
+    expect_status: 200
+
+  unpublish:
+    method: POST
+    path: /api/v1/products/{{product.product_id}}/unpublish
+    actor: vendor
+    depends_on: [product.publish]
+    expect_status: 200
+
+  delete:
+    method: DELETE
+    path: /api/v1/products/{{product.product_id}}
+    actor: vendor
+    depends_on: [product.create]
+    expect_status: 204

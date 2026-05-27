@@ -1,5 +1,4 @@
 // Stable mapping of ErrorCode → string code, retryability, and class.
-// Engine Requirement §5.
 #include <chainapi/engine/ErrorCodes.h>
 
 namespace chainapi::engine {
@@ -42,6 +41,16 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_EXTRACTION_FAILED";
         case ErrorCode::ResponseParse:
             return "E_RESPONSE_PARSE";
+        case ErrorCode::PollTimeout:
+            return "E_POLL_TIMEOUT";
+        case ErrorCode::PollMaxAttemptsExceeded:
+            return "E_POLL_MAX_ATTEMPTS_EXCEEDED";
+        case ErrorCode::PollFailPredicate:
+            return "E_POLL_FAIL_PREDICATE";
+        case ErrorCode::LlmRequestFailed:
+            return "E_LLM_REQUEST_FAILED";
+        case ErrorCode::LlmResponseInvalid:
+            return "E_LLM_RESPONSE_INVALID";
         case ErrorCode::Cancelled:
             return "E_CANCELLED";
     }
@@ -55,6 +64,7 @@ bool isRetryable(ErrorCode code) noexcept {
         case ErrorCode::Http5xx:
             return true;
         default:
+            // Poll outcomes are not retryable — the polling loop owns its own retry budget.
             return false;
     }
 }
@@ -92,6 +102,15 @@ ErrorClass classify(ErrorCode code) noexcept {
         case ErrorCode::ExtractionFailed:
         case ErrorCode::ResponseParse:
             return ErrorClass::Extraction;
+
+        case ErrorCode::PollTimeout:
+        case ErrorCode::PollMaxAttemptsExceeded:
+        case ErrorCode::PollFailPredicate:
+            return ErrorClass::Polling;
+
+        case ErrorCode::LlmRequestFailed:
+        case ErrorCode::LlmResponseInvalid:
+            return ErrorClass::Llm;
 
         case ErrorCode::Cancelled:
             return ErrorClass::Run;

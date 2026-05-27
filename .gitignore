@@ -23,6 +23,12 @@ install_manifest.txt
 # vcpkg
 vcpkg_installed/
 .vcpkg-root
+# vcpkg checkout when bootstrapped at the repo root by CI/local.
+/vcpkg/
+
+# Qt — installed via tools/setup-qt.sh into ~/Qt by default; ignored when
+# someone installs it inside the repo tree.
+/Qt/
 
 # Conan
 .conan/
@@ -50,6 +56,18 @@ coverage/
 # Logs
 *.log
 
+# Validation — raw results and per-API working notes
+validation/llm-feasibility/runs/
+validation/design-partners/results-template.md
+validation/testreuslt.md
+validation/github/findings.md
+validation/stripe/findings.md
+validation/discourse/findings.md
+
 # local 
 .kiro/hooks
 doc/local
+# Anchored to repo root: only the top-level chainapi/ working dir
+
+/chainapi/
+doc/adr

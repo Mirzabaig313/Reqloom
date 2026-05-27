@@ -17,18 +17,14 @@ add_library(chainapi-engine-domain OBJECT
     src/domain/Topology.cpp
     src/domain/VariableResolver.cpp
     src/domain/RunContext.cpp
-    src/domain/Operation.cpp
-    src/domain/Actor.cpp
-    src/domain/Resource.cpp
     src/domain/ErrorCodes.cpp
+    src/domain/Codecs.cpp
 )
 target_include_directories(chainapi-engine-domain
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-# Domain layer is currently std-only. AGENTS.md permits Qt6::Core (for
-# QString) but we have not needed it; keep this layer Qt-free as long as
-# possible to ease the Phase B engine extraction.
+# Domain layer is currently std-only.
 chainapi_set_warnings(chainapi-engine-domain)
 chainapi_apply_sanitizers(chainapi-engine-domain)
 
@@ -40,13 +36,18 @@ add_library(chainapi-engine-infrastructure OBJECT
     src/infrastructure/storage/SqliteHistoryStore.cpp
     src/infrastructure/secrets/KeychainSecretStore.cpp
     src/infrastructure/schema/YamlSchemaParser.cpp
+    src/infrastructure/schema/YamlSchemaWriter.cpp
     src/infrastructure/hooks/QuickJsHookRunner.cpp
     src/infrastructure/extraction/JsonPathEvaluator.cpp
+    src/infrastructure/util/Crypto.cpp
+    src/infrastructure/typings/StaticHookTypingsEmitter.cpp
+    src/infrastructure/llm/HttpLlmClient.cpp
 )
 target_include_directories(chainapi-engine-infrastructure
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+find_package(OpenSSL REQUIRED)
 target_link_libraries(chainapi-engine-infrastructure
     PUBLIC  chainapi-engine-domain
     PRIVATE
@@ -55,6 +56,7 @@ target_link_libraries(chainapi-engine-infrastructure
         yaml-cpp::yaml-cpp
         SQLite3::SQLite3
         nlohmann_json::nlohmann_json
+        OpenSSL::Crypto
 )
 if(TARGET Qt6Keychain::Qt6Keychain)
     target_link_libraries(chainapi-engine-infrastructure
@@ -71,6 +73,12 @@ add_library(chainapi-engine-application OBJECT
     src/application/RunOperationUseCase.cpp
     src/application/ImportFromOpenApi.cpp
     src/application/ExecutionEngine.cpp
+    src/application/Factories.cpp
+    src/application/PredicateEvaluator.cpp
+    src/application/Verifier.cpp
+    src/application/AuthStrategy.cpp
+    src/application/JsonExtraction.cpp
+    src/application/RequestSigners.cpp
 )
 target_include_directories(chainapi-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -78,7 +86,9 @@ target_include_directories(chainapi-engine-application
 )
 target_link_libraries(chainapi-engine-application
     PUBLIC  chainapi-engine-domain
-    PRIVATE chainapi-engine-infrastructure
+    PRIVATE
+        chainapi-engine-infrastructure
+        nlohmann_json::nlohmann_json
 )
 chainapi_set_warnings(chainapi-engine-application)
 chainapi_apply_sanitizers(chainapi-engine-application)

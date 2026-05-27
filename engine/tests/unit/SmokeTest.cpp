@@ -1,6 +1,6 @@
 // Engine smoke test: validates that the public surface compiles, links,
 // and produces stable error-code strings. Real integration tests
-// (Engine Req §8) are added in Phase 1.
+// are added in Phase 1.
 //
 // Each assertion fails without the production code under test:
 //   - ErrorCodeStringsAreStable    → fails if ErrorCodes.cpp mapping breaks
@@ -20,7 +20,7 @@ TEST(EngineSmoke, ErrorCodeStringsAreStable) {
 }
 
 TEST(EngineSmoke, RetryabilityMatchesSpec) {
-    // Engine Req §3.5: 5xx, network timeouts retry; 4xx and schema errors do not.
+    // 5xx and network timeouts retry; 4xx and schema errors do not.
     EXPECT_TRUE(ce::isRetryable(ce::ErrorCode::Http5xx));
     EXPECT_TRUE(ce::isRetryable(ce::ErrorCode::NetworkTimeout));
     EXPECT_FALSE(ce::isRetryable(ce::ErrorCode::Http4xx));

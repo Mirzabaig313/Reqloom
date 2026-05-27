@@ -1,8 +1,4 @@
 // QuickJsHookRunner — sandboxed JS execution via QuickJS.
-// PRD §5.10 / Engine Req §3.12.
-//
-// Sandbox enforced at runtime: no FS, no network, 1s timeout, read-only
-// access to other actors' variables. Phase 1 implementation.
 #include "QuickJsHookRunner.h"
 
 namespace chainapi::engine {

@@ -1,0 +1,131 @@
+---
+title: ChainAPI
+description: "A workflow-aware API testing tool that auto-resolves request dependency chains."
+template: splash
+hero:
+  tagline: Postman is an HTTP client. ChainAPI is an API workflow engine.
+  image:
+    file: ../../assets/hero.svg
+  actions:
+    - text: Get started in 5 minutes
+      link: /start/tour/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/chainapi/chainapi
+      icon: external
+---
+
+import { Card, CardGrid, Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+## Stop copying tokens between Postman tabs
+
+Modern SaaS backends are multi-actor. To test "admin approves a customer
+refund", you need to log in as three actors and create six prerequisite
+records first. ChainAPI treats your API as a dependency graph: define
+each actor and resource **once**, then run any endpoint with a single
+command — the engine auto-resolves the entire chain.
+
+```bash
+chainapi run refund.approve --project marketplace
+# resolves: vendor.login → customer.verify_otp →
+#           product.create → product.publish →
+#           order.create → order.pay →
+#           refund.request → refund.approve
+# 9 steps. 3.4 seconds. Zero copy-paste.
+```
+
+## Why teams switch
+
+<CardGrid>
+    <Card title="Auto-resolved chains" icon="rocket">
+        Click any endpoint. The engine builds the prerequisite chain
+        from your schema and runs it in topological order.
+    </Card>
+    <Card title="Multi-actor first" icon="setting">
+        Admin, vendor, customer, worker — each actor's auth flow is
+        defined once. No more re-logging in every morning.
+    </Card>
+    <Card title="One file, every environment" icon="document">
+        Local, staging, production. Same schema. Switch with `--env`.
+    </Card>
+    <Card title="AI importer" icon="puzzle">
+        Generate a working schema from your OpenAPI spec, Markdown
+        docs, or pasted curl logs in ~5 minutes.
+    </Card>
+    <Card title="Open core" icon="approve-check">
+        Apache 2.0 engine, CLI, schema, and desktop. No vendor lock-in.
+    </Card>
+    <Card title="Local-first" icon="laptop">
+        Your project, schemas, and history live on your machine.
+        Nothing forced to the cloud.
+    </Card>
+</CardGrid>
+
+## Quick install
+
+<Tabs>
+    <TabItem label="macOS (Homebrew)">
+        ```bash
+        # Coming with v1 release. Today: build from source — see
+        # /dev/building/
+        brew install chainapi/tap/chainapi
+        ```
+    </TabItem>
+    <TabItem label="Linux">
+        ```bash
+        # AppImage:
+        curl -L https://github.com/chainapi/chainapi/releases/latest/download/chainapi-linux-x86_64.AppImage -o chainapi
+        chmod +x chainapi
+        ```
+    </TabItem>
+    <TabItem label="Windows">
+        ```powershell
+        # Scoop:
+        scoop bucket add chainapi https://github.com/chainapi/scoop-bucket
+        scoop install chainapi
+        ```
+    </TabItem>
+    <TabItem label="Build from source">
+        ```bash
+        git clone https://github.com/chainapi/chainapi
+        cd chainapi
+        cmake --preset macos-debug
+        cmake --build --preset macos-debug
+        ```
+        See [Building from source](/dev/building/) for the full prerequisites.
+    </TabItem>
+</Tabs>
+
+## Compared to other tools
+
+|                                | Postman | Bruno | Insomnia | **ChainAPI** |
+|--------------------------------|---------|-------|----------|--------------|
+| Auto-resolved request chains   | ❌      | ❌    | ❌       | **✅**       |
+| First-class actor abstraction  | ❌      | ❌    | ❌       | **✅**       |
+| AI importer for any spec       | ❌      | ❌    | ❌       | **✅**       |
+| Git-friendly schema files      | partial | ✅    | partial  | **✅**       |
+| Open source                    | ❌      | ✅    | partial  | **✅**       |
+| Local-first by default         | ❌      | ✅    | ❌       | **✅**       |
+| CLI for CI/CD                  | partial | ✅    | partial  | **✅**       |
+
+## Where to next
+
+<CardGrid stagger>
+    <Card title="5-minute tour" icon="seti:smarty">
+        See ChainAPI run the marketplace sample end-to-end.
+        [Take the tour →](/start/tour/)
+    </Card>
+    <Card title="Authoring guide" icon="open-book">
+        Learn the schema by example. From auth flows to dependency
+        chains. [Read the guide →](/schema/authoring/)
+    </Card>
+    <Card title="AI importer" icon="magnifier">
+        Convert your existing OpenAPI / Postman / curl into a
+        runnable schema. [Use the playbook →](/ai-importer/playbook/)
+    </Card>
+    <Card title="Architecture" icon="setting">
+        How the engine resolves chains, caches sessions, and stays
+        Qt-UI-free. [Architecture →](/dev/architecture/)
+    </Card>
+</CardGrid>
