@@ -113,8 +113,23 @@ std::vector<Extraction> parseExtractions(const YAML::Node& node) {
         Extraction ext;
         ext.variableName = kv.first.as<std::string>();
         ext.sourcePath = kv.second.as<std::string>();
+
+        // Auto-detect the extraction source from the path prefix. Users
+        // can override by setting `source:` explicitly when the YAML
+        // shape doesn't fit (post-MVP — once we support map-form
+        // extractions). Convention:
+        //   $.headers.X     → Source::Header   (header X, case-insensitive)
+        //   $.cookies.X     → Source::Cookie   (Set-Cookie X)
+        //   $.status_code   → Source::StatusCode
+        //   $... else        → Source::JsonPath (default)
+        // Regex / XPath are not auto-detected — they require an
+        // explicit annotation that hand-written schemas don't carry yet.
         if (ext.sourcePath.starts_with("$.headers.")) {
             ext.source = Extraction::Source::Header;
+        } else if (ext.sourcePath.starts_with("$.cookies.")) {
+            ext.source = Extraction::Source::Cookie;
+        } else if (ext.sourcePath == "$.status_code") {
+            ext.source = Extraction::Source::StatusCode;
         }
         result.push_back(std::move(ext));
     }

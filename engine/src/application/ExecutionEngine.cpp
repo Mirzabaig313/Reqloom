@@ -11,6 +11,7 @@
 #include "../infrastructure/secrets/SecretStore.h"
 #include "../infrastructure/storage/HistoryStore.h"
 #include "AuthStrategy.h"
+#include "Cookies.h"
 #include "JsonExtraction.h"
 #include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
@@ -100,6 +101,21 @@ struct ExecutionEngine::Impl {
     [[nodiscard]] bool isCancelled(RunId runId) const noexcept {
         const auto cancelled = cancelledRunId.load(std::memory_order_acquire);
         return cancelled != 0 && cancelled == runId.value;
+    }
+
+    /// Walk a response's Set-Cookie headers and update the actor's jar.
+    /// Order-preserving: when the same name appears twice in the same
+    /// response, the second one wins (RFC 6265 §5.3 step 11). The jar
+    /// is shared across operations performed AS this actor for the
+    /// remainder of the run.
+    static void absorbResponseCookies(
+        const std::vector<std::pair<std::string, std::string>>& headers,
+        const ActorId& actor,
+        RunContext& ctx) {
+        const auto fresh = cookies::collectFromResponse(headers);
+        for (const auto& [name, value] : fresh) {
+            ctx.setCookie(actor, name, value);
+        }
     }
 
     void emit(const RunEvent& e) {
@@ -264,6 +280,17 @@ struct ExecutionEngine::Impl {
                         req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
                     }
                 }
+
+                // Cookie jar emission for poll requests. Same priority
+                // as the parent op: a poll inheriting the parent's
+                // actor sees the jar that has accumulated through the
+                // initial response and any prior poll attempt.
+                if (!req.headers.contains("Cookie")) {
+                    const auto jar = ctx.cookies(pollActor->id);
+                    if (!jar.empty()) {
+                        req.headers["Cookie"] = cookies::formatRequestHeader(jar);
+                    }
+                }
             }
 
             // Per-request signing done after inject merge so the signer sees the final shape.
@@ -296,6 +323,14 @@ struct ExecutionEngine::Impl {
             }
             lastResponse = std::move(*resp);
             haveLastResponse = true;
+
+            // Update the cookie jar from this poll's Set-Cookie headers.
+            // Pollers that issue stateful status checks (rare but real)
+            // can rotate session cookies — without absorbing them here
+            // a follow-up op would send a stale cookie.
+            if (pollActor) {
+                absorbResponseCookies(lastResponse.headers, pollActor->id, ctx);
+            }
 
             // Each poll attempt is a timeline row alongside the parent step.
             const auto failMatched =
@@ -433,6 +468,22 @@ struct ExecutionEngine::Impl {
                     }
                 }
             }
+
+            // Cookie jar emission. The actor's jar accumulates from
+            // every Set-Cookie the server has sent on prior operations
+            // performed AS this actor in the current run. We emit a
+            // single `Cookie:` header rolling them up.
+            //
+            // Lowest priority — anything already in req.headers["Cookie"]
+            // (user-set or session-inject) wins. RFC 6265 §5.4 doesn't
+            // forbid multiple Cookie headers, but most servers concat
+            // them so we'd rather not double-send.
+            if (!req.headers.contains("Cookie")) {
+                const auto jar = ctx.cookies(op.actor);
+                if (!jar.empty()) {
+                    req.headers["Cookie"] = cookies::formatRequestHeader(jar);
+                }
+            }
         }
 
         // Session-level injects folded in, winning on key collision.
@@ -560,6 +611,15 @@ struct ExecutionEngine::Impl {
             auto resp = deps.http->send(req);
             if (resp) {
                 httpResp = std::move(*resp);
+                // Absorb Set-Cookie headers immediately so any
+                // post_response hook running between here and the next
+                // outbound call sees the up-to-date jar (today the jar
+                // isn't exposed to the JS sandbox, but the contract is
+                // clearer if absorption happens at receive time, not
+                // before send time).
+                if (!op.actor.value.empty()) {
+                    absorbResponseCookies(httpResp->headers, op.actor, ctx);
+                }
                 break;
             }
             lastError = resp.error();
@@ -622,11 +682,23 @@ struct ExecutionEngine::Impl {
                         }
                     }
 
+                    // Refresh the Cookie header for the retry. The
+                    // earlier ctx.invalidateSession(op.actor) cleared
+                    // the jar, but the re-auth flow may have populated
+                    // a fresh session cookie via Set-Cookie — emit it
+                    // so the retried request carries the new cookie
+                    // rather than nothing.
+                    req.headers.erase("Cookie");
+                    if (const auto jar = ctx.cookies(op.actor); !jar.empty()) {
+                        req.headers["Cookie"] = cookies::formatRequestHeader(jar);
+                    }
+
                     auto retryResp = deps.http->send(req);
                     ++attemptCount;
                     result.attempts = attemptCount;
                     if (retryResp) {
                         httpResp = std::move(*retryResp);
+                        absorbResponseCookies(httpResp->headers, op.actor, ctx);
                     } else {
                         // Network error on the retry — surface the new
                         // error rather than the original 401 so users
@@ -716,7 +788,8 @@ struct ExecutionEngine::Impl {
         }
 
         if (httpResp && !op.extractions.empty()) {
-            auto detailed = extractFromJsonDetailed(op.id, httpResp->body, op.extractions);
+            auto detailed = extractFromResponseDetailed(
+                op.id, httpResp->body, httpResp->status, httpResp->headers, op.extractions);
             if (!detailed) {
                 result.status = StepResult::Status::Failed;
                 result.error = detailed.error().code;

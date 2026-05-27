@@ -32,9 +32,11 @@ public:
     /// (variables populated) or a `ChainApiError`.
     ///
     /// Authenticators must NOT consult or mutate the `RunContext`'s
-    /// session cache — that's the engine's job.
+    /// session cache — that's the engine's job. They MAY mutate the
+    /// per-actor cookie jar via `ctx.setCookie(...)` to absorb
+    /// `Set-Cookie` headers that arrive on the auth response.
     [[nodiscard]] virtual std::expected<ActorSession, ChainApiError> authenticate(
-        const Actor& actor, const RunContext& ctx, const ResolveContext& rctx) = 0;
+        const Actor& actor, RunContext& ctx, const ResolveContext& rctx) = 0;
 };
 
 /// Pick a concrete authenticator for `actor`. Returns null only when the
@@ -56,6 +58,6 @@ public:
 /// (e.g. `{{user.refresh_token}}`), so the caller must keep the session
 /// in the RunContext's cache while calling.
 [[nodiscard]] std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
-    const Actor& actor, const RunContext& ctx, const ResolveContext& rctx, AuthDependencies deps);
+    const Actor& actor, RunContext& ctx, const ResolveContext& rctx, AuthDependencies deps);
 
 }  // namespace chainapi::engine

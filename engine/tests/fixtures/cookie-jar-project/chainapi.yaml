@@ -1,0 +1,79 @@
+version: 1
+name: Cookie Jar Smoke
+default_environment: local
+
+environments:
+  local:
+    baseUrl: http://placeholder.invalid
+
+actors:
+  alice:
+    auth:
+      strategy: simple
+      method: POST
+      path: /api/v1/auth/login
+      body:
+        who: "alice"
+      expect_status: 200
+      extract:
+        token: $.data.accessToken
+    inject:
+      headers:
+        Authorization: "Bearer {{alice.token}}"
+
+  bob:
+    auth:
+      strategy: simple
+      method: POST
+      path: /api/v1/auth/login-bob
+      body:
+        who: "bob"
+      expect_status: 200
+      extract:
+        token: $.data.accessToken
+    inject:
+      headers:
+        Authorization: "Bearer {{bob.token}}"
+
+resources:
+  widget:
+    operations:
+      # Sets two cookies including a same-name collision (session=old,
+      # session=new) — the executor must absorb only the last value.
+      create:
+        method: POST
+        path: /api/v1/widgets
+        actor: alice
+        body:
+          name: "thing"
+        expect_status: 201
+        extract:
+          id: $.data.id
+
+      # Performed AS alice — should automatically carry the cookies
+      # absorbed by `create` (session=new + csrf-token).
+      read:
+        method: GET
+        path: /api/v1/widgets/{{widget.id}}
+        actor: alice
+        expect_status: 200
+
+      # Performed AS bob — should NOT carry alice's cookies. The mock
+      # SUT returns 200 only when no `session` cookie is present.
+      read_as_bob:
+        method: GET
+        path: /api/v1/widgets/bob-only
+        actor: bob
+        expect_status: 200
+
+  manual_cookie:
+    operations:
+      send:
+        method: GET
+        path: /api/v1/manual
+        actor: alice
+        # User-set Cookie header wins over the jar entirely. Schema
+        # contract: an explicit `headers.Cookie` is final.
+        headers:
+          Cookie: "manual=override"
+        expect_status: 200

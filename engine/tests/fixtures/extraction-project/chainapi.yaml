@@ -1,0 +1,44 @@
+version: 1
+name: Extraction Sources Smoke
+default_environment: local
+
+environments:
+  local:
+    baseUrl: http://placeholder.invalid
+
+actors:
+  user:
+    auth:
+      strategy: simple
+      method: POST
+      path: /api/v1/auth/login
+      body:
+        email: "u@x.test"
+        password: "p"
+      expect_status: 200
+      extract:
+        token: $.data.accessToken
+    inject:
+      headers:
+        Authorization: "Bearer {{user.token}}"
+
+resources:
+  order:
+    operations:
+      create:
+        method: POST
+        path: /api/v1/orders
+        actor: user
+        body:
+          sku: "abc"
+        expect_status: 201
+        extract:
+          # Body — JSONPath (the existing supported case)
+          id: $.data.id
+          # Header — auto-detected via $.headers. prefix
+          location: $.headers.Location
+          request_id: $.headers.X-Request-Id
+          # Status — auto-detected via $.status_code
+          status: $.status_code
+          # Cookie — auto-detected via $.cookies. prefix
+          audit_cookie: $.cookies.audit

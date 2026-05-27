@@ -104,6 +104,24 @@ public:
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
 
+    // Cookie jar — per actor, populated from response Set-Cookie headers
+    // and emitted as a single `Cookie:` request header on subsequent
+    // operations performed by the same actor. The jar is intentionally
+    // simple: name → value, no domain / path / expiry tracking. We are
+    // not a full HTTP user-agent, just a chain runner; partner schemas
+    // that need full RFC 6265 semantics can opt out by setting their
+    // own `Cookie:` header on the operation (which wins on collision).
+
+    /// Snapshot of the actor's current cookies. Empty when no jar.
+    [[nodiscard]] std::map<std::string, std::string> cookies(const ActorId& actor) const;
+
+    /// Insert or replace a cookie. Mirrors RFC 6265 §5.3 step 11:
+    /// the latest Set-Cookie wins on name collision.
+    void setCookie(const ActorId& actor, std::string name, std::string value);
+
+    /// Drop the actor's entire jar. Called by `invalidateSession`.
+    void clearCookies(const ActorId& actor);
+
     // Extraction cache — list of instances per resource
     [[nodiscard]] const std::vector<ResourceInstance>& instances(
         const ResourceId& resource) const noexcept;

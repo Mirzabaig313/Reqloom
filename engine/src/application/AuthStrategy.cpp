@@ -1,5 +1,6 @@
 // Authenticator — strategy dispatch and concrete implementations.
 #include "AuthStrategy.h"
+#include "Cookies.h"
 #include "JsonExtraction.h"
 
 #include "../domain/Codecs.h"
@@ -27,7 +28,7 @@ public:
     explicit ChainAuthenticator(AuthDependencies deps) : deps_(deps) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            const RunContext& ctx,
+                                                            RunContext& ctx,
                                                             const ResolveContext& rctx) override {
         // nullptr here means a programming error in the engine, not a
         // user-triggerable condition.
@@ -76,6 +77,15 @@ public:
                                   "auth: network error during step '" + step.id + "'"});
             }
 
+            // Absorb Set-Cookie headers from the auth response into the
+            // actor's jar so subsequent operations (which run AS this
+            // actor) carry the cookie. PHP / Rails apps that issue a
+            // session cookie on /login depend on this; without it the
+            // cookie disappears the moment authenticate() returns.
+            for (const auto& [name, value] : cookies::collectFromResponse(response->headers)) {
+                ctx.setCookie(actor.id, name, value);
+            }
+
             if (step.expectStatus && response->status != *step.expectStatus) {
                 return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
                                                      ErrorClass::Auth,
@@ -114,7 +124,7 @@ public:
     explicit BasicAuthenticator(AuthDependencies deps) : deps_(deps) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            const RunContext& ctx,
+                                                            RunContext& ctx,
                                                             const ResolveContext& rctx) override {
         if (!deps_.varResolver) {
             return std::unexpected(
@@ -174,7 +184,7 @@ public:
     explicit ApiKeyAuthenticator(AuthDependencies deps) : deps_(deps) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            const RunContext& ctx,
+                                                            RunContext& ctx,
                                                             const ResolveContext& rctx) override {
         if (!deps_.varResolver) {
             return std::unexpected(
@@ -358,7 +368,7 @@ public:
     explicit OAuth2ClientCredentialsAuthenticator(AuthDependencies deps) : deps_(deps) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            const RunContext& ctx,
+                                                            RunContext& ctx,
                                                             const ResolveContext& rctx) override {
         if (!deps_.http || !deps_.varResolver) {
             return std::unexpected(
@@ -407,7 +417,7 @@ public:
     explicit OAuth2PasswordAuthenticator(AuthDependencies deps) : deps_(deps) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            const RunContext& ctx,
+                                                            RunContext& ctx,
                                                             const ResolveContext& rctx) override {
         if (!deps_.http || !deps_.varResolver) {
             return std::unexpected(
@@ -464,7 +474,7 @@ public:
     explicit OAuth1Authenticator(AuthDependencies deps) : deps_(deps) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            const RunContext& ctx,
+                                                            RunContext& ctx,
                                                             const ResolveContext& rctx) override {
         if (!deps_.varResolver) {
             return std::unexpected(
@@ -529,7 +539,7 @@ public:
     explicit AwsSigV4Authenticator(AuthDependencies deps) : deps_(deps) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            const RunContext& ctx,
+                                                            RunContext& ctx,
                                                             const ResolveContext& rctx) override {
         if (!deps_.varResolver) {
             return std::unexpected(
@@ -597,7 +607,7 @@ std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor, AuthDepen
 }
 
 std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
-    const Actor& actor, const RunContext& ctx, const ResolveContext& rctx, AuthDependencies deps) {
+    const Actor& actor, RunContext& ctx, const ResolveContext& rctx, AuthDependencies deps) {
     if (!actor.refresh) {
         return std::unexpected(ChainApiError{
             ErrorCode::SessionRefreshFailed,
@@ -641,6 +651,14 @@ std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
         return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
                                              ErrorClass::Auth,
                                              "refresh: network error: " + response.error().detail});
+    }
+
+    // Absorb Set-Cookie headers from the refresh response — same
+    // contract as ChainAuthenticator. Refresh endpoints commonly
+    // rotate session cookies (CSRF tokens, anti-replay nonces) and
+    // the next operation as this actor needs the rotated value.
+    for (const auto& [name, value] : cookies::collectFromResponse(response->headers)) {
+        ctx.setCookie(actor.id, name, value);
     }
 
     // Honour the user's `expect_status:` when set, otherwise fall back

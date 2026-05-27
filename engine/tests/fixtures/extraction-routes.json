@@ -1,0 +1,21 @@
+{
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "status": 200,
+      "body": { "data": { "accessToken": "tok-1" } }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/orders",
+      "status": 201,
+      "headers": {
+        "Location": "/api/v1/orders/ord-42",
+        "X-Request-Id": "req-99",
+        "Set-Cookie": "audit=trace-001; Path=/"
+      },
+      "body": { "data": { "id": "ord-42" } }
+    }
+  ]
+}
