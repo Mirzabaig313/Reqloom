@@ -80,7 +80,7 @@ struct ExtractionApplied {
 /// surface resolved values, nulls, and missing fields per step instead
 /// of the coarse-grained `ExtractionApplied` summary.
 struct ExtractionCompleted {
-    enum class Outcome { Resolved, Null, Missing, Unsupported };
+    enum class Outcome { Resolved, Null, Missing, InvalidPattern, Unsupported };
 
     RunId runId;
     std::size_t stepIndex{};

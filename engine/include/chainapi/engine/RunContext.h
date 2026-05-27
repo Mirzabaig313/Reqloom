@@ -68,10 +68,11 @@ struct StepResult {
 
 struct ExtractionTrace {
     enum class Outcome {
-        Resolved,     ///< Source path resolved to a non-null value.
-        Null,         ///< Source path resolved but the value was null.
-        Missing,      ///< Source path did not resolve at all.
-        Unsupported,  ///< Source kind cannot be resolved by this engine build.
+        Resolved,        ///< Source path resolved to a non-null value.
+        Null,            ///< Source path resolved but the value was null.
+        Missing,         ///< Source path did not resolve at all.
+        InvalidPattern,  ///< Source kind is regex/xpath and the pattern is malformed.
+        Unsupported,     ///< Source kind cannot be resolved by this engine build.
     };
 
     OperationId op;
