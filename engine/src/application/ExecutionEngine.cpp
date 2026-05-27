@@ -12,6 +12,7 @@
 #include "../infrastructure/storage/HistoryStore.h"
 #include "AuthStrategy.h"
 #include "Cookies.h"
+#include "HeaderMasking.h"
 #include "JsonExtraction.h"
 #include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
@@ -83,6 +84,21 @@ using namespace codecs;
         out.emplace_back(k, v);
     }
     return out;
+}
+
+/// Sum of bytes the request will put on the wire — body for inline
+/// requests, sum of part sizes for multipart. The desktop's "X bytes"
+/// indicator on the request preview reads this; persisted history
+/// rolls it up across a run for traffic accounting.
+[[nodiscard]] std::size_t requestBodySize(const HttpRequest& req) noexcept {
+    if (!req.multipart.empty()) {
+        std::size_t total = 0;
+        for (const auto& part : req.multipart) {
+            total += part.value.size();  // text fields + pre-loaded file bytes
+        }
+        return total;
+    }
+    return req.body ? req.body->size() : 0u;
 }
 
 }  // namespace
@@ -201,6 +217,7 @@ struct ExecutionEngine::Impl {
                                                            RunContext& ctx,
                                                            const ResolveContext& rctx,
                                                            RunId runId,
+                                                           std::size_t stepIndex,
                                                            const HttpResponse& /*initialResponse*/,
                                                            std::vector<StepResult>& attemptRows) {
         PredicateEvaluator evaluator;
@@ -326,12 +343,27 @@ struct ExecutionEngine::Impl {
                 }
             }
 
+            emit(RequestPrepared{runId,
+                                 stepIndex,
+                                 req.method,
+                                 req.url,
+                                 headersToVector(maskHeaders(req.headers)),
+                                 requestBodySize(req),
+                                 std::chrono::system_clock::now()});
+
             auto resp = deps.http->send(req);
             if (!resp) {
                 return std::unexpected(resp.error());
             }
             lastResponse = std::move(*resp);
             haveLastResponse = true;
+            emit(ResponseReceived{runId,
+                                  stepIndex,
+                                  lastResponse.status,
+                                  maskHeaders(lastResponse.headers),
+                                  lastResponse.body.size(),
+                                  lastResponse.elapsed,
+                                  std::chrono::system_clock::now()});
 
             // Update the cookie jar from this poll's Set-Cookie headers.
             // Pollers that issue stateful status checks (rare but real)
@@ -617,9 +649,24 @@ struct ExecutionEngine::Impl {
                 }
             }
 
+            emit(RequestPrepared{runId,
+                                 stepIndex,
+                                 req.method,
+                                 req.url,
+                                 headersToVector(maskHeaders(req.headers)),
+                                 requestBodySize(req),
+                                 std::chrono::system_clock::now()});
+
             auto resp = deps.http->send(req);
             if (resp) {
                 httpResp = std::move(*resp);
+                emit(ResponseReceived{runId,
+                                      stepIndex,
+                                      httpResp->status,
+                                      maskHeaders(httpResp->headers),
+                                      httpResp->body.size(),
+                                      httpResp->elapsed,
+                                      std::chrono::system_clock::now()});
                 // Absorb Set-Cookie headers immediately so any
                 // post_response hook running between here and the next
                 // outbound call sees the up-to-date jar (today the jar
@@ -700,11 +747,26 @@ struct ExecutionEngine::Impl {
                         }
                     }
 
+                    emit(RequestPrepared{runId,
+                                         stepIndex,
+                                         req.method,
+                                         req.url,
+                                         headersToVector(maskHeaders(req.headers)),
+                                         requestBodySize(req),
+                                         std::chrono::system_clock::now()});
+
                     auto retryResp = deps.http->send(req);
                     ++attemptCount;
                     result.attempts = attemptCount;
                     if (retryResp) {
                         httpResp = std::move(*retryResp);
+                        emit(ResponseReceived{runId,
+                                              stepIndex,
+                                              httpResp->status,
+                                              maskHeaders(httpResp->headers),
+                                              httpResp->body.size(),
+                                              httpResp->elapsed,
+                                              std::chrono::system_clock::now()});
                         absorbResponseCookies(httpResp->headers, op.actor, ctx);
                     } else {
                         // Network error on the retry — surface the new
@@ -755,8 +817,15 @@ struct ExecutionEngine::Impl {
 
         // Polling phase — engine polls until success_when/fail_when matches or budget fires.
         if (op.pollUntil && httpResp) {
-            auto pollResult = runPollLoop(
-                op, *op.pollUntil, project, ctx, rctx, runId, *httpResp, pollAttemptRows);
+            auto pollResult = runPollLoop(op,
+                                          *op.pollUntil,
+                                          project,
+                                          ctx,
+                                          rctx,
+                                          runId,
+                                          stepIndex,
+                                          *httpResp,
+                                          pollAttemptRows);
             if (!pollResult.has_value()) {
                 result.status = StepResult::Status::Failed;
                 result.error = pollResult.error().code;
@@ -809,11 +878,6 @@ struct ExecutionEngine::Impl {
 
             // Trace every extraction outcome — including misses — so the
             // timeline shows nulls and missing fields. The op still fails
-            // when any required extraction misses; that contract pre-dates
-            // this slice and downstream ops depend on it. InvalidPattern
-            // is treated as a miss for failure purposes — the captured
-            // value isn't there, so anything downstream that templates
-            // it would resolve to undefined.
             std::optional<std::string> firstMiss;
             for (auto& t : detailed->traces) {
                 const bool isMissLike = t.outcome == ExtractionTrace::Outcome::Missing ||
@@ -863,6 +927,23 @@ struct ExecutionEngine::Impl {
             if (!detailed->values.empty()) {
                 ResourceInstance instance;
                 instance.variables = std::move(detailed->values);
+
+                // Names only — values that came from auth flows would
+                // contain tokens and must never enter the event stream.
+                // The desktop renders the names list; the per-extraction
+                // ExtractionCompleted events above carry the (truncated,
+                // unmasked) values for the timeline rows that need them.
+                std::vector<std::string> names;
+                names.reserve(instance.variables.size());
+                for (const auto& [k, _] : instance.variables) {
+                    names.push_back(k);
+                }
+                emit(ExtractionApplied{runId,
+                                       stepIndex,
+                                       op.resource,
+                                       std::move(names),
+                                       std::chrono::system_clock::now()});
+
                 ctx.appendInstance(op.resource, std::move(instance));
             }
         }
@@ -1017,12 +1098,14 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
         }
 
         if (stepResult.status == StepResult::Status::Cancelled) {
+            impl_->emit(StepCancelled{runId, i, opId, std::chrono::system_clock::now()});
             result.outcome = RunOutcome::Cancelled;
             for (std::size_t j = i + 1; j < chain.size(); ++j) {
                 StepResult cancelled;
                 cancelled.op = chain[j];
                 cancelled.status = StepResult::Status::Cancelled;
                 result.steps.push_back(cancelled);
+                impl_->emit(StepCancelled{runId, j, chain[j], std::chrono::system_clock::now()});
             }
             break;
         }

@@ -373,3 +373,136 @@ TEST_F(RunOptionsFixture, step_started_events_are_emitted_for_each_step) {
     }
     EXPECT_TRUE(sawPingStep) << "expected StepStarted for ping.get";
 }
+
+// ─── Full event stream (AC-3.6.2 / AC-3.6.3 contract surface) ───────────────
+// The desktop timeline subscribes to RunEvent and renders one panel per
+// event variant. Each of these tests fails on the parent commit because
+// the corresponding event was declared in Events.h but never emitted.
+
+TEST_F(RunOptionsFixture, request_prepared_event_fires_with_masked_headers) {
+    // RequestPrepared lets the desktop show "what we're about to send".
+    // The Authorization header carries the actor's bearer token; it
+    // MUST be redacted before reaching the event stream (AC-3.6.3).
+    //
+    // Note: today only operations dispatched through the executor's
+    // main step path (and the 401-recovery retry path, and the poll
+    // loop) emit RequestPrepared. Auth strategy sends and the
+    // session-refresh block run through AuthStrategy / runRefresh,
+    // which do not yet have access to the event emitter. Wiring the
+    // emitter through AuthDependencies is a follow-up slice; this
+    // test pins the contract for the path that exists today.
+    RunOptionsScratchProject project(kSimpleProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+
+    std::vector<ce::RequestPrepared> events;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* e = std::get_if<ce::RequestPrepared>(&ev)) {
+            events.push_back(*e);
+        }
+    });
+
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    // One event for ping.get itself. Auth login is dispatched through
+    // AuthStrategy and is not yet event-instrumented.
+    ASSERT_EQ(events.size(), 1u) << "expected one RequestPrepared for the executor send path";
+
+    const auto& pingPrep = events[0];
+    EXPECT_EQ(pingPrep.method, ce::HttpMethod::Get);
+    EXPECT_NE(pingPrep.url.find("/api/v1/with-bearer"), std::string::npos);
+
+    // Authorization header MUST be redacted.
+    bool sawAuthHeader = false;
+    for (const auto& [k, v] : pingPrep.maskedHeaders) {
+        if (k == "Authorization") {
+            sawAuthHeader = true;
+            EXPECT_EQ(v, ce::kRedactedHeaderValue)
+                << "Authorization value leaked into the event stream";
+        }
+    }
+    EXPECT_TRUE(sawAuthHeader) << "Authorization header should still be visible (name only)";
+}
+
+TEST_F(RunOptionsFixture, response_received_event_carries_status_and_size) {
+    // ResponseReceived is the signal the timeline uses to flip a step
+    // row from "in flight" to "received". Status, masked headers, and
+    // body size are the minimum needed for the row.
+    //
+    // Same auth-path caveat as request_prepared_event_fires_with_masked_headers
+    // above: today only the executor's main path emits this event.
+    RunOptionsScratchProject project(kSimpleProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+
+    std::vector<ce::ResponseReceived> events;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* e = std::get_if<ce::ResponseReceived>(&ev)) {
+            events.push_back(*e);
+        }
+    });
+
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    ASSERT_EQ(events.size(), 1u);
+    const auto& ping = events[0];
+    EXPECT_EQ(ping.status, 200);
+    EXPECT_GT(ping.bodySize, 0u);
+    // Set-Cookie is on the response side and must be redacted in events
+    // even though the engine still uses the raw value internally to
+    // populate the cookie jar.
+    for (const auto& [k, v] : ping.headers) {
+        if (k == "Set-Cookie" || k == "set-cookie") {
+            EXPECT_EQ(v, ce::kRedactedHeaderValue);
+        }
+    }
+}
+
+TEST_F(RunOptionsFixture, extraction_applied_event_carries_variable_names_only) {
+    // ExtractionApplied is the per-step summary; values are intentionally
+    // omitted (per-extraction values live on ExtractionCompleted, where
+    // sensitive auth values are already masked separately). This test
+    // pins that the event fires once per step that records extractions
+    // and that variable names are present.
+    RunOptionsScratchProject project(kSimpleProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+
+    std::vector<ce::ExtractionApplied> events;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* e = std::get_if<ce::ExtractionApplied>(&ev)) {
+            events.push_back(*e);
+        }
+    });
+
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    // ping.get extracts ping_id; the auth flow doesn't surface
+    // ExtractionApplied — its extractions land on session variables.
+    bool sawPingExtraction = false;
+    for (const auto& e : events) {
+        if (e.resource.value == "ping") {
+            sawPingExtraction = true;
+            EXPECT_EQ(e.variableNames.size(), 1u);
+            if (!e.variableNames.empty()) {
+                EXPECT_EQ(e.variableNames[0], "ping_id");
+            }
+        }
+    }
+    EXPECT_TRUE(sawPingExtraction) << "expected ExtractionApplied for ping resource";
+}

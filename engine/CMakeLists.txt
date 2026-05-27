@@ -83,6 +83,7 @@ add_library(chainapi-engine-application OBJECT
     src/application/JsonExtraction.cpp
     src/application/MultipartBuilder.cpp
     src/application/RequestSigners.cpp
+    src/application/HeaderMasking.cpp
 )
 target_include_directories(chainapi-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
