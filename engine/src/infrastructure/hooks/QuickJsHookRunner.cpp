@@ -484,7 +484,7 @@ QuickJsHookRunner::~QuickJsHookRunner() = default;
 namespace {
 
 constexpr auto kHookTimeout = std::chrono::seconds(1);
-constexpr std::size_t kStackSize = 8 * 1024 * 1024;  // 8 MiB
+constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
 
 [[nodiscard]] std::expected<HookOutcome, ChainApiError> runScript(const std::string& script,
                                                                   HookContext context,

@@ -93,7 +93,12 @@ public:
 
     /// Verify with an empty sample. Every extraction comes back tagged
     /// `NoSample`. Used when no sample of any kind is available.
-    [[nodiscard]] VerificationReport verifyWithoutSample(const Operation& op) const noexcept;
+    ///
+    /// Not noexcept: building the report allocates strings and grows a
+    /// vector. On OOM the standard exception propagates — callers in the
+    /// engine treat that as unrecoverable, matching the rest of the
+    /// application layer.
+    [[nodiscard]] VerificationReport verifyWithoutSample(const Operation& op) const;
 };
 
 }  // namespace chainapi::engine

@@ -251,7 +251,7 @@ std::expected<VerificationReport, ChainApiError> Verifier::verify(
     return report;
 }
 
-VerificationReport Verifier::verifyWithoutSample(const Operation& op) const noexcept {
+VerificationReport Verifier::verifyWithoutSample(const Operation& op) const {
     VerificationReport report;
     report.extractions.reserve(op.extractions.size());
     for (const auto& ext : op.extractions) {

@@ -74,8 +74,12 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
             std::size_t pos = 0;
             double d = std::stod(raw, &pos);
             if (pos == raw.size()) return nlohmann::json(d);
+            // std::stod throws on non-numeric input; that's our signal to
+            // fall through and treat the scalar as a string. No log needed
+            // — every YAML string starting with a digit-like character
+            // takes this path.
+            // NOLINTNEXTLINE(bugprone-empty-catch)
         } catch (...) {
-            // fall through to string
         }
     }
     return nlohmann::json(raw);
@@ -307,7 +311,7 @@ TransportConfig parseTransport(const YAML::Node& node) {
                           "hook script is not a regular file: " + canonical.string()});
     }
 
-    constexpr std::uintmax_t kMaxHookBytes = 1 * 1024 * 1024;  // 1 MiB
+    constexpr std::uintmax_t kMaxHookBytes = std::uintmax_t{1} * 1024 * 1024;  // 1 MiB
     const auto size = fs::file_size(canonical, ec);
     if (ec) {
         return std::unexpected(ChainApiError{
