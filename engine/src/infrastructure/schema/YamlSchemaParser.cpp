@@ -136,22 +136,65 @@ std::vector<Extraction> parseExtractions(const YAML::Node& node) {
     return result;
 }
 
+/// Parse a non-negative integer using from_chars. Returns nullopt for
+/// any malformed input (non-digit, sign, partial parse, negative).
+/// Used by all the duration parsers below — std::stol throws on bad
+/// input and AGENTS.md mandates std::expected over exceptions.
+[[nodiscard]] std::optional<long> parseNonNegativeLong(std::string_view digits) {
+    long value = 0;
+    const auto* first = digits.data();
+    const auto* last = first + digits.size();
+    const auto fc = std::from_chars(first, last, value);
+    if (fc.ec != std::errc{} || fc.ptr != last || value < 0) {
+        return std::nullopt;
+    }
+    return value;
+}
+
 std::chrono::seconds parseDuration(const std::string& s) {
-    if (s.empty()) return std::chrono::seconds{900};  // default 15m
-    auto value = std::stol(s.substr(0, s.size() - 1));
-    char unit = s.back();
+    constexpr std::chrono::seconds kDefault{900};  // 15m — used when input is malformed
+    if (s.empty()) return kDefault;
+
+    const auto digits = std::string_view{s}.substr(0, s.size() - 1);
+    const auto value = parseNonNegativeLong(digits);
+    if (!value) return kDefault;
+
+    const char unit = s.back();
     switch (unit) {
         case 's':
-            return std::chrono::seconds{value};
+            return std::chrono::seconds{*value};
         case 'm':
-            return std::chrono::seconds{value * 60};
+            return std::chrono::seconds{*value * 60};
         case 'h':
-            return std::chrono::seconds{value * 3600};
+            return std::chrono::seconds{*value * 3600};
         case 'd':
-            return std::chrono::seconds{value * 86400};
+            return std::chrono::seconds{*value * 86400};
         default:
-            return std::chrono::seconds{value};
+            return std::chrono::seconds{*value};
     }
+}
+
+/// Parse a duration literal in either milliseconds (`750ms`) or
+/// seconds-and-up (`5s`, `1m`, `1h`, `1d`). Returns `fallback` when
+/// the literal is malformed. Centralised so the schema parser doesn't
+/// sprinkle `std::stol` calls (which throw) across every poll /
+/// transport / refresh field.
+[[nodiscard]] std::chrono::milliseconds parseDurationMs(const std::string& literal,
+                                                        std::chrono::milliseconds fallback) {
+    if (literal.empty()) return fallback;
+    if (literal.ends_with("ms")) {
+        const auto digits = std::string_view{literal}.substr(0, literal.size() - 2);
+        if (auto ms = parseNonNegativeLong(digits)) {
+            return std::chrono::milliseconds{*ms};
+        }
+        return fallback;
+    }
+    // Fall through to second-grained parser. Empty unit (just digits)
+    // is treated as seconds by parseDuration.
+    if (literal.size() < 2) return fallback;
+    const auto digits = std::string_view{literal}.substr(0, literal.size() - 1);
+    if (!parseNonNegativeLong(digits)) return fallback;  // malformed; don't trust parseDuration
+    return std::chrono::duration_cast<std::chrono::milliseconds>(parseDuration(literal));
 }
 
 /// Parse a `transport:` block.
@@ -185,13 +228,7 @@ TransportConfig parseTransport(const YAML::Node& node) {
 
     if (node["connect_timeout"]) {
         const auto literal = node["connect_timeout"].as<std::string>("");
-        if (literal.ends_with("ms")) {
-            out.connectTimeout =
-                std::chrono::milliseconds{std::stol(literal.substr(0, literal.size() - 2))};
-        } else if (!literal.empty()) {
-            out.connectTimeout =
-                std::chrono::duration_cast<std::chrono::milliseconds>(parseDuration(literal));
-        }
+        out.connectTimeout = parseDurationMs(literal, out.connectTimeout);
     }
 
     return out;
@@ -513,49 +550,24 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
                 poll.failWhen = p["fail_when"].as<std::string>();
             }
             if (p["interval"]) {
-                // parseDuration returns seconds; read milliseconds directly
-                // when the literal ends in 'ms'.
                 const auto literal = p["interval"].as<std::string>("2s");
-                if (literal.ends_with("ms")) {
-                    poll.interval =
-                        std::chrono::milliseconds{std::stol(literal.substr(0, literal.size() - 2))};
-                } else {
-                    poll.interval = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        parseDuration(literal));
-                }
+                poll.interval = parseDurationMs(literal, poll.interval);
             }
             if (p["backoff"]) {
                 const auto& b = p["backoff"];
                 if (b["base"]) {
                     const auto literal = b["base"].as<std::string>("500ms");
-                    if (literal.ends_with("ms")) {
-                        poll.backoffBase = std::chrono::milliseconds{
-                            std::stol(literal.substr(0, literal.size() - 2))};
-                    } else {
-                        poll.backoffBase = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            parseDuration(literal));
-                    }
+                    poll.backoffBase = parseDurationMs(
+                        literal, poll.backoffBase.value_or(std::chrono::milliseconds{500}));
                 }
                 if (b["max"]) {
                     const auto literal = b["max"].as<std::string>("30s");
-                    if (literal.ends_with("ms")) {
-                        poll.backoffMax = std::chrono::milliseconds{
-                            std::stol(literal.substr(0, literal.size() - 2))};
-                    } else {
-                        poll.backoffMax = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            parseDuration(literal));
-                    }
+                    poll.backoffMax = parseDurationMs(literal, poll.backoffMax);
                 }
             }
             if (p["timeout"]) {
                 const auto literal = p["timeout"].as<std::string>("60s");
-                if (literal.ends_with("ms")) {
-                    poll.timeout =
-                        std::chrono::milliseconds{std::stol(literal.substr(0, literal.size() - 2))};
-                } else {
-                    poll.timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        parseDuration(literal));
-                }
+                poll.timeout = parseDurationMs(literal, poll.timeout);
             }
             if (p["max_attempts"]) {
                 poll.maxAttempts = p["max_attempts"].as<int>();

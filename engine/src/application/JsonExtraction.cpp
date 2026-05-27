@@ -77,7 +77,9 @@ std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson
             const auto* first = indexStr.data();
             const auto* last = first + indexStr.size();
             const auto fc = std::from_chars(first, last, index);
-            if (fc.ec != std::errc{}) return nullptr;
+            // Reject partial parses — `[0xFF]` would otherwise parse as
+            // 0 and silently alias to the first element.
+            if (fc.ec != std::errc{} || fc.ptr != last) return nullptr;
 
             if (!current->is_array() || index >= current->size()) return nullptr;
             current = &(*current)[index];
@@ -148,7 +150,9 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
             const auto* first = indexStr.data();
             const auto* last = first + indexStr.size();
             const auto fc = std::from_chars(first, last, index);
-            if (fc.ec != std::errc{}) return nullptr;
+            // Reject partial parses — `[0xFF]` would otherwise parse as
+            // 0 and silently alias to the first element.
+            if (fc.ec != std::errc{} || fc.ptr != last) return nullptr;
             if (!current->is_array() || index >= current->size()) return nullptr;
             current = &(*current)[index];
             pos = segment.find('[', closePos);

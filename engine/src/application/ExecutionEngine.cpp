@@ -684,15 +684,17 @@ struct ExecutionEngine::Impl {
                         }
                     }
 
-                    // Refresh the Cookie header for the retry. The
-                    // earlier ctx.invalidateSession(op.actor) cleared
-                    // the jar, but the re-auth flow may have populated
-                    // a fresh session cookie via Set-Cookie — emit it
-                    // so the retried request carries the new cookie
-                    // rather than nothing.
-                    req.headers.erase("Cookie");
-                    if (const auto jar = ctx.cookies(op.actor); !jar.empty()) {
-                        req.headers["Cookie"] = cookies::formatRequestHeader(jar);
+                    // Refresh the Cookie header for the retry. Mirror
+                    // the first-attempt precedence: a user-set Cookie
+                    // (left in req.headers by the re-resolved op or
+                    // actor injects above) wins over the jar. Only
+                    // emit from the jar when nothing else set Cookie,
+                    // so the recovery path doesn't quietly clobber an
+                    // explicit `headers.Cookie:` on the operation.
+                    if (!req.headers.contains("Cookie")) {
+                        if (const auto jar = ctx.cookies(op.actor); !jar.empty()) {
+                            req.headers["Cookie"] = cookies::formatRequestHeader(jar);
+                        }
                     }
 
                     auto retryResp = deps.http->send(req);

@@ -470,12 +470,19 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
 // keyword, treat it as (a). Otherwise (b).
 
 [[nodiscard]] bool looksLikeModule(std::string_view script) {
-    // Crude but adequate — comments and string literals can fool this,
-    // but the only way to reach this code path is via a hook the user
-    // wrote themselves, so a false positive is recoverable.
-    return script.find("\nexport ") != std::string_view::npos ||
-           script.find("\nimport ") != std::string_view::npos || script.starts_with("export ") ||
-           script.starts_with("import ");
+    // Module hooks use `export default ...` per the project's hook
+    // authoring guide. Detect via heuristic on the script's first
+    // non-whitespace token, which is robust to indented files but
+    // doesn't fight back when a script-style hook contains the word
+    // `export` inside a comment or string. JS_DetectModule (the real
+    // lexer) is too permissive — it returns true for non-strict
+    // classic scripts that happen to parse as a module — so we'd
+    // route inline bodies through the module path and fail with
+    // "module did not export a default function".
+    while (!script.empty() && std::isspace(static_cast<unsigned char>(script.front()))) {
+        script.remove_prefix(1);
+    }
+    return script.starts_with("export ") || script.starts_with("import ");
 }
 
 }  // namespace
@@ -518,16 +525,15 @@ constexpr std::size_t kStackSize = 8 * 1024 * 1024;  // 8 MiB
     JSValue global = JS_GetGlobalObject(c);
     JsValueGuard globalGuard{c, global};
     JS_SetPropertyStr(c, global, "__chainapi_ctx", JS_DupValue(c, hookCtxObj));
-    // Don't free hookCtxObj here — JS_SetPropertyStr above takes ownership
-    // of the duplicated handle, but we still hold the original. The dup
-    // exists so we can keep our own reference to read mutations back.
-
-    auto release = [&] {
-        JS_FreeValue(c, hookCtxObj);
-    };
+    // RAII-wrap our local reference. JS_SetPropertyStr above takes
+    // ownership of the duplicated handle stored on the global; we
+    // still hold the original (used after the script runs to read
+    // mutations back). Wrapping in JsValueGuard ensures every return
+    // path frees it without a manual `release()` lambda — easier to
+    // keep correct as future edits add more error paths.
+    JsValueGuard hookCtxGuard{c, hookCtxObj};
 
     auto fail = [&](ErrorCode code, std::string detail) {
-        release();
         return std::unexpected(ChainApiError{code, ErrorClass::Hook, std::move(detail)});
     };
 
@@ -610,7 +616,6 @@ constexpr std::size_t kStackSize = 8 * 1024 * 1024;  // 8 MiB
         out.mutatedResponse = *context.response;
         readMutatedResponse(c, hookCtxObj, *out.mutatedResponse);
     }
-    release();
     return out;
 }
 
