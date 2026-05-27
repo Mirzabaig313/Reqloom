@@ -12,6 +12,7 @@
     "sqlite3",
     "nlohmann-json",
     "cpp-httplib",
+    "quickjs-ng",
     {
       "name": "gtest",
       "version>=": "1.14.0"

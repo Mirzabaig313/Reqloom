@@ -26,6 +26,7 @@ add_executable(chainapi-engine-unit-tests
     unit/DependencyResolverTest.cpp
     unit/CodecsTest.cpp
     unit/MultipartBuilderTest.cpp
+    unit/QuickJsHookRunnerTest.cpp
     unit/SchemaParserMultiFileTest.cpp
 )
 target_include_directories(chainapi-engine-unit-tests
@@ -50,6 +51,7 @@ add_executable(chainapi-engine-integration-tests
     integration/MockSutHarness.h
     integration/MockSutHarness.cpp
     integration/HappyPathTest.cpp
+    integration/HooksTest.cpp
     integration/PollingTest.cpp
     integration/RunOptionsTest.cpp
     integration/MultipartTest.cpp
