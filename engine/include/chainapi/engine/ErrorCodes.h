@@ -1,12 +1,13 @@
 // Error taxonomy. Codes are stable; UI/CLI render them; QA asserts on them.
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
 namespace chainapi::engine {
 
-enum class ErrorCode {
+enum class ErrorCode : std::uint8_t {
     // Schema layer
     SchemaInvalid,
     YamlParse,
@@ -56,7 +57,7 @@ enum class ErrorCode {
     Cancelled,
 };
 
-enum class ErrorClass {
+enum class ErrorClass : std::uint8_t {
     Schema,
     Resolution,
     Network,

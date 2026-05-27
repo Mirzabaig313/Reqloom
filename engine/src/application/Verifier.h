@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <expected>
 #include <map>
 #include <optional>
@@ -20,7 +21,7 @@
 namespace chainapi::engine {
 
 /// One extraction's verification outcome.
-enum class VerificationStatus {
+enum class VerificationStatus : std::uint8_t {
     Verified,      ///< JSONPath resolved to a non-null scalar of plausible type
     Null,          ///< JSONPath structurally valid but produced null or empty
     NoMatch,       ///< JSONPath did not resolve at all

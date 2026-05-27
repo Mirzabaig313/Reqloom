@@ -17,6 +17,7 @@
 
 #include <chainapi/engine/ErrorCodes.h>
 
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <string>
@@ -26,7 +27,7 @@ namespace chainapi::engine {
 
 /// One evaluation outcome. Structurally invalid expressions or misses
 /// produce `False`, never an error.
-enum class PredicateValue { False, True };
+enum class PredicateValue : std::uint8_t { False, True };
 
 /// Compiled expression handle. Opaque to callers — keeps the AST out of
 /// the header. Move-only because the AST contains unique_ptr nodes.

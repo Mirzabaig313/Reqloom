@@ -7,6 +7,7 @@
 #include <chainapi/engine/Operation.h>
 
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -17,14 +18,14 @@ namespace chainapi::engine {
 
 /// One actor session, lifecycled per run.
 struct ActorSession {
-    enum class State { None, Authenticating, Live, Refreshing };
+    enum class State : std::uint8_t { None, Authenticating, Live, Refreshing };
 
     /// Per-request signing scheme. Most strategies leave this as `None`
     /// and rely on `injectHeaders` for static auth values. OAuth 1.0a
     /// and AWS SigV4 are the exceptions — their signature depends on the
     /// request URL / method / params / body, so the executor calls a
     /// signer right before each send.
-    enum class SigningScheme { None, OAuth1HmacSha1, AwsSigV4 };
+    enum class SigningScheme : std::uint8_t { None, OAuth1HmacSha1, AwsSigV4 };
 
     State state{State::None};
     std::map<std::string, std::string> variables;  ///< token, user_id, etc.
@@ -50,7 +51,7 @@ struct ResourceInstance {
 
 /// One step in a chain.
 struct StepResult {
-    enum class Status { Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked };
+    enum class Status : std::uint8_t { Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked };
 
     OperationId op;
     Status status{Status::Pending};
@@ -67,7 +68,7 @@ struct StepResult {
 
 
 struct ExtractionTrace {
-    enum class Outcome {
+    enum class Outcome : std::uint8_t {
         Resolved,        ///< Source path resolved to a non-null value.
         Null,            ///< Source path resolved but the value was null.
         Missing,         ///< Source path did not resolve at all.

@@ -32,15 +32,15 @@ struct ArrayNode;
 
 using NodePtr = std::unique_ptr<ParsedPredicate::Node>;
 
-enum class CompareOp { Eq, Neq, Lt, Le, Gt, Ge, In, Matches };
-enum class LogicOp { And, Or };
+enum class CompareOp : std::uint8_t { Eq, Neq, Lt, Le, Gt, Ge, In, Matches };
+enum class LogicOp : std::uint8_t { And, Or };
 
 struct LiteralNode {
     Json value;
 };
 struct JsonPathNode {
     // Stored as segments so evaluation walks the JSON tree without re-tokenising.
-    enum class SegKind { Field, Index };
+    enum class SegKind : std::uint8_t { Field, Index };
     struct Seg {
         SegKind kind;
         std::string field;
@@ -78,7 +78,7 @@ namespace {
 
 // Tokenizer
 
-enum class Tok {
+enum class Tok : std::uint8_t {
     End,
     LParen,
     RParen,

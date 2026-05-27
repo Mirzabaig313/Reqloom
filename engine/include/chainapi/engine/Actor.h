@@ -4,6 +4,7 @@
 
 #include <chainapi/engine/Operation.h>
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -19,7 +20,7 @@ namespace chainapi::engine {
 ///   - `oauth2_password`:              RFC 6749 §4.3 resource owner password grant
 ///   - `oauth1`:                       RFC 5849 HMAC-SHA1, signed per-request
 ///   - `aws_sigv4`:                    AWS Signature Version 4, signed per-request
-enum class AuthStrategy {
+enum class AuthStrategy : std::uint8_t {
     Simple,
     Chain,
     Basic,
