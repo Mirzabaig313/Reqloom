@@ -7,7 +7,9 @@
 #include <chainapi/engine/RunContext.h>
 
 #include <expected>
+#include <map>
 #include <memory>
+#include <string>
 
 namespace chainapi::engine {
 
@@ -40,5 +42,20 @@ public:
 /// surfaces that as `SessionRefreshFailed`.
 [[nodiscard]] std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor,
                                                                  AuthDependencies deps);
+
+/// Run the actor's `refresh:` block (a single HTTP step with templates,
+/// expected status, and extractions) and return the new variable map
+/// to merge into the existing session.
+///
+/// Returns `std::nullopt` (via the unexpected error path) when the actor
+/// has no refresh block declared. Returns `SessionRefreshFailed` for any
+/// network / status / extraction failure — the caller should treat this
+/// as "fall back to full re-auth".
+///
+/// Templates in the refresh block resolve against the EXISTING session
+/// (e.g. `{{user.refresh_token}}`), so the caller must keep the session
+/// in the RunContext's cache while calling.
+[[nodiscard]] std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
+    const Actor& actor, const RunContext& ctx, const ResolveContext& rctx, AuthDependencies deps);
 
 }  // namespace chainapi::engine

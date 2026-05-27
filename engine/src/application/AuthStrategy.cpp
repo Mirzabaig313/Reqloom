@@ -596,4 +596,90 @@ std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor, AuthDepen
     return nullptr;
 }
 
+std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
+    const Actor& actor, const RunContext& ctx, const ResolveContext& rctx, AuthDependencies deps) {
+    if (!actor.refresh) {
+        return std::unexpected(ChainApiError{
+            ErrorCode::SessionRefreshFailed,
+            ErrorClass::Auth,
+            "refresh: actor '" + actor.id.value + "' has no `session.refresh:` block defined"});
+    }
+    if (!deps.http || !deps.varResolver) {
+        return std::unexpected(ChainApiError{
+            ErrorCode::SessionRefreshFailed, ErrorClass::Auth, "refresh: dependencies not wired"});
+    }
+
+    const auto& refresh = *actor.refresh;
+    auto resolvedPath = deps.varResolver->resolve(refresh.pathTemplate, ctx, rctx);
+    if (!resolvedPath.unresolved.empty()) {
+        return std::unexpected(ChainApiError{
+            ErrorCode::SessionRefreshFailed,
+            ErrorClass::Auth,
+            "refresh: unresolved variable in path: " + resolvedPath.unresolved.front()});
+    }
+
+    HttpRequest req;
+    req.method = refresh.method;
+    const auto baseUrlIt = rctx.envVars.find("baseUrl");
+    const std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
+    req.url = baseUrl + resolvedPath.output;
+
+    for (const auto& [k, v] : refresh.headers) {
+        auto resolved = deps.varResolver->resolve(v, ctx, rctx);
+        req.headers[k] = resolved.output;
+    }
+    if (refresh.bodyTemplate) {
+        auto resolved = deps.varResolver->resolve(*refresh.bodyTemplate, ctx, rctx);
+        req.body = resolved.output;
+        if (!req.headers.contains("Content-Type")) {
+            req.headers["Content-Type"] = "application/json";
+        }
+    }
+
+    auto response = deps.http->send(req);
+    if (!response) {
+        return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
+                                             ErrorClass::Auth,
+                                             "refresh: network error: " + response.error().detail});
+    }
+
+    // Honour the user's `expect_status:` when set, otherwise fall back
+    // to "any 2xx is success". Both forms align with the operation-level
+    // schema so users can copy patterns between the two.
+    const auto statusOk = [&]() {
+        if (!refresh.expectStatusList.empty()) {
+            return std::find(refresh.expectStatusList.begin(),
+                             refresh.expectStatusList.end(),
+                             response->status) != refresh.expectStatusList.end();
+        }
+        if (refresh.expectStatus) {
+            return response->status == *refresh.expectStatus;
+        }
+        return response->status >= 200 && response->status < 300;
+    }();
+
+    if (!statusOk) {
+        return std::unexpected(ChainApiError{
+            ErrorCode::SessionRefreshFailed,
+            ErrorClass::Auth,
+            "refresh: HTTP " + std::to_string(response->status) +
+                " (refresh endpoint rejected the existing credentials — caller should re-auth)"});
+    }
+
+    if (refresh.extractions.empty()) {
+        // No declared extractions — treat as "refresh succeeded, but
+        // there's nothing to merge". Return an empty map so the caller
+        // can update expiresAt without overwriting any session vars.
+        return std::map<std::string, std::string>{};
+    }
+    auto values = extractFromJson(response->body, refresh.extractions);
+    if (!values) {
+        return std::unexpected(
+            ChainApiError{ErrorCode::SessionRefreshFailed,
+                          ErrorClass::Auth,
+                          "refresh: extraction failed: " + values.error().detail});
+    }
+    return std::move(*values);
+}
+
 }  // namespace chainapi::engine

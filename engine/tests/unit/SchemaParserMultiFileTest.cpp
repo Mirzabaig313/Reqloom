@@ -832,6 +832,138 @@ resources:
     EXPECT_FALSE(user.refresh.has_value());
 }
 
+TEST(SchemaParserSessionFields, session_refresh_expect_status_scalar_is_parsed) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: RefreshExpectStatusScalar
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@test.com" }
+      extract: { token: $.data.accessToken }
+    session:
+      ttl: 15m
+      refresh:
+        method: POST
+        path: /api/v1/auth/refresh
+        body: { refresh_token: "{{user.refresh_token}}" }
+        expect_status: 204
+        extract: { token: $.data.accessToken }
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: user
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& refresh = *result->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_EQ(refresh.expectStatus, 204);
+    EXPECT_TRUE(refresh.expectStatusList.empty()) << "scalar form must not populate the list field";
+}
+
+TEST(SchemaParserSessionFields, session_refresh_expect_status_list_is_parsed) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: RefreshExpectStatusList
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@test.com" }
+      extract: { token: $.data.accessToken }
+    session:
+      ttl: 15m
+      refresh:
+        method: POST
+        path: /api/v1/auth/refresh
+        body: { refresh_token: "{{user.refresh_token}}" }
+        expect_status: [200, 202, 204]
+        extract: { token: $.data.accessToken }
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: user
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& refresh = *result->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_FALSE(refresh.expectStatus.has_value())
+        << "list form must not also populate the scalar field";
+    EXPECT_EQ(refresh.expectStatusList, (std::vector<int>{200, 202, 204}));
+}
+
+TEST(SchemaParserSessionFields, session_refresh_without_expect_status_leaves_both_fields_empty) {
+    // Backwards compatibility: schemas that pre-date `refresh.expect_status`
+    // must continue to parse cleanly. runRefresh's "any 2xx is success"
+    // default keeps their behaviour unchanged.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: RefreshNoExpectStatus
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@test.com" }
+      extract: { token: $.data.accessToken }
+    session:
+      ttl: 15m
+      refresh:
+        method: POST
+        path: /api/v1/auth/refresh
+        body: { refresh_token: "{{user.refresh_token}}" }
+        extract: { token: $.data.accessToken }
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: user
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& refresh = *result->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_FALSE(refresh.expectStatus.has_value());
+    EXPECT_TRUE(refresh.expectStatusList.empty());
+}
+
 // ─── Schema version validation ───────────────────────────────────────────────
 
 TEST(SchemaParserVersion, version_zero_is_rejected) {

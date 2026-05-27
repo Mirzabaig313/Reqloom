@@ -1,0 +1,41 @@
+{
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "status": 200,
+      "body": {
+        "data": {
+          "accessToken": "tok-initial",
+          "refreshToken": "rt-1",
+          "user": { "id": "u-1" }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/refresh",
+      "status": 200,
+      "body": {
+        "data": {
+          "accessToken": "tok-refreshed",
+          "refreshToken": "rt-2"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/me",
+      "status": 200,
+      "body": { "data": { "id": "u-1", "email": "u@x.test" } }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/protected",
+      "sequence": [
+        { "status": 401, "body": { "error": "token_expired" } },
+        { "status": 200, "body": { "data": { "id": "ok-after-reauth" } } }
+      ]
+    }
+  ]
+}
