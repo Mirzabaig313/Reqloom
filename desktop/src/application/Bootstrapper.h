@@ -12,6 +12,10 @@ namespace chainapi::desktop {
 class Bootstrapper {
 public:
     Bootstrapper();
+    Bootstrapper(const Bootstrapper&) = delete;
+    Bootstrapper& operator=(const Bootstrapper&) = delete;
+    Bootstrapper(Bootstrapper&&) = delete;
+    Bootstrapper& operator=(Bootstrapper&&) = delete;
     ~Bootstrapper();
 
     engine::ExecutionEngine& engine() noexcept;

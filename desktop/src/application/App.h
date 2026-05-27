@@ -12,6 +12,10 @@ class Bootstrapper;
 class App {
 public:
     App();
+    App(const App&) = delete;
+    App& operator=(const App&) = delete;
+    App(App&&) = delete;
+    App& operator=(App&&) = delete;
     ~App();
 
     void show();

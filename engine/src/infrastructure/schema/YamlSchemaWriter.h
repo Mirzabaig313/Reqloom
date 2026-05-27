@@ -9,6 +9,10 @@ namespace chainapi::engine {
 class YamlSchemaWriter final : public SchemaWriter {
 public:
     YamlSchemaWriter();
+    YamlSchemaWriter(const YamlSchemaWriter&) = delete;
+    YamlSchemaWriter& operator=(const YamlSchemaWriter&) = delete;
+    YamlSchemaWriter(YamlSchemaWriter&&) = delete;
+    YamlSchemaWriter& operator=(YamlSchemaWriter&&) = delete;
     ~YamlSchemaWriter() override;
 
     SchemaWriteResult write(const std::filesystem::path& targetDir,
