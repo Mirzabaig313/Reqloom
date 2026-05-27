@@ -56,9 +56,15 @@ void printUsage(std::ostream& os) {
 }
 
 [[nodiscard]] std::expected<Format, std::string> parseFormat(const std::string& token) {
-    if (token == "text") return Format::Text;
-    if (token == "json") return Format::Json;
-    if (token == "junit") return Format::JUnit;
+    if (token == "text") {
+        return Format::Text;
+    }
+    if (token == "json") {
+        return Format::Json;
+    }
+    if (token == "junit") {
+        return Format::JUnit;
+    }
     return std::unexpected("--format must be one of text, json, junit (got '" + token + "')");
 }
 
@@ -123,7 +129,9 @@ void printUsage(std::ostream& os) {
 [[nodiscard]] std::ostream& renderTarget(std::ostream& fallback,
                                          const fs::path& path,
                                          std::unique_ptr<std::ofstream>& owned) {
-    if (path.empty()) return fallback;
+    if (path.empty()) {
+        return fallback;
+    }
     owned = std::make_unique<std::ofstream>(path);
     if (!*owned) {
         std::println(stderr, "chainapi run: cannot open --output file '{}'", path.string());
@@ -136,7 +144,9 @@ void printUsage(std::ostream& os) {
 
 int runCommand(const QStringList& args) {
     auto parsed = parseArgs(args);
-    if (!parsed) return parsed.error();
+    if (!parsed) {
+        return parsed.error();
+    }
     auto& cfg = *parsed;
 
     auto yamlPath = cfg.projectPath / "chainapi.yaml";
@@ -184,7 +194,9 @@ int runCommand(const QStringList& args) {
     ce::ExecutionEngine engine(ce::makeDefaultDependencies());
     ce::RunContext ctx;
     ce::RunOptions options;
-    if (!cfg.envName.empty()) options.environment = cfg.envName;
+    if (!cfg.envName.empty()) {
+        options.environment = cfg.envName;
+    }
 
     if (cfg.format == Format::Text) {
         engine.subscribe([&textRenderer](const ce::RunEvent& e) { textRenderer.onEvent(e); });

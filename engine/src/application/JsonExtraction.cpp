@@ -23,7 +23,9 @@ using json = nlohmann::json;
 constexpr std::size_t kMaxTraceValueBytes = 256;
 
 std::string truncateForTrace(std::string s) {
-    if (s.size() <= kMaxTraceValueBytes) return s;
+    if (s.size() <= kMaxTraceValueBytes) {
+        return s;
+    }
     s.resize(kMaxTraceValueBytes);
     s += "...";
     return s;
@@ -32,7 +34,9 @@ std::string truncateForTrace(std::string s) {
 [[nodiscard]] std::string toLowerCopy(std::string_view s) {
     std::string out;
     out.reserve(s.size());
-    for (char c : s) out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    for (char c : s) {
+        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
     return out;
 }
 
@@ -40,7 +44,9 @@ std::string truncateForTrace(std::string s) {
 
 std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson(
     const std::string& body, const std::vector<Extraction>& extractions) {
-    if (extractions.empty()) return std::map<std::string, std::string>{};
+    if (extractions.empty()) {
+        return std::map<std::string, std::string>{};
+    }
 
     json doc;
     try {
@@ -55,16 +61,22 @@ std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson
     // Walk a single segment that may be "name", "name[N]", or "[N]".
     // Returns nullptr on miss.
     auto walkSegment = [](const json* current, const std::string& segment) -> const json* {
-        if (segment.empty()) return current;
+        if (segment.empty()) {
+            return current;
+        }
 
         const auto bracketPos = segment.find('[');
         const std::string name =
             (bracketPos == std::string::npos) ? segment : segment.substr(0, bracketPos);
 
         if (!name.empty()) {
-            if (!current->is_object()) return nullptr;
+            if (!current->is_object()) {
+                return nullptr;
+            }
             auto it = current->find(name);
-            if (it == current->end()) return nullptr;
+            if (it == current->end()) {
+                return nullptr;
+            }
             current = &(*it);
         }
 
@@ -72,7 +84,9 @@ std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson
         std::size_t pos = bracketPos;
         while (pos != std::string::npos) {
             const auto closePos = segment.find(']', pos);
-            if (closePos == std::string::npos) return nullptr;
+            if (closePos == std::string::npos) {
+                return nullptr;
+            }
             const auto indexStr = segment.substr(pos + 1, closePos - pos - 1);
             std::size_t index = 0;
             const auto* first = indexStr.data();
@@ -80,9 +94,13 @@ std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson
             const auto fc = std::from_chars(first, last, index);
             // Reject partial parses — `[0xFF]` would otherwise parse as
             // 0 and silently alias to the first element.
-            if (fc.ec != std::errc{} || fc.ptr != last) return nullptr;
+            if (fc.ec != std::errc{} || fc.ptr != last) {
+                return nullptr;
+            }
 
-            if (!current->is_array() || index >= current->size()) return nullptr;
+            if (!current->is_array() || index >= current->size()) {
+                return nullptr;
+            }
             current = &(*current)[index];
 
             pos = segment.find('[', closePos);
@@ -93,7 +111,9 @@ std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson
     std::map<std::string, std::string> values;
     for (const auto& ext : extractions) {
         auto path = ext.sourcePath;
-        if (path.starts_with("$.")) path = path.substr(2);
+        if (path.starts_with("$.")) {
+            path = path.substr(2);
+        }
 
         const json* current = &doc;
         bool found = true;
@@ -124,28 +144,38 @@ namespace {
 
 const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
     std::string path{sourcePath};
-    if (path.starts_with("$.")) path = path.substr(2);
+    if (path.starts_with("$.")) {
+        path = path.substr(2);
+    }
 
     const json* current = &doc;
     std::istringstream ss(path);
     std::string segment;
     while (std::getline(ss, segment, '.')) {
-        if (segment.empty()) continue;
+        if (segment.empty()) {
+            continue;
+        }
         const auto bracketPos = segment.find('[');
         const std::string name =
             (bracketPos == std::string::npos) ? segment : segment.substr(0, bracketPos);
 
         if (!name.empty()) {
-            if (!current->is_object()) return nullptr;
+            if (!current->is_object()) {
+                return nullptr;
+            }
             auto it = current->find(name);
-            if (it == current->end()) return nullptr;
+            if (it == current->end()) {
+                return nullptr;
+            }
             current = &(*it);
         }
 
         std::size_t pos = bracketPos;
         while (pos != std::string::npos) {
             const auto closePos = segment.find(']', pos);
-            if (closePos == std::string::npos) return nullptr;
+            if (closePos == std::string::npos) {
+                return nullptr;
+            }
             const auto indexStr = segment.substr(pos + 1, closePos - pos - 1);
             std::size_t index = 0;
             const auto* first = indexStr.data();
@@ -153,8 +183,12 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
             const auto fc = std::from_chars(first, last, index);
             // Reject partial parses — `[0xFF]` would otherwise parse as
             // 0 and silently alias to the first element.
-            if (fc.ec != std::errc{} || fc.ptr != last) return nullptr;
-            if (!current->is_array() || index >= current->size()) return nullptr;
+            if (fc.ec != std::errc{} || fc.ptr != last) {
+                return nullptr;
+            }
+            if (!current->is_array() || index >= current->size()) {
+                return nullptr;
+            }
             current = &(*current)[index];
             pos = segment.find('[', closePos);
         }
@@ -178,7 +212,9 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
     const std::vector<std::pair<std::string, std::string>>& headers, std::string_view name) {
     const auto target = toLowerCopy(name);
     for (const auto& [k, v] : headers) {
-        if (toLowerCopy(k) == target) return v;
+        if (toLowerCopy(k) == target) {
+            return v;
+        }
     }
     return std::nullopt;
 }
@@ -189,8 +225,12 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
 [[nodiscard]] std::optional<std::string> parseSetCookieValue(std::string_view header,
                                                              std::string_view cookieName) {
     auto parsed = cookies::parseSetCookie(header);
-    if (!parsed) return std::nullopt;
-    if (parsed->first != cookieName) return std::nullopt;
+    if (!parsed) {
+        return std::nullopt;
+    }
+    if (parsed->first != cookieName) {
+        return std::nullopt;
+    }
     return std::move(parsed->second);
 }
 
@@ -205,8 +245,12 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
     const std::vector<std::pair<std::string, std::string>>& headers, std::string_view name) {
     std::optional<std::string> latest;
     for (const auto& [k, v] : headers) {
-        if (toLowerCopy(k) != "set-cookie") continue;
-        if (auto found = parseSetCookieValue(v, name); found) latest = std::move(found);
+        if (toLowerCopy(k) != "set-cookie") {
+            continue;
+        }
+        if (auto found = parseSetCookieValue(v, name); found) {
+            latest = std::move(found);
+        }
     }
     return latest;
 }
@@ -271,7 +315,9 @@ void resolveJsonPath(const json& doc,
 /// Whether at least one extraction in the list needs the JSON body.
 [[nodiscard]] bool anyNeedsJsonParse(const std::vector<Extraction>& extractions) {
     for (const auto& ext : extractions) {
-        if (ext.source == Extraction::Source::JsonPath) return true;
+        if (ext.source == Extraction::Source::JsonPath) {
+            return true;
+        }
     }
     return false;
 }
@@ -292,7 +338,9 @@ std::expected<DetailedExtraction, ChainApiError> extractFromResponseDetailed(
     const std::vector<std::pair<std::string, std::string>>& headers,
     const std::vector<Extraction>& extractions) {
     DetailedExtraction out;
-    if (extractions.empty()) return out;
+    if (extractions.empty()) {
+        return out;
+    }
 
     json doc;
     bool docParsed = false;

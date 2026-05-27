@@ -88,14 +88,18 @@ int interruptCallback(JSRuntime* /*rt*/, void* opaque) {
 
 struct JsRuntimeDeleter {
     void operator()(JSRuntime* rt) const noexcept {
-        if (rt != nullptr) JS_FreeRuntime(rt);
+        if (rt != nullptr) {
+            JS_FreeRuntime(rt);
+        }
     }
 };
 using JsRuntimePtr = std::unique_ptr<JSRuntime, JsRuntimeDeleter>;
 
 struct JsContextDeleter {
     void operator()(JSContext* ctx) const noexcept {
-        if (ctx != nullptr) JS_FreeContext(ctx);
+        if (ctx != nullptr) {
+            JS_FreeContext(ctx);
+        }
     }
 };
 using JsContextPtr = std::unique_ptr<JSContext, JsContextDeleter>;
@@ -116,9 +120,13 @@ private:
 // ─── String marshalling ──────────────────────────────────────────────────────
 
 [[nodiscard]] std::string toCppString(JSContext* ctx, JSValueConst v) {
-    if (JS_IsUndefined(v) || JS_IsNull(v)) return {};
+    if (JS_IsUndefined(v) || JS_IsNull(v)) {
+        return {};
+    }
     const char* c = JS_ToCString(ctx, v);
-    if (c == nullptr) return {};
+    if (c == nullptr) {
+        return {};
+    }
     std::string out{c};
     JS_FreeCString(ctx, c);
     return out;
@@ -146,7 +154,9 @@ void setIntProp(JSContext* ctx, JSValueConst obj, const char* name, int32_t valu
 
 [[nodiscard]] std::map<std::string, std::string> readStringMap(JSContext* ctx, JSValueConst obj) {
     std::map<std::string, std::string> out;
-    if (!JS_IsObject(obj)) return out;
+    if (!JS_IsObject(obj)) {
+        return out;
+    }
 
     JSPropertyEnum* tab = nullptr;
     uint32_t len = 0;
@@ -155,7 +165,9 @@ void setIntProp(JSContext* ctx, JSValueConst obj, const char* name, int32_t valu
     }
     for (uint32_t i = 0; i < len; ++i) {
         const char* key = JS_AtomToCString(ctx, tab[i].atom);
-        if (key == nullptr) continue;
+        if (key == nullptr) {
+            continue;
+        }
 
         JSValue v = JS_GetProperty(ctx, obj, tab[i].atom);
 
@@ -181,50 +193,72 @@ void setIntProp(JSContext* ctx, JSValueConst obj, const char* name, int32_t valu
                                                    int argc,
                                                    JSValueConst* argv,
                                                    int idx) {
-    if (idx >= argc) return std::nullopt;
-    if (!JS_IsString(argv[idx])) return std::nullopt;
+    if (idx >= argc) {
+        return std::nullopt;
+    }
+    if (!JS_IsString(argv[idx])) {
+        return std::nullopt;
+    }
     return toCppString(ctx, argv[idx]);
 }
 
 JSValue jsBase64Encode(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto s = argString(ctx, argc, argv, 0);
-    if (!s) return JS_UNDEFINED;
+    if (!s) {
+        return JS_UNDEFINED;
+    }
     return jsStr(ctx, base64Encode(*s));
 }
 
 JSValue jsBase64Decode(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto s = argString(ctx, argc, argv, 0);
-    if (!s) return JS_UNDEFINED;
+    if (!s) {
+        return JS_UNDEFINED;
+    }
     auto decoded = base64Decode(*s);
-    if (!decoded) return JS_UNDEFINED;
+    if (!decoded) {
+        return JS_UNDEFINED;
+    }
     return jsStr(ctx, *decoded);
 }
 
 JSValue jsHexEncode(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto s = argString(ctx, argc, argv, 0);
-    if (!s) return JS_UNDEFINED;
+    if (!s) {
+        return JS_UNDEFINED;
+    }
     return jsStr(ctx, hexEncode(*s));
 }
 
 JSValue jsHexDecode(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto s = argString(ctx, argc, argv, 0);
-    if (!s) return JS_UNDEFINED;
+    if (!s) {
+        return JS_UNDEFINED;
+    }
     auto decoded = hexDecode(*s);
-    if (!decoded) return JS_UNDEFINED;
+    if (!decoded) {
+        return JS_UNDEFINED;
+    }
     return jsStr(ctx, *decoded);
 }
 
 JSValue jsUrlEncode(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto s = argString(ctx, argc, argv, 0);
-    if (!s) return JS_UNDEFINED;
+    if (!s) {
+        return JS_UNDEFINED;
+    }
     return jsStr(ctx, urlEncode(*s));
 }
 
 JSValue jsUrlDecode(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto s = argString(ctx, argc, argv, 0);
-    if (!s) return JS_UNDEFINED;
+    if (!s) {
+        return JS_UNDEFINED;
+    }
     auto decoded = urlDecode(*s);
-    if (!decoded) return JS_UNDEFINED;
+    if (!decoded) {
+        return JS_UNDEFINED;
+    }
     return jsStr(ctx, *decoded);
 }
 
@@ -232,13 +266,17 @@ template <std::string (*Fn)(std::string_view, std::string_view)>
 JSValue jsHmac(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto key = argString(ctx, argc, argv, 0);
     auto msg = argString(ctx, argc, argv, 1);
-    if (!key || !msg) return JS_UNDEFINED;
+    if (!key || !msg) {
+        return JS_UNDEFINED;
+    }
     return jsStr(ctx, hexEncode(Fn(*key, *msg)));
 }
 
 JSValue jsSha256(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     auto msg = argString(ctx, argc, argv, 0);
-    if (!msg) return JS_UNDEFINED;
+    if (!msg) {
+        return JS_UNDEFINED;
+    }
     return jsStr(ctx, hexEncode(crypto::sha256(*msg)));
 }
 
@@ -246,7 +284,9 @@ JSValue jsSha256(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
 /// `claims` may be either a JS object or a JSON string. `alg` defaults
 /// to "HS256"; "HS512" is also supported.
 JSValue jsJwtSign(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
-    if (argc < 2) return JS_UNDEFINED;
+    if (argc < 2) {
+        return JS_UNDEFINED;
+    }
 
     std::string payloadJson;
     if (JS_IsString(argv[0])) {
@@ -264,13 +304,17 @@ JSValue jsJwtSign(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
         JSValue args[1] = {argv[0]};
         JSValue str = JS_Call(ctx, stringify, jsonObj, 1, args);
         JsValueGuard strGuard{ctx, str};
-        if (JS_IsException(str)) return JS_UNDEFINED;
+        if (JS_IsException(str)) {
+            return JS_UNDEFINED;
+        }
         payloadJson = toCppString(ctx, str);
     } else {
         return JS_UNDEFINED;
     }
 
-    if (!JS_IsString(argv[1])) return JS_UNDEFINED;
+    if (!JS_IsString(argv[1])) {
+        return JS_UNDEFINED;
+    }
     const auto key = toCppString(ctx, argv[1]);
 
     std::string alg = "HS256";
@@ -286,7 +330,9 @@ JSValue jsJwtSign(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     } else {
         return JS_UNDEFINED;
     }
-    if (signed_.empty()) return JS_UNDEFINED;
+    if (signed_.empty()) {
+        return JS_UNDEFINED;
+    }
     return jsStr(ctx, signed_);
 }
 
@@ -383,12 +429,16 @@ void installHelper(
 void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outReq) {
     JSValue req = JS_GetPropertyStr(ctx, root, "request");
     JsValueGuard guard{ctx, req};
-    if (!JS_IsObject(req)) return;
+    if (!JS_IsObject(req)) {
+        return;
+    }
 
     {
         JSValue url = JS_GetPropertyStr(ctx, req, "url");
         JsValueGuard urlGuard{ctx, url};
-        if (JS_IsString(url)) outReq.url = toCppString(ctx, url);
+        if (JS_IsString(url)) {
+            outReq.url = toCppString(ctx, url);
+        }
     }
     {
         JSValue body = JS_GetPropertyStr(ctx, req, "body");
@@ -402,7 +452,9 @@ void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outR
     {
         JSValue headers = JS_GetPropertyStr(ctx, req, "headers");
         JsValueGuard headersGuard{ctx, headers};
-        if (JS_IsObject(headers)) outReq.headers = readStringMap(ctx, headers);
+        if (JS_IsObject(headers)) {
+            outReq.headers = readStringMap(ctx, headers);
+        }
     }
     // method is intentionally read-only post-resolution; templates have
     // already locked it in by the time hooks see ctx.
@@ -411,25 +463,33 @@ void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outR
 void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& outResp) {
     JSValue resp = JS_GetPropertyStr(ctx, root, "response");
     JsValueGuard guard{ctx, resp};
-    if (!JS_IsObject(resp)) return;
+    if (!JS_IsObject(resp)) {
+        return;
+    }
 
     {
         JSValue status = JS_GetPropertyStr(ctx, resp, "status");
         JsValueGuard statusGuard{ctx, status};
         if (JS_IsNumber(status)) {
             int32_t s = 0;
-            if (JS_ToInt32(ctx, &s, status) == 0) outResp.status = s;
+            if (JS_ToInt32(ctx, &s, status) == 0) {
+                outResp.status = s;
+            }
         }
     }
     {
         JSValue body = JS_GetPropertyStr(ctx, resp, "body");
         JsValueGuard bodyGuard{ctx, body};
-        if (JS_IsString(body)) outResp.body = toCppString(ctx, body);
+        if (JS_IsString(body)) {
+            outResp.body = toCppString(ctx, body);
+        }
     }
     {
         JSValue headers = JS_GetPropertyStr(ctx, resp, "headers");
         JsValueGuard headersGuard{ctx, headers};
-        if (JS_IsObject(headers)) outResp.headers = readStringMap(ctx, headers);
+        if (JS_IsObject(headers)) {
+            outResp.headers = readStringMap(ctx, headers);
+        }
     }
 }
 
@@ -438,14 +498,18 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
 [[nodiscard]] std::string formatJsException(JSContext* ctx) {
     JSValue ex = JS_GetException(ctx);
     JsValueGuard guard{ctx, ex};
-    if (JS_IsNull(ex) || JS_IsUndefined(ex)) return "<unknown>";
+    if (JS_IsNull(ex) || JS_IsUndefined(ex)) {
+        return "<unknown>";
+    }
 
     auto base = toCppString(ctx, ex);
     JSValue stack = JS_GetPropertyStr(ctx, ex, "stack");
     JsValueGuard stackGuard{ctx, stack};
     if (JS_IsString(stack)) {
         auto stackStr = toCppString(ctx, stack);
-        if (!stackStr.empty()) base += "\n" + stackStr;
+        if (!stackStr.empty()) {
+            base += "\n" + stackStr;
+        }
     }
     return base;
 }

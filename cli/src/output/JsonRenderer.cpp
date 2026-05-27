@@ -117,9 +117,9 @@ void JsonRenderer::render(const ce::OperationId& target,
 
     out_ << "{\n";
     out_ << "  \"run_id\": " << result.runId.value << ",\n";
-    out_ << "  \"target\": \"" << escape(target.value) << "\",\n";
-    out_ << "  \"environment\": \"" << escape(environment) << "\",\n";
-    out_ << "  \"outcome\": \"" << runOutcomeName(result.outcome) << "\",\n";
+    out_ << R"(  "target": ")" << escape(target.value) << "\",\n";
+    out_ << R"(  "environment": ")" << escape(environment) << "\",\n";
+    out_ << R"(  "outcome": ")" << runOutcomeName(result.outcome) << "\",\n";
     out_ << "  \"summary\": {\n";
     out_ << "    \"succeeded\": " << succeeded << ",\n";
     out_ << "    \"failed\": " << failed << ",\n";
@@ -132,17 +132,19 @@ void JsonRenderer::render(const ce::OperationId& target,
     out_ << "  \"steps\": [";
     bool first = true;
     for (const auto& step : result.steps) {
-        if (!first) out_ << ",";
+        if (!first) {
+            out_ << ",";
+        }
         first = false;
         out_ << "\n    {\n";
-        out_ << "      \"op\": \"" << escape(step.op.value) << "\",\n";
+        out_ << R"(      "op": ")" << escape(step.op.value) << "\",\n";
         out_ << "      \"status\": ";
         writeStatus(out_, step.status);
         out_ << ",\n";
         out_ << "      \"attempts\": " << step.attempts << ",\n";
         out_ << "      \"elapsed_ms\": " << step.elapsed.count() << ",\n";
         if (step.error) {
-            out_ << "      \"error_code\": \"" << escape(ce::toCodeString(*step.error)) << "\",\n";
+            out_ << R"(      "error_code": ")" << escape(ce::toCodeString(*step.error)) << "\",\n";
         } else {
             out_ << "      \"error_code\": null,\n";
         }
@@ -151,10 +153,12 @@ void JsonRenderer::render(const ce::OperationId& target,
         } else {
             out_ << "      \"poll_attempt\": null,\n";
         }
-        out_ << "      \"detail\": \"" << escape(step.detail) << "\"\n";
+        out_ << R"(      "detail": ")" << escape(step.detail) << "\"\n";
         out_ << "    }";
     }
-    if (!result.steps.empty()) out_ << "\n  ";
+    if (!result.steps.empty()) {
+        out_ << "\n  ";
+    }
     out_ << "]\n";
     out_ << "}\n";
 }

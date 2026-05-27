@@ -46,7 +46,9 @@ constexpr std::uintmax_t kMaxUploadBytes = 50ULL * 1024 * 1024;  // 50 MiB
 [[nodiscard]] std::string toLower(std::string_view s) {
     std::string out;
     out.reserve(s.size());
-    for (auto c : s) out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    for (auto c : s) {
+        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
     return out;
 }
 
@@ -77,7 +79,9 @@ std::expected<FormBody, ChainApiError> buildFormBody(
     if (!routeMultipart) {
         std::string urlEncoded;
         for (const auto& [k, v] : resolvedFormFields) {
-            if (!urlEncoded.empty()) urlEncoded += "&";
+            if (!urlEncoded.empty()) {
+                urlEncoded += "&";
+            }
             urlEncoded += codecs::urlEncode(k) + "=" + codecs::urlEncode(v);
         }
         return FormBody{UrlEncodedBody{std::move(urlEncoded)}};

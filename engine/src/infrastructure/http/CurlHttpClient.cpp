@@ -22,8 +22,12 @@ namespace {
 [[nodiscard]] long toCurlLongClamped(std::int64_t v) noexcept {
     constexpr auto kMax = std::numeric_limits<long>::max();
     constexpr auto kMin = std::numeric_limits<long>::min();
-    if (v > static_cast<std::int64_t>(kMax)) return kMax;
-    if (v < static_cast<std::int64_t>(kMin)) return kMin;
+    if (v > static_cast<std::int64_t>(kMax)) {
+        return kMax;
+    }
+    if (v < static_cast<std::int64_t>(kMin)) {
+        return kMin;
+    }
     return static_cast<long>(v);
 }
 
@@ -31,21 +35,27 @@ namespace {
 
 struct CurlEasyDeleter {
     void operator()(CURL* p) const noexcept {
-        if (p) curl_easy_cleanup(p);
+        if (p) {
+            curl_easy_cleanup(p);
+        }
     }
 };
 using CurlEasyHandle = std::unique_ptr<CURL, CurlEasyDeleter>;
 
 struct CurlSlistDeleter {
     void operator()(curl_slist* p) const noexcept {
-        if (p) curl_slist_free_all(p);
+        if (p) {
+            curl_slist_free_all(p);
+        }
     }
 };
 using CurlSlistHandle = std::unique_ptr<curl_slist, CurlSlistDeleter>;
 
 struct CurlMimeDeleter {
     void operator()(curl_mime* p) const noexcept {
-        if (p) curl_mime_free(p);
+        if (p) {
+            curl_mime_free(p);
+        }
     }
 };
 using CurlMimeHandle = std::unique_ptr<curl_mime, CurlMimeDeleter>;
@@ -73,7 +83,9 @@ std::size_t headerCallback(char* ptr, std::size_t size, std::size_t nmemb, void*
     auto* headers = static_cast<std::vector<std::pair<std::string, std::string>>*>(userdata);
     std::string line(ptr, size * nmemb);
     auto colonPos = line.find(':');
-    if (colonPos == std::string::npos) return size * nmemb;
+    if (colonPos == std::string::npos) {
+        return size * nmemb;
+    }
 
     auto key = line.substr(0, colonPos);
     auto value = line.substr(colonPos + 1);

@@ -125,7 +125,9 @@ void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m
 }
 
 void emitExtractions(YAML::Emitter& e, const std::vector<Extraction>& extractions) {
-    if (extractions.empty()) return;
+    if (extractions.empty()) {
+        return;
+    }
     e << YAML::Key << "extract" << YAML::Value << YAML::BeginMap;
     for (const auto& ext : extractions) {
         e << YAML::Key << ext.variableName << YAML::Value << ext.sourcePath;
@@ -140,8 +142,12 @@ void emitProvenance(YAML::Emitter& e, const Provenance& p) {
         e << YAML::Key << "verified_against" << YAML::Value
           << std::string{verifiedAgainstToString(p.verifiedAgainst)};
     }
-    if (p.model) e << YAML::Key << "model" << YAML::Value << *p.model;
-    if (p.importedAt) e << YAML::Key << "imported_at" << YAML::Value << *p.importedAt;
+    if (p.model) {
+        e << YAML::Key << "model" << YAML::Value << *p.model;
+    }
+    if (p.importedAt) {
+        e << YAML::Key << "imported_at" << YAML::Value << *p.importedAt;
+    }
     if (!p.evidence.empty()) {
         e << YAML::Key << "evidence" << YAML::Value;
         emitStringMap(e, p.evidence);
@@ -173,14 +179,18 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
     }
     if (!op.expectStatusList.empty()) {
         e << YAML::Key << "expect_status" << YAML::Value << YAML::Flow << YAML::BeginSeq;
-        for (int s : op.expectStatusList) e << s;
+        for (int s : op.expectStatusList) {
+            e << s;
+        }
         e << YAML::EndSeq;
     } else if (op.expectStatus) {
         e << YAML::Key << "expect_status" << YAML::Value << *op.expectStatus;
     }
     if (!op.explicitDependencies.empty()) {
         e << YAML::Key << "depends_on" << YAML::Value << YAML::Flow << YAML::BeginSeq;
-        for (const auto& dep : op.explicitDependencies) e << dep.value;
+        for (const auto& dep : op.explicitDependencies) {
+            e << dep.value;
+        }
         e << YAML::EndSeq;
     }
     if (op.preRequestScript) {
@@ -233,7 +243,9 @@ std::string emitResource(const Resource& res) {
       << YAML::BeginMap;
     std::vector<std::string> opNames;
     opNames.reserve(res.operations.size());
-    for (const auto& [k, _] : res.operations) opNames.push_back(k);
+    for (const auto& [k, _] : res.operations) {
+        opNames.push_back(k);
+    }
     std::sort(opNames.begin(), opNames.end());
     for (const auto& name : opNames) {
         e << YAML::Key << name << YAML::Value;
@@ -355,7 +367,9 @@ std::string emitActor(const Actor& actor) {
         // operation-level expect_status.
         if (!actor.refresh->expectStatusList.empty()) {
             e << YAML::Key << "expect_status" << YAML::Value << YAML::Flow << YAML::BeginSeq;
-            for (int s : actor.refresh->expectStatusList) e << s;
+            for (int s : actor.refresh->expectStatusList) {
+                e << s;
+            }
             e << YAML::EndSeq;
         } else if (actor.refresh->expectStatus) {
             e << YAML::Key << "expect_status" << YAML::Value << *actor.refresh->expectStatus;

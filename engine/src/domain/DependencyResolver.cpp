@@ -18,11 +18,19 @@ namespace {
 std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& project) {
     std::vector<std::string> templates;
     templates.push_back(op.pathTemplate);
-    if (op.bodyTemplate) templates.push_back(*op.bodyTemplate);
-    for (const auto& [_, v] : op.headers) templates.push_back(v);
-    for (const auto& [_, v] : op.queryParams) templates.push_back(v);
+    if (op.bodyTemplate) {
+        templates.push_back(*op.bodyTemplate);
+    }
+    for (const auto& [_, v] : op.headers) {
+        templates.push_back(v);
+    }
+    for (const auto& [_, v] : op.queryParams) {
+        templates.push_back(v);
+    }
     if (op.bodyForm) {
-        for (const auto& [_, v] : *op.bodyForm) templates.push_back(v);
+        for (const auto& [_, v] : *op.bodyForm) {
+            templates.push_back(v);
+        }
     }
 
     // Find all {{X.y}} or {{X[N].y}} references. The first capture group
@@ -37,8 +45,12 @@ std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& p
             auto refResource = (*it)[1].str();
             auto refVar = (*it)[2].str();
 
-            if (refResource == "$") continue;
-            if (refResource == "env" || refResource == "secret") continue;
+            if (refResource == "$") {
+                continue;
+            }
+            if (refResource == "env" || refResource == "secret") {
+                continue;
+            }
 
             // Actor deps are handled by the session system, not the chain.
             bool isActor = false;
@@ -48,10 +60,14 @@ std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& p
                     break;
                 }
             }
-            if (isActor) continue;
+            if (isActor) {
+                continue;
+            }
 
             auto resIt = project.resources.find(ResourceId{refResource});
-            if (resIt == project.resources.end()) continue;
+            if (resIt == project.resources.end()) {
+                continue;
+            }
 
             for (const auto& [opName, resOp] : resIt->second.operations) {
                 for (const auto& ext : resOp.extractions) {
@@ -87,7 +103,9 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
         auto current = worklist.front();
         worklist.pop();
 
-        if (visited.contains(current)) continue;
+        if (visited.contains(current)) {
+            continue;
+        }
         visited.insert(current);
 
         auto dotPos = current.value.find('.');
@@ -138,11 +156,15 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
     std::map<OperationId, std::vector<OperationId>> dependents;
 
     for (const auto& [node, deps] : graph) {
-        if (!inDegree.contains(node)) inDegree[node] = 0;
+        if (!inDegree.contains(node)) {
+            inDegree[node] = 0;
+        }
         for (const auto& dep : deps) {
             dependents[dep].push_back(node);
             inDegree[node]++;
-            if (!inDegree.contains(dep)) inDegree[dep] = 0;
+            if (!inDegree.contains(dep)) {
+                inDegree[dep] = 0;
+            }
         }
     }
 
@@ -181,7 +203,9 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
         std::string cycleOps;
         for (const auto& [node, _] : graph) {
             if (!sortedSet.contains(node)) {
-                if (!cycleOps.empty()) cycleOps += " → ";
+                if (!cycleOps.empty()) {
+                    cycleOps += " → ";
+                }
                 cycleOps += node.value;
             }
         }

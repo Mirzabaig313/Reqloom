@@ -52,7 +52,7 @@ using namespace codecs;
     out.request.body = req.body;
 
     for (const auto& [actorId, _] : project.actors) {
-        if (auto* sess = ctx.session(actorId); sess) {
+        if (const auto* sess = ctx.session(actorId); sess) {
             out.variables[actorId.value] = sess->variables;
         }
     }
@@ -176,10 +176,14 @@ struct ExecutionEngine::Impl {
 
         auto authenticator =
             selectAuthenticator(actor, AuthDependencies{deps.http.get(), &varResolver});
-        if (!authenticator) return false;
+        if (!authenticator) {
+            return false;
+        }
 
         auto outcome = authenticator->authenticate(actor, ctx, rctx);
-        if (!outcome) return false;
+        if (!outcome) {
+            return false;
+        }
 
         ActorSession session = std::move(*outcome);
         session.state = ActorSession::State::Live;
@@ -227,10 +231,14 @@ struct ExecutionEngine::Impl {
         const Actor* pollActor = nullptr;
         if (poll.actor) {
             auto it = project.actors.find(*poll.actor);
-            if (it != project.actors.end()) pollActor = &it->second;
+            if (it != project.actors.end()) {
+                pollActor = &it->second;
+            }
         } else if (!op.actor.value.empty()) {
             auto it = project.actors.find(op.actor);
-            if (it != project.actors.end()) pollActor = &it->second;
+            if (it != project.actors.end()) {
+                pollActor = &it->second;
+            }
         }
 
         if (pollActor && !ensureSession(*pollActor, ctx, rctx, runId)) {
@@ -266,14 +274,16 @@ struct ExecutionEngine::Impl {
                     req.headers[k] = resolved.output;
                 }
                 // Session-level inject. Session wins on key collision.
-                if (auto* session = ctx.session(pollActor->id); session) {
+                if (const auto* session = ctx.session(pollActor->id); session) {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
                     }
                     if (!session->injectQueryParams.empty()) {
                         std::string qs;
                         for (const auto& [k, v] : session->injectQueryParams) {
-                            if (!qs.empty()) qs += "&";
+                            if (!qs.empty()) {
+                                qs += "&";
+                            }
                             qs += urlEncode(k) + "=" + urlEncode(v);
                         }
                         req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
@@ -294,7 +304,7 @@ struct ExecutionEngine::Impl {
 
             // Per-request signing done after inject merge so the signer sees the final shape.
             if (pollActor) {
-                if (auto* session = ctx.session(pollActor->id); session) {
+                if (const auto* session = ctx.session(pollActor->id); session) {
                     if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
                         if (!signOAuth1Request(req, *session)) {
                             return std::unexpected(
@@ -384,7 +394,9 @@ struct ExecutionEngine::Impl {
 
             // Floor delay to avoid busy-looping on `interval: 0ms`.
             constexpr auto kMinPollDelay = std::chrono::milliseconds{50};
-            if (delay < kMinPollDelay) delay = kMinPollDelay;
+            if (delay < kMinPollDelay) {
+                delay = kMinPollDelay;
+            }
 
             const auto remaining = deadline - std::chrono::steady_clock::now();
             if (remaining <= std::chrono::milliseconds{0}) {
@@ -462,7 +474,7 @@ struct ExecutionEngine::Impl {
                     req.headers[k] = resolved.output;
                 }
                 // Session-level inject wins on key collision.
-                if (auto* session = ctx.session(op.actor); session) {
+                if (const auto* session = ctx.session(op.actor); session) {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
                     }
@@ -488,7 +500,7 @@ struct ExecutionEngine::Impl {
             queryParams[k] = resolved.output;
         }
         if (!op.actor.value.empty()) {
-            if (auto* session = ctx.session(op.actor); session) {
+            if (const auto* session = ctx.session(op.actor); session) {
                 for (const auto& [k, v] : session->injectQueryParams) {
                     queryParams[k] = v;
                 }
@@ -497,7 +509,9 @@ struct ExecutionEngine::Impl {
         if (!queryParams.empty()) {
             std::string qs;
             for (const auto& [k, v] : queryParams) {
-                if (!qs.empty()) qs += "&";
+                if (!qs.empty()) {
+                    qs += "&";
+                }
                 qs += urlEncode(k) + "=" + urlEncode(v);
             }
             req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
@@ -576,7 +590,7 @@ struct ExecutionEngine::Impl {
             // Per-request signing (OAuth 1.0a / AWS SigV4). Inside the
             // retry loop so each attempt gets a fresh nonce/timestamp.
             if (!op.actor.value.empty()) {
-                if (auto* session = ctx.session(op.actor); session) {
+                if (const auto* session = ctx.session(op.actor); session) {
                     if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
                         if (!signOAuth1Request(req, *session)) {
                             result.status = StepResult::Status::Failed;
@@ -628,7 +642,9 @@ struct ExecutionEngine::Impl {
             // UB on large maxAttempts values.
             const auto shift = std::min(attempt, 20);
             auto delay = op.retry.baseBackoff * (std::uint32_t{1} << shift);
-            if (delay > op.retry.maxBackoff) delay = op.retry.maxBackoff;
+            if (delay > op.retry.maxBackoff) {
+                delay = op.retry.maxBackoff;
+            }
             std::this_thread::sleep_for(delay);
         }
 
@@ -671,7 +687,7 @@ struct ExecutionEngine::Impl {
                     for (const auto& [k, v] : actorIt->second.inject.headers) {
                         req.headers[k] = varResolver.resolve(v, ctx, rctx).output;
                     }
-                    if (auto* session = ctx.session(op.actor); session) {
+                    if (const auto* session = ctx.session(op.actor); session) {
                         for (const auto& [k, v] : session->injectHeaders) {
                             req.headers[k] = v;
                         }
@@ -710,7 +726,9 @@ struct ExecutionEngine::Impl {
         // singular expectStatus field; the latter is the legacy single-value
         // form consulted only when the list is empty.
         const auto statusMatches = [&]() -> bool {
-            if (!httpResp) return true;
+            if (!httpResp) {
+                return true;
+            }
             if (!op.expectStatusList.empty()) {
                 return std::find(op.expectStatusList.begin(),
                                  op.expectStatusList.end(),

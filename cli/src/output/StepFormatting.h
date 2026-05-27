@@ -34,7 +34,9 @@ namespace chainapi::cli {
 }
 
 [[nodiscard]] inline std::string errorCodeName(const engine::StepResult& step) {
-    if (!step.error) return "—";
+    if (!step.error) {
+        return "—";
+    }
     return std::string(engine::toCodeString(*step.error));
 }
 
