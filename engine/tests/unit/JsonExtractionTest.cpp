@@ -232,14 +232,32 @@ TEST(JsonExtractionResponse, regex_returns_whole_match_when_no_capture_group) {
     EXPECT_EQ(result->values.at("title"), "Welcome");
 }
 
-TEST(JsonExtractionResponse, malformed_regex_marks_missing_not_failure) {
-    // An unclosed group is a regex_error. The extraction must surface
-    // as Missing (with a clear trace) rather than crash the run.
+TEST(JsonExtractionResponse, malformed_regex_marks_invalid_pattern_not_missing) {
+    // An unclosed group is a regex_error. Surface it as InvalidPattern
+    // so the timeline distinguishes "your pattern is broken" from
+    // "your pattern compiled but didn't match". The op still fails the
+    // same way (downstream templating would resolve to undefined), but
+    // the user-facing trace row tells them where to look.
     const std::vector<ce::Extraction> exts = {
         make("bad", "(unclosed", ce::Extraction::Source::Regex),
     };
 
     auto result = ce::extractFromResponseDetailed(ce::OperationId{"x.y"}, "body", 200, {}, exts);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->traces[0].outcome, ce::ExtractionTrace::Outcome::InvalidPattern);
+    EXPECT_TRUE(result->values.empty());
+}
+
+TEST(JsonExtractionResponse, regex_with_no_match_still_marks_missing) {
+    // Companion to the InvalidPattern test above: a syntactically
+    // valid pattern that simply doesn't match must remain Missing —
+    // we only differentiate when the pattern itself is broken.
+    const std::vector<ce::Extraction> exts = {
+        make("nope", R"(\d+)", ce::Extraction::Source::Regex),
+    };
+
+    auto result =
+        ce::extractFromResponseDetailed(ce::OperationId{"x.y"}, "no digits here", 200, {}, exts);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->traces[0].outcome, ce::ExtractionTrace::Outcome::Missing);
 }

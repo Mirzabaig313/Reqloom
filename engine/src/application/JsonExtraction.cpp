@@ -210,24 +210,38 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
     return latest;
 }
 
-/// Run a regex against the body and return capture group 1 if present,
-/// otherwise the whole match. Returns nullopt on no match.
+/// Result of running a regex extraction. We need to distinguish three
+/// outcomes — match found, pattern was syntactically valid but didn't
+/// match anything, pattern itself was malformed — so the trace can
+/// surface "your pattern is broken" instead of conflating it with
+/// "your pattern is fine but the response didn't match".
+enum class RegexOutcome { Matched, NoMatch, InvalidPattern };
+
+struct RegexResult {
+    RegexOutcome outcome{RegexOutcome::NoMatch};
+    std::string value;  ///< Populated only when outcome == Matched.
+};
+
+/// Run a regex against the body. On a match, returns capture group 1
+/// when present, otherwise the whole match.
 ///
-/// Catches std::regex_error so a malformed pattern surfaces as Missing
-/// rather than blowing up the whole step. Hook authors can spot pattern
-/// issues in the trace value (which is empty on Missing) without
-/// crashing the run.
-[[nodiscard]] std::optional<std::string> findRegex(std::string_view body,
-                                                   std::string_view pattern) {
+/// Returns `InvalidPattern` (not an exception) when std::regex rejects
+/// the pattern as malformed — extraction code maps that to its own
+/// trace outcome so the user sees a distinct row in the timeline.
+[[nodiscard]] RegexResult findRegex(std::string_view body, std::string_view pattern) {
     try {
         const std::regex re{std::string{pattern}};
         std::cmatch match;
         const std::string bodyStr{body};
-        if (!std::regex_search(bodyStr.c_str(), match, re)) return std::nullopt;
-        if (match.size() >= 2 && match[1].matched) return match[1].str();
-        return match[0].str();
+        if (!std::regex_search(bodyStr.c_str(), match, re)) {
+            return RegexResult{RegexOutcome::NoMatch, {}};
+        }
+        if (match.size() >= 2 && match[1].matched) {
+            return RegexResult{RegexOutcome::Matched, match[1].str()};
+        }
+        return RegexResult{RegexOutcome::Matched, match[0].str()};
     } catch (const std::regex_error&) {
-        return std::nullopt;
+        return RegexResult{RegexOutcome::InvalidPattern, {}};
     }
 }
 
@@ -350,14 +364,27 @@ std::expected<DetailedExtraction, ChainApiError> extractFromResponseDetailed(
                 break;
             }
             case Extraction::Source::Regex: {
-                auto value = findRegex(body, ext.sourcePath);
-                if (!value) {
-                    trace.outcome = ExtractionTrace::Outcome::Missing;
-                    break;
+                const auto rx = findRegex(body, ext.sourcePath);
+                switch (rx.outcome) {
+                    case RegexOutcome::Matched:
+                        trace.value = truncateForTrace(rx.value);
+                        trace.outcome = ExtractionTrace::Outcome::Resolved;
+                        out.values[ext.variableName] = rx.value;
+                        break;
+                    case RegexOutcome::NoMatch:
+                        // Pattern compiled fine; the body just didn't
+                        // match. Same outcome as a JsonPath that walks
+                        // the document successfully but finds no node.
+                        trace.outcome = ExtractionTrace::Outcome::Missing;
+                        break;
+                    case RegexOutcome::InvalidPattern:
+                        // Pattern itself was malformed — distinct from
+                        // Missing so users can fix the schema instead
+                        // of staring at a body wondering why their
+                        // capture group didn't fire.
+                        trace.outcome = ExtractionTrace::Outcome::InvalidPattern;
+                        break;
                 }
-                trace.value = truncateForTrace(*value);
-                trace.outcome = ExtractionTrace::Outcome::Resolved;
-                out.values[ext.variableName] = std::move(*value);
                 break;
             }
             case Extraction::Source::XPath:

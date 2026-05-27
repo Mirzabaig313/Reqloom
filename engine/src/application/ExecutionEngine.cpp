@@ -792,10 +792,16 @@ struct ExecutionEngine::Impl {
             // Trace every extraction outcome — including misses — so the
             // timeline shows nulls and missing fields. The op still fails
             // when any required extraction misses; that contract pre-dates
-            // this slice and downstream ops depend on it.
+            // this slice and downstream ops depend on it. InvalidPattern
+            // is treated as a miss for failure purposes — the captured
+            // value isn't there, so anything downstream that templates
+            // it would resolve to undefined.
             std::optional<std::string> firstMiss;
             for (auto& t : detailed->traces) {
-                if (!firstMiss && t.outcome == ExtractionTrace::Outcome::Missing) {
+                const bool isMissLike =
+                    t.outcome == ExtractionTrace::Outcome::Missing ||
+                    t.outcome == ExtractionTrace::Outcome::InvalidPattern;
+                if (!firstMiss && isMissLike) {
                     firstMiss = t.variableName;
                 }
 
@@ -816,6 +822,9 @@ struct ExecutionEngine::Impl {
                         break;
                     case ExtractionTrace::Outcome::Missing:
                         ev.outcome = ExtractionCompleted::Outcome::Missing;
+                        break;
+                    case ExtractionTrace::Outcome::InvalidPattern:
+                        ev.outcome = ExtractionCompleted::Outcome::InvalidPattern;
                         break;
                     case ExtractionTrace::Outcome::Unsupported:
                         ev.outcome = ExtractionCompleted::Outcome::Unsupported;
