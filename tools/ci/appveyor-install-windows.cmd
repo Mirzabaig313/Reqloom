@@ -1,12 +1,18 @@
 @echo off
 REM ChainAPI — AppVeyor Windows install step.
 REM
-REM Lives in a real .cmd file rather than inline in appveyor.yml because
-REM cmd.exe's parsing of `if (...) else (...)` blocks breaks reliably
-REM when AppVeyor wraps inline cmd: scripts. This file runs untouched.
+REM Lives in a real .cmd file because cmd.exe's parsing of `if (...)
+REM else (...)` blocks breaks reliably when AppVeyor wraps inline cmd:
+REM scripts. This file runs untouched.
 REM
 REM Required env vars (set by appveyor.yml's `environment:` block):
 REM   QT_VERSION, AQT_VERSION, APPVEYOR_REPO_BRANCH
+REM
+REM Note: this script does NOT call `appveyor SetVariable` because the
+REM `appveyor.exe` CLI is only on PATH inside AppVeyor's inline cmd:
+REM scripts, not standalone .cmd invocations. Env-var persistence is
+REM handled by a small inline cmd: block in appveyor.yml that runs
+REM right after this script.
 
 setlocal enableextensions
 
@@ -46,16 +52,6 @@ if not exist "%QT_PREFIX%\lib\cmake\Qt6\Qt6Config.cmake" (
 
 echo === Caches ===
 if not exist "C:\vcpkg-bincache" mkdir "C:\vcpkg-bincache"
-
-echo === Persist env vars for later steps ===
-appveyor SetVariable -Name CMAKE_PREFIX_PATH -Value "%QT_PREFIX%"
-appveyor SetVariable -Name VCPKG_DEFAULT_BINARY_CACHE -Value "C:\vcpkg-bincache"
-
-if /i "%APPVEYOR_REPO_BRANCH%" == "main" (
-    appveyor SetVariable -Name PRESET -Value "windows-release"
-) else (
-    appveyor SetVariable -Name PRESET -Value "windows-debug"
-)
 
 echo === Done ===
 endlocal
