@@ -46,6 +46,11 @@ struct HookOutcome {
 
 class HookRunner {
 public:
+    HookRunner() = default;
+    HookRunner(const HookRunner&) = delete;
+    HookRunner& operator=(const HookRunner&) = delete;
+    HookRunner(HookRunner&&) = delete;
+    HookRunner& operator=(HookRunner&&) = delete;
     virtual ~HookRunner() = default;
 
     virtual std::expected<HookOutcome, ChainApiError> runPreRequest(const std::string& script,

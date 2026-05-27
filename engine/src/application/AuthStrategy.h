@@ -26,6 +26,11 @@ struct AuthDependencies {
 
 class Authenticator {
 public:
+    Authenticator() = default;
+    Authenticator(const Authenticator&) = delete;
+    Authenticator& operator=(const Authenticator&) = delete;
+    Authenticator(Authenticator&&) = delete;
+    Authenticator& operator=(Authenticator&&) = delete;
     virtual ~Authenticator() = default;
 
     /// Run the authenticator's flow. Returns the resulting session

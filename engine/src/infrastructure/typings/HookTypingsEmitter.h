@@ -24,6 +24,11 @@ using TypingsEmitResult = std::expected<std::filesystem::path, ChainApiError>;
 
 class HookTypingsEmitter {
 public:
+    HookTypingsEmitter() = default;
+    HookTypingsEmitter(const HookTypingsEmitter&) = delete;
+    HookTypingsEmitter& operator=(const HookTypingsEmitter&) = delete;
+    HookTypingsEmitter(HookTypingsEmitter&&) = delete;
+    HookTypingsEmitter& operator=(HookTypingsEmitter&&) = delete;
     virtual ~HookTypingsEmitter() = default;
 
     /// Write `<targetDir>/chainapi.d.ts` describing the hook `ctx` surface.
