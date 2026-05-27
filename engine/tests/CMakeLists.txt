@@ -29,6 +29,7 @@ add_executable(chainapi-engine-unit-tests
     unit/MultipartBuilderTest.cpp
     unit/QuickJsHookRunnerTest.cpp
     unit/SchemaParserMultiFileTest.cpp
+    unit/HeaderMaskingTest.cpp
 )
 target_include_directories(chainapi-engine-unit-tests
     PRIVATE ${CMAKE_SOURCE_DIR}/engine/src

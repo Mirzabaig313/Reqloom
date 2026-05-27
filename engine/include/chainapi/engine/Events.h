@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -22,6 +23,12 @@ struct RunId {
 using TimePoint = std::chrono::system_clock::time_point;
 
 enum class SkipReason : std::uint8_t { SessionValid, ExtractionCached };
+
+/// Sentinel value that replaces sensitive header values in
+/// `RequestPrepared::maskedHeaders` and `ResponseReceived::headers`.
+/// Stable across releases so timeline renderers, persistence layers,
+/// and integration tests can match on it. Engine Requirement AC-3.6.3.
+inline constexpr std::string_view kRedactedHeaderValue = "***REDACTED***";
 
 struct RunStarted {
     RunId runId;

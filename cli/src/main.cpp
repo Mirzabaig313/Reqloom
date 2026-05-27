@@ -67,11 +67,17 @@ int main(int argc, char** argv) {
         // successful run with failing checks (1). std::fputs is noexcept,
         // unlike std::println — using it here keeps the catch handler
         // itself from throwing and re-arming the exception-escape lint.
+        // We discard fputs return values intentionally: if stderr is
+        // closed or full, there is no recovery action available in a
+        // last-resort handler — we still exit 3.
+        // NOLINTBEGIN(cert-err33-c)
         std::fputs("fatal: ", stderr);
         std::fputs(ex.what(), stderr);
         std::fputs("\n", stderr);
+        // NOLINTEND(cert-err33-c)
         return 3;
     } catch (...) {
+        // NOLINTNEXTLINE(cert-err33-c) — same rationale as above.
         std::fputs("fatal: unknown exception\n", stderr);
         return 3;
     }
