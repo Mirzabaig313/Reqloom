@@ -65,6 +65,11 @@ struct HttpResponse {
 
 class HttpClient {
 public:
+    HttpClient() = default;
+    HttpClient(const HttpClient&) = delete;
+    HttpClient& operator=(const HttpClient&) = delete;
+    HttpClient(HttpClient&&) = delete;
+    HttpClient& operator=(HttpClient&&) = delete;
     virtual ~HttpClient() = default;
 
     /// Synchronous. Network failures are surfaced as `ChainApiError`

@@ -13,6 +13,11 @@ namespace chainapi::engine {
 
 class HistoryStore {
 public:
+    HistoryStore() = default;
+    HistoryStore(const HistoryStore&) = delete;
+    HistoryStore& operator=(const HistoryStore&) = delete;
+    HistoryStore(HistoryStore&&) = delete;
+    HistoryStore& operator=(HistoryStore&&) = delete;
     virtual ~HistoryStore() = default;
 
     virtual std::expected<void, ChainApiError> open(const std::filesystem::path& dbPath) = 0;

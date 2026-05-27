@@ -60,6 +60,11 @@ struct LlmResponse {
 
 class LlmClient {
 public:
+    LlmClient() = default;
+    LlmClient(const LlmClient&) = delete;
+    LlmClient& operator=(const LlmClient&) = delete;
+    LlmClient(LlmClient&&) = delete;
+    LlmClient& operator=(LlmClient&&) = delete;
     virtual ~LlmClient() = default;
 
     /// Synchronous. Returns `LlmRequestFailed` for transport / 4xx / 5xx
