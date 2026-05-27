@@ -136,9 +136,20 @@ install:
       appveyor SetVariable -Name PRESET -Value "$PRESET"
 
   # ----- Windows ---------------------------------------------------------
-  # The install logic lives in a real .cmd file because cmd.exe breaks on
-  # `if (...) else (...)` blocks once AppVeyor wraps the YAML cmd: script.
+  # CMake + aqtinstall + Qt install live in a real .cmd file because
+  # cmd.exe breaks on `if (...) else (...)` blocks once AppVeyor wraps
+  # the YAML cmd: script. The follow-up inline cmd: block below
+  # persists env vars (which only works inside AppVeyor's wrapped scripts
+  # because that's where the `appveyor` CLI is on PATH).
   - cmd: tools\ci\appveyor-install-windows.cmd
+
+  - cmd: |
+      REM Persist env vars for subsequent steps. Must run as inline cmd:
+      REM (not a standalone .cmd file) because the `appveyor` CLI is only
+      REM on PATH here.
+      appveyor SetVariable -Name CMAKE_PREFIX_PATH -Value "C:\Qt\%QT_VERSION%\msvc2022_64"
+      appveyor SetVariable -Name VCPKG_DEFAULT_BINARY_CACHE -Value "C:\vcpkg-bincache"
+      if /i "%APPVEYOR_REPO_BRANCH%" == "main" ( appveyor SetVariable -Name PRESET -Value "windows-release" ) else ( appveyor SetVariable -Name PRESET -Value "windows-debug" )
 
 # --------------------------------------------------------------------------
 # Bootstrap vcpkg (cached between runs) and run configure + build + test.
@@ -159,18 +170,12 @@ before_build:
         echo "vcpkg already present from cache."
       fi
 
+  - cmd: tools\ci\appveyor-bootstrap-vcpkg-windows.cmd
+
   - cmd: |
-      set VCPKG_ROOT=%APPVEYOR_BUILD_FOLDER%\vcpkg
-      set VCPKG_BINARY_SOURCES=clear;files,%VCPKG_DEFAULT_BINARY_CACHE%,readwrite
-      appveyor SetVariable -Name VCPKG_ROOT -Value "%VCPKG_ROOT%"
-      appveyor SetVariable -Name VCPKG_BINARY_SOURCES -Value "%VCPKG_BINARY_SOURCES%"
-      if not exist "%VCPKG_ROOT%\vcpkg.exe" (
-        git clone https://github.com/microsoft/vcpkg.git "%VCPKG_ROOT%"
-        git -C "%VCPKG_ROOT%" checkout "%VCPKG_COMMIT%"
-        call "%VCPKG_ROOT%\bootstrap-vcpkg.bat" -disableMetrics
-      ) else (
-        echo vcpkg already present from cache.
-      )
+      REM Persist VCPKG_ROOT + VCPKG_BINARY_SOURCES for the build step.
+      appveyor SetVariable -Name VCPKG_ROOT -Value "%APPVEYOR_BUILD_FOLDER%\vcpkg"
+      appveyor SetVariable -Name VCPKG_BINARY_SOURCES -Value "clear;files,%VCPKG_DEFAULT_BINARY_CACHE%,readwrite"
 
 # --------------------------------------------------------------------------
 # Configure / Build / Test.
