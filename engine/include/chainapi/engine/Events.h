@@ -21,7 +21,7 @@ struct RunId {
 
 using TimePoint = std::chrono::system_clock::time_point;
 
-enum class SkipReason { SessionValid, ExtractionCached };
+enum class SkipReason : std::uint8_t { SessionValid, ExtractionCached };
 
 struct RunStarted {
     RunId runId;
@@ -80,7 +80,7 @@ struct ExtractionApplied {
 /// surface resolved values, nulls, and missing fields per step instead
 /// of the coarse-grained `ExtractionApplied` summary.
 struct ExtractionCompleted {
-    enum class Outcome { Resolved, Null, Missing, InvalidPattern, Unsupported };
+    enum class Outcome : std::uint8_t { Resolved, Null, Missing, InvalidPattern, Unsupported };
 
     RunId runId;
     std::size_t stepIndex{};
@@ -113,7 +113,7 @@ struct StepCancelled {
 };
 
 struct SessionRefreshed {
-    enum class Trigger { Expiry, Unauthorized };
+    enum class Trigger : std::uint8_t { Expiry, Unauthorized };
 
     RunId runId;
     ActorId actor;
@@ -121,7 +121,7 @@ struct SessionRefreshed {
     TimePoint at;
 };
 
-enum class RunOutcome { Succeeded, Failed, Cancelled };
+enum class RunOutcome : std::uint8_t { Succeeded, Failed, Cancelled };
 
 struct RunEnded {
     RunId runId;

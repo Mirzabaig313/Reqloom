@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstdint>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -215,7 +216,7 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
 /// match anything, pattern itself was malformed — so the trace can
 /// surface "your pattern is broken" instead of conflating it with
 /// "your pattern is fine but the response didn't match".
-enum class RegexOutcome { Matched, NoMatch, InvalidPattern };
+enum class RegexOutcome : std::uint8_t { Matched, NoMatch, InvalidPattern };
 
 struct RegexResult {
     RegexOutcome outcome{RegexOutcome::NoMatch};

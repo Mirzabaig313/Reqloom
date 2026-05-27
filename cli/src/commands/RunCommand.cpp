@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <ostream>
@@ -28,7 +29,7 @@ namespace chainapi::cli {
 
 namespace {
 
-enum class Format { Text, Json, JUnit };
+enum class Format : std::uint8_t { Text, Json, JUnit };
 
 struct RunArgs {
     std::string targetOp;

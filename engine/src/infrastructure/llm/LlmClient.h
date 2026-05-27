@@ -8,6 +8,7 @@
 #include <chainapi/engine/ErrorCodes.h>
 
 #include <chrono>
+#include <cstdint>
 #include <expected>
 #include <map>
 #include <optional>
@@ -16,7 +17,7 @@
 
 namespace chainapi::engine {
 
-enum class LlmProvider {
+enum class LlmProvider : std::uint8_t {
     OpenAI,     ///< POST <endpoint>/v1/chat/completions
     Anthropic,  ///< POST <endpoint>/v1/messages
     Ollama,     ///< POST <endpoint>/api/chat (local; no API key)
@@ -38,7 +39,7 @@ struct LlmConfig {
 /// One conversation turn. The system prompt lands in `messages[0]` for
 /// OpenAI/Ollama and in the top-level `system` field for Anthropic.
 struct LlmMessage {
-    enum class Role { System, User, Assistant };
+    enum class Role : std::uint8_t { System, User, Assistant };
 
     Role role{Role::User};
     std::string content;
