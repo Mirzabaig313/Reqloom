@@ -11,8 +11,6 @@ login, prerequisites, target call — and executes them in the correct order.
 
 > Postman is an HTTP client. ChainAPI is an API workflow engine.
 
-See [`doc/ChainAPI - PRD.md`](doc/ChainAPI%20-%20PRD.md) for the full product spec.
-
 ---
 
 ## Repository Layout
