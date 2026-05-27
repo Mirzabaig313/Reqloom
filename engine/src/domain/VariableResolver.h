@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chainapi/engine/RunContext.h>
+#include <chainapi/engine/Transport.h>
 
 #include <map>
 #include <string>
@@ -13,6 +14,11 @@ namespace chainapi::engine {
 struct ResolveContext {
     std::map<std::string, std::string> envVars;
     std::map<std::string, std::string> secrets;
+    /// Per-environment transport overrides. The executor stamps this
+    /// onto every outbound HttpRequest before send so authenticators,
+    /// poll loops, and the main step builder all see the same TLS /
+    /// proxy / connect-timeout settings.
+    TransportConfig transport;
 };
 
 class VariableResolver {

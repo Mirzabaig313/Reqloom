@@ -145,7 +145,34 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
-    curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 5000L);
+
+    // Connect timeout — configurable via TransportConfig::connectTimeout.
+    // Default 5s matches the hard-coded value before this knob existed.
+    curl_easy_setopt(curl.get(),
+                     CURLOPT_CONNECTTIMEOUT_MS,
+                     static_cast<long>(request.transport.connectTimeout.count()));
+    // No-signal mode: libcurl normally uses SIGALRM for the resolver
+    // timeout when built without c-ares. Disabling signals lets the
+    // pure-millisecond connect timeout above actually take effect on
+    // platforms where the SIGALRM handler isn't reliably installed.
+    curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
+
+    // TLS verification. Both fields default to true; flipping either to
+    // false yields curl's `--insecure` semantics for that layer. The
+    // CAINFO path, when set, replaces the system trust store rather
+    // than augmenting it — that's libcurl's contract.
+    curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, request.transport.tlsVerify ? 1L : 0L);
+    curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, request.transport.tlsVerifyHost ? 2L : 0L);
+    if (request.transport.caBundlePath) {
+        curl_easy_setopt(curl.get(), CURLOPT_CAINFO, request.transport.caBundlePath->c_str());
+    }
+
+    // Proxy. Empty leaves libcurl on its default (which honours the
+    // HTTPS_PROXY / NO_PROXY env vars per request); a non-empty value
+    // pins the request to that proxy regardless of env state.
+    if (request.transport.proxy && !request.transport.proxy->empty()) {
+        curl_easy_setopt(curl.get(), CURLOPT_PROXY, request.transport.proxy->c_str());
+    }
 
     CurlSlistHandle headerList;
     for (const auto& [key, value] : request.headers) {

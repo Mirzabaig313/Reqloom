@@ -52,6 +52,7 @@ public:
 
             HttpRequest req;
             req.method = step.method;
+            req.transport = rctx.transport;
             const auto baseUrlIt = rctx.envVars.find("baseUrl");
             const std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
             req.url = baseUrl + resolvedPath.output;
@@ -252,13 +253,15 @@ std::expected<ActorSession, ChainApiError> executeOAuth2TokenRequest(
     HttpClient& http,
     const std::string& tokenUrl,
     std::string formBody,
-    std::string_view strategyLabel) {
+    std::string_view strategyLabel,
+    const TransportConfig& transport) {
     HttpRequest req;
     req.method = HttpMethod::Post;
     req.url = tokenUrl;
     req.headers["Content-Type"] = "application/x-www-form-urlencoded";
     req.headers["Accept"] = "application/json";
     req.body = std::move(formBody);
+    req.transport = transport;
 
     const auto response = http.send(req);
     if (!response) {
@@ -401,7 +404,8 @@ public:
             body += "&scope=" + urlEncode(*scope);
         }
 
-        return executeOAuth2TokenRequest(*deps_.http, *tokenUrl, std::move(body), kLabel);
+        return executeOAuth2TokenRequest(
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport);
     }
 
 private:
@@ -457,7 +461,8 @@ public:
             body += "&scope=" + urlEncode(*scope);
         }
 
-        return executeOAuth2TokenRequest(*deps_.http, *tokenUrl, std::move(body), kLabel);
+        return executeOAuth2TokenRequest(
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport);
     }
 
 private:
@@ -630,6 +635,7 @@ std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
 
     HttpRequest req;
     req.method = refresh.method;
+    req.transport = rctx.transport;
     const auto baseUrlIt = rctx.envVars.find("baseUrl");
     const std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
     req.url = baseUrl + resolvedPath.output;
