@@ -377,12 +377,36 @@ std::string emitActor(const Actor& actor) {
 }
 
 std::string emitEnvironment(const std::string& name,
-                            const std::map<std::string, std::string>& vars) {
+                            const std::map<std::string, std::string>& vars,
+                            const std::optional<TransportConfig>& transport) {
     YAML::Emitter e;
     e << YAML::BeginMap << YAML::Key << "name" << YAML::Value << name;
     if (!vars.empty()) {
         e << YAML::Key << "variables" << YAML::Value;
         emitStringMap(e, vars);
+    }
+    if (transport) {
+        e << YAML::Key << "transport" << YAML::Value << YAML::BeginMap;
+        // Emit only fields that diverge from defaults — keeps round-tripped
+        // YAMLs minimal and lets readers see what's actually overridden.
+        const TransportConfig defaults;
+        if (transport->tlsVerify != defaults.tlsVerify) {
+            e << YAML::Key << "tls_verify" << YAML::Value << transport->tlsVerify;
+        }
+        if (transport->tlsVerifyHost != defaults.tlsVerifyHost) {
+            e << YAML::Key << "tls_verify_host" << YAML::Value << transport->tlsVerifyHost;
+        }
+        if (transport->caBundlePath) {
+            e << YAML::Key << "ca_bundle" << YAML::Value << *transport->caBundlePath;
+        }
+        if (transport->proxy) {
+            e << YAML::Key << "proxy" << YAML::Value << *transport->proxy;
+        }
+        if (transport->connectTimeout != defaults.connectTimeout) {
+            e << YAML::Key << "connect_timeout" << YAML::Value
+              << (std::to_string(transport->connectTimeout.count()) + "ms");
+        }
+        e << YAML::EndMap;
     }
     e << YAML::EndMap;
     return e.c_str();
@@ -447,7 +471,11 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
 
     for (const auto& [name, vars] : project.environments) {
         const auto path = targetDir / "environments" / (name + ".yaml");
-        if (auto r = writeAtomic(path, emitEnvironment(name, vars)); !r) {
+        std::optional<TransportConfig> transport;
+        if (auto it = project.transport.find(name); it != project.transport.end()) {
+            transport = it->second;
+        }
+        if (auto r = writeAtomic(path, emitEnvironment(name, vars, transport)); !r) {
             return std::unexpected(r.error());
         }
     }

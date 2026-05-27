@@ -8,6 +8,7 @@
 #include <chainapi/engine/Operation.h>
 #include <chainapi/engine/Resource.h>
 #include <chainapi/engine/RunContext.h>
+#include <chainapi/engine/Transport.h>
 
 #include <expected>
 #include <functional>
@@ -45,6 +46,12 @@ struct Project {
     std::map<ActorId, Actor> actors;
     std::map<ResourceId, Resource> resources;
     std::map<std::string, std::map<std::string, std::string>> environments;
+    /// Per-environment transport overrides. Keyed by environment name
+    /// (matches the keys of `environments`). Missing entries fall back
+    /// to a default-constructed `TransportConfig` (TLS verified, no
+    /// proxy, 5s connect timeout) — which is byte-for-byte equivalent
+    /// to the engine's behavior before this map existed.
+    std::map<std::string, TransportConfig> transport;
 };
 
 /// Per-run options.

@@ -644,3 +644,106 @@ TEST(SchemaWriter, session_refresh_without_expect_status_round_trips_cleanly) {
     EXPECT_FALSE(refresh.expectStatus.has_value());
     EXPECT_TRUE(refresh.expectStatusList.empty());
 }
+
+// ─── Per-environment transport round-trip ──────────────────────────────────
+//
+// project.transport[envName] survives writeProject → parseProject. Only
+// fields that diverge from defaults are emitted, so a default-only
+// project doesn't acquire a stray `transport:` block on round-trip.
+
+TEST(SchemaWriter, transport_block_round_trips_with_all_fields) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "TransportRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://api.test"}};
+
+    ce::TransportConfig t;
+    t.tlsVerify = false;
+    t.tlsVerifyHost = false;
+    t.caBundlePath = "/etc/ssl/corporate-root.pem";
+    t.proxy = "http://proxy.test:3128";
+    t.connectTimeout = std::chrono::milliseconds{12'000};
+    original.transport["local"] = std::move(t);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    ASSERT_TRUE(reloaded->transport.contains("local"));
+    const auto& back = reloaded->transport.at("local");
+    EXPECT_FALSE(back.tlsVerify);
+    EXPECT_FALSE(back.tlsVerifyHost);
+    ASSERT_TRUE(back.caBundlePath.has_value());
+    EXPECT_EQ(*back.caBundlePath, "/etc/ssl/corporate-root.pem");
+    ASSERT_TRUE(back.proxy.has_value());
+    EXPECT_EQ(*back.proxy, "http://proxy.test:3128");
+    EXPECT_EQ(back.connectTimeout, std::chrono::milliseconds{12'000});
+}
+
+TEST(SchemaWriter, default_transport_does_not_acquire_a_stray_block) {
+    // A project with no transport overrides round-trips without
+    // gaining a `transport:` block in the env file. Important because
+    // schemas that pre-date this slice should look identical after
+    // re-writing.
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "DefaultTransport";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    // Read the env file directly — it should not mention `transport:`.
+    const auto envYaml = scratch.path() / "environments" / "local.yaml";
+    std::string content;
+    {
+        std::ifstream in(envYaml, std::ios::binary);
+        ASSERT_TRUE(in.good());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_EQ(content.find("transport"), std::string::npos)
+        << "default-only project should not emit a transport block; got:\n"
+        << content;
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value());
+    EXPECT_FALSE(reloaded->transport.contains("local"));
+}
+
+TEST(SchemaWriter, transport_emits_only_non_default_fields) {
+    // Only proxy diverges from defaults; the round-tripped block
+    // should carry just `proxy:` and nothing else (so users see a
+    // minimal diff in version control).
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "PartialTransport";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://api.test"}};
+    ce::TransportConfig t;
+    t.proxy = "http://proxy.test:8080";
+    original.transport["local"] = std::move(t);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    const auto envYaml = scratch.path() / "environments" / "local.yaml";
+    std::string content;
+    {
+        std::ifstream in(envYaml, std::ios::binary);
+        ASSERT_TRUE(in.good());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_NE(content.find("proxy"), std::string::npos);
+    EXPECT_EQ(content.find("tls_verify"), std::string::npos)
+        << "default tls_verify should not be emitted; got:\n"
+        << content;
+    EXPECT_EQ(content.find("connect_timeout"), std::string::npos)
+        << "default connect_timeout should not be emitted; got:\n"
+        << content;
+}

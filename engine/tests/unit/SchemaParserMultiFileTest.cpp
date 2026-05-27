@@ -1131,3 +1131,136 @@ resources:
         result->resources.at(ce::ResourceId{"thing"}).operations.at("get").extractions[0];
     EXPECT_EQ(ext.source, ce::Extraction::Source::StatusCode);
 }
+
+// ─── Transport (per-environment) ────────────────────────────────────────────
+//
+// `transport:` block lives inside an environment file (or at the root
+// for single-env projects) and configures TLS verification, an outbound
+// proxy, an optional CA bundle, and the TCP connect timeout. Defaults
+// match libcurl's safe defaults (TLS verified, no proxy, 5s connect),
+// so schemas that omit `transport:` keep their previous behavior
+// verbatim.
+
+TEST(SchemaParserTransport, root_transport_block_parses_all_fields) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: TransportRoot
+default_environment: local
+environment: { baseUrl: https://api.test }
+
+transport:
+  tls_verify: false
+  tls_verify_host: false
+  ca_bundle: /etc/ssl/corporate-root.pem
+  proxy: http://proxy.test:3128
+  connect_timeout: 12s
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: user
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    ASSERT_TRUE(result->transport.contains("local"));
+    const auto& t = result->transport.at("local");
+    EXPECT_FALSE(t.tlsVerify);
+    EXPECT_FALSE(t.tlsVerifyHost);
+    ASSERT_TRUE(t.caBundlePath.has_value());
+    EXPECT_EQ(*t.caBundlePath, "/etc/ssl/corporate-root.pem");
+    ASSERT_TRUE(t.proxy.has_value());
+    EXPECT_EQ(*t.proxy, "http://proxy.test:3128");
+    EXPECT_EQ(t.connectTimeout, std::chrono::milliseconds{12'000});
+}
+
+TEST(SchemaParserTransport, missing_block_yields_default_constructed_config) {
+    // Project with no `transport:` anywhere — `project.transport` must
+    // not contain an entry for `local`. The executor will then fall
+    // back to a default-constructed TransportConfig, which is exactly
+    // what the engine did before this slice landed.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: NoTransport
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->transport.contains("local"));
+}
+
+TEST(SchemaParserTransport, accepts_milliseconds_for_connect_timeout) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: TransportMs
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+transport:
+  connect_timeout: 750ms
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->transport.contains("local"));
+    EXPECT_EQ(result->transport.at("local").connectTimeout, std::chrono::milliseconds{750});
+}
+
+TEST(SchemaParserTransport, environment_file_transport_block_is_picked_up) {
+    ScratchDir scratch;
+    scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: TransportPerEnv
+default_environment: local
+imports:
+  - environments/*.yaml
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+)YAML");
+    const auto envFile = scratch.path() / "environments" / "local.yaml";
+    fs::create_directories(envFile.parent_path());
+    {
+        std::ofstream out{envFile};
+        out << R"YAML(
+name: local
+variables:
+  baseUrl: https://api.test
+transport:
+  tls_verify: false
+  proxy: socks5h://proxy.test:1080
+  connect_timeout: 30s
+)YAML";
+    }
+
+    auto result = ce::parseProject(scratch.path() / "chainapi.yaml");
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->transport.contains("local"));
+    const auto& t = result->transport.at("local");
+    EXPECT_FALSE(t.tlsVerify);
+    ASSERT_TRUE(t.proxy.has_value());
+    EXPECT_EQ(*t.proxy, "socks5h://proxy.test:1080");
+    EXPECT_EQ(t.connectTimeout, std::chrono::milliseconds{30'000});
+}

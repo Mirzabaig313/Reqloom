@@ -253,6 +253,7 @@ struct ExecutionEngine::Impl {
 
             HttpRequest req;
             req.method = poll.method;
+            req.transport = rctx.transport;
             auto resolvedPath = varResolver.resolve(poll.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
                 return std::unexpected(ChainApiError{
@@ -445,6 +446,7 @@ struct ExecutionEngine::Impl {
 
         HttpRequest req;
         req.method = op.method;
+        req.transport = rctx.transport;
         auto baseUrlIt = rctx.envVars.find("baseUrl");
         std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
         req.url = baseUrl + resolvedPath.output;
@@ -893,6 +895,12 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
     auto envName = options.environment.empty() ? project.defaultEnvironment : options.environment;
     if (project.environments.contains(envName)) {
         rctx.envVars = project.environments.at(envName);
+    }
+    // Resolve per-env transport overrides once at run start. Operations,
+    // auth steps, refresh blocks and poll requests all see the same
+    // TLS / proxy / connect-timeout settings via rctx.transport.
+    if (auto it = project.transport.find(envName); it != project.transport.end()) {
+        rctx.transport = it->second;
     }
 
     impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});

@@ -154,6 +154,49 @@ std::chrono::seconds parseDuration(const std::string& s) {
     }
 }
 
+/// Parse a `transport:` block.
+///
+/// Recognised keys:
+///   tls_verify:       bool              (default true)
+///   tls_verify_host:  bool              (default true)
+///   ca_bundle:        string (path)     (optional)
+///   proxy:            string (URL)      (optional)
+///   connect_timeout:  duration ("5s")   (default 5s, also accepts "500ms")
+///
+/// Unknown keys are silently ignored — same forward-compat policy used
+/// for poll_until and other extension blocks. A fully-empty / missing
+/// block parses to a default-constructed `TransportConfig` so absent
+/// schema declarations preserve the engine's prior behaviour exactly.
+TransportConfig parseTransport(const YAML::Node& node) {
+    TransportConfig out;
+    if (!node || !node.IsMap()) return out;
+
+    if (node["tls_verify"]) out.tlsVerify = node["tls_verify"].as<bool>(true);
+    if (node["tls_verify_host"]) out.tlsVerifyHost = node["tls_verify_host"].as<bool>(true);
+
+    if (node["ca_bundle"]) {
+        const auto path = node["ca_bundle"].as<std::string>("");
+        if (!path.empty()) out.caBundlePath = path;
+    }
+    if (node["proxy"]) {
+        const auto proxy = node["proxy"].as<std::string>("");
+        if (!proxy.empty()) out.proxy = proxy;
+    }
+
+    if (node["connect_timeout"]) {
+        const auto literal = node["connect_timeout"].as<std::string>("");
+        if (literal.ends_with("ms")) {
+            out.connectTimeout =
+                std::chrono::milliseconds{std::stol(literal.substr(0, literal.size() - 2))};
+        } else if (!literal.empty()) {
+            out.connectTimeout =
+                std::chrono::duration_cast<std::chrono::milliseconds>(parseDuration(literal));
+        }
+    }
+
+    return out;
+}
+
 // Resolve a hook-script value: if it looks like a relative path to a .js/.mjs
 // file, load the file content; otherwise treat as inline JS. Paths are
 // canonicalised via weakly_canonical against baseDir and rejected if outside
@@ -678,13 +721,22 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
             } else if (subDoc.IsMap()) {
                 for (const auto& kv : subDoc) {
                     auto key = kv.first.as<std::string>();
-                    if (key == "name") continue;
+                    if (key == "name" || key == "transport") continue;
                     if (kv.second.IsScalar()) {
                         vars[key] = kv.second.as<std::string>("");
                     }
                 }
             }
             project.environments[envName] = std::move(vars);
+
+            // Optional `transport:` block at env level. Sits alongside
+            // `variables:` in the wrapped form, or as a top-level key
+            // in the flat form (which is why we skip it in the flat
+            // loop above — otherwise a YAML map would land in `vars`
+            // as the empty string).
+            if (subDoc["transport"]) {
+                project.transport[envName] = parseTransport(subDoc["transport"]);
+            }
         }
         return std::nullopt;
     };
@@ -748,6 +800,12 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
             vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
         }
         project.environments[project.defaultEnvironment] = std::move(vars);
+    }
+
+    // Root-level `transport:` block. Applies to the default environment
+    // only — multi-env projects should put the block on each env file.
+    if (root["transport"]) {
+        project.transport[project.defaultEnvironment] = parseTransport(root["transport"]);
     }
 
     return project;

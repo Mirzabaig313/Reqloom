@@ -4,6 +4,7 @@
 
 #include <chainapi/engine/ErrorCodes.h>
 #include <chainapi/engine/Operation.h>
+#include <chainapi/engine/Transport.h>
 
 #include <chrono>
 #include <expected>
@@ -30,6 +31,14 @@ struct MultipartPart {
     [[nodiscard]] bool isFile() const noexcept { return filePath.has_value(); }
 };
 
+/// Per-send transport configuration. The executor resolves these from
+/// the active environment (`environments.<name>.transport:`) and stamps
+/// them onto every outbound request. Same shape as the public
+/// `chainapi::engine::TransportConfig` — re-aliased here so callers
+/// inside the infrastructure layer don't have to reach into the public
+/// include path.
+using TransportConfig = ::chainapi::engine::TransportConfig;
+
 struct HttpRequest {
     HttpMethod method{HttpMethod::Get};
     std::string url;
@@ -43,6 +52,11 @@ struct HttpRequest {
     std::vector<MultipartPart> multipart;
 
     std::chrono::milliseconds timeout{30'000};
+
+    /// Per-send transport overrides. Defaults are safe — TLS verified,
+    /// no proxy, 5s connect timeout — so existing callers that don't
+    /// populate this field keep their prior behavior verbatim.
+    TransportConfig transport;
 };
 
 struct HttpResponse {
