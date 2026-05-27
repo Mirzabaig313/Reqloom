@@ -1,0 +1,8 @@
+name: live
+variables:
+  baseUrl: https://api.github.com
+  user_pat: !secret GITHUB_USER_PAT
+  admin_pat: !secret GITHUB_ADMIN_PAT
+  test_org: !secret GITHUB_TEST_ORG
+  test_repo_name: chainapi-test-repo
+  api_version: "2022-11-28"

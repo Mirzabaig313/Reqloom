@@ -1,0 +1,47 @@
+name: payment_intent
+
+operations:
+  create:
+    method: POST
+    path: /v1/payment_intents
+    actor: platform
+    depends_on: [payment_method.attach_to_customer]
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Idempotency-Key: "{{$.uuid}}"
+    body_form:
+      amount: "2000"
+      currency: "usd"
+      customer: "{{customer.customer_id}}"
+      payment_method: "{{payment_method.payment_method_id}}"
+      off_session: "true"
+      confirm: "true"
+    expect_status: 200
+    extract:
+      payment_intent_id: $.id
+      charge_id: $.latest_charge
+
+  retrieve:
+    method: GET
+    path: /v1/payment_intents/{{payment_intent.payment_intent_id}}
+    actor: platform
+    depends_on: [payment_intent.create]
+    query_params:
+      expand[]: "latest_charge"
+    expect_status: 200
+
+  cancel:
+    method: POST
+    path: /v1/payment_intents/{{payment_intent.payment_intent_id}}/cancel
+    actor: platform
+    depends_on: [payment_intent.create]
+    expect_status: 200
+
+  list:
+    method: GET
+    path: /v1/payment_intents
+    actor: platform
+    query_params:
+      customer: "{{customer.customer_id}}"
+      limit: "10"
+    expect_status: 200

@@ -1,0 +1,149 @@
+---
+title: 5-minute tour
+description: "Run a 9-step API chain end-to-end against the bundled marketplace sample. Zero configuration."
+---
+
+import { Steps, Aside, FileTree } from "@astrojs/starlight/components";
+
+This tour walks through the canonical ChainAPI demo: testing
+`refund.approve` against a marketplace API. The chain spans **3 actors**
+and **9 operations** — the kind of scenario that takes 10 minutes of
+copy-paste in Postman.
+
+## What you'll need
+
+- ChainAPI built locally ([install guide](/start/install/))
+- ~5 minutes
+- No backend running — the test harness will start a mock server
+
+## The marketplace sample
+
+The repository ships with a sample project at `samples/marketplace/`
+that defines:
+
+<FileTree>
+- samples/marketplace/
+    - chainapi.yaml          Project root + imports
+    - environments/
+        - local.yaml         baseUrl + per-env variables
+    - actors/
+        - admin.yaml         Email + password
+        - vendor.yaml        Email + password + refresh token
+        - customer.yaml      Phone + OTP chain
+    - resources/
+        - products.yaml      7 operations: create, list, get, publish, etc.
+        - cart.yaml          4 operations: add, view, update, remove
+        - orders.yaml        7 operations: create, pay, ship, cancel, etc.
+        - refunds.yaml       5 operations: request, approve, reject, etc.
+        - reviews.yaml       4 operations: create, list, flag, remove
+</FileTree>
+
+## Steps
+
+<Steps>
+1. **Lint the schema first.** Make sure everything parses and the dependency
+   graph is valid:
+
+    ```bash
+    ./build/macos-debug/cli/chainapi lint --project samples/marketplace
+    ```
+
+    Expected output:
+
+    ```
+    LINT OK — 3 actors, 5 resources, 27 operations. No errors.
+    ```
+
+2. **Run the engine integration tests.** These start a mock HTTP server,
+   exercise the full `refund.approve` chain end-to-end, and verify the
+   chain composition.
+
+    ```bash
+    ctest --preset macos-debug --label-regex engine_integration
+    ```
+
+    Expected output:
+
+    ```
+    100% tests passed, 0 tests failed out of 12
+
+    Label Time Summary:
+    engine_integration  =   3.64 sec*proc (12 tests)
+    ```
+
+    The 12 tests include the canonical `RefundApproveResolvesAndExecutes`,
+    plus tests for session caching, polling, OAuth flows, and more.
+
+3. **Watch the chain run.** Run a single operation against the mock
+   server. The engine resolves the dependency chain, runs each step,
+   and prints the result.
+
+    ```bash
+    ./build/macos-debug/engine/tests/chainapi-engine-integration-tests \
+        --gtest_filter=MarketplaceHappyPath.RefundApproveResolvesAndExecutes
+    ```
+
+    What happens internally:
+
+    ```
+    Step 1: vendor.login          (POST /api/v1/auth/vendor/login)
+    Step 2: customer.send_otp     (POST /api/v1/auth/send-otp)
+    Step 3: customer.verify_otp   (POST /api/v1/auth/verify-otp)
+    Step 4: product.create        (POST /api/v1/vendors/.../products)
+    Step 5: product.publish       (POST /api/v1/products/.../publish)
+    Step 6: cart.add_item         (POST /api/v1/cart/items)
+    Step 7: order.create          (POST /api/v1/orders)
+    Step 8: order.pay             (POST /api/v1/orders/.../pay)
+    Step 9: refund.request        (POST /api/v1/orders/.../refunds)
+    Step 10: refund.approve       (POST /api/v1/admin/refunds/.../approve)  ← target
+    ```
+
+    Total time: ~250ms against the mock SUT.
+
+4. **Try a different operation.** The engine resolves a different chain.
+   For example, running just `order.pay` skips the refund-related steps:
+
+    ```bash
+    ./build/macos-debug/engine/tests/chainapi-engine-integration-tests \
+        --gtest_filter=MarketplaceHappyPath.RerunUsesCachedSessions
+    ```
+
+    Sessions cached from the previous run are reused — `vendor.login` and
+    `customer.verify_otp` show as `Skipped` because their TTL hasn't
+    expired.
+</Steps>
+
+## What just happened
+
+You exercised the core ChainAPI value prop:
+
+- **One command, one operation.** You didn't write any glue scripts.
+- **Auto-resolved chain.** The engine read your schema's `depends_on`
+  and `{{X.y}}` references to build a 9-step DAG.
+- **Topologically ordered execution.** Every step ran with all its
+  prerequisites' outputs already in scope.
+- **Session caching.** Re-running reuses live sessions instead of
+  re-authenticating.
+
+In Postman, this exact scenario is 9 manual requests with 7 manual
+copy-paste operations between tabs. Every time you reset the test
+database, you do it all again.
+
+<Aside type="tip" title="Run against a real backend">
+The marketplace sample uses a mock SUT for the test suite. To run
+against a real running API, point `baseUrl` in
+`environments/local.yaml` at your backend and run:
+
+```bash
+chainapi run refund.approve --project samples/marketplace --env local
+```
+</Aside>
+
+## Where to next
+
+- **[Mental model](/concepts/mental-model/)** — the 60-second
+  conceptual overview
+- **[Schema authoring guide](/schema/authoring/)** — how to write
+  schemas for your own APIs
+- **[AI importer playbook](/ai-importer/playbook/)** — how to bootstrap
+  a schema from existing OpenAPI / Postman / curl logs in ~5 minutes

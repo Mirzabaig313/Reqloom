@@ -1,5 +1,5 @@
 // Per-run mutable state: session cache, extraction cache, and recorded steps.
-// Engine Requirement §3.3, §3.4.
+
 #pragma once
 
 #include <chainapi/engine/ErrorCodes.h>
@@ -15,12 +15,31 @@
 
 namespace chainapi::engine {
 
-/// One actor session, lifecycled per Engine Requirement §4.2.
+/// One actor session, lifecycled per run.
 struct ActorSession {
     enum class State { None, Authenticating, Live, Refreshing };
 
+    /// Per-request signing scheme. Most strategies leave this as `None`
+    /// and rely on `injectHeaders` for static auth values. OAuth 1.0a
+    /// and AWS SigV4 are the exceptions — their signature depends on the
+    /// request URL / method / params / body, so the executor calls a
+    /// signer right before each send.
+    enum class SigningScheme { None, OAuth1HmacSha1, AwsSigV4 };
+
     State state{State::None};
     std::map<std::string, std::string> variables;  ///< token, user_id, etc.
+
+    /// Auth strategies may pre-resolve request mutations here so the engine
+    /// adds them to every operation owned by the actor without requiring an
+    /// explicit `inject:` block. Values are already resolved — the engine
+    /// does NOT re-resolve them when merging into a request.
+    std::map<std::string, std::string> injectHeaders;
+    std::map<std::string, std::string> injectQueryParams;
+
+    /// When non-`None`, the executor calls the matching signer (e.g.
+    /// `signOAuth1Request`) after inject merging but before `HttpClient::send`.
+    SigningScheme signingScheme{SigningScheme::None};
+
     std::chrono::steady_clock::time_point expiresAt{};
 };
 
@@ -29,7 +48,7 @@ struct ResourceInstance {
     std::map<std::string, std::string> variables;
 };
 
-/// Status of a single step in a chain. Engine Req §4.1.
+/// One step in a chain.
 struct StepResult {
     enum class Status { Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked };
 
@@ -38,6 +57,36 @@ struct StepResult {
     std::optional<ErrorCode> error;
     int attempts{0};
     std::chrono::milliseconds elapsed{};
+
+    std::string detail;
+
+    /// Set when this row is one poll attempt within a `poll_until` loop
+    /// (1-based). Parent operation rows leave this empty.
+    std::optional<int> pollAttempt;
+};
+
+/// One extraction's runtime outcome, recorded by the executor each time
+/// it evaluates an `extract:` entry. Powers the timeline UI.
+/// and the AI-importer diagnostic loop — when an inferred extraction
+/// resolves to `null` at runtime, the user can see it without re-running
+/// against the schema.
+struct ExtractionTrace {
+    enum class Outcome {
+        Resolved,     ///< Source path resolved to a non-null value.
+        Null,         ///< Source path resolved but the value was null.
+        Missing,      ///< Source path did not resolve at all.
+        Unsupported,  ///< Source kind cannot be resolved by this engine build.
+    };
+
+    OperationId op;
+    std::string variableName;
+    std::string sourcePath;
+    Extraction::Source sourceKind{Extraction::Source::JsonPath};
+    Outcome outcome{Outcome::Missing};
+
+    /// Resolved value when `outcome == Resolved`. Empty otherwise.
+    /// Truncated to ~256 bytes so the timeline doesn't store payloads.
+    std::string value;
 };
 
 /// The mutable state of a single run.
@@ -50,20 +99,23 @@ public:
     RunContext(RunContext&&) noexcept;
     RunContext& operator=(RunContext&&) noexcept;
 
-    // Session cache — per actor.
+    // Session cache — per actor
     [[nodiscard]] const ActorSession* session(const ActorId& actor) const noexcept;
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
 
-    // Extraction cache — list of instances per resource (for `{{R[k].x}}`).
+    // Extraction cache — list of instances per resource
     [[nodiscard]] const std::vector<ResourceInstance>& instances(
         const ResourceId& resource) const noexcept;
     void appendInstance(const ResourceId& resource, ResourceInstance instance);
     void clearExtractions();
 
-    // Step recording.
+    // Step recording
     void record(StepResult step);
     [[nodiscard]] const std::vector<StepResult>& steps() const noexcept;
+
+    void recordExtraction(ExtractionTrace trace);
+    [[nodiscard]] const std::vector<ExtractionTrace>& extractionTrace() const noexcept;
 
 private:
     struct Impl;

@@ -1,0 +1,64 @@
+# Marketplace API — pasted curl commands captured from a developer's terminal.
+# Three actors (admin, vendor, customer) and the refund-approval flow.
+# This is the hardest input format — no schema, no formal docs, just curls.
+
+# ─── Admin login ──────────────────────────────────────────────────────────────
+curl -X POST https://marketplace.test/api/v1/auth/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@marketplace.test","password":"admin-password"}'
+# Returns: {"data":{"accessToken":"...","user":{"id":"adm-1"}}}
+
+# ─── Vendor login ─────────────────────────────────────────────────────────────
+curl -X POST https://marketplace.test/api/v1/auth/vendor/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"vendor@marketplace.test","password":"vendor-password"}'
+# Returns: {"data":{"accessToken":"...","refreshToken":"...","user":{"id":"vnd-1"}}}
+
+# ─── Customer login (OTP-based) ───────────────────────────────────────────────
+curl -X POST https://marketplace.test/api/v1/auth/send-otp \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"+15555550100"}'
+# Returns 200 with empty body
+
+curl -X POST https://marketplace.test/api/v1/auth/verify-otp \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"+15555550100","otp":"123456"}'
+# Returns: {"data":{"accessToken":"...","user":{"id":"cust-1"}}}
+
+# ─── Vendor creates a product ─────────────────────────────────────────────────
+curl -X POST https://marketplace.test/api/v1/vendors/vnd-1/products \
+  -H "Authorization: Bearer <vendor_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Demo Widget","price":999,"stock":50}'
+# Returns 201: {"data":{"id":"prod-42"}}
+
+# ─── Vendor publishes the product ─────────────────────────────────────────────
+curl -X POST https://marketplace.test/api/v1/products/prod-42/publish \
+  -H "Authorization: Bearer <vendor_token>"
+# Returns 200
+
+# ─── Customer places an order ─────────────────────────────────────────────────
+curl -X POST https://marketplace.test/api/v1/orders \
+  -H "Authorization: Bearer <customer_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"product_id":"prod-42","quantity":1}'
+# Returns 201: {"data":{"id":"ord-7"}}
+
+# ─── Customer pays for the order ──────────────────────────────────────────────
+curl -X POST https://marketplace.test/api/v1/orders/ord-7/pay \
+  -H "Authorization: Bearer <customer_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"method":"card","token":"tok_test_visa"}'
+# Returns 200: {"data":{"payment":{"id":"pay-3"}}}
+
+# ─── Customer requests a refund ───────────────────────────────────────────────
+curl -X POST https://marketplace.test/api/v1/orders/ord-7/refunds \
+  -H "Authorization: Bearer <customer_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Item not as described"}'
+# Returns 201: {"data":{"id":"ref-9"}}
+
+# ─── Admin approves the refund ────────────────────────────────────────────────
+curl -X POST https://marketplace.test/api/v1/admin/refunds/ref-9/approve \
+  -H "Authorization: Bearer <admin_token>"
+# Returns 200

@@ -1,0 +1,21 @@
+# Admin actor. Discourse admin API keys can impersonate any user via
+# the Api-Username header. The "admin" actor uses the key as itself.
+name: admin
+description: Discourse admin
+
+auth:
+  strategy: simple
+  method: GET
+  path: /admin/users/list/active.json
+  headers:
+    Api-Key: "{{env.admin_api_key}}"
+    Api-Username: "{{env.admin_username}}"
+  expect_status: 200
+
+session:
+  ttl: 24h
+
+inject:
+  headers:
+    Api-Key: "{{env.admin_api_key}}"
+    Api-Username: "{{env.admin_username}}"

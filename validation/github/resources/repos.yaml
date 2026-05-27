@@ -1,0 +1,55 @@
+name: repo
+
+operations:
+  list_user_repos:
+    method: GET
+    path: /user/repos
+    actor: user
+    query_params:
+      per_page: "30"
+      sort: created
+    expect_status: 200
+    # SCHEMA FINDING #2: GitHub paginates via Link headers, not body cursors.
+    # The current Extraction enum has Header as a Source variant — good —
+    # but parsing Link header values requires a regex extractor. The Regex
+    # variant already exists. Workable.
+    extract:
+      next_link: '$.headers.Link'  # placeholder — needs Source::Header
+      total_count: $.length
+
+  create_user_repo:
+    method: POST
+    path: /user/repos
+    actor: user
+    body:
+      name: "{{env.test_repo_name}}-{{$.uuid}}"
+      private: false
+      auto_init: true
+    expect_status: 201
+    extract:
+      repo_full_name: $.full_name
+      repo_id: $.id
+      default_branch: $.default_branch
+
+  get_repo:
+    method: GET
+    path: /repos/{{repo.repo_full_name}}
+    actor: user
+    depends_on: [repo.create_user_repo]
+    expect_status: 200
+
+  update_repo:
+    method: PATCH
+    path: /repos/{{repo.repo_full_name}}
+    actor: user
+    depends_on: [repo.create_user_repo]
+    body:
+      description: "Updated by ChainAPI validation"
+    expect_status: 200
+
+  delete_repo:
+    method: DELETE
+    path: /repos/{{repo.repo_full_name}}
+    actor: user
+    depends_on: [repo.create_user_repo]
+    expect_status: 204

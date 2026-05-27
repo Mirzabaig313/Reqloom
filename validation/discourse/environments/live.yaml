@@ -1,0 +1,7 @@
+name: live
+variables:
+  baseUrl: https://meta.discourse.test     # any self-hosted Discourse instance
+  admin_api_key: !secret DISCOURSE_ADMIN_API_KEY
+  admin_username: chainapi_admin
+  member_username: chainapi_member
+  guest_username: chainapi_guest

@@ -1,0 +1,192 @@
+---
+title: AI importer playbook
+description: "How to convert API documentation into a runnable ChainAPI project using the multi-stage prompt suite. ~30 minutes for a 50-endpoint API, ~$0.30 in API credits."
+---
+
+import { Aside, Steps, Tabs, TabItem } from "@astrojs/starlight/components";
+
+The single-prompt approach **does not work** for any non-trivial API.
+Use the multi-stage workflow at `prompts/import/` in the source tree.
+
+```
+your API docs
+  → [Stage 1] LLM produces a structured digest you can spot-check
+  → [Stage 2] LLM produces a written plan you read in 5 minutes
+  → [Stages 3-5] LLM writes YAML files to disk, one resource at a time
+  → [Stage 6] Iterate on lint + run errors with the LLM until clean
+```
+
+Total time: **~30 minutes** for a 50-endpoint API. Cost: **$0.10–$0.40**
+in API credits. Output: a schema that runs against the live backend
+with maybe 5–10 hand-fixes after the first try.
+
+## The six stages
+
+| Stage | Prompt file | Purpose | LLM calls |
+|---|---|---|---|
+| 1 | [`01-discover.md`](https://github.com/chainapi/chainapi/blob/main/prompts/import/01-discover.md) | Structured digest of the API | 1 |
+| 2 | [`02-plan-schema.md`](https://github.com/chainapi/chainapi/blob/main/prompts/import/02-plan-schema.md) | Written schema plan | 1 |
+| 3 | [`03-generate-actors.md`](https://github.com/chainapi/chainapi/blob/main/prompts/import/03-generate-actors.md) | Actor YAML files | 1 |
+| 4 | [`04-generate-resources.md`](https://github.com/chainapi/chainapi/blob/main/prompts/import/04-generate-resources.md) | Resource YAML (one per call) | N |
+| 5 | [`05-generate-environment.md`](https://github.com/chainapi/chainapi/blob/main/prompts/import/05-generate-environment.md) | Environment file | 1 |
+| 6 | [`06-fix-lint-errors.md`](https://github.com/chainapi/chainapi/blob/main/prompts/import/06-fix-lint-errors.md) | Iterative fix-up | iterative |
+
+## Why multi-stage beats single-prompt
+
+The single-prompt approach has three failure modes:
+
+1. **Hallucinated detail.** The model fills gaps with plausible-looking
+   guesses (`expect_status: 200`, `body: { status: approved }`) instead of
+   asking. Multi-stage forces a plan in plain English first, where wrong
+   assumptions are easy to spot before YAML is generated.
+2. **Lost context on long output.** Generating 30 resource files in one
+   response triggers truncation, hallucinated repetition, or fields
+   silently dropped. Stage 4 is N calls of one resource each.
+3. **No review gate.** By the time you see the YAML, you've burned the
+   whole budget. The Stage 2 plan is human-readable in five minutes.
+
+## The full workflow
+
+<Steps>
+
+1. **Open a fresh chat session** with your LLM of choice. Claude Sonnet
+   4.5 and GPT-4o both work well; Haiku 4.5 / GPT-4o-mini are good
+   enough for stages 1+2.
+
+2. **Paste `prompts/import/01-discover.md`** as the system prompt and
+   paste your API docs (OpenAPI / Markdown / curl logs) as the user
+   message.
+
+   The LLM returns a structured Markdown digest with five sections:
+   Actors, Resources, Operations, Inferred chains, Auth flows, and
+   crucially **Open questions**. Read the open questions first.
+
+3. **Iterate on the digest.** Answer the open questions in chat. Ask
+   the model to refine specific entries. Don't move on until the
+   digest is correct.
+
+4. **Paste `prompts/import/02-plan-schema.md`** in the same session.
+   The digest is in context; the plan stage produces a written plan
+   describing every actor, resource, op, and dependency edge — plus
+   a **variable producer/consumer table** that prevents the most
+   common LLM bug.
+
+5. **Read the plan in 5 minutes.** Check the producer/consumer table
+   especially carefully. Every `{{X.y}}` reference must trace to a
+   real producer.
+
+6. **Generate the schema.** Three sub-stages:
+
+    - Stage 3 (`03-generate-actors.md`) — single LLM call, writes all
+      actor files
+    - Stage 4 (`04-generate-resources.md`) — one call per resource;
+      pass the resource name as user message
+    - Stage 5 (`05-generate-environment.md`) — single LLM call, writes
+      the environment file with placeholders
+
+7. **Manually create `chainapi/chainapi.yaml`** (the project root):
+
+   ```yaml
+   version: 1
+   name: <Your API>
+   default_environment: local
+
+   imports:
+     environments:
+       - environments/local.yaml
+     actors:
+       - actors/*.yaml
+     resources:
+       - resources/*.yaml
+   ```
+
+8. **Run `chainapi lint --project chainapi`.** Expect lint errors on
+   the first pass. Don't worry — Stage 6 handles them.
+
+9. **Test a public endpoint first.** Find an op with no `actor:` and
+   run it. Confirm `baseUrl` is right.
+
+10. **Test an authenticated endpoint.** Pick the simplest actor (admin
+    email/password is usually easiest) and run an op. Confirm auth works
+    end-to-end.
+
+11. **Iterate on errors with `06-fix-lint-errors.md`.** Paste the lint
+    or runtime error output and let the LLM apply minimal fixes. Stop
+    after 3 failed attempts on the same error — that's a sign the
+    plan is wrong, not the YAML.
+
+</Steps>
+
+## Time and cost
+
+For a typical 50-endpoint API:
+
+| Phase | Time |
+|---|---|
+| Stages 1+2 with review | 10–15 min |
+| Stages 3+4+5 generation | 5–10 min |
+| `chainapi lint` clean | 5 min |
+| First successful auth | 5 min |
+| 5–10 hand-fixes for body field mismatches | 15–30 min |
+| **Total to "I can run any endpoint"** | **~1 hour** |
+
+In Postman, the same setup is 4–6 hours of manual scripting, and
+typically never reaches "I can run any endpoint" because nobody bothers
+wiring all the dependencies by hand.
+
+## Provider recommendations
+
+Tested against the GiGwala backend (174 endpoints):
+
+| Provider | Verdict |
+|---|---|
+| **Claude Sonnet 4.5** | Best overall. Strong adherence to multi-stage prompts. Doesn't hallucinate body fields aggressively. ~$0.25 for full import. |
+| **Claude Opus 4.7** | Better still on complex chains; overkill for most APIs. ~$1.20. |
+| **GPT-4o** | Good. Slightly more aggressive about adding "helpful" defaults. ~$0.30. |
+| **GPT-4o-mini** / **Claude Haiku 4.5** | Acceptable for Stage 1 (digest) and Stage 2 (plan). Fall back to Sonnet/4o for code generation. ~$0.04. |
+
+<Aside type="caution">
+**Don't use small open models** (under 13B params) for code generation
+stages. They lose track of multi-line YAML structure and produce
+malformed files.
+</Aside>
+
+## What the LLM gets wrong consistently
+
+From the GiGwala validation, here's what failed and what fixed it:
+
+1. **Hardcoded test phone `+919876543210`** → conflict on every re-run.
+   Fixed by parameterizing as `{{env.new_employer_phone}}` and using
+   `--var` per run.
+2. **`expect_status: 200` for create endpoints** that returned 201.
+   Fixed by reading actual API responses.
+3. **`register_employee` had no `send_otp_for_signup` dependency**
+   despite the backend requiring it. Fixed by adding the prereq op
+   and `depends_on`.
+4. **`admin_organization.verify` had `notes:` body field** the backend
+   rejected. Fixed by removing it.
+5. **`{{employer.org_id}}` cross-actor reference** that didn't resolve.
+   Fixed by referencing `{{auth.employer_org_id}}` and adding
+   `depends_on: [auth.register_employer]`.
+
+The prompts in `prompts/import/` encode each lesson as an explicit rule
+the model checks before emitting output.
+
+## When to skip the AI importer
+
+Hand-write the schema if:
+
+- The API has fewer than 5 endpoints
+- The auth flow is unusual (HMAC signatures, custom tokens, mTLS)
+- You already have a working Postman collection — use the [direct
+  Postman importer](/cli/import/) instead
+
+For everything else, the prompt suite gets you to working faster than
+hand-writing.
+
+## Where to next
+
+- [Multi-stage prompt suite](/ai-importer/prompts/) — the prompts themselves
+- [Importing OpenAPI](/ai-importer/openapi/)
+- [Importing Postman](/ai-importer/postman/)
+- [Importing curl logs](/ai-importer/curl/)

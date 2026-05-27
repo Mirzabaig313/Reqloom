@@ -1,0 +1,30 @@
+# Stripe Connect transfers — uses the `connected` actor to demonstrate
+# the Stripe-Account header pattern in action.
+name: transfer
+
+operations:
+  create:
+    method: POST
+    path: /v1/transfers
+    actor: platform                # Created from platform's perspective
+    depends_on: [payment_intent.create]
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Idempotency-Key: "{{$.uuid}}"
+    body_form:
+      amount: "1500"
+      currency: "usd"
+      destination: "{{env.connect_account_id}}"
+      source_transaction: "{{payment_intent.charge_id}}"
+    expect_status: 200
+    extract:
+      transfer_id: $.id
+
+  retrieve_as_connected:
+    # Same transfer, viewed from the connected account's perspective.
+    # Demonstrates same resource, two actor views.
+    method: GET
+    path: /v1/transfers/{{transfer.transfer_id}}
+    actor: connected
+    depends_on: [transfer.create]
+    expect_status: 200

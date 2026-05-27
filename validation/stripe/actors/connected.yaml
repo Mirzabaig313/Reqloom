@@ -1,0 +1,29 @@
+# Connected-account actor — tests against a Stripe Connect connected
+# account by sending the Stripe-Account header on every request. The
+# auth credential is the platform key; the actor identity is the
+# Stripe-Account header.
+#
+# This is a real pattern in multi-tenant SaaS that no other API testing
+# tool models cleanly: same credential, different acting identity per
+# request.
+name: connected
+description: Stripe Connect connected account (acts on behalf of)
+
+auth:
+  strategy: simple
+  method: GET
+  path: /v1/account
+  headers:
+    Authorization: !basic "{{env.platform_key}}:"
+    Stripe-Account: "{{env.connect_account_id}}"
+  expect_status: 200
+  extract:
+    connected_account_id: $.id
+
+session:
+  ttl: 24h
+
+inject:
+  headers:
+    Authorization: !basic "{{env.platform_key}}:"
+    Stripe-Account: "{{env.connect_account_id}}"

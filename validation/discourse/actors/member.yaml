@@ -1,0 +1,29 @@
+# Member actor — uses the admin's API key but sends Api-Username as a
+# different user. Discourse calls this "acting on behalf of" and it lets
+# admins automate testing across roles without managing N API keys.
+#
+# Stress test: the schema must let two actors share a credential
+# (resolved through env/secret per Finding 1) but differ in *which*
+# header value identifies them. This is the same pattern as Stripe's
+# Stripe-Account, but for the actor itself rather than a sub-account.
+name: member
+description: Regular member, impersonated via admin key
+
+auth:
+  strategy: simple
+  method: GET
+  path: /session/current.json
+  headers:
+    Api-Key: "{{env.admin_api_key}}"
+    Api-Username: "{{env.member_username}}"
+  expect_status: 200
+  extract:
+    member_id: $.current_user.id
+
+session:
+  ttl: 24h
+
+inject:
+  headers:
+    Api-Key: "{{env.admin_api_key}}"
+    Api-Username: "{{env.member_username}}"

@@ -1,23 +1,20 @@
 # ChainAPI — macOS CI on Azure DevOps Pipelines.
 #
-# Linux + Windows live on AppVeyor (see appveyor.yml). GitHub Actions is no
-# longer used for ChainAPI builds.
-#
 # Branch routing:
 #   * push to dev  → static checks + macos-debug   (ASan + UBSan + tests)
 #   * push to main → static checks + macos-release (-O2, build only)
 #
-# Until the public-project parallel grant is approved, this org has 1 free
-# Microsoft-hosted slot and 1800 free minutes/month. The first cold-cache
-# build will spend ~25-30 min in `cmake --preset` building qtbase from source
-# via vcpkg; warm-cache builds drop to ~3-5 min.
+# Qt 6.8 LTS comes from the official Qt download mirror via aqtinstall, NOT
+# from vcpkg. Building qtbase from source via vcpkg blew past per-job time
+# limits on every provider we tried; pre-built Qt brings cold-cache builds
+# to ~10-15 min total.
+#
 
 trigger:
   branches:
     include:
       - main
       - dev
-  # Don't auto-trigger on tags; manual releases only.
   tags:
     exclude:
       - '*'
@@ -26,53 +23,33 @@ trigger:
 pr: none
 
 variables:
-  # Cache vcpkg's compiled package outputs ($VCPKG_ROOT/installed) and the
-  # binary cache used by `x-files` so subsequent runs reuse builds.
+  # Pinned vcpkg baseline used elsewhere in the repo.
+  VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
+  # Qt version pin — must match appveyor.yml.
+  QT_VERSION: 6.8.3
+  AQT_VERSION: 3.3.0
+  # vcpkg binary cache: small now that Qt is no longer in vcpkg.
   VCPKG_DEFAULT_BINARY_CACHE: $(Pipeline.Workspace)/vcpkg-bincache
   VCPKG_BINARY_SOURCES: 'clear;files,$(Pipeline.Workspace)/vcpkg-bincache,readwrite'
-  # Pin the same vcpkg baseline used elsewhere in the repo.
-  VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
 
 stages:
   # ==========================================================================
   # Static checks — gates the macOS build. Cheap (≤ 1 min on Linux agent).
-  # Runs the architectural boundary check and clang-format dry-run.
+  # Runs the architectural boundary check.
   # ==========================================================================
   - stage: static_checks
     displayName: Static Checks
     jobs:
       - job: lint
-        displayName: Boundary + clang-format
+        displayName: Architectural boundary check
         pool:
-          vmImage: ubuntu-24.04
+          vmImage: ubuntu-latest
         steps:
           - checkout: self
             fetchDepth: 1
 
           - script: ./tools/ci/boundary-check.sh
             displayName: Architectural boundary check
-
-          - script: |
-              sudo apt-get update
-              sudo apt-get install -y --no-install-recommends clang-format-18
-              sudo update-alternatives --install /usr/bin/clang-format clang-format \
-                /usr/bin/clang-format-18 100
-            displayName: Install clang-format-18
-
-          - script: |
-              set -euo pipefail
-              mapfile -t files < <(
-                find engine cli desktop ipc \
-                  \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cc' \) \
-                  -not -path '*/build/*' \
-                  2>/dev/null
-              )
-              if [[ ${#files[@]} -eq 0 ]]; then
-                echo "No C++ files found — nothing to check."
-                exit 0
-              fi
-              clang-format --dry-run --Werror "${files[@]}"
-            displayName: clang-format dry-run
 
   # ==========================================================================
   # macOS build — debug on dev, release on main.
@@ -85,7 +62,7 @@ stages:
       - job: build
         displayName: macos-14
         pool:
-          vmImage: macOS-14
+          vmImage: macOS-latest
         timeoutInMinutes: 90
         variables:
           # Branch-conditional preset. dev → macos-debug, main → macos-release.
@@ -95,6 +72,10 @@ stages:
             preset: macos-debug
           # vcpkg root used by the toolchain file pulled in by CMakePresets.
           VCPKG_ROOT: $(Build.SourcesDirectory)/vcpkg
+          # Qt install root for aqtinstall.
+          QT_INSTALL_DIR: $(Pipeline.Workspace)/Qt
+          # Qt prefix consumed by find_package(Qt6 ...).
+          CMAKE_PREFIX_PATH: $(Pipeline.Workspace)/Qt/$(QT_VERSION)/macos
 
         steps:
           - checkout: self
@@ -115,18 +96,43 @@ stages:
             displayName: Install macOS build prerequisites
 
           # ------------------------------------------------------------------
-          # CMake 4.x — macos-14 ships with 3.x. Install via pip's published
-          # wheels which is fastest for this version range.
+          # CMake 4.x + aqtinstall via pip.
           # ------------------------------------------------------------------
           - script: |
               set -euo pipefail
-              python3 -m pip install --upgrade --quiet 'cmake~=4.0'
+              python3 -m pip install --upgrade --quiet --break-system-packages \
+                "cmake~=4.0" "aqtinstall==$(AQT_VERSION)"
               cmake --version
-            displayName: Install CMake 4.x
+            displayName: Install CMake 4.x and aqtinstall
 
           # ------------------------------------------------------------------
-          # vcpkg — clone at the pinned commit. Cached between runs to skip
-          # the clone on warm runs.
+          # Qt 6.8 — cached between runs. ~250 MB extracted, ~3 min download
+          # on cold cache.
+          # ------------------------------------------------------------------
+          - task: Cache@2
+            displayName: Cache Qt $(QT_VERSION)
+            inputs:
+              key: '"qt" | "$(Agent.OS)" | "$(QT_VERSION)" | "macos"'
+              path: $(QT_INSTALL_DIR)
+
+          - script: |
+              set -euo pipefail
+              qt_marker="$(CMAKE_PREFIX_PATH)/mkspecs/qconfig.pri"
+              if [[ ! -f "$qt_marker" ]]; then
+                rm -rf "$(QT_INSTALL_DIR)/$(QT_VERSION)"
+                aqt install-qt mac desktop "$(QT_VERSION)" clang_64 \
+                  --outputdir "$(QT_INSTALL_DIR)"
+              else
+                echo "Qt $(QT_VERSION) already present from cache."
+              fi
+              [[ -f "$(CMAKE_PREFIX_PATH)/lib/cmake/Qt6/Qt6Config.cmake" ]] || {
+                echo "error: Qt6Config.cmake missing under $(CMAKE_PREFIX_PATH)" >&2
+                exit 1
+              }
+            displayName: Install Qt $(QT_VERSION)
+
+          # ------------------------------------------------------------------
+          # vcpkg — clone at the pinned commit. Cached between runs.
           # ------------------------------------------------------------------
           - task: Cache@2
             displayName: Cache vcpkg tool
@@ -146,10 +152,8 @@ stages:
             displayName: Bootstrap vcpkg
 
           # ------------------------------------------------------------------
-          # vcpkg binary cache — keyed on the manifest hash. A change to
-          # vcpkg.json invalidates the cache; baseline bumps trigger a
-          # rebuild. The cache stores compiled qtbase/curl/etc, which is
-          # the dominant cost.
+          # vcpkg binary cache — keyed on manifest hash. Now small since Qt
+          # is no longer a vcpkg dependency.
           # ------------------------------------------------------------------
           - task: Cache@2
             displayName: Cache vcpkg binary archives

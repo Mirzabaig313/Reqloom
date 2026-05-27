@@ -1,12 +1,9 @@
-// chainapi CLI entry point. PRD FR-13.
+// chainapi CLI entry point.
 //
-// Subcommands (Phase 1):
+// Subcommands:
 //   chainapi run <op>      — execute an operation chain
 //   chainapi lint          — validate a project schema
 //   chainapi import <file> — import OpenAPI / Postman / Bruno
-//
-// This skeleton dispatches to the command stubs so CI can build the
-// binary end-to-end before any feature work lands.
 #include "commands/ImportCommand.h"
 #include "commands/LintCommand.h"
 #include "commands/RunCommand.h"

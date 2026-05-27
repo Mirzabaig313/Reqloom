@@ -1,0 +1,154 @@
+---
+title: Installation
+description: "Install ChainAPI on macOS, Linux, or Windows. Or build from source."
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+<Aside type="caution" title="Pre-1.0 status">
+Pre-built binaries for macOS / Linux / Windows are part of the v1.0
+milestone. Today, the supported install path is **build from source** —
+takes ~10 minutes on macOS, ~5 minutes on Linux/Windows once
+prerequisites are in place.
+</Aside>
+
+## Build from source
+
+<Tabs>
+    <TabItem label="macOS">
+        ```bash
+        # 1. Build prerequisites
+        brew install ninja autoconf autoconf-archive automake \
+                     libtool pkg-config qt@6
+
+        # 2. vcpkg (one-time)
+        git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
+        ~/vcpkg/bootstrap-vcpkg.sh
+        echo 'export VCPKG_ROOT="$HOME/vcpkg"' >> ~/.zshrc
+        exec zsh
+
+        # 3. ChainAPI
+        git clone https://github.com/chainapi/chainapi
+        cd chainapi
+        cmake --preset macos-debug
+        cmake --build --preset macos-debug
+
+        # 4. Run
+        ./build/macos-debug/cli/chainapi --help
+        ```
+    </TabItem>
+    <TabItem label="Linux (Ubuntu 24.04)">
+        ```bash
+        # 1. Build prerequisites
+        sudo apt-get install -y ninja-build cmake autoconf \
+            autoconf-archive automake libtool pkg-config \
+            qt6-base-dev qt6-declarative-dev
+
+        # 2. vcpkg (one-time)
+        git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
+        ~/vcpkg/bootstrap-vcpkg.sh
+        export VCPKG_ROOT="$HOME/vcpkg"
+
+        # 3. ChainAPI
+        git clone https://github.com/chainapi/chainapi
+        cd chainapi
+        cmake --preset linux-debug
+        cmake --build --preset linux-debug
+
+        # 4. Run
+        ./build/linux-debug/cli/chainapi --help
+        ```
+    </TabItem>
+    <TabItem label="Windows">
+        ```powershell
+        # 1. Prerequisites: Visual Studio 2022 (with C++ workload)
+        #    Qt 6.8+ from the Qt online installer
+        #    Git for Windows
+
+        # 2. vcpkg
+        git clone https://github.com/microsoft/vcpkg.git $HOME\vcpkg
+        $HOME\vcpkg\bootstrap-vcpkg.bat
+        $env:VCPKG_ROOT = "$HOME\vcpkg"
+
+        # 3. ChainAPI
+        git clone https://github.com/chainapi/chainapi
+        cd chainapi
+        cmake --preset windows-debug
+        cmake --build --preset windows-debug
+
+        # 4. Run
+        .\build\windows-debug\cli\chainapi.exe --help
+        ```
+    </TabItem>
+</Tabs>
+
+## Verify the install
+
+```bash
+chainapi --help
+# ChainAPI CLI
+#   chainapi run <operation>      Execute a chain ending at <operation>
+#   chainapi lint                 Validate the schema in current project
+#   chainapi import <file>        Import an external API spec
+#   chainapi --help               Show this message
+
+chainapi lint --project samples/marketplace
+# LINT OK — 3 actors, 5 resources, 27 operations. No errors.
+```
+
+If both commands work, you're set up. Take the [5-minute tour](/start/tour/) next.
+
+## What's installed
+
+The build produces three binaries:
+
+- **`chainapi`** (CLI) — the daily-driver command-line tool. Used in
+  shell scripts, CI/CD, and the bulk of this documentation's examples.
+- **`ChainAPI.app`** (macOS) / `ChainAPI` (Linux/Windows) — the desktop
+  app. Phase 2 milestone; UI is still minimal.
+- **`chainapi-mock-sut`** — the test-fixture HTTP server used by the
+  engine's integration tests. Not part of the daily workflow.
+
+## Troubleshooting
+
+### `cmake: command not found`
+
+CMake 4.0+ is required. macOS Homebrew and most Linux package
+managers ship 3.x. Install from [cmake.org](https://cmake.org/download/)
+or via `pip install cmake`.
+
+### vcpkg can't find Qt
+
+vcpkg's Qt build takes ~2 hours and ~15 GB of disk on the first run.
+The macOS preset uses Homebrew's Qt to skip this — that's why the
+macOS section installs `qt@6` via brew. Linux/Windows presets use
+vcpkg-built Qt for reproducibility.
+
+### "qt@6 keg-only"
+
+Add the brew Qt to your `CMAKE_PREFIX_PATH` if cmake doesn't find it
+automatically:
+
+```bash
+export CMAKE_PREFIX_PATH="/opt/homebrew/opt/qt@6:$CMAKE_PREFIX_PATH"
+```
+
+Or just point the preset at it (already done in `CMakePresets.json` for
+the macOS presets).
+
+### Build succeeds but the binary fails to start
+
+Most likely a Qt deployment issue. Try `otool -L build/macos-debug/cli/chainapi`
+(macOS) or `ldd build/linux-debug/cli/chainapi` (Linux) to see which
+shared libraries are missing.
+
+## Updating
+
+```bash
+cd chainapi
+git pull
+cmake --build --preset macos-debug
+```
+
+vcpkg picks up new dependencies automatically when the `vcpkg.json`
+manifest changes.

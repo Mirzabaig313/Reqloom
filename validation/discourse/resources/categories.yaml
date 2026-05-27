@@ -1,0 +1,37 @@
+name: category
+
+operations:
+  list:
+    method: GET
+    path: /categories.json
+    actor: member
+    expect_status: 200
+
+  create:
+    method: POST
+    path: /categories.json
+    actor: admin
+    body:
+      name: "ChainAPI Validation {{$.uuid}}"
+      color: "0088CC"
+      text_color: "FFFFFF"
+    expect_status: 200
+    extract:
+      category_id: $.category.id
+      category_slug: $.category.slug
+
+  update:
+    method: PUT
+    path: /categories/{{category.category_id}}.json
+    actor: admin
+    depends_on: [category.create]
+    body:
+      description: "Updated by ChainAPI validation"
+    expect_status: 200
+
+  delete:
+    method: DELETE
+    path: /categories/{{category.category_id}}.json
+    actor: admin
+    depends_on: [category.create]
+    expect_status: 200

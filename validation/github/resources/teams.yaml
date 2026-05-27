@@ -1,0 +1,31 @@
+name: team
+
+operations:
+  create:
+    method: POST
+    path: /orgs/{{env.test_org}}/teams
+    actor: admin
+    body:
+      name: "chainapi-validation-{{$.uuid}}"
+      description: "Created by ChainAPI validation"
+      privacy: "closed"
+    expect_status: 201
+    extract:
+      team_slug: $.slug
+      team_id: $.id
+
+  add_member:
+    method: PUT
+    path: /orgs/{{env.test_org}}/teams/{{team.team_slug}}/memberships/{{user.user_login}}
+    actor: admin
+    depends_on: [team.create]
+    body:
+      role: "member"
+    expect_status: 200
+
+  delete:
+    method: DELETE
+    path: /orgs/{{env.test_org}}/teams/{{team.team_slug}}
+    actor: admin
+    depends_on: [team.create]
+    expect_status: 204

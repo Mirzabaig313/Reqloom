@@ -1,7 +1,7 @@
 // Engine-internal interface for executing pre/post hooks in a sandboxed
 // JS environment. Concrete impl: QuickJsHookRunner.
 //
-// Sandbox rules (PRD §5.10):
+// Sandbox rules:
 //   - No filesystem access
 //   - No network beyond the operation's own request
 //   - 1-second timeout per hook

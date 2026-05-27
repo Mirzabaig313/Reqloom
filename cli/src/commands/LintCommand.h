@@ -4,7 +4,7 @@
 
 namespace chainapi::cli {
 
-/// Validate the project schema. PRD FR-13.6.
+/// Validate the project schema.
 int lintCommand(const QStringList& args);
 
 }  // namespace chainapi::cli
