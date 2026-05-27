@@ -533,7 +533,7 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
 // keyword, treat it as (a). Otherwise (b).
 
 [[nodiscard]] bool looksLikeModule(std::string_view script) {
-    while (!script.empty() && std::isspace(static_cast<unsigned char>(script.front()))) {
+    while (!script.empty() && (std::isspace(static_cast<unsigned char>(script.front())) != 0)) {
         script.remove_prefix(1);
     }
     return script.starts_with("export ") || script.starts_with("import ");

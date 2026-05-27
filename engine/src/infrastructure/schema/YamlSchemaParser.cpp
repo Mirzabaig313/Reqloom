@@ -84,7 +84,7 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
     if (raw == "null" || raw == "~") {
         return {nullptr};
     }
-    if (!raw.empty() && (std::isdigit(static_cast<unsigned char>(raw.front())) ||
+    if (!raw.empty() && ((std::isdigit(static_cast<unsigned char>(raw.front())) != 0) ||
                          raw.front() == '-' || raw.front() == '+')) {
         long long ll = 0;
         const auto* first = raw.data();

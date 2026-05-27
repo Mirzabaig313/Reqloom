@@ -35,7 +35,7 @@ namespace {
 
 struct CurlEasyDeleter {
     void operator()(CURL* p) const noexcept {
-        if (p) {
+        if (p != nullptr) {
             curl_easy_cleanup(p);
         }
     }
@@ -44,7 +44,7 @@ using CurlEasyHandle = std::unique_ptr<CURL, CurlEasyDeleter>;
 
 struct CurlSlistDeleter {
     void operator()(curl_slist* p) const noexcept {
-        if (p) {
+        if (p != nullptr) {
             curl_slist_free_all(p);
         }
     }
@@ -53,7 +53,7 @@ using CurlSlistHandle = std::unique_ptr<curl_slist, CurlSlistDeleter>;
 
 struct CurlMimeDeleter {
     void operator()(curl_mime* p) const noexcept {
-        if (p) {
+        if (p != nullptr) {
             curl_mime_free(p);
         }
     }

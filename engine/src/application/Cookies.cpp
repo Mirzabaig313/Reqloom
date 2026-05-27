@@ -10,10 +10,10 @@ namespace chainapi::engine::cookies {
 namespace {
 
 [[nodiscard]] std::string_view trim(std::string_view s) {
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) {
+    while (!s.empty() && (std::isspace(static_cast<unsigned char>(s.front())) != 0)) {
         s.remove_prefix(1);
     }
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) {
+    while (!s.empty() && (std::isspace(static_cast<unsigned char>(s.back())) != 0)) {
         s.remove_suffix(1);
     }
     return s;

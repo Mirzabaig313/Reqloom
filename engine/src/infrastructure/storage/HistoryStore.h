@@ -22,7 +22,8 @@ public:
 
     virtual std::expected<void, ChainApiError> open(const std::filesystem::path& dbPath) = 0;
     virtual std::expected<void, ChainApiError> append(const RunEvent& event) = 0;
-    virtual std::expected<std::vector<RunEvent>, ChainApiError> eventsFor(RunId run) const = 0;
+    [[nodiscard]] virtual std::expected<std::vector<RunEvent>, ChainApiError> eventsFor(
+        RunId run) const = 0;
     virtual void close() = 0;
 };
 

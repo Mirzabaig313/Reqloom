@@ -384,13 +384,12 @@ TEST_F(RunOptionsFixture, request_prepared_event_fires_with_masked_headers) {
     // The Authorization header carries the actor's bearer token; it
     // MUST be redacted before reaching the event stream (AC-3.6.3).
     //
-    // Note: today only operations dispatched through the executor's
-    // main step path (and the 401-recovery retry path, and the poll
-    // loop) emit RequestPrepared. Auth strategy sends and the
-    // session-refresh block run through AuthStrategy / runRefresh,
-    // which do not yet have access to the event emitter. Wiring the
-    // emitter through AuthDependencies is a follow-up slice; this
-    // test pins the contract for the path that exists today.
+    // The chain runs two outbound HTTP calls — the auth login and the
+    // ping.get itself. Both emit RequestPrepared via the same code path
+    // (the auth flow's emitter is plumbed through AuthDependencies),
+    // so the desktop timeline sees one row per send regardless of
+    // whether the request came from the executor's main path or from
+    // an authenticator.
     RunOptionsScratchProject project(kSimpleProjectYaml);
     auto loaded = ce::parseProject(project.yaml());
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
@@ -409,15 +408,20 @@ TEST_F(RunOptionsFixture, request_prepared_event_fires_with_masked_headers) {
     auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
 
-    // One event for ping.get itself. Auth login is dispatched through
-    // AuthStrategy and is not yet event-instrumented.
-    ASSERT_EQ(events.size(), 1u) << "expected one RequestPrepared for the executor send path";
+    // Two requests on the wire: the auth login (issued from inside the
+    // auth strategy) and the ping.get itself (executor main path).
+    ASSERT_EQ(events.size(), 2u) << "expected one RequestPrepared per HTTP send";
 
-    const auto& pingPrep = events[0];
+    // Auth login is the first send; ping.get is the second.
+    const auto& authPrep = events[0];
+    EXPECT_EQ(authPrep.method, ce::HttpMethod::Post);
+    EXPECT_NE(authPrep.url.find("/api/v1/auth/login"), std::string::npos);
+
+    const auto& pingPrep = events[1];
     EXPECT_EQ(pingPrep.method, ce::HttpMethod::Get);
     EXPECT_NE(pingPrep.url.find("/api/v1/with-bearer"), std::string::npos);
 
-    // Authorization header MUST be redacted.
+    // Authorization header on the ping.get request MUST be redacted.
     bool sawAuthHeader = false;
     for (const auto& [k, v] : pingPrep.maskedHeaders) {
         if (k == "Authorization") {
@@ -434,8 +438,9 @@ TEST_F(RunOptionsFixture, response_received_event_carries_status_and_size) {
     // row from "in flight" to "received". Status, masked headers, and
     // body size are the minimum needed for the row.
     //
-    // Same auth-path caveat as request_prepared_event_fires_with_masked_headers
-    // above: today only the executor's main path emits this event.
+    // Both auth-side and main-path responses now flow through this
+    // event. Tests assert on the ping.get response (index 1) since the
+    // auth response shape is owned by AuthStrategyRefreshTests.
     RunOptionsScratchProject project(kSimpleProjectYaml);
     auto loaded = ce::parseProject(project.yaml());
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
@@ -454,8 +459,8 @@ TEST_F(RunOptionsFixture, response_received_event_carries_status_and_size) {
     auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
 
-    ASSERT_EQ(events.size(), 1u);
-    const auto& ping = events[0];
+    ASSERT_EQ(events.size(), 2u);
+    const auto& ping = events[1];
     EXPECT_EQ(ping.status, 200);
     EXPECT_GT(ping.bodySize, 0u);
     // Set-Cookie is on the response side and must be redacted in events
@@ -466,6 +471,44 @@ TEST_F(RunOptionsFixture, response_received_event_carries_status_and_size) {
             EXPECT_EQ(v, ce::kRedactedHeaderValue);
         }
     }
+}
+
+TEST_F(RunOptionsFixture, auth_request_response_events_share_step_index_with_parent) {
+    // Auth-side events ride on the parent step's stepIndex so the
+    // desktop timeline groups them under the operation that triggered
+    // the auth — no separate "auth" pseudo-step is needed.
+    RunOptionsScratchProject project(kSimpleProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+
+    std::vector<ce::RequestPrepared> reqEvents;
+    std::vector<ce::ResponseReceived> respEvents;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* e = std::get_if<ce::RequestPrepared>(&ev)) {
+            reqEvents.push_back(*e);
+        } else if (const auto* e = std::get_if<ce::ResponseReceived>(&ev)) {
+            respEvents.push_back(*e);
+        }
+    });
+
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    ASSERT_EQ(reqEvents.size(), 2u);
+    ASSERT_EQ(respEvents.size(), 2u);
+
+    // Auth was triggered from ensureSession at the start of ping.get's
+    // step (stepIndex 0 — single-step chain after deduping). Pin that
+    // both auth and main-path events tag the same stepIndex.
+    EXPECT_EQ(reqEvents[0].stepIndex, reqEvents[1].stepIndex)
+        << "auth and main-path RequestPrepared should share the parent step's index";
+    EXPECT_EQ(respEvents[0].stepIndex, respEvents[1].stepIndex)
+        << "auth and main-path ResponseReceived should share the parent step's index";
+    EXPECT_EQ(reqEvents[0].runId, reqEvents[1].runId);
 }
 
 TEST_F(RunOptionsFixture, extraction_applied_event_carries_variable_names_only) {
@@ -505,4 +548,102 @@ TEST_F(RunOptionsFixture, extraction_applied_event_carries_variable_names_only) 
         }
     }
     EXPECT_TRUE(sawPingExtraction) << "expected ExtractionApplied for ping resource";
+}
+
+
+// ─── Cancellation event surface ──────────────────────────────────────────────
+
+namespace {
+
+/// Project YAML for the cancellation test. Two unrelated resources so
+/// the chain has at least two steps to exercise the "cancel propagates
+/// to downstream steps" path.
+constexpr const char* kTwoStepProjectYaml = R"YAML(
+version: 1
+name: CancelTest
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+resources:
+  first:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/with-api-key
+        expect_status: 200
+        extract:
+          first_id: $.id
+  second:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/with-api-key
+        depends_on: [first.get]
+        expect_status: 200
+)YAML";
+
+}  // namespace
+
+TEST_F(RunOptionsFixture, step_cancelled_event_fires_for_each_cancelled_step) {
+    // Cancellation is observable through the StepCancelled event for
+    // every step that did not run to completion. The test cancels mid
+    // run by hooking StepStarted: when step 0 fires, the subscriber
+    // calls engine.cancel(runId). The atomic flip is observed by the
+    // retry-loop's isCancelled check at the top of attempt 0, which
+    // returns Cancelled without sending any HTTP. Step 1 is then
+    // marked Cancelled by the run loop and a StepCancelled event is
+    // emitted for it as well — the desktop timeline needs both rows
+    // to render the chain accurately.
+    RunOptionsScratchProject project(kTwoStepProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+
+    std::vector<ce::StepCancelled> cancelEvents;
+    ce::RunId observedRunId{};
+    bool cancelled = false;
+
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* started = std::get_if<ce::StepStarted>(&ev)) {
+            // Cancel the first time we see a step start. Calling
+            // cancel() from inside a subscriber is safe — the engine
+            // snapshots the subscriber list before invoking callbacks.
+            if (!cancelled) {
+                engine.cancel(started->runId);
+                observedRunId = started->runId;
+                cancelled = true;
+            }
+        } else if (const auto* c = std::get_if<ce::StepCancelled>(&ev)) {
+            cancelEvents.push_back(*c);
+        }
+    });
+
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"second.get"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->outcome, ce::RunOutcome::Cancelled);
+
+    // Two steps in the chain: first.get and second.get. Both should
+    // have a StepCancelled event — the in-flight one (caught by the
+    // retry-loop check) and the downstream one (marked by the run
+    // loop's tail-fill).
+    ASSERT_EQ(cancelEvents.size(), 2u);
+    EXPECT_EQ(cancelEvents[0].runId, observedRunId);
+    EXPECT_EQ(cancelEvents[1].runId, observedRunId);
+
+    // Step indexes ascend; the cancelled-in-flight step is index 0,
+    // the tail-filled step is index 1.
+    EXPECT_EQ(cancelEvents[0].stepIndex, 0u);
+    EXPECT_EQ(cancelEvents[1].stepIndex, 1u);
+
+    // Both step ops should appear by name. We don't pin the order
+    // beyond stepIndex because the dependency resolver is the source
+    // of truth for chain order; first.get → second.get is what it
+    // produces here.
+    EXPECT_EQ(cancelEvents[0].op.value, "first.get");
+    EXPECT_EQ(cancelEvents[1].op.value, "second.get");
 }

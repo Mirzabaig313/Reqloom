@@ -33,9 +33,9 @@ public:
     /// Substitute every `{{X.y}}` reference. Unresolved references are
     /// listed; the caller decides whether to fail (live run) or surface
     /// `<UNRESOLVED: X.y>` markers (dry run).
-    Result resolve(std::string_view templateStr,
-                   const RunContext& ctx,
-                   const ResolveContext& resolveCtx) const;
+    [[nodiscard]] Result resolve(std::string_view templateStr,
+                                 const RunContext& ctx,
+                                 const ResolveContext& resolveCtx) const;
 };
 
 }  // namespace chainapi::engine

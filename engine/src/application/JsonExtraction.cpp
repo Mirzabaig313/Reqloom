@@ -121,7 +121,7 @@ std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson
         std::string segment;
         while (std::getline(ss, segment, '.')) {
             current = walkSegment(current, segment);
-            if (!current) {
+            if (current == nullptr) {
                 found = false;
                 break;
             }
