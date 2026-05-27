@@ -24,7 +24,6 @@ struct ResolveContext {
 class VariableResolver {
 public:
     VariableResolver();
-    ~VariableResolver();
 
     struct Result {
         std::string output;                   ///< Substituted string.

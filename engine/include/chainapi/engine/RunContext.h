@@ -51,7 +51,15 @@ struct ResourceInstance {
 
 /// One step in a chain.
 struct StepResult {
-    enum class Status : std::uint8_t { Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked };
+    enum class Status : std::uint8_t {
+        Pending,
+        Ready,
+        Skipped,
+        Succeeded,
+        Failed,
+        Cancelled,
+        Blocked
+    };
 
     OperationId op;
     Status status{Status::Pending};
@@ -65,7 +73,6 @@ struct StepResult {
     /// (1-based). Parent operation rows leave this empty.
     std::optional<int> pollAttempt;
 };
-
 
 struct ExtractionTrace {
     enum class Outcome : std::uint8_t {
@@ -102,8 +109,6 @@ public:
     [[nodiscard]] const ActorSession* session(const ActorId& actor) const noexcept;
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
-
-
 
     /// Snapshot of the actor's current cookies. Empty when no jar.
     [[nodiscard]] std::map<std::string, std::string> cookies(const ActorId& actor) const;

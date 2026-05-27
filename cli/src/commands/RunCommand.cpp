@@ -10,11 +10,11 @@
 #include <chainapi/engine/Factories.h>
 #include <chainapi/engine/PublicApi.h>
 
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <cstdint>
 #include <map>
 #include <memory>
 #include <ostream>
@@ -77,7 +77,7 @@ void printUsage(std::ostream& os) {
     out.targetOp = args.first().toStdString();
 
     for (int i = 1; i < args.size(); ++i) {
-        const auto flag = args[i];
+        const auto& flag = args[i];
         if (flag == QStringLiteral("--project") && i + 1 < args.size()) {
             out.projectPath = args[++i].toStdString();
         } else if (flag == QStringLiteral("--env") && i + 1 < args.size()) {

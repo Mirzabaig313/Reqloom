@@ -13,7 +13,6 @@ namespace chainapi::engine {
 class DependencyResolver {
 public:
     DependencyResolver();
-    ~DependencyResolver();
 
     /// Returns the chain in topological order, terminating with `target`.
     /// Returns `ChainApiError{Cycle | RefUndefined | ...}` on schema

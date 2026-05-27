@@ -152,7 +152,7 @@ struct ExecutionEngine::Impl {
             if (now < existing->expiresAt) {
                 return true;
             }
-    
+
             if (actor.refresh) {
                 auto refreshed =
                     runRefresh(actor, ctx, rctx, AuthDependencies{deps.http.get(), &varResolver});
@@ -737,7 +737,7 @@ struct ExecutionEngine::Impl {
 
         // Polling phase — engine polls until success_when/fail_when matches or budget fires.
         if (op.pollUntil && httpResp) {
-            const auto pollResult = runPollLoop(
+            auto pollResult = runPollLoop(
                 op, *op.pollUntil, project, ctx, rctx, runId, *httpResp, pollAttemptRows);
             if (!pollResult.has_value()) {
                 result.status = StepResult::Status::Failed;
@@ -798,9 +798,8 @@ struct ExecutionEngine::Impl {
             // it would resolve to undefined.
             std::optional<std::string> firstMiss;
             for (auto& t : detailed->traces) {
-                const bool isMissLike =
-                    t.outcome == ExtractionTrace::Outcome::Missing ||
-                    t.outcome == ExtractionTrace::Outcome::InvalidPattern;
+                const bool isMissLike = t.outcome == ExtractionTrace::Outcome::Missing ||
+                                        t.outcome == ExtractionTrace::Outcome::InvalidPattern;
                 if (!firstMiss && isMissLike) {
                     firstMiss = t.variableName;
                 }

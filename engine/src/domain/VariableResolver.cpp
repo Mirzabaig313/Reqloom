@@ -312,7 +312,6 @@ ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const Res
 }  // namespace
 
 VariableResolver::VariableResolver() = default;
-VariableResolver::~VariableResolver() = default;
 
 VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
                                                    const RunContext& ctx,

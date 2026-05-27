@@ -19,7 +19,6 @@
 // containment hook is one if-statement away.
 //
 
-
 #include "MultipartBuilder.h"
 
 #include "../domain/Codecs.h"
@@ -28,6 +27,7 @@
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -117,16 +117,16 @@ std::expected<FormBody, ChainApiError> buildFormBody(
         // and content checks below go through an open fd instead of
         // re-statting the path.
         if (!fs::exists(effective, ec) || ec) {
-            return std::unexpected(
-                ChainApiError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              "body_form field '" + k + "': file does not exist: " + rawPath});
+            return std::unexpected(ChainApiError{
+                ErrorCode::UploadFileUnreadable,
+                ErrorClass::Resolution,
+                std::format("body_form field '{}': file does not exist: {}", k, rawPath)});
         }
         if (!fs::is_regular_file(effective, ec) || ec) {
-            return std::unexpected(
-                ChainApiError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              "body_form field '" + k + "': not a regular file: " + rawPath});
+            return std::unexpected(ChainApiError{
+                ErrorCode::UploadFileUnreadable,
+                ErrorClass::Resolution,
+                std::format("body_form field '{}': not a regular file: {}", k, rawPath)});
         }
 
         // Open and pull bytes through the resulting handle. From this
@@ -139,24 +139,27 @@ std::expected<FormBody, ChainApiError> buildFormBody(
             return std::unexpected(
                 ChainApiError{ErrorCode::UploadFileUnreadable,
                               ErrorClass::Resolution,
-                              "body_form field '" + k + "': could not open: " + rawPath});
+                              std::format("body_form field '{}': could not open: {}", k, rawPath)});
         }
 
         in.seekg(0, std::ios::end);
         const auto endPos = in.tellg();
         if (endPos == std::streampos{-1}) {
-            return std::unexpected(
-                ChainApiError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              "body_form field '" + k + "': could not measure size: " + rawPath});
+            return std::unexpected(ChainApiError{
+                ErrorCode::UploadFileUnreadable,
+                ErrorClass::Resolution,
+                std::format("body_form field '{}': could not measure size: {}", k, rawPath)});
         }
         const auto size = static_cast<std::uintmax_t>(endPos);
         if (size > kMaxUploadBytes) {
-            return std::unexpected(ChainApiError{ErrorCode::UploadFileUnreadable,
-                                                 ErrorClass::Resolution,
-                                                 "body_form field '" + k +
-                                                     "': file exceeds 50 MiB upload cap (" +
-                                                     std::to_string(size) + " bytes): " + rawPath});
+            return std::unexpected(
+                ChainApiError{ErrorCode::UploadFileUnreadable,
+                              ErrorClass::Resolution,
+                              std::format("body_form field '{}': file exceeds 50 MiB upload cap "
+                                          "({} bytes): {}",
+                                          k,
+                                          size,
+                                          rawPath)});
         }
         in.seekg(0, std::ios::beg);
 
@@ -169,7 +172,7 @@ std::expected<FormBody, ChainApiError> buildFormBody(
             return std::unexpected(
                 ChainApiError{ErrorCode::UploadFileUnreadable,
                               ErrorClass::Resolution,
-                              "body_form field '" + k + "': read error: " + rawPath});
+                              std::format("body_form field '{}': read error: {}", k, rawPath)});
         }
 
         part.value = std::move(contents);
