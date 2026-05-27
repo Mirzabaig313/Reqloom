@@ -286,6 +286,11 @@ bool isScalarSchemaType(std::string_view t) noexcept {
     return t == "string" || t == "integer" || t == "number" || t == "boolean";
 }
 
+// YAML::Node's destructor is not marked noexcept upstream (yaml-cpp 0.8),
+// so the implicit ~UnwrappedSchema is noexcept-suspect. In practice
+// yaml-cpp's destructor only releases ref-counted nodes and cannot throw.
+// Silenced locally rather than wrapping a noexcept dtor in try/catch.
+// NOLINTNEXTLINE(bugprone-exception-escape)
 struct UnwrappedSchema {
     YAML::Node schema;
     bool wrappedInData{false};
@@ -391,7 +396,7 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
     // 8 MiB cap. Real-world OpenAPI specs (Stripe, GitHub) clock in around
     // 5 MiB; anything bigger is almost certainly an attack or a runaway
     // generator. yaml-cpp will happily allocate gigabytes if we let it.
-    constexpr std::uintmax_t kMaxSpecBytes = 8 * 1024 * 1024;
+    constexpr std::uintmax_t kMaxSpecBytes = std::uintmax_t{8} * 1024 * 1024;
     std::error_code sizeEc;
     const auto specSize = fs::file_size(*canonical, sizeEc);
     if (sizeEc) {

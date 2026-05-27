@@ -113,8 +113,10 @@ std::size_t headerCallback(char* ptr, std::size_t size, std::size_t nmemb, void*
         case CURLE_SSL_CONNECT_ERROR:
         case CURLE_PEER_FAILED_VERIFICATION:
             return ErrorCode::NetworkTls;
-        case CURLE_OPERATION_TIMEDOUT:
-            return ErrorCode::NetworkTimeout;
+        // CURLE_OPERATION_TIMEDOUT and every other libcurl error map to
+        // NetworkTimeout for now. ErrorCodes.h only models DNS / TLS /
+        // Timeout for the network class; refining the taxonomy (separate
+        // generic-network, connection-refused, etc.) is tracked separately.
         default:
             return ErrorCode::NetworkTimeout;
     }
@@ -186,7 +188,12 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
             return std::unexpected(ChainApiError{
                 ErrorCode::NetworkTimeout, ErrorClass::Network, "Failed to append header: " + key});
         }
-        // curl_slist_append returns the updated head — release the old and adopt the new.
+        // curl_slist_append returns the updated head; we release the old
+        // and adopt the new. The released pointer is the same node
+        // `appended` already references (libcurl returns the head, which
+        // is unchanged after the first append), so discarding it is
+        // correct — `headerList` has already disowned the storage.
+        // NOLINTNEXTLINE(bugprone-unused-return-value)
         (void)headerList.release();
         headerList.reset(appended);
     }

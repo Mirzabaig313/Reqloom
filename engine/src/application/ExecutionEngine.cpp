@@ -129,18 +129,19 @@ struct ExecutionEngine::Impl {
         for (auto& cb : snapshot) {
             try {
                 cb(e);
-            } catch (...) {  // never let a subscriber break the engine
+                // Subscriber isolation is intentional: a misbehaving callback
+                // must not propagate into the engine's run loop, which would
+                // break the chain for every other subscriber. Once the
+                // engine logger lands (Engine Requirement §10), this becomes
+                // log + continue.
+                // NOLINTNEXTLINE(bugprone-empty-catch)
+            } catch (...) {
             }
         }
     }
 
     // Authenticate an actor if session is not live. Returns true on success.
-    //
-    // When TTL has expired and the actor declares a `session.refresh:`
-    // block, attempt the refresh first — it's lighter than a full
-    // re-login and preserves any session variables the refresh response
-    // doesn't re-extract. Refresh failure falls through to full re-auth
-    // so the chain still has a chance to succeed.
+
     bool ensureSession(const Actor& actor,
                        RunContext& ctx,
                        const ResolveContext& rctx,
@@ -151,11 +152,7 @@ struct ExecutionEngine::Impl {
             if (now < existing->expiresAt) {
                 return true;
             }
-            // Expired — try `refresh:` first if the actor declares one
-            // and the existing session still holds the credential it
-            // needs (refresh_token / equivalent). The variable resolver
-            // reads from `ctx.session(actor)`, which still points at the
-            // old session here, so `{{actor.refresh_token}}` resolves.
+    
             if (actor.refresh) {
                 auto refreshed =
                     runRefresh(actor, ctx, rctx, AuthDependencies{deps.http.get(), &varResolver});
@@ -476,11 +473,6 @@ struct ExecutionEngine::Impl {
             // every Set-Cookie the server has sent on prior operations
             // performed AS this actor in the current run. We emit a
             // single `Cookie:` header rolling them up.
-            //
-            // Lowest priority — anything already in req.headers["Cookie"]
-            // (user-set or session-inject) wins. RFC 6265 §5.4 doesn't
-            // forbid multiple Cookie headers, but most servers concat
-            // them so we'd rather not double-send.
             if (!req.headers.contains("Cookie")) {
                 const auto jar = ctx.cookies(op.actor);
                 if (!jar.empty()) {
@@ -686,12 +678,6 @@ struct ExecutionEngine::Impl {
                     }
 
                     // Refresh the Cookie header for the retry. Mirror
-                    // the first-attempt precedence: a user-set Cookie
-                    // (left in req.headers by the re-resolved op or
-                    // actor injects above) wins over the jar. Only
-                    // emit from the jar when nothing else set Cookie,
-                    // so the recovery path doesn't quietly clobber an
-                    // explicit `headers.Cookie:` on the operation.
                     if (!req.headers.contains("Cookie")) {
                         if (const auto jar = ctx.cookies(op.actor); !jar.empty()) {
                             req.headers["Cookie"] = cookies::formatRequestHeader(jar);

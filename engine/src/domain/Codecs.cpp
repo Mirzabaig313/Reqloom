@@ -16,10 +16,14 @@ constexpr std::string_view kBase64Alphabet =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 constexpr std::array<std::uint8_t, 256> makeBase64DecodeTable() {
+    static_assert(kBase64Alphabet.size() <= 0xFF,
+                  "Base64 alphabet must fit in uint8_t for decode-table indexing");
     std::array<std::uint8_t, 256> t{};
     for (auto& v : t) v = 0xFF;
-    for (std::uint8_t i = 0; i < kBase64Alphabet.size(); ++i) {
-        t[static_cast<std::uint8_t>(kBase64Alphabet[i])] = i;
+    // Loop counter is std::size_t to satisfy bugprone-too-small-loop-variable;
+    // the static_assert above guarantees the cast back to uint8_t is lossless.
+    for (std::size_t i = 0; i < kBase64Alphabet.size(); ++i) {
+        t[static_cast<std::uint8_t>(kBase64Alphabet[i])] = static_cast<std::uint8_t>(i);
     }
     return t;
 }

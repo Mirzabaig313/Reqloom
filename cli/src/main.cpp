@@ -12,6 +12,7 @@
 #include <QtCore/QString>
 #include <QtCore/QStringList>
 
+#include <cstdio>
 #include <print>
 
 namespace {
@@ -35,28 +36,43 @@ void printUsage() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("chainapi"));
-    app.setApplicationVersion(QStringLiteral("0.1.0"));
+    try {
+        QCoreApplication app(argc, argv);
+        app.setApplicationName(QStringLiteral("chainapi"));
+        app.setApplicationVersion(QStringLiteral("0.1.0"));
 
-    const QStringList args = QCoreApplication::arguments();
-    if (args.size() < 2 || args.at(1) == QStringLiteral("--help")) {
+        const QStringList args = QCoreApplication::arguments();
+        if (args.size() < 2 || args.at(1) == QStringLiteral("--help")) {
+            printUsage();
+            return args.size() < 2 ? 1 : 0;
+        }
+
+        const QString verb = args.at(1);
+        if (verb == QStringLiteral("run")) {
+            return chainapi::cli::runCommand(args.mid(2));
+        }
+        if (verb == QStringLiteral("lint")) {
+            return chainapi::cli::lintCommand(args.mid(2));
+        }
+        if (verb == QStringLiteral("import")) {
+            return chainapi::cli::importCommand(args.mid(2));
+        }
+
+        std::println(stderr, "Unknown command: {}", verb.toStdString());
         printUsage();
-        return args.size() < 2 ? 1 : 0;
+        return 2;
+    } catch (const std::exception& ex) {
+        // Last-resort handler. Surface a stable exit code (3) so CI can
+        // distinguish a crash from a normal validation failure (2) or a
+        // successful run with failing checks (1). std::fputs is noexcept,
+        // unlike std::println — using it here keeps the catch handler
+        // itself from throwing and re-arming the exception-escape lint.
+        std::fputs("fatal: ", stderr);
+        std::fputs(ex.what(), stderr);
+        std::fputs("\n", stderr);
+        return 3;
+    } catch (...) {
+        std::fputs("fatal: unknown exception\n", stderr);
+        return 3;
     }
-
-    const QString verb = args.at(1);
-    if (verb == QStringLiteral("run")) {
-        return chainapi::cli::runCommand(args.mid(2));
-    }
-    if (verb == QStringLiteral("lint")) {
-        return chainapi::cli::lintCommand(args.mid(2));
-    }
-    if (verb == QStringLiteral("import")) {
-        return chainapi::cli::importCommand(args.mid(2));
-    }
-
-    std::println(stderr, "Unknown command: {}", verb.toStdString());
-    printUsage();
-    return 2;
 }
