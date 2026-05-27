@@ -143,13 +143,13 @@ void JUnitRenderer::render(const ce::OperationId& target,
          << " time=\"" << seconds << "\""
          << " hostname=\"chainapi-cli\">\n";
     out_ << "    <properties>\n";
-    out_ << "      <property name=\"chainapi.target\" value=\"" << xmlEscape(target.value)
+    out_ << R"(      <property name="chainapi.target" value=")" << xmlEscape(target.value)
          << "\"/>\n";
-    out_ << "      <property name=\"chainapi.environment\" value=\"" << xmlEscape(envName)
+    out_ << R"(      <property name="chainapi.environment" value=")" << xmlEscape(envName)
          << "\"/>\n";
-    out_ << "      <property name=\"chainapi.outcome\" value=\"" << runOutcomeName(result.outcome)
+    out_ << R"(      <property name="chainapi.outcome" value=")" << runOutcomeName(result.outcome)
          << "\"/>\n";
-    out_ << "      <property name=\"chainapi.run_id\" value=\"" << result.runId.value << "\"/>\n";
+    out_ << R"(      <property name="chainapi.run_id" value=")" << result.runId.value << "\"/>\n";
     out_ << "    </properties>\n";
 
     for (const auto& g : groups) {

@@ -18,7 +18,9 @@ using Json = nlohmann::json;
 constexpr std::size_t kDetailExcerpt = 80;
 
 std::string truncate(std::string_view s) {
-    if (s.size() <= kDetailExcerpt) return std::string{s};
+    if (s.size() <= kDetailExcerpt) {
+        return std::string{s};
+    }
     std::string out{s.substr(0, kDetailExcerpt)};
     out += "...";
     return out;
@@ -28,7 +30,9 @@ std::string truncate(std::string_view s) {
 /// Distinguishes "miss" (nullptr) from "hit a null value" (non-null pointer
 /// to a JSON `null`) — the verifier needs that distinction for NoMatch vs Null.
 const Json* walk(const Json& root, std::string_view path) {
-    if (!path.starts_with("$")) return nullptr;
+    if (!path.starts_with("$")) {
+        return nullptr;
+    }
     path.remove_prefix(1);
 
     const Json* cur = &root;
@@ -39,25 +43,39 @@ const Json* walk(const Json& root, std::string_view path) {
             while (end < path.size() && path[end] != '.' && path[end] != '[') {
                 ++end;
             }
-            if (end == 0) return nullptr;
+            if (end == 0) {
+                return nullptr;
+            }
             const std::string name{path.substr(0, end)};
-            if (!cur->is_object()) return nullptr;
+            if (!cur->is_object()) {
+                return nullptr;
+            }
             const auto it = cur->find(name);
-            if (it == cur->end()) return nullptr;
+            if (it == cur->end()) {
+                return nullptr;
+            }
             cur = &(*it);
             path.remove_prefix(end);
         } else if (path.front() == '[') {
             path.remove_prefix(1);
             std::size_t end = 0;
-            while (end < path.size() && path[end] != ']') ++end;
-            if (end >= path.size()) return nullptr;
+            while (end < path.size() && path[end] != ']') {
+                ++end;
+            }
+            if (end >= path.size()) {
+                return nullptr;
+            }
             const auto digits = path.substr(0, end);
             std::size_t idx = 0;
             const auto* first = digits.data();
             const auto* last = first + digits.size();
             const auto fc = std::from_chars(first, last, idx);
-            if (fc.ec != std::errc{}) return nullptr;
-            if (!cur->is_array() || idx >= cur->size()) return nullptr;
+            if (fc.ec != std::errc{}) {
+                return nullptr;
+            }
+            if (!cur->is_array() || idx >= cur->size()) {
+                return nullptr;
+            }
             cur = &((*cur)[idx]);
             path.remove_prefix(end + 1);
         } else {

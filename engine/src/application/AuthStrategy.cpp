@@ -384,16 +384,24 @@ public:
 
         const auto tokenUrl =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "token_url");
-        if (!tokenUrl) return std::unexpected(tokenUrl.error());
+        if (!tokenUrl) {
+            return std::unexpected(tokenUrl.error());
+        }
         const auto clientId =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_id");
-        if (!clientId) return std::unexpected(clientId.error());
+        if (!clientId) {
+            return std::unexpected(clientId.error());
+        }
         const auto clientSecret =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
-        if (!clientSecret) return std::unexpected(clientSecret.error());
+        if (!clientSecret) {
+            return std::unexpected(clientSecret.error());
+        }
         const auto scope =
             resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "scope");
-        if (!scope) return std::unexpected(scope.error());
+        if (!scope) {
+            return std::unexpected(scope.error());
+        }
 
         // RFC 6749 §4.4.2.
         std::string body =
@@ -434,22 +442,34 @@ public:
 
         const auto tokenUrl =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "token_url");
-        if (!tokenUrl) return std::unexpected(tokenUrl.error());
+        if (!tokenUrl) {
+            return std::unexpected(tokenUrl.error());
+        }
         const auto clientId =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_id");
-        if (!clientId) return std::unexpected(clientId.error());
+        if (!clientId) {
+            return std::unexpected(clientId.error());
+        }
         const auto clientSecret =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
-        if (!clientSecret) return std::unexpected(clientSecret.error());
+        if (!clientSecret) {
+            return std::unexpected(clientSecret.error());
+        }
         const auto username =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "username");
-        if (!username) return std::unexpected(username.error());
+        if (!username) {
+            return std::unexpected(username.error());
+        }
         const auto password =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "password");
-        if (!password) return std::unexpected(password.error());
+        if (!password) {
+            return std::unexpected(password.error());
+        }
         const auto scope =
             resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "scope");
-        if (!scope) return std::unexpected(scope.error());
+        if (!scope) {
+            return std::unexpected(scope.error());
+        }
 
         // RFC 6749 §4.3.2.
         std::string body =
@@ -491,20 +511,30 @@ public:
 
         const auto consumerKey =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "consumer_key");
-        if (!consumerKey) return std::unexpected(consumerKey.error());
+        if (!consumerKey) {
+            return std::unexpected(consumerKey.error());
+        }
         const auto consumerSecret =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "consumer_secret");
-        if (!consumerSecret) return std::unexpected(consumerSecret.error());
+        if (!consumerSecret) {
+            return std::unexpected(consumerSecret.error());
+        }
 
         const auto token =
             resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "token");
-        if (!token) return std::unexpected(token.error());
+        if (!token) {
+            return std::unexpected(token.error());
+        }
         const auto tokenSecret =
             resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "token_secret");
-        if (!tokenSecret) return std::unexpected(tokenSecret.error());
+        if (!tokenSecret) {
+            return std::unexpected(tokenSecret.error());
+        }
         const auto realm =
             resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "realm");
-        if (!realm) return std::unexpected(realm.error());
+        if (!realm) {
+            return std::unexpected(realm.error());
+        }
 
         // Token + token_secret must come as a pair (RFC 5849 §3.1).
         if (token->empty() != tokenSecret->empty()) {
@@ -519,9 +549,15 @@ public:
         session.state = ActorSession::State::Authenticating;
         session.variables["consumer_key"] = *consumerKey;
         session.variables["consumer_secret"] = *consumerSecret;
-        if (!token->empty()) session.variables["token"] = *token;
-        if (!tokenSecret->empty()) session.variables["token_secret"] = *tokenSecret;
-        if (!realm->empty()) session.variables["realm"] = *realm;
+        if (!token->empty()) {
+            session.variables["token"] = *token;
+        }
+        if (!tokenSecret->empty()) {
+            session.variables["token_secret"] = *tokenSecret;
+        }
+        if (!realm->empty()) {
+            session.variables["realm"] = *realm;
+        }
         session.signingScheme = ActorSession::SigningScheme::OAuth1HmacSha1;
         return session;
     }
@@ -556,20 +592,30 @@ public:
 
         const auto accessKey =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "access_key");
-        if (!accessKey) return std::unexpected(accessKey.error());
+        if (!accessKey) {
+            return std::unexpected(accessKey.error());
+        }
         const auto secretKey =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "secret_key");
-        if (!secretKey) return std::unexpected(secretKey.error());
+        if (!secretKey) {
+            return std::unexpected(secretKey.error());
+        }
         const auto region =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "region");
-        if (!region) return std::unexpected(region.error());
+        if (!region) {
+            return std::unexpected(region.error());
+        }
         const auto service =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "service");
-        if (!service) return std::unexpected(service.error());
+        if (!service) {
+            return std::unexpected(service.error());
+        }
 
         const auto sessionToken = resolveAuthConfigOptional(
             actor, ctx, rctx, *deps_.varResolver, kLabel, "session_token");
-        if (!sessionToken) return std::unexpected(sessionToken.error());
+        if (!sessionToken) {
+            return std::unexpected(sessionToken.error());
+        }
 
         ActorSession session;
         session.state = ActorSession::State::Authenticating;

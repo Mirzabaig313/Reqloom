@@ -29,7 +29,7 @@ std::string randomNonce() {
         const auto v = dist(gen);
         for (int j = 0; j < 8; ++j) {
             constexpr char hex[] = "0123456789abcdef";
-            const auto byte = static_cast<unsigned>((v >> (j * 8)) & 0xFFu);
+            const auto byte = static_cast<unsigned>((v >> (j * 8)) & 0xFFU);
             nonce.push_back(hex[byte >> 4]);
             nonce.push_back(hex[byte & 0xF]);
         }
@@ -50,7 +50,9 @@ struct UrlParts {
 
 std::optional<UrlParts> splitUrl(std::string_view url) {
     const auto schemeEnd = url.find("://");
-    if (schemeEnd == std::string_view::npos) return std::nullopt;
+    if (schemeEnd == std::string_view::npos) {
+        return std::nullopt;
+    }
 
     const auto pathStart = url.find('/', schemeEnd + 3);
     const auto queryStart = url.find('?', schemeEnd + 3);
@@ -107,10 +109,16 @@ std::vector<std::pair<std::string, std::string>> parseQuery(std::string_view qs)
         // Decode then re-encode in the canonicalisation step.
         // urlDecode returns nullopt for malformed %-escapes; keep the
         // encoded form as-is.
-        if (auto d = codecs::urlDecode(name); d) name = std::move(*d);
-        if (auto d = codecs::urlDecode(value); d) value = std::move(*d);
+        if (auto d = codecs::urlDecode(name); d) {
+            name = std::move(*d);
+        }
+        if (auto d = codecs::urlDecode(value); d) {
+            value = std::move(*d);
+        }
         out.emplace_back(std::move(name), std::move(value));
-        if (amp == std::string_view::npos) break;
+        if (amp == std::string_view::npos) {
+            break;
+        }
         i = amp + 1;
     }
     return out;
@@ -130,27 +138,35 @@ bool signOAuth1Request(HttpRequest& req,
     };
     const auto consumerKey = findVar("consumer_key");
     const auto consumerSecret = findVar("consumer_secret");
-    if (consumerKey.empty() || consumerSecret.empty()) return false;
+    if (consumerKey.empty() || consumerSecret.empty()) {
+        return false;
+    }
 
     const auto token = findVar("token");
     const auto tokenSecret = findVar("token_secret");
     const auto realm = findVar("realm");
 
     const auto urlParts = splitUrl(req.url);
-    if (!urlParts) return false;
+    if (!urlParts) {
+        return false;
+    }
 
     using Pair = std::pair<std::string, std::string>;
     std::vector<Pair> params;
 
     auto queryParams = parseQuery(urlParts->queryString);
     params.reserve(queryParams.size());
-    for (auto& p : queryParams) params.push_back(std::move(p));
+    for (auto& p : queryParams) {
+        params.push_back(std::move(p));
+    }
 
     const auto contentTypeIt = req.headers.find("Content-Type");
     if (contentTypeIt != req.headers.end() &&
         contentTypeIt->second.starts_with("application/x-www-form-urlencoded") && req.body) {
         auto bodyParams = parseQuery(*req.body);
-        for (auto& p : bodyParams) params.push_back(std::move(p));
+        for (auto& p : bodyParams) {
+            params.push_back(std::move(p));
+        }
     }
 
     const std::string nonce = overrides.nonce.value_or(randomNonce());
@@ -178,7 +194,9 @@ bool signOAuth1Request(HttpRequest& req,
 
     std::string paramString;
     for (const auto& [n, v] : encoded) {
-        if (!paramString.empty()) paramString.push_back('&');
+        if (!paramString.empty()) {
+            paramString.push_back('&');
+        }
         paramString += n;
         paramString.push_back('=');
         paramString += v;
@@ -195,7 +213,9 @@ bool signOAuth1Request(HttpRequest& req,
         codecs::urlEncode(consumerSecret) + "&" + codecs::urlEncode(tokenSecret);
 
     const auto mac = crypto::hmacSha1(signingKey, baseString);
-    if (mac.empty()) return false;
+    if (mac.empty()) {
+        return false;
+    }
     const auto signature = codecs::base64Encode(mac);
 
     // Build Authorization header. Order matches the RFC 5849 §3.4.3 example;
@@ -211,7 +231,9 @@ bool signOAuth1Request(HttpRequest& req,
         authHeader += "\", ";
     };
     append("oauth_consumer_key", consumerKey);
-    if (!token.empty()) append("oauth_token", token);
+    if (!token.empty()) {
+        append("oauth_token", token);
+    }
     append("oauth_signature_method", "HMAC-SHA1");
     append("oauth_timestamp", timestamp);
     append("oauth_nonce", nonce);
@@ -275,7 +297,9 @@ std::string awsUriEncodeQuery(std::string_view input) {
 std::string toLowerAscii(std::string_view s) {
     std::string out{s};
     for (auto& c : out) {
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c + ('a' - 'A'));
+        }
     }
     return out;
 }
@@ -297,17 +321,23 @@ std::string trimAndCollapseWs(std::string_view s) {
             inWs = false;
         }
     }
-    if (!out.empty() && out.back() == ' ') out.pop_back();
+    if (!out.empty() && out.back() == ' ') {
+        out.pop_back();
+    }
     return out;
 }
 
 /// Extract host[:port] from a URL. Empty string when unparseable.
 std::string hostFromUrl(std::string_view url) {
     const auto schemeEnd = url.find("://");
-    if (schemeEnd == std::string_view::npos) return {};
+    if (schemeEnd == std::string_view::npos) {
+        return {};
+    }
     const auto hostStart = schemeEnd + 3;
     auto hostEnd = url.find_first_of("/?#", hostStart);
-    if (hostEnd == std::string_view::npos) hostEnd = url.size();
+    if (hostEnd == std::string_view::npos) {
+        hostEnd = url.size();
+    }
     return std::string{url.substr(hostStart, hostEnd - hostStart)};
 }
 
@@ -315,11 +345,17 @@ std::string hostFromUrl(std::string_view url) {
 /// `/` when the URL has no path.
 std::string pathFromUrl(std::string_view url) {
     const auto schemeEnd = url.find("://");
-    if (schemeEnd == std::string_view::npos) return "/";
+    if (schemeEnd == std::string_view::npos) {
+        return "/";
+    }
     const auto pathStart = url.find('/', schemeEnd + 3);
-    if (pathStart == std::string_view::npos) return "/";
+    if (pathStart == std::string_view::npos) {
+        return "/";
+    }
     auto pathEnd = url.find_first_of("?#", pathStart);
-    if (pathEnd == std::string_view::npos) pathEnd = url.size();
+    if (pathEnd == std::string_view::npos) {
+        pathEnd = url.size();
+    }
     return std::string{url.substr(pathStart, pathEnd - pathStart)};
 }
 
@@ -342,7 +378,9 @@ bool signSigV4Request(HttpRequest& req,
     }
 
     const auto urlParts = splitUrl(req.url);
-    if (!urlParts) return false;
+    if (!urlParts) {
+        return false;
+    }
 
     // Stage header mutations on a local copy; commit only on success so a
     // partial failure leaves the request untouched.
@@ -368,7 +406,9 @@ bool signSigV4Request(HttpRequest& req,
                               tm.tm_min,
                               tm.tm_sec);
     }
-    if (amzDate.size() < 8) return false;
+    if (amzDate.size() < 8) {
+        return false;
+    }
     const std::string dateStamp = amzDate.substr(0, 8);
 
     // 2. Canonical URI + query string
@@ -384,7 +424,9 @@ bool signSigV4Request(HttpRequest& req,
     std::sort(encQuery.begin(), encQuery.end());
     std::string canonicalQuery;
     for (const auto& [n, v] : encQuery) {
-        if (!canonicalQuery.empty()) canonicalQuery.push_back('&');
+        if (!canonicalQuery.empty()) {
+            canonicalQuery.push_back('&');
+        }
         canonicalQuery += n;
         canonicalQuery.push_back('=');
         canonicalQuery += v;
@@ -401,7 +443,9 @@ bool signSigV4Request(HttpRequest& req,
     }
     if (!haveHost) {
         const auto host = hostFromUrl(req.url);
-        if (host.empty()) return false;
+        if (host.empty()) {
+            return false;
+        }
         stagedHeaders["Host"] = host;
     }
     stagedHeaders["x-amz-date"] = amzDate;
@@ -414,7 +458,9 @@ bool signSigV4Request(HttpRequest& req,
     // other services, so we always emit it.
     const std::string body = req.body.value_or(std::string{});
     const auto payloadHashRaw = crypto::sha256(body);
-    if (payloadHashRaw.empty()) return false;
+    if (payloadHashRaw.empty()) {
+        return false;
+    }
     const std::string payloadHashHex = codecs::hexEncode(payloadHashRaw);
     stagedHeaders["x-amz-content-sha256"] = payloadHashHex;
 
@@ -443,7 +489,9 @@ bool signSigV4Request(HttpRequest& req,
         canonicalHeaders.push_back(':');
         canonicalHeaders += v;
         canonicalHeaders.push_back('\n');
-        if (!signedHeaders.empty()) signedHeaders.push_back(';');
+        if (!signedHeaders.empty()) {
+            signedHeaders.push_back(';');
+        }
         signedHeaders += n;
     }
 
@@ -454,7 +502,9 @@ bool signSigV4Request(HttpRequest& req,
                                          payloadHashHex;
 
     const auto canonicalRequestHash = crypto::sha256(canonicalRequest);
-    if (canonicalRequestHash.empty()) return false;
+    if (canonicalRequestHash.empty()) {
+        return false;
+    }
 
     const std::string credentialScope = dateStamp + "/" + region + "/" + service + "/aws4_request";
     const std::string stringToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope +
@@ -470,7 +520,9 @@ bool signSigV4Request(HttpRequest& req,
     }
 
     const auto signatureRaw = crypto::hmacSha256(kSigning, stringToSign);
-    if (signatureRaw.empty()) return false;
+    if (signatureRaw.empty()) {
+        return false;
+    }
     const std::string signatureHex = codecs::hexEncode(signatureRaw);
 
     // 6. Authorization header

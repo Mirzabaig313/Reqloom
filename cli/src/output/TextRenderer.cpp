@@ -26,7 +26,9 @@ TextRenderer::TextRenderer(std::ostream& summaryOut,
 void TextRenderer::printProjectPreamble(const std::string& projectName,
                                         std::size_t actorCount,
                                         std::size_t resourceCount) {
-    if (quiet_) return;
+    if (quiet_) {
+        return;
+    }
     std::println(progress_,
                  "Loaded project: {} ({} actors, {} resources)",
                  projectName,
@@ -39,21 +41,27 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
         [this](const auto& e) {
             using T = std::decay_t<decltype(e)>;
             if constexpr (std::is_same_v<T, ce::RunStarted>) {
-                if (quiet_) return;
+                if (quiet_) {
+                    return;
+                }
                 std::println(progress_,
                              "Running: {} (chain of {} steps, env={})",
                              e.target.value,
                              e.chainSize,
                              e.envName);
             } else if constexpr (std::is_same_v<T, ce::StepStarted>) {
-                if (quiet_) return;
+                if (quiet_) {
+                    return;
+                }
                 std::println(progress_,
                              "  [{}] Running: {} (attempt {})",
                              e.stepIndex + 1,
                              e.op.value,
                              e.attempt);
             } else if constexpr (std::is_same_v<T, ce::StepSkipped>) {
-                if (quiet_) return;
+                if (quiet_) {
+                    return;
+                }
                 std::println(progress_, "  [{}] Skipped: {} (cached)", e.stepIndex + 1, e.op.value);
             } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
                 // Failures always go to stderr, even when quiet — CI logs need them.
@@ -64,7 +72,9 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
                              std::string(ce::toCodeString(e.code)),
                              e.detail);
             } else if constexpr (std::is_same_v<T, ce::RunEnded>) {
-                if (quiet_) return;
+                if (quiet_) {
+                    return;
+                }
                 std::println(progress_, "\nResult: {}", std::string(runOutcomeName(e.outcome)));
             }
         },

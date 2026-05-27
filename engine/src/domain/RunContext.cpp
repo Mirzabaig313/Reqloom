@@ -42,12 +42,16 @@ void RunContext::invalidateSession(const ActorId& actor) {
 
 std::map<std::string, std::string> RunContext::cookies(const ActorId& actor) const {
     const auto it = impl_->cookieJars.find(actor);
-    if (it == impl_->cookieJars.end()) return {};
+    if (it == impl_->cookieJars.end()) {
+        return {};
+    }
     return it->second;
 }
 
 void RunContext::setCookie(const ActorId& actor, std::string name, std::string value) {
-    if (name.empty()) return;
+    if (name.empty()) {
+        return;
+    }
     impl_->cookieJars[actor][std::move(name)] = std::move(value);
 }
 

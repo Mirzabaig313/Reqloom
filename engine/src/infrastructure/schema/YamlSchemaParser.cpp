@@ -27,19 +27,35 @@ namespace {
 // Helpers
 
 HttpMethod parseMethod(const std::string& m) {
-    if (m == "GET" || m == "get") return HttpMethod::Get;
-    if (m == "POST" || m == "post") return HttpMethod::Post;
-    if (m == "PUT" || m == "put") return HttpMethod::Put;
-    if (m == "PATCH" || m == "patch") return HttpMethod::Patch;
-    if (m == "DELETE" || m == "delete") return HttpMethod::Delete;
-    if (m == "HEAD" || m == "head") return HttpMethod::Head;
-    if (m == "OPTIONS" || m == "options") return HttpMethod::Options;
+    if (m == "GET" || m == "get") {
+        return HttpMethod::Get;
+    }
+    if (m == "POST" || m == "post") {
+        return HttpMethod::Post;
+    }
+    if (m == "PUT" || m == "put") {
+        return HttpMethod::Put;
+    }
+    if (m == "PATCH" || m == "patch") {
+        return HttpMethod::Patch;
+    }
+    if (m == "DELETE" || m == "delete") {
+        return HttpMethod::Delete;
+    }
+    if (m == "HEAD" || m == "head") {
+        return HttpMethod::Head;
+    }
+    if (m == "OPTIONS" || m == "options") {
+        return HttpMethod::Options;
+    }
     return HttpMethod::Get;
 }
 
 std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     std::map<std::string, std::string> result;
-    if (!node || !node.IsMap()) return result;
+    if (!node || !node.IsMap()) {
+        return result;
+    }
     for (const auto& kv : node) {
         auto key = kv.first.as<std::string>();
         if (kv.second.IsScalar()) {
@@ -59,9 +75,15 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
     const auto raw = scalar.as<std::string>();
     // Use parens, not braces — nlohmann::json{x} treats braces as an
     // initializer-list and produces a one-element array.
-    if (raw == "true") return nlohmann::json(true);
-    if (raw == "false") return nlohmann::json(false);
-    if (raw == "null" || raw == "~") return nlohmann::json(nullptr);
+    if (raw == "true") {
+        return nlohmann::json(true);
+    }
+    if (raw == "false") {
+        return nlohmann::json(false);
+    }
+    if (raw == "null" || raw == "~") {
+        return {nullptr};
+    }
     if (!raw.empty() && (std::isdigit(static_cast<unsigned char>(raw.front())) ||
                          raw.front() == '-' || raw.front() == '+')) {
         long long ll = 0;
@@ -74,7 +96,9 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
         try {
             std::size_t pos = 0;
             double d = std::stod(raw, &pos);
-            if (pos == raw.size()) return nlohmann::json(d);
+            if (pos == raw.size()) {
+                return nlohmann::json(d);
+            }
             // std::stod throws on non-numeric input; that's our signal to
             // fall through and treat the scalar as a string. No log needed
             // — every YAML string starting with a digit-like character
@@ -87,8 +111,12 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
 }
 
 nlohmann::json yamlNodeToJsonValue(const YAML::Node& node) {
-    if (!node || node.IsNull()) return nlohmann::json(nullptr);
-    if (node.IsScalar()) return yamlScalarToJsonValue(node);
+    if (!node || node.IsNull()) {
+        return {nullptr};
+    }
+    if (node.IsScalar()) {
+        return yamlScalarToJsonValue(node);
+    }
     if (node.IsSequence()) {
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& item : node) {
@@ -103,17 +131,21 @@ nlohmann::json yamlNodeToJsonValue(const YAML::Node& node) {
         }
         return obj;
     }
-    return nlohmann::json(nullptr);
+    return {nullptr};
 }
 
 std::string nodeToJsonString(const YAML::Node& node) {
-    if (!node || node.IsNull()) return "";
+    if (!node || node.IsNull()) {
+        return "";
+    }
     return yamlNodeToJsonValue(node).dump();
 }
 
 std::vector<Extraction> parseExtractions(const YAML::Node& node) {
     std::vector<Extraction> result;
-    if (!node || !node.IsMap()) return result;
+    if (!node || !node.IsMap()) {
+        return result;
+    }
     for (const auto& kv : node) {
         Extraction ext;
         ext.variableName = kv.first.as<std::string>();
@@ -158,11 +190,15 @@ std::vector<Extraction> parseExtractions(const YAML::Node& node) {
 
 std::chrono::seconds parseDuration(const std::string& s) {
     constexpr std::chrono::seconds kDefault{900};  // 15m — used when input is malformed
-    if (s.empty()) return kDefault;
+    if (s.empty()) {
+        return kDefault;
+    }
 
     const auto digits = std::string_view{s}.substr(0, s.size() - 1);
     const auto value = parseNonNegativeLong(digits);
-    if (!value) return kDefault;
+    if (!value) {
+        return kDefault;
+    }
 
     const char unit = s.back();
     switch (unit) {
@@ -186,7 +222,9 @@ std::chrono::seconds parseDuration(const std::string& s) {
 /// transport / refresh field.
 [[nodiscard]] std::chrono::milliseconds parseDurationMs(const std::string& literal,
                                                         std::chrono::milliseconds fallback) {
-    if (literal.empty()) return fallback;
+    if (literal.empty()) {
+        return fallback;
+    }
     if (literal.ends_with("ms")) {
         const auto digits = std::string_view{literal}.substr(0, literal.size() - 2);
         if (auto ms = parseNonNegativeLong(digits)) {
@@ -196,9 +234,13 @@ std::chrono::seconds parseDuration(const std::string& s) {
     }
     // Fall through to second-grained parser. Empty unit (just digits)
     // is treated as seconds by parseDuration.
-    if (literal.size() < 2) return fallback;
+    if (literal.size() < 2) {
+        return fallback;
+    }
     const auto digits = std::string_view{literal}.substr(0, literal.size() - 1);
-    if (!parseNonNegativeLong(digits)) return fallback;  // malformed; don't trust parseDuration
+    if (!parseNonNegativeLong(digits)) {
+        return fallback;  // malformed; don't trust parseDuration
+    }
     return std::chrono::duration_cast<std::chrono::milliseconds>(parseDuration(literal));
 }
 
@@ -217,18 +259,28 @@ std::chrono::seconds parseDuration(const std::string& s) {
 /// schema declarations preserve the engine's prior behaviour exactly.
 TransportConfig parseTransport(const YAML::Node& node) {
     TransportConfig out;
-    if (!node || !node.IsMap()) return out;
+    if (!node || !node.IsMap()) {
+        return out;
+    }
 
-    if (node["tls_verify"]) out.tlsVerify = node["tls_verify"].as<bool>(true);
-    if (node["tls_verify_host"]) out.tlsVerifyHost = node["tls_verify_host"].as<bool>(true);
+    if (node["tls_verify"]) {
+        out.tlsVerify = node["tls_verify"].as<bool>(true);
+    }
+    if (node["tls_verify_host"]) {
+        out.tlsVerifyHost = node["tls_verify_host"].as<bool>(true);
+    }
 
     if (node["ca_bundle"]) {
         const auto path = node["ca_bundle"].as<std::string>("");
-        if (!path.empty()) out.caBundlePath = path;
+        if (!path.empty()) {
+            out.caBundlePath = path;
+        }
     }
     if (node["proxy"]) {
         const auto proxy = node["proxy"].as<std::string>("");
-        if (!proxy.empty()) out.proxy = proxy;
+        if (!proxy.empty()) {
+            out.proxy = proxy;
+        }
     }
 
     if (node["connect_timeout"]) {
@@ -245,17 +297,31 @@ TransportConfig parseTransport(const YAML::Node& node) {
 // root. File size capped at 1 MiB.
 [[nodiscard]] std::expected<std::string, ChainApiError> resolveHookScript(const std::string& value,
                                                                           const fs::path& baseDir) {
-    if (value.empty()) return value;
+    if (value.empty()) {
+        return value;
+    }
 
     const auto looksLikeRelativePath = [](std::string_view s) {
-        if (s.starts_with("./") || s.starts_with("../")) return true;
-        if (s.find('\n') != std::string_view::npos) return false;
-        if (s.find('{') != std::string_view::npos) return false;
-        if (s.find('(') != std::string_view::npos) return false;
-        if (s.find('=') != std::string_view::npos) return false;
+        if (s.starts_with("./") || s.starts_with("../")) {
+            return true;
+        }
+        if (s.find('\n') != std::string_view::npos) {
+            return false;
+        }
+        if (s.find('{') != std::string_view::npos) {
+            return false;
+        }
+        if (s.find('(') != std::string_view::npos) {
+            return false;
+        }
+        if (s.find('=') != std::string_view::npos) {
+            return false;
+        }
         return s.ends_with(".js") || s.ends_with(".mjs");
     };
-    if (!looksLikeRelativePath(value)) return value;
+    if (!looksLikeRelativePath(value)) {
+        return value;
+    }
 
     const fs::path raw{value};
     if (raw.is_absolute()) {
@@ -422,10 +488,15 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             // RFC 5849 two-legged + optional preacquired access token.
             actor.authConfig["consumer_key"] = auth["consumer_key"].as<std::string>("");
             actor.authConfig["consumer_secret"] = auth["consumer_secret"].as<std::string>("");
-            if (auth["token"]) actor.authConfig["token"] = auth["token"].as<std::string>();
-            if (auth["token_secret"])
+            if (auth["token"]) {
+                actor.authConfig["token"] = auth["token"].as<std::string>();
+            }
+            if (auth["token_secret"]) {
                 actor.authConfig["token_secret"] = auth["token_secret"].as<std::string>();
-            if (auth["realm"]) actor.authConfig["realm"] = auth["realm"].as<std::string>();
+            }
+            if (auth["realm"]) {
+                actor.authConfig["realm"] = auth["realm"].as<std::string>();
+            }
         } else if (actor.strategy == AuthStrategy::AwsSigV4) {
             // AWS SigV4 (AWS4-HMAC-SHA256). Long-lived keys are discouraged;
             // prefer {{X.y}} references that pull from a secret store.
@@ -502,7 +573,9 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
     resource.description = node["description"].as<std::string>("");
 
     const auto& ops = node["operations"];
-    if (!ops || !ops.IsMap()) return resource;
+    if (!ops || !ops.IsMap()) {
+        return resource;
+    }
 
     for (const auto& kv : ops) {
         auto opName = kv.first.as<std::string>();
@@ -593,18 +666,24 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
         // heuristic and security checks.
         if (opNode["pre_request"]) {
             auto resolved = resolveHookScript(opNode["pre_request"].as<std::string>(), baseDir);
-            if (!resolved) return std::unexpected(resolved.error());
+            if (!resolved) {
+                return std::unexpected(resolved.error());
+            }
             op.preRequestScript = std::move(*resolved);
         }
         if (opNode["post_response"]) {
             auto resolved = resolveHookScript(opNode["post_response"].as<std::string>(), baseDir);
-            if (!resolved) return std::unexpected(resolved.error());
+            if (!resolved) {
+                return std::unexpected(resolved.error());
+            }
             op.postResponseScript = std::move(*resolved);
         }
 
         if (opNode["retry"]) {
             const auto& retryNode = opNode["retry"];
-            if (retryNode["max"]) op.retry.maxAttempts = retryNode["max"].as<int>();
+            if (retryNode["max"]) {
+                op.retry.maxAttempts = retryNode["max"].as<int>();
+            }
             if (retryNode["backoff"]) {
                 op.retry.baseBackoff = std::chrono::milliseconds{retryNode["backoff"].as<int>(500)};
             }
@@ -629,7 +708,9 @@ std::vector<fs::path> resolveGlob(const fs::path& baseDir, const std::string& pa
     auto dir = baseDir / fs::path(pattern).parent_path();
     auto ext = fs::path(pattern).filename().string();
 
-    if (!fs::exists(dir)) return results;
+    if (!fs::exists(dir)) {
+        return results;
+    }
 
     if (ext == "*.yaml" || ext == "*.yml") {
         for (const auto& entry : fs::directory_iterator(dir)) {
@@ -709,7 +790,9 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
                 }
                 return subDoc;
             }();
-            if (actorId.empty()) actorId = file.stem().string();
+            if (actorId.empty()) {
+                actorId = file.stem().string();
+            }
             project.actors[ActorId{actorId}] = parseActor(actorId, actorBody);
         } else if (relPath.starts_with("resources/") || relPath.starts_with("resources\\")) {
             auto resourceId = subDoc["name"].as<std::string>("");
@@ -721,9 +804,13 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
                 }
                 return subDoc;
             }();
-            if (resourceId.empty()) resourceId = file.stem().string();
+            if (resourceId.empty()) {
+                resourceId = file.stem().string();
+            }
             auto parsedResource = parseResource(resourceId, resourceBody, baseDir);
-            if (!parsedResource) return parsedResource.error();
+            if (!parsedResource) {
+                return parsedResource.error();
+            }
             project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
         } else if (relPath.starts_with("environments/") || relPath.starts_with("environments\\")) {
             // Two env file shapes accepted:
@@ -738,7 +825,9 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
             } else if (subDoc.IsMap()) {
                 for (const auto& kv : subDoc) {
                     auto key = kv.first.as<std::string>();
-                    if (key == "name" || key == "transport") continue;
+                    if (key == "name" || key == "transport") {
+                        continue;
+                    }
                     if (kv.second.IsScalar()) {
                         vars[key] = kv.second.as<std::string>("");
                     }
@@ -759,7 +848,9 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
     };
 
     auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ChainApiError> {
-        if (!importsNode) return std::nullopt;
+        if (!importsNode) {
+            return std::nullopt;
+        }
 
         std::vector<std::string> patterns;
         if (importsNode.IsSequence()) {

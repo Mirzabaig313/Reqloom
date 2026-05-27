@@ -70,7 +70,9 @@ std::expected<fs::path, ChainApiError> canonicalSpecPath(const fs::path& spec,
 std::string toLowerAscii(std::string_view s) {
     std::string out{s};
     for (auto& c : out) {
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c + ('a' - 'A'));
+        }
     }
     return out;
 }
@@ -102,8 +104,12 @@ std::vector<std::string> splitPathSegments(std::string_view path) {
         const auto next = path.find('/', i);
         const auto piece =
             path.substr(i, next == std::string_view::npos ? std::string_view::npos : next - i);
-        if (!piece.empty()) out.emplace_back(piece);
-        if (next == std::string_view::npos) break;
+        if (!piece.empty()) {
+            out.emplace_back(piece);
+        }
+        if (next == std::string_view::npos) {
+            break;
+        }
         i = next + 1;
     }
     return out;
@@ -118,7 +124,9 @@ struct ResourceDerivation {
 ResourceDerivation deriveResourceIdDetailed(std::string_view path) {
     const auto segments = splitPathSegments(path);
     for (auto it = segments.rbegin(); it != segments.rend(); ++it) {
-        if (it->starts_with("{") || it->starts_with(":")) continue;
+        if (it->starts_with("{") || it->starts_with(":")) {
+            continue;
+        }
         const auto lowered = toLowerAscii(*it);
         const auto sing = singulariseDetailed(lowered);
         return {sing.value, *it, sing.modified};
@@ -131,23 +139,49 @@ std::string deriveOperationName(std::string_view methodLower, std::string_view p
     const bool endsWithParam =
         !segments.empty() && (segments.back().starts_with("{") || segments.back().starts_with(":"));
 
-    if (methodLower == "get") return endsWithParam ? "get" : "list";
-    if (methodLower == "post") return "create";
-    if (methodLower == "put") return "update";
-    if (methodLower == "patch") return "patch";
-    if (methodLower == "delete") return "delete";
-    if (methodLower == "head") return "head";
-    if (methodLower == "options") return "options";
+    if (methodLower == "get") {
+        return endsWithParam ? "get" : "list";
+    }
+    if (methodLower == "post") {
+        return "create";
+    }
+    if (methodLower == "put") {
+        return "update";
+    }
+    if (methodLower == "patch") {
+        return "patch";
+    }
+    if (methodLower == "delete") {
+        return "delete";
+    }
+    if (methodLower == "head") {
+        return "head";
+    }
+    if (methodLower == "options") {
+        return "options";
+    }
     return std::string{methodLower};
 }
 
 HttpMethod parseHttpMethod(std::string_view methodLower) {
-    if (methodLower == "post") return HttpMethod::Post;
-    if (methodLower == "put") return HttpMethod::Put;
-    if (methodLower == "patch") return HttpMethod::Patch;
-    if (methodLower == "delete") return HttpMethod::Delete;
-    if (methodLower == "head") return HttpMethod::Head;
-    if (methodLower == "options") return HttpMethod::Options;
+    if (methodLower == "post") {
+        return HttpMethod::Post;
+    }
+    if (methodLower == "put") {
+        return HttpMethod::Put;
+    }
+    if (methodLower == "patch") {
+        return HttpMethod::Patch;
+    }
+    if (methodLower == "delete") {
+        return HttpMethod::Delete;
+    }
+    if (methodLower == "head") {
+        return HttpMethod::Head;
+    }
+    if (methodLower == "options") {
+        return HttpMethod::Options;
+    }
     return HttpMethod::Get;
 }
 
@@ -158,7 +192,9 @@ constexpr bool isOpenApiMethod(std::string_view m) noexcept {
 
 // Pick the first 2xx status declared on the operation, falling back to 200.
 int pickExpectedStatus(const YAML::Node& responses) {
-    if (!responses || !responses.IsMap()) return 200;
+    if (!responses || !responses.IsMap()) {
+        return 200;
+    }
     for (const auto& kv : responses) {
         const auto code = kv.first.as<std::string>("");
         if (code.size() == 3 && code[0] == '2') {
@@ -194,9 +230,13 @@ std::string nowIso8601Utc() {
 /// slices can offer environment-per-server.
 std::string firstServerUrl(const YAML::Node& root) {
     const auto& servers = root["servers"];
-    if (!servers || !servers.IsSequence() || servers.size() == 0) return "/";
+    if (!servers || !servers.IsSequence() || servers.size() == 0) {
+        return "/";
+    }
     const auto& first = servers[0];
-    if (!first || !first.IsMap()) return "/";
+    if (!first || !first.IsMap()) {
+        return "/";
+    }
     return first["url"].as<std::string>("/");
 }
 
@@ -241,16 +281,26 @@ PathRewriteResult rewritePathParams(std::string_view pathTemplate, std::string_v
 
 YAML::Node firstJsonResponseSchema(const YAML::Node& opNode) {
     const auto& responses = opNode["responses"];
-    if (!responses || !responses.IsMap()) return {};
+    if (!responses || !responses.IsMap()) {
+        return {};
+    }
     for (const auto& kv : responses) {
         const auto code = kv.first.as<std::string>("");
-        if (code.size() != 3 || code[0] != '2') continue;
+        if (code.size() != 3 || code[0] != '2') {
+            continue;
+        }
         const auto& resp = kv.second;
-        if (!resp || !resp.IsMap()) continue;
+        if (!resp || !resp.IsMap()) {
+            continue;
+        }
         const auto& content = resp["content"];
-        if (!content || !content.IsMap()) continue;
+        if (!content || !content.IsMap()) {
+            continue;
+        }
         const auto& json = content["application/json"];
-        if (!json || !json.IsMap()) continue;
+        if (!json || !json.IsMap()) {
+            continue;
+        }
         return json["schema"];
     }
     return {};
@@ -258,16 +308,26 @@ YAML::Node firstJsonResponseSchema(const YAML::Node& opNode) {
 
 std::optional<YAML::Node> firstJsonResponseExample(const YAML::Node& opNode) {
     const auto& responses = opNode["responses"];
-    if (!responses || !responses.IsMap()) return std::nullopt;
+    if (!responses || !responses.IsMap()) {
+        return std::nullopt;
+    }
     for (const auto& kv : responses) {
         const auto code = kv.first.as<std::string>("");
-        if (code.size() != 3 || code[0] != '2') continue;
+        if (code.size() != 3 || code[0] != '2') {
+            continue;
+        }
         const auto& resp = kv.second;
-        if (!resp || !resp.IsMap()) continue;
+        if (!resp || !resp.IsMap()) {
+            continue;
+        }
         const auto& content = resp["content"];
-        if (!content || !content.IsMap()) continue;
+        if (!content || !content.IsMap()) {
+            continue;
+        }
         const auto& json = content["application/json"];
-        if (!json || !json.IsMap()) continue;
+        if (!json || !json.IsMap()) {
+            continue;
+        }
         if (auto example = json["example"]; example.IsDefined() && !example.IsNull()) {
             return example;
         }
@@ -298,10 +358,16 @@ struct UnwrappedSchema {
 
 UnwrappedSchema unwrapSchema(const YAML::Node& schema) {
     UnwrappedSchema out{schema, false};
-    if (!schema || !schema.IsMap()) return out;
-    if (schema["type"].as<std::string>("") != "object") return out;
+    if (!schema || !schema.IsMap()) {
+        return out;
+    }
+    if (schema["type"].as<std::string>("") != "object") {
+        return out;
+    }
     const auto& props = schema["properties"];
-    if (!props || !props.IsMap()) return out;
+    if (!props || !props.IsMap()) {
+        return out;
+    }
     if (props.size() == 1 && props["data"]) {
         const auto& inner = props["data"];
         if (inner && inner.IsMap() && inner["type"].as<std::string>("") == "object") {
@@ -317,20 +383,30 @@ std::vector<std::pair<std::string, std::string>> inferExtractionsFromSchema(
     std::vector<std::pair<std::string, std::string>> out;
     const auto unwrapped = unwrapSchema(schemaIn);
     const auto& schema = unwrapped.schema;
-    if (!schema || !schema.IsMap()) return out;
-    if (schema["type"].as<std::string>("") != "object") return out;
+    if (!schema || !schema.IsMap()) {
+        return out;
+    }
+    if (schema["type"].as<std::string>("") != "object") {
+        return out;
+    }
 
     const auto& props = schema["properties"];
-    if (!props || !props.IsMap()) return out;
+    if (!props || !props.IsMap()) {
+        return out;
+    }
 
     const std::string root = unwrapped.wrappedInData ? "$.data." : "$.";
 
     for (const auto& kv : props) {
         const auto name = kv.first.as<std::string>("");
         const auto& propSchema = kv.second;
-        if (name.empty() || !propSchema || !propSchema.IsMap()) continue;
+        if (name.empty() || !propSchema || !propSchema.IsMap()) {
+            continue;
+        }
         const auto type = propSchema["type"].as<std::string>("");
-        if (!isScalarSchemaType(type)) continue;
+        if (!isScalarSchemaType(type)) {
+            continue;
+        }
         out.emplace_back(name, root + name);
     }
     return out;
@@ -339,14 +415,24 @@ std::vector<std::pair<std::string, std::string>> inferExtractionsFromSchema(
 constexpr int kMaxYamlToJsonDepth = 64;
 
 nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
-    if (depth > kMaxYamlToJsonDepth) return nlohmann::json{nullptr};
-    if (!node || node.IsNull()) return nlohmann::json{nullptr};
+    if (depth > kMaxYamlToJsonDepth) {
+        return nlohmann::json{nullptr};
+    }
+    if (!node || node.IsNull()) {
+        return nlohmann::json{nullptr};
+    }
 
     if (node.IsScalar()) {
         const auto& raw = node.Scalar();
-        if (raw == "true") return nlohmann::json(true);
-        if (raw == "false") return nlohmann::json(false);
-        if (raw == "null" || raw == "~") return nlohmann::json{nullptr};
+        if (raw == "true") {
+            return nlohmann::json(true);
+        }
+        if (raw == "false") {
+            return nlohmann::json(false);
+        }
+        if (raw == "null" || raw == "~") {
+            return nlohmann::json{nullptr};
+        }
 
         if (!raw.empty()) {
             const auto* first = raw.data();
@@ -371,7 +457,9 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
 
     if (node.IsSequence()) {
         nlohmann::json arr = nlohmann::json::array();
-        for (const auto& item : node) arr.push_back(yamlToJson(item, depth + 1));
+        for (const auto& item : node) {
+            arr.push_back(yamlToJson(item, depth + 1));
+        }
         return arr;
     }
 
@@ -391,7 +479,9 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
 std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
     const fs::path& spec, const fs::path& projectRoot) const {
     auto canonical = canonicalSpecPath(spec, projectRoot);
-    if (!canonical) return std::unexpected(canonical.error());
+    if (!canonical) {
+        return std::unexpected(canonical.error());
+    }
 
     // 8 MiB cap. Real-world OpenAPI specs (Stripe, GitHub) clock in around
     // 5 MiB; anything bigger is almost certainly an attack or a runaway
@@ -456,19 +546,27 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
     for (const auto& pathKv : paths) {
         const auto pathTemplate = pathKv.first.as<std::string>("");
         const auto& pathItem = pathKv.second;
-        if (pathTemplate.empty() || !pathItem || !pathItem.IsMap()) continue;
+        if (pathTemplate.empty() || !pathItem || !pathItem.IsMap()) {
+            continue;
+        }
 
         const auto derivation = deriveResourceIdDetailed(pathTemplate);
         const auto& resourceId = derivation.id;
         auto& resource = outcome.project.resources[ResourceId{resourceId}];
-        if (resource.id.value.empty()) resource.id = ResourceId{resourceId};
+        if (resource.id.value.empty()) {
+            resource.id = ResourceId{resourceId};
+        }
 
         for (const auto& methodKv : pathItem) {
             const auto methodLower = toLowerAscii(methodKv.first.as<std::string>(""));
-            if (!isOpenApiMethod(methodLower)) continue;
+            if (!isOpenApiMethod(methodLower)) {
+                continue;
+            }
 
             const auto& opNode = methodKv.second;
-            if (!opNode || !opNode.IsMap()) continue;
+            if (!opNode || !opNode.IsMap()) {
+                continue;
+            }
 
             auto opName = deriveOperationName(methodLower, pathTemplate);
             // Disambiguate collisions (e.g. two GETs on different paths
@@ -609,7 +707,9 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
     }
 
     std::ostringstream wbuf;
-    for (const auto& w : warnings) wbuf << w << '\n';
+    for (const auto& w : warnings) {
+        wbuf << w << '\n';
+    }
     outcome.warnings = wbuf.str();
     return outcome;
 }

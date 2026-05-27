@@ -34,7 +34,7 @@ std::string generateUuid() {
     };
     auto hex = [](std::uint32_t v, int digits) {
         const std::uint64_t mask =
-            (digits >= 8) ? std::uint64_t{0xFFFF'FFFFu} : ((std::uint64_t{1} << (digits * 4)) - 1);
+            (digits >= 8) ? std::uint64_t{0xFFFF'FFFFU} : ((std::uint64_t{1} << (digits * 4)) - 1);
         std::ostringstream ss;
         ss << std::hex << std::setfill('0') << std::setw(digits)
            << (static_cast<std::uint64_t>(v) & mask);
@@ -67,7 +67,9 @@ std::string nowIso() {
 /// for malformed input. Overflow-safe: absurdly large values return nullopt
 /// rather than triggering signed overflow UB.
 std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
-    if (literal.size() < 2) return std::nullopt;
+    if (literal.size() < 2) {
+        return std::nullopt;
+    }
 
     const char unit = literal.back();
     auto digits = literal.substr(0, literal.size() - 1);
@@ -81,7 +83,9 @@ std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
     }
 
     auto safeMul = [](long long v, long long factor) -> std::optional<long long> {
-        if (factor == 0) return 0;
+        if (factor == 0) {
+            return 0;
+        }
         if (v > std::numeric_limits<long long>::max() / factor) {
             return std::nullopt;
         }
@@ -92,13 +96,19 @@ std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
         case 's':
             return std::chrono::seconds{value};
         case 'm':
-            if (auto r = safeMul(value, 60); r) return std::chrono::seconds{*r};
+            if (auto r = safeMul(value, 60); r) {
+                return std::chrono::seconds{*r};
+            }
             return std::nullopt;
         case 'h':
-            if (auto r = safeMul(value, 3600); r) return std::chrono::seconds{*r};
+            if (auto r = safeMul(value, 3600); r) {
+                return std::chrono::seconds{*r};
+            }
             return std::nullopt;
         case 'd':
-            if (auto r = safeMul(value, 86400); r) return std::chrono::seconds{*r};
+            if (auto r = safeMul(value, 86400); r) {
+                return std::chrono::seconds{*r};
+            }
             return std::nullopt;
         default:
             return std::nullopt;
@@ -107,7 +117,9 @@ std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
 
 std::string_view trim(std::string_view s) {
     auto begin = s.find_first_not_of(" \t");
-    if (begin == std::string_view::npos) return {};
+    if (begin == std::string_view::npos) {
+        return {};
+    }
     auto end = s.find_last_not_of(" \t");
     return s.substr(begin, end - begin + 1);
 }
@@ -123,8 +135,12 @@ struct CallParts {
 
 std::optional<CallParts> splitCall(std::string_view tail) {
     const auto open = tail.find('(');
-    if (open == std::string_view::npos) return std::nullopt;
-    if (tail.back() != ')') return std::nullopt;
+    if (open == std::string_view::npos) {
+        return std::nullopt;
+    }
+    if (tail.back() != ')') {
+        return std::nullopt;
+    }
 
     CallParts parts;
     parts.name = trim(tail.substr(0, open));
@@ -139,10 +155,14 @@ ResolvedRef resolveCallArg(std::string_view arg,
                            const RunContext& ctx,
                            const ResolveContext& rctx) {
     arg = trim(arg);
-    if (arg.empty()) return std::nullopt;
+    if (arg.empty()) {
+        return std::nullopt;
+    }
 
     if ((arg.front() == '"' && arg.back() == '"') || (arg.front() == '\'' && arg.back() == '\'')) {
-        if (arg.size() < 2) return std::nullopt;
+        if (arg.size() < 2) {
+            return std::nullopt;
+        }
         return std::string{arg.substr(1, arg.size() - 2)};
     }
 
@@ -154,36 +174,62 @@ ResolvedRef resolveCallArg(std::string_view arg,
 ResolvedRef resolveBuiltin(std::string_view ref,
                            const RunContext& ctx,
                            const ResolveContext& rctx) {
-    if (!ref.starts_with("$.")) return std::nullopt;
+    if (!ref.starts_with("$.")) {
+        return std::nullopt;
+    }
 
     // Function-call form: `$.ns.name(arg)`. Dispatch first because the
     // offset-stripping below must not run inside parentheses.
     if (ref.find('(') != std::string_view::npos) {
         if (ref.starts_with("$.base64.")) {
             const auto call = splitCall(ref.substr(9));
-            if (!call) return std::nullopt;
+            if (!call) {
+                return std::nullopt;
+            }
             const auto value = resolveCallArg(call->arg, ctx, rctx);
-            if (!value) return std::nullopt;
-            if (call->name == "encode") return base64Encode(*value);
-            if (call->name == "decode") return base64Decode(*value);
+            if (!value) {
+                return std::nullopt;
+            }
+            if (call->name == "encode") {
+                return base64Encode(*value);
+            }
+            if (call->name == "decode") {
+                return base64Decode(*value);
+            }
             return std::nullopt;
         }
         if (ref.starts_with("$.hex.")) {
             const auto call = splitCall(ref.substr(6));
-            if (!call) return std::nullopt;
+            if (!call) {
+                return std::nullopt;
+            }
             const auto value = resolveCallArg(call->arg, ctx, rctx);
-            if (!value) return std::nullopt;
-            if (call->name == "encode") return hexEncode(*value);
-            if (call->name == "decode") return hexDecode(*value);
+            if (!value) {
+                return std::nullopt;
+            }
+            if (call->name == "encode") {
+                return hexEncode(*value);
+            }
+            if (call->name == "decode") {
+                return hexDecode(*value);
+            }
             return std::nullopt;
         }
         if (ref.starts_with("$.url.")) {
             const auto call = splitCall(ref.substr(6));
-            if (!call) return std::nullopt;
+            if (!call) {
+                return std::nullopt;
+            }
             const auto value = resolveCallArg(call->arg, ctx, rctx);
-            if (!value) return std::nullopt;
-            if (call->name == "encode") return urlEncode(*value);
-            if (call->name == "decode") return urlDecode(*value);
+            if (!value) {
+                return std::nullopt;
+            }
+            if (call->name == "encode") {
+                return urlEncode(*value);
+            }
+            if (call->name == "decode") {
+                return urlDecode(*value);
+            }
             return std::nullopt;
         }
         return std::nullopt;
@@ -198,11 +244,11 @@ ResolvedRef resolveBuiltin(std::string_view ref,
         char opCh = '\0';
         for (std::size_t i = 0; i < ref.size(); ++i) {
             const char c = ref[i];
-            if (c == '(')
+            if (c == '(') {
                 ++depth;
-            else if (c == ')')
+            } else if (c == ')') {
                 --depth;
-            else if (depth == 0 && (c == '+' || c == '-') && i > 1) {
+            } else if (depth == 0 && (c == '+' || c == '-') && i > 1) {
                 opPos = i;
                 opCh = c;
             }
@@ -219,15 +265,21 @@ ResolvedRef resolveBuiltin(std::string_view ref,
     }
 
     if (ref == "$.uuid") {
-        if (hasOffset) return std::nullopt;
+        if (hasOffset) {
+            return std::nullopt;
+        }
         return generateUuid();
     }
     if (ref == "$.now") {
-        if (!hasOffset) return nowIso();
+        if (!hasOffset) {
+            return nowIso();
+        }
         return formatIso(std::chrono::system_clock::now() + offset);
     }
     if (ref.starts_with("$.env.")) {
-        if (hasOffset) return std::nullopt;
+        if (hasOffset) {
+            return std::nullopt;
+        }
         const std::string envName{ref.substr(6)};
         if (auto* val = std::getenv(envName.c_str())) {
             return std::string{val};
@@ -235,7 +287,9 @@ ResolvedRef resolveBuiltin(std::string_view ref,
         return std::nullopt;
     }
     if (ref.starts_with("$.faker.")) {
-        if (hasOffset) return std::nullopt;
+        if (hasOffset) {
+            return std::nullopt;
+        }
         const auto fakerType = ref.substr(8);
         if (fakerType == "email") {
             return "test+" + generateUuid().substr(0, 8) + "@example.com";
@@ -254,26 +308,34 @@ ResolvedRef resolveBuiltin(std::string_view ref,
 /// indexed refs (resource[N].var).
 ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const ResolveContext& rctx) {
     const auto dotPos = ref.find('.');
-    if (dotPos == std::string_view::npos) return std::nullopt;
+    if (dotPos == std::string_view::npos) {
+        return std::nullopt;
+    }
 
     const auto scope = std::string{ref.substr(0, dotPos)};
     const auto field = std::string{ref.substr(dotPos + 1)};
 
     if (scope == "env") {
         auto it = rctx.envVars.find(field);
-        if (it != rctx.envVars.end()) return it->second;
+        if (it != rctx.envVars.end()) {
+            return it->second;
+        }
         return std::nullopt;
     }
 
     if (scope == "secret") {
         auto it = rctx.secrets.find(field);
-        if (it != rctx.secrets.end()) return it->second;
+        if (it != rctx.secrets.end()) {
+            return it->second;
+        }
         return std::nullopt;
     }
 
-    if (auto* session = ctx.session(ActorId{scope}); session != nullptr) {
+    if (const auto* session = ctx.session(ActorId{scope}); session != nullptr) {
         auto it = session->variables.find(field);
-        if (it != session->variables.end()) return it->second;
+        if (it != session->variables.end()) {
+            return it->second;
+        }
     }
 
     // Indexed resource reference: resource[N].var (1-indexed).
@@ -286,14 +348,20 @@ ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const Res
         const auto* first = indexStr.data();
         const auto* last = first + indexStr.size();
         auto fc = std::from_chars(first, last, index);
-        if (fc.ec != std::errc{} || index == 0) return std::nullopt;
+        if (fc.ec != std::errc{} || index == 0) {
+            return std::nullopt;
+        }
 
         index -= 1;  // 1-indexed → 0-indexed
         const auto& instances = ctx.instances(ResourceId{resName});
-        if (index >= instances.size()) return std::nullopt;
+        if (index >= instances.size()) {
+            return std::nullopt;
+        }
 
         auto it = instances[index].variables.find(field);
-        if (it != instances[index].variables.end()) return it->second;
+        if (it != instances[index].variables.end()) {
+            return it->second;
+        }
         return std::nullopt;
     }
 
@@ -303,7 +371,9 @@ ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const Res
     const auto& instances = ctx.instances(ResourceId{scope});
     for (auto it = instances.rbegin(); it != instances.rend(); ++it) {
         auto fieldIt = it->variables.find(field);
-        if (fieldIt != it->variables.end()) return fieldIt->second;
+        if (fieldIt != it->variables.end()) {
+            return fieldIt->second;
+        }
     }
 
     return std::nullopt;
