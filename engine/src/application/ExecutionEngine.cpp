@@ -57,6 +57,7 @@ using namespace codecs;
         }
     }
     out.env = rctx.envVars;
+    out.secrets = rctx.secrets;
     return out;
 }
 

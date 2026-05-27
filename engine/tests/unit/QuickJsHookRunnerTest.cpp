@@ -73,6 +73,19 @@ TEST(QuickJsHookRunner, inline_pre_request_reads_actor_variables) {
     EXPECT_EQ(outcome->mutatedRequest.headers.at("Authorization"), "Bearer abc123");
 }
 
+TEST(QuickJsHookRunner, inline_pre_request_reads_secrets) {
+    ce::QuickJsHookRunner runner;
+    auto hctx = baseContext();
+    hctx.secrets["API_KEY"] = "sk_live_zzz";
+
+    const std::string script =
+        "ctx.request.headers['X-Api-Key'] = 'Bearer ' + ctx.secret.API_KEY;";
+
+    auto outcome = runner.runPreRequest(script, std::move(hctx));
+    ASSERT_TRUE(outcome.has_value()) << (outcome ? "" : outcome.error().detail);
+    EXPECT_EQ(outcome->mutatedRequest.headers.at("X-Api-Key"), "Bearer sk_live_zzz");
+}
+
 // ─── Module-style mutation (export default) ─────────────────────────────────
 
 TEST(QuickJsHookRunner, module_default_export_runs) {

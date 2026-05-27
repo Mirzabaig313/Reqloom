@@ -4,13 +4,27 @@
 #include <curl/curl.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 
 namespace chainapi::engine {
 
 namespace {
+
+// Clamp a 64-bit count into libcurl's `long`-sized timeout slots.
+// On Windows, `long` is 32-bit and `chrono::milliseconds::rep` is 64-bit,
+// so an unchecked cast silently truncates past ~24 days. The clamp is a
+// no-op on platforms where `long` is already 64-bit (macOS, Linux LP64).
+[[nodiscard]] long toCurlLongClamped(std::int64_t v) noexcept {
+    constexpr auto kMax = std::numeric_limits<long>::max();
+    constexpr auto kMin = std::numeric_limits<long>::min();
+    if (v > static_cast<std::int64_t>(kMax)) return kMax;
+    if (v < static_cast<std::int64_t>(kMin)) return kMin;
+    return static_cast<long>(v);
+}
 
 // ─── RAII wrappers ───────────────────────────────────────────────────────────
 
@@ -134,33 +148,18 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
     curl_easy_setopt(curl.get(), CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.get(), CURLOPT_HEADERDATA, &responseHeaders);
     curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
-    // chrono::milliseconds::rep is long on libstdc++ but long long on libc++,
-    // so the cast is platform-conditional. Suppress GCC's useless-cast on the
-    // platform where it happens to be a no-op.
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wuseless-cast"
-#endif
-    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, static_cast<long>(request.timeout.count()));
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
+    curl_easy_setopt(curl.get(),
+                     CURLOPT_TIMEOUT_MS,
+                     toCurlLongClamped(static_cast<std::int64_t>(request.timeout.count())));
 
     // Connect timeout — configurable via TransportConfig::connectTimeout.
     // Default 5s matches the hard-coded value before this knob existed.
-    curl_easy_setopt(curl.get(),
-                     CURLOPT_CONNECTTIMEOUT_MS,
-                     static_cast<long>(request.transport.connectTimeout.count()));
-    // No-signal mode: libcurl normally uses SIGALRM for the resolver
-    // timeout when built without c-ares. Disabling signals lets the
-    // pure-millisecond connect timeout above actually take effect on
-    // platforms where the SIGALRM handler isn't reliably installed.
-    curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(
+        curl.get(),
+        CURLOPT_CONNECTTIMEOUT_MS,
+        toCurlLongClamped(static_cast<std::int64_t>(request.transport.connectTimeout.count())));
 
-    // TLS verification. Both fields default to true; flipping either to
-    // false yields curl's `--insecure` semantics for that layer. The
-    // CAINFO path, when set, replaces the system trust store rather
-    // than augmenting it — that's libcurl's contract.
+    curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, request.transport.tlsVerify ? 1L : 0L);
     curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, request.transport.tlsVerifyHost ? 2L : 0L);
     if (request.transport.caBundlePath) {
@@ -243,8 +242,12 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
         }
         curl_easy_setopt(curl.get(), CURLOPT_MIMEPOST, mime.get());
     } else if (request.body) {
-        curl_easy_setopt(
-            curl.get(), CURLOPT_POSTFIELDSIZE, static_cast<long>(request.body->size()));
+        // _LARGE variant takes curl_off_t (64-bit) — the plain
+        // CURLOPT_POSTFIELDSIZE is `long` and silently truncates bodies
+        // larger than 2 GiB on Windows.
+        curl_easy_setopt(curl.get(),
+                         CURLOPT_POSTFIELDSIZE_LARGE,
+                         static_cast<curl_off_t>(request.body->size()));
         curl_easy_setopt(curl.get(), CURLOPT_COPYPOSTFIELDS, request.body->c_str());
     }
 

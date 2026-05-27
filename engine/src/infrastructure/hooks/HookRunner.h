@@ -36,6 +36,7 @@ struct HookContext {
     std::optional<HookResponseView> response;  ///< Set only for post_response.
     std::map<std::string, std::map<std::string, std::string>> variables;
     std::map<std::string, std::string> env;
+    std::map<std::string, std::string> secrets;
 };
 
 struct HookOutcome {
