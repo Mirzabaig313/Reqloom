@@ -7,6 +7,10 @@ namespace chainapi::engine {
 class KeychainSecretStore final : public SecretStore {
 public:
     KeychainSecretStore();
+    KeychainSecretStore(const KeychainSecretStore&) = delete;
+    KeychainSecretStore& operator=(const KeychainSecretStore&) = delete;
+    KeychainSecretStore(KeychainSecretStore&&) = delete;
+    KeychainSecretStore& operator=(KeychainSecretStore&&) = delete;
     ~KeychainSecretStore() override;
 
     std::expected<std::optional<std::string>, ChainApiError> read(const std::string& name) override;

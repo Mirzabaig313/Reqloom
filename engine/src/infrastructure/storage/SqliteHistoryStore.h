@@ -7,6 +7,10 @@ namespace chainapi::engine {
 class SqliteHistoryStore final : public HistoryStore {
 public:
     SqliteHistoryStore();
+    SqliteHistoryStore(const SqliteHistoryStore&) = delete;
+    SqliteHistoryStore& operator=(const SqliteHistoryStore&) = delete;
+    SqliteHistoryStore(SqliteHistoryStore&&) = delete;
+    SqliteHistoryStore& operator=(SqliteHistoryStore&&) = delete;
     ~SqliteHistoryStore() override;
 
     std::expected<void, ChainApiError> open(const std::filesystem::path& dbPath) override;

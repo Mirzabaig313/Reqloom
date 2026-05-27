@@ -110,6 +110,8 @@ public:
     ~JsValueGuard() { JS_FreeValue(ctx_, v_); }
     JsValueGuard(const JsValueGuard&) = delete;
     JsValueGuard& operator=(const JsValueGuard&) = delete;
+    JsValueGuard(JsValueGuard&&) = delete;
+    JsValueGuard& operator=(JsValueGuard&&) = delete;
     [[nodiscard]] JSValue value() const noexcept { return v_; }
 
 private:
