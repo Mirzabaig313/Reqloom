@@ -47,6 +47,10 @@ chainapi_apply_sanitizers(chainapi-engine-unit-tests)
 
 gtest_discover_tests(chainapi-engine-unit-tests
     PROPERTIES LABELS "engine_unit"
+    # Sanitizer-instrumented binaries linking QtCore/OpenSSL/curl can take
+    # several seconds just to start up and reach --gtest_list_tests on a
+    # loaded CI runner. The default 5s discovery timeout is too tight there.
+    DISCOVERY_TIMEOUT 60
 )
 
 # ─── Integration tests ───────────────────────────────────────────────────────
@@ -86,6 +90,7 @@ chainapi_apply_sanitizers(chainapi-engine-integration-tests)
 
 gtest_discover_tests(chainapi-engine-integration-tests
     PROPERTIES LABELS "engine_integration"
+    DISCOVERY_TIMEOUT 60
 )
 
 # All test binaries must respect the same engine-side boundary.
