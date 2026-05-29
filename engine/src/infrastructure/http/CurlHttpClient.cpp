@@ -20,8 +20,12 @@ namespace {
 // so an unchecked cast silently truncates past ~24 days. The clamp is a
 // no-op on platforms where `long` is already 64-bit (macOS, Linux LP64).
 [[nodiscard]] long toCurlLongClamped(std::int64_t v) noexcept {
-    constexpr auto kMax = std::numeric_limits<long>::max();
-    constexpr auto kMin = std::numeric_limits<long>::min();
+    // Parenthesise max/min to defang the function-like macros that
+    // <windows.h> (pulled in transitively by curl on Windows) defines for
+    // `min` and `max`. The extra parens stop the preprocessor treating these
+    // as macro invocations; on other platforms they are a harmless no-op.
+    constexpr auto kMax = (std::numeric_limits<long>::max)();
+    constexpr auto kMin = (std::numeric_limits<long>::min)();
     if (v > static_cast<std::int64_t>(kMax)) {
         return kMax;
     }
