@@ -708,13 +708,9 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
         return std::unexpected(invalid("openapi import: spec yielded zero importable operations"));
     }
 
-    // Defense in depth: the importer constructs a Project directly
-    // rather than going through YamlSchemaParser, so it doesn't get the
-    // parser's load-time validation for free. Today the importer only
-    // emits JsonPath extractions and simple ops, which can't form a
-    // cycle or an undefined reference — but a future change to the
-    // generation logic (or a hand-edited spec that drives it) could.
-    // Validating here keeps the same load-time guarantee on both paths
+    // Same load-time validation the YAML parser runs — the importer
+    // builds a Project directly and would otherwise skip it. Harmless
+    // today (generated ops can't cycle), cheap insurance for later.
     if (auto valid = DependencyResolver{}.validate(outcome.project); !valid) {
         return std::unexpected(valid.error());
     }

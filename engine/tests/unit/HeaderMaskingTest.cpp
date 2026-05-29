@@ -44,6 +44,32 @@ TEST(HeaderMasking, content_type_and_friends_are_not_sensitive) {
     EXPECT_FALSE(ce::isSensitiveHeader("X-Request-Id"));
 }
 
+TEST(HeaderMasking, signing_and_encryption_key_headers_are_sensitive) {
+    // Regression for the doc/code mismatch: the policy needle is "key",
+    // not "apikey", so these vendor key headers must be caught.
+    EXPECT_TRUE(ce::isSensitiveHeader("X-Signing-Key"));
+    EXPECT_TRUE(ce::isSensitiveHeader("X-Encryption-Key"));
+    EXPECT_TRUE(ce::isSensitiveHeader("X-Api-Key"));
+}
+
+// ─── isSensitiveName: extraction-variable value redaction ───────────────────
+
+TEST(HeaderMasking, sensitive_variable_names_are_flagged) {
+    EXPECT_TRUE(ce::isSensitiveName("token"));
+    EXPECT_TRUE(ce::isSensitiveName("access_token"));
+    EXPECT_TRUE(ce::isSensitiveName("refreshToken"));
+    EXPECT_TRUE(ce::isSensitiveName("api_key"));
+    EXPECT_TRUE(ce::isSensitiveName("client_secret"));
+    EXPECT_TRUE(ce::isSensitiveName("password"));
+}
+
+TEST(HeaderMasking, ordinary_variable_names_are_not_flagged) {
+    EXPECT_FALSE(ce::isSensitiveName("order_id"));
+    EXPECT_FALSE(ce::isSensitiveName("user_id"));
+    EXPECT_FALSE(ce::isSensitiveName("status"));
+    EXPECT_FALSE(ce::isSensitiveName("ping_id"));
+}
+
 // ─── maskHeaders (map): value redaction ─────────────────────────────────────
 
 TEST(HeaderMasking, sensitive_value_is_replaced_with_fixed_placeholder) {

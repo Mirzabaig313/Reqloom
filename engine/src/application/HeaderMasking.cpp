@@ -2,7 +2,6 @@
 
 #include "HeaderMasking.h"
 
-#include <algorithm>
 #include <array>
 #include <cctype>
 #include <string>
@@ -12,9 +11,8 @@ namespace chainapi::engine {
 
 namespace {
 
-// Exact-match allowlist of always-redacted header names. Case-insensitive.
-// Kept short and explicit so the policy is auditable; the substring rules
-// below catch the long tail (X-Foo-Token, X-Bar-Secret, etc.).
+// Always-redacted header names, lower-cased for case-insensitive match.
+// The substring needles below catch the long tail (X-Foo-Token, …).
 constexpr std::array<std::string_view, 5> kSensitiveExactNames = {
     "authorization",
     "proxy-authorization",
@@ -23,15 +21,15 @@ constexpr std::array<std::string_view, 5> kSensitiveExactNames = {
     "x-api-key",
 };
 
-// Substring needles. Any header name that contains one of these
-// (case-insensitive) is redacted. Catches the long tail of vendor-
-// specific names like X-Stripe-Secret-Key, X-Auth-Token, X-Refresh-Token.
+// Matched as substrings after '-'/'_' are stripped, so "Api-Key" and
+// "api_key" both hit "key". "auth" is broad on purpose — over-redacting
+// a stray header beats leaking a token.
 constexpr std::array<std::string_view, 5> kSensitiveSubstrings = {
     "token",
     "secret",
     "password",
-    "apikey",  // covers ApiKey, API-Key after dash strip
-    "auth",    // matches auth, authn, refresh-auth — accepted false-positive rate
+    "key",
+    "auth",
 };
 
 [[nodiscard]] std::string toLowerCopy(std::string_view s) {
@@ -43,19 +41,8 @@ constexpr std::array<std::string_view, 5> kSensitiveSubstrings = {
     return out;
 }
 
-}  // namespace
-
-bool isSensitiveHeader(std::string_view name) noexcept {
+[[nodiscard]] bool matchesSubstringPolicy(std::string_view name) {
     const auto lower = toLowerCopy(name);
-
-    for (const auto& exact : kSensitiveExactNames) {
-        if (lower == exact) return true;
-    }
-
-    // Substring scan against a name with dashes stripped — so "Api-Key"
-    // matches the "apikey" needle. We intentionally don't strip from
-    // the input form returned to the user; redaction policy is
-    // matching-only.
     std::string flat;
     flat.reserve(lower.size());
     for (char c : lower) {
@@ -64,8 +51,21 @@ bool isSensitiveHeader(std::string_view name) noexcept {
     for (const auto& needle : kSensitiveSubstrings) {
         if (flat.find(needle) != std::string::npos) return true;
     }
-
     return false;
+}
+
+}  // namespace
+
+bool isSensitiveHeader(std::string_view name) noexcept {
+    const auto lower = toLowerCopy(name);
+    for (const auto& exact : kSensitiveExactNames) {
+        if (lower == exact) return true;
+    }
+    return matchesSubstringPolicy(name);
+}
+
+bool isSensitiveName(std::string_view name) noexcept {
+    return matchesSubstringPolicy(name);
 }
 
 std::map<std::string, std::string> maskHeaders(const std::map<std::string, std::string>& headers) {

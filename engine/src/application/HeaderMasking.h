@@ -1,26 +1,12 @@
-// HeaderMasking — redact sensitive HTTP headers before they enter the
-// observability event stream or persisted run history.
+// Redacts secret-bearing HTTP header values (and extraction-variable
+// values) before they reach the event stream or persisted history.
+// Secrets must never hit logs, telemetry, or disk — AGENTS.md security
+// rules.
 //
-// AGENTS.md security rules and Engine Requirement AC-3.6.3 mandate that
-// secrets must NEVER appear in logs, telemetry events, or local-storage
-// history. The desktop timeline subscribes to `RequestPrepared` events
-// and the SQLite history store will persist them; both surfaces consume
-// the masked map produced here.
-//
-// The redaction policy is conservative-by-default:
-//   - Header names matching a fixed allowlist of known-sensitive names
-//     (Authorization, Cookie, X-API-Key, Proxy-Authorization, …) are
-//     fully replaced with a fixed-length placeholder.
-//   - Header names CONTAINING (case-insensitive) any of: token, secret,
-//     key, password, auth — are also replaced.
-//   - Everything else passes through verbatim. Header NAMES are never
-//     redacted; only values.
-//
-// The placeholder (`kRedactedHeaderValue`) is declared in the public
-// `chainapi/engine/Events.h` so that timeline renderers, persistence
-// layers, and tests share one source of truth. The placeholder is a
-// fixed-length string rather than the original value's length, to
-// avoid leaking secret length as a side channel.
+// Policy: an exact allowlist (Authorization, Cookie, X-API-Key, …) plus
+// a substring scan (token, secret, password, key, auth). Names pass
+// through; only values are replaced — with a fixed-length placeholder,
+// so a secret's length isn't leaked as a side channel.
 #pragma once
 
 #include <chainapi/engine/Events.h>
@@ -32,19 +18,22 @@
 
 namespace chainapi::engine {
 
-/// True when the named header should have its value replaced with
-/// `kRedactedHeaderValue`. Match is case-insensitive on the header name.
+/// True when this header's value should be redacted. Case-insensitive.
 [[nodiscard]] bool isSensitiveHeader(std::string_view name) noexcept;
 
-/// Return a copy of `headers` with sensitive values replaced.
-/// Header NAMES pass through unchanged so the desktop timeline can
-/// still show "Authorization" as a row — just not its value.
+/// True when an identifier (e.g. an `extract:` variable name) looks
+/// secret-bearing. Shares the substring policy with isSensitiveHeader,
+/// so an `access_token` extraction and an `Authorization` header are
+/// redacted by the same rule.
+[[nodiscard]] bool isSensitiveName(std::string_view name) noexcept;
+
+/// Copy of `headers` with sensitive values replaced. Names are kept so
+/// the timeline can still show that an Authorization header was sent.
 [[nodiscard]] std::map<std::string, std::string> maskHeaders(
     const std::map<std::string, std::string>& headers);
 
-/// Vector overload — preserves header order and case as the wire saw it.
-/// Used for response headers (which the curl client returns as a vector
-/// to keep duplicates and order intact).
+/// Vector overload for response headers, which arrive order- and
+/// duplicate-preserving from libcurl.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> maskHeaders(
     const std::vector<std::pair<std::string, std::string>>& headers);
 

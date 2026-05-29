@@ -86,10 +86,8 @@ using namespace codecs;
     return out;
 }
 
-/// Sum of bytes the request will put on the wire — body for inline
-/// requests, sum of part sizes for multipart. The desktop's "X bytes"
-/// indicator on the request preview reads this; persisted history
-/// rolls it up across a run for traffic accounting.
+/// Bytes the request body puts on the wire — inline body, or the sum of
+/// multipart part sizes.
 [[nodiscard]] std::size_t requestBodySize(const HttpRequest& req) noexcept {
     if (!req.multipart.empty()) {
         std::size_t total = 0;
@@ -136,15 +134,10 @@ struct ExecutionEngine::Impl {
     }
 
     void emit(const RunEvent& e) {
-        // Persist before fanning out to subscribers. If a subscriber
-        // crashes the process, the event is durably on disk for the
-        // history pane and post-mortem inspection. A persistence
-        // failure is logged but never fails the run — observability
-        // must never break execution.
+        // Persist before fanning out — the event survives a subscriber
+        // that crashes the process. Best-effort: a persistence failure
+        // must never break the run (log + continue once §10 logging lands).
         if (deps.history) {
-            // Best-effort. If history->append returns an error we
-            // silently drop it for now; once the engine logger lands
-            // (Engine Requirement §10) this becomes log + continue.
             // NOLINTNEXTLINE(bugprone-unused-return-value)
             (void)deps.history->append(e);
         }
@@ -176,9 +169,8 @@ struct ExecutionEngine::Impl {
                        const ResolveContext& rctx,
                        RunId runId,
                        std::size_t stepIndex) {
-        // EventSink closure passed into auth strategies. Captures `this`
-        // by reference so the closure forwards into Impl::emit, which
-        // dispatches to subscribers under the existing snapshot lock.
+        // Forwards auth-flow events into Impl::emit so they reach
+        // subscribers and history under the parent step's runId/stepIndex.
         auto sink = [this](const RunEvent& ev) {
             this->emit(ev);
         };
@@ -916,8 +908,13 @@ struct ExecutionEngine::Impl {
                 ev.at = std::chrono::system_clock::now();
                 switch (t.outcome) {
                     case ExtractionTrace::Outcome::Resolved:
+                        // RunContext keeps the real value for downstream
+                        // templating; the event copy (timeline + disk) is
+                        // masked when the variable name looks secret.
                         ev.outcome = ExtractionCompleted::Outcome::Resolved;
-                        ev.value = t.value;
+                        ev.value = isSensitiveName(t.variableName)
+                                       ? std::string{kRedactedHeaderValue}
+                                       : t.value;
                         break;
                     case ExtractionTrace::Outcome::Null:
                         ev.outcome = ExtractionCompleted::Outcome::Null;
@@ -949,11 +946,8 @@ struct ExecutionEngine::Impl {
                 ResourceInstance instance;
                 instance.variables = std::move(detailed->values);
 
-                // Names only — values that came from auth flows would
-                // contain tokens and must never enter the event stream.
-                // The desktop renders the names list; the per-extraction
-                // ExtractionCompleted events above carry the (truncated,
-                // unmasked) values for the timeline rows that need them.
+                // Names only — the per-extraction ExtractionCompleted
+                // events above carry the values (masked when sensitive).
                 std::vector<std::string> names;
                 names.reserve(instance.variables.size());
                 for (const auto& [k, _] : instance.variables) {

@@ -24,11 +24,7 @@ namespace {
 
 using namespace codecs;
 
-// Build a vector<pair> view of a request's header map for emission into
-// the event stream. Inline rather than shared with ExecutionEngine.cpp
-// so the two callers stay independent — auth events tag against the
-// parent step's runId via the bound EventSink, not the executor's
-// internal helpers.
+// Masked headers as an ordered vector for event emission.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> snapshotMaskedRequestHeaders(
     const HttpRequest& req) {
     auto masked = maskHeaders(req.headers);
@@ -101,10 +97,8 @@ public:
             }
 
             if (deps_.emit) {
-                // The runId / stepIndex were stamped into AuthDependencies
-                // by the executor; auth-side events ride on the parent
-                // step's index so the desktop timeline groups them under
-                // the operation that triggered the auth.
+                // runId/stepIndex are the parent step's, so the timeline
+                // groups the auth request under the op that triggered it.
                 deps_.emit(RequestPrepared{deps_.runId,
                                            deps_.stepIndex,
                                            req.method,

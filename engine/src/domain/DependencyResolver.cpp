@@ -41,20 +41,60 @@ std::vector<std::string> operationTemplates(const Operation& op) {
     return templates;
 }
 
-/// Find every `{{X.y}}` / `{{X[N].y}}` reference across a set of
-/// templates. The first capture group is the scope (resource / actor /
-/// env / secret), the second is the field. `$`-prefixed builtins are
-/// matched separately by the resolver and excluded here.
+/// Trim ASCII spaces/tabs — matches VariableResolver's trim of each
+/// `{{...}}` capture.
+[[nodiscard]] std::string_view trimWs(std::string_view s) {
+    const auto begin = s.find_first_not_of(" \t");
+    if (begin == std::string_view::npos) {
+        return {};
+    }
+    const auto end = s.find_last_not_of(" \t");
+    return s.substr(begin, end - begin + 1);
+}
+
+/// Find every `{{...}}` reference and split it into (scope, field).
+///
+/// Must mirror VariableResolver exactly — it matches `{{[^}]+}}`, trims,
+/// then splits on the first dot. A narrower pattern here would miss
+/// `{{ order.id }}` (spaces), dropping a real dependency edge and
+/// letting a whitespaced cyclic reference evade detection.
+///
+/// `$` builtins are recorded with scope "$": the resolver handles them,
+/// and anything nested in their call args resolves (or fails) at send
+/// time, never at load — so "$" satisfies the scope check without
+/// inventing a load error.
 std::vector<ParsedRef> scanReferences(const std::vector<std::string>& templates) {
-    // Mirrors VariableResolver's grammar. Kept in sync deliberately:
-    // parse-time validation must accept exactly what runtime resolves.
-    static const std::regex refPattern(R"(\{\{(\w+)(?:\[\d+\])?\.(\w+)\}\})");
+    static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
     std::vector<ParsedRef> refs;
     for (const auto& tmpl : templates) {
         auto begin = std::sregex_iterator(tmpl.begin(), tmpl.end(), refPattern);
         auto end = std::sregex_iterator();
         for (auto it = begin; it != end; ++it) {
-            refs.push_back(ParsedRef{(*it)[1].str(), (*it)[2].str()});
+            const auto inner = std::string{trimWs((*it)[1].str())};
+            if (inner.empty()) {
+                continue;
+            }
+
+            if (inner.front() == '$') {
+                refs.push_back(ParsedRef{"$", {}});
+                continue;
+            }
+
+            const auto dot = inner.find('.');
+            if (dot == std::string::npos) {
+                // No dot → unresolved at send time, not a load error. Skip.
+                continue;
+            }
+
+            auto scope = inner.substr(0, dot);
+            auto field = inner.substr(dot + 1);
+
+            // Strip a trailing `[N]` index, matching resolveDotted's
+            // indexed-resource handling (`order[2]`).
+            if (const auto br = scope.find('['); br != std::string::npos) {
+                scope = scope.substr(0, br);
+            }
+            refs.push_back(ParsedRef{std::move(scope), std::move(field)});
         }
     }
     return refs;
@@ -239,8 +279,8 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
 }
 
 std::expected<void, ChainApiError> DependencyResolver::validate(const Project& project) const {
-    // Helper: is `scope` a resolvable reference root? `$` builtins,
-    // env, secret, any defined actor, or any defined resource.
+    // A resolvable reference root: $ builtins, env, secret, or any
+    // defined actor or resource.
     const auto isKnownScope = [&](const std::string& scope) -> bool {
         if (scope == "$" || scope == "env" || scope == "secret") {
             return true;
@@ -253,18 +293,17 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
         return project.resources.contains(ResourceId{scope});
     };
 
-    // 1. Reference + dependency checks across every operation. Build the
-    //    whole-project graph as we go so the cycle check below sees all
-    //    edges, not just those reachable from one target.
+    // Walk every operation: check references and depends_on targets, and
+    // build the whole-project graph so the cycle check sees all edges,
+    // not just those reachable from one target.
     std::map<OperationId, std::vector<OperationId>> graph;
 
     for (const auto& [resId, resource] : project.resources) {
         for (const auto& [opName, op] : resource.operations) {
             const auto opId = OperationId{std::format("{}.{}", resId.value, opName)};
 
-            // 1a. Undefined-reference check. A reference whose scope is
-            //     not a known actor / resource / env / secret / builtin
-            //     can never resolve — reject at load (AC-3.1.6).
+            // AC-3.1.6: a reference whose scope isn't a known root can
+            // never resolve — reject at load.
             for (const auto& ref : scanReferences(operationTemplates(op))) {
                 if (!isKnownScope(ref.scope)) {
                     return std::unexpected(ChainApiError{
@@ -279,7 +318,7 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
                 }
             }
 
-            // 1b. Explicit `depends_on:` targets must exist.
+            // depends_on targets must name a real operation.
             std::set<OperationId> allDeps;
             for (const auto& dep : op.explicitDependencies) {
                 const auto dotPos = dep.value.find('.');
@@ -310,9 +349,8 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
         }
     }
 
-    // 2. Whole-project cycle detection via Kahn's topological sort. A
-    //    self-loop (op depends on itself) shows up as a node that never
-    //    reaches in-degree 0.
+    // Whole-project cycle detection (Kahn's). A self-loop never reaches
+    // in-degree 0, so AC-3.1.5 falls out for free.
     std::map<OperationId, int> inDegree;
     std::map<OperationId, std::vector<OperationId>> dependents;
     for (const auto& [node, deps] : graph) {

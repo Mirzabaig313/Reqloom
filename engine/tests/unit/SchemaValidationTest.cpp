@@ -281,6 +281,94 @@ resources:
     EXPECT_NE(result.error().detail.find("loop.op"), std::string::npos);
 }
 
+TEST(SchemaValidation, undefined_reference_with_surrounding_whitespace_fails_load) {
+    // The runtime resolver matches {{[^}]+}} then trims, so a reference
+    // with inner whitespace resolves at run time. Parse-time validation
+    // must use the SAME grammar — otherwise `{{ ghost.id }}` (spaces)
+    // slips past the undefined-ref check. Regression for the scanner
+    // grammar that previously required `{{word.word}}` with no spaces.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: WhitespaceGhost
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  order:
+    operations:
+      create:
+        method: POST
+        path: "/api/v1/orders/{{ ghost.id }}"
+        expect_status: 200
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::RefUndefined);
+    EXPECT_NE(result.error().detail.find("ghost"), std::string::npos);
+}
+
+TEST(SchemaValidation, implicit_cycle_with_whitespace_references_fails_load) {
+    // Same grammar concern, on the cycle path: whitespaced implicit
+    // edges must still be inferred so the cycle is detected at load.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: WhitespaceCycle
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  a:
+    operations:
+      op:
+        method: GET
+        path: "/a/{{ b.b_id }}"
+        expect_status: 200
+        extract:
+          a_id: $.id
+  b:
+    operations:
+      op:
+        method: GET
+        path: "/b/{{ a.a_id }}"
+        expect_status: 200
+        extract:
+          b_id: $.id
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::Cycle);
+}
+
+TEST(SchemaValidation, builtin_call_embedding_a_secret_reference_loads) {
+    // {{$.base64.encode(secret.API_KEY)}} — the scanner sees scope "$"
+    // (a builtin); the nested secret.API_KEY resolves inside the
+    // builtin at run time and must NOT be flagged undefined at load.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: BuiltinCallOk
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/thing
+        headers:
+          Authorization: "Basic {{$.base64.encode(secret.API_KEY)}}"
+        expect_status: 200
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+}
+
 // ─── Healthy multi-op project still loads ────────────────────────────────────
 
 TEST(SchemaValidation, acyclic_multi_resource_project_loads_cleanly) {

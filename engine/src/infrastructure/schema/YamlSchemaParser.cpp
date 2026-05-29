@@ -917,11 +917,8 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         project.transport[project.defaultEnvironment] = parseTransport(root["transport"]);
     }
 
-    // Whole-project static validation: undefined references, missing
-    // depends_on targets, and dependency cycles are caught here, at load
-    // time, so a malformed project never reaches the run loop (Engine
-    // Requirement AC-3.1.4 / AC-3.1.5 / AC-3.1.6). The desktop surfaces
-    // these inline on save; the CLI fails `lint` and `run` up front.
+    // Reject undefined references, missing depends_on targets, and
+    // dependency cycles at load time (AC-3.1.4 / 3.1.5 / 3.1.6).
     if (auto valid = DependencyResolver{}.validate(project); !valid) {
         return std::unexpected(valid.error());
     }

@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -73,6 +74,12 @@ enum class ErrorClass : std::uint8_t {
 /// Stable, human-readable code string (e.g. "E_CYCLE"). Safe in logs and
 /// asserted on by integration tests.
 std::string_view toCodeString(ErrorCode code) noexcept;
+
+/// Inverse of `toCodeString`. Returns the matching code, or nullopt for
+/// an unrecognised string (e.g. a code persisted by a newer build).
+/// Callers decide the fallback — the history store maps nullopt to
+/// `SchemaInvalid` so an unknown persisted code still surfaces.
+[[nodiscard]] std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept;
 
 /// Whether a step that fails with this code should be retried per the
 /// per-operation RetryPolicy.
