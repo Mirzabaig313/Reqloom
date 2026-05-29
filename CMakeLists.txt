@@ -12,6 +12,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# On Windows, prevent <windows.h> (pulled in transitively by curl, the Qt
+# platform layer, and others) from defining the function-like `min`/`max`
+# macros that collide with std::min/std::max and numeric_limits::max().
+# WIN32_LEAN_AND_MEAN trims rarely-needed Win32 sub-headers, cutting both
+# compile time and the surface for further macro clashes.
+if(WIN32)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
