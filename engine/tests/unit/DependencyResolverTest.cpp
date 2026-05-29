@@ -332,3 +332,74 @@ TEST(DependencyResolver, indexed_resource_reference_creates_correct_dep) {
     EXPECT_EQ(chain->front().value, "order.create");
     EXPECT_EQ(chain->back().value, "refund.create");
 }
+
+// ─── collectSecretReferences ─────────────────────────────────────────────────
+
+TEST(DependencyResolver, collect_secret_references_finds_op_template_secrets) {
+    auto op = makeOp("product", "get");
+    op.headers["X-Api-Key"] = "{{secret.API_KEY}}";
+    op.bodyTemplate = R"({"sig": "{{secret.SIGNING_KEY}}"})";
+
+    auto project = makeProject({
+        {"product", {{"get", std::move(op)}}},
+    });
+
+    const auto names = ce::DependencyResolver::collectSecretReferences(project);
+    ASSERT_EQ(names.size(), 2u);
+    EXPECT_EQ(names[0], "API_KEY");  // sorted
+    EXPECT_EQ(names[1], "SIGNING_KEY");
+}
+
+TEST(DependencyResolver, collect_secret_references_dedups_across_fields) {
+    auto op = makeOp("product", "get");
+    op.headers["X-Api-Key"] = "{{secret.API_KEY}}";
+    op.queryParams["k"] = "{{secret.API_KEY}}";
+
+    auto project = makeProject({
+        {"product", {{"get", std::move(op)}}},
+    });
+
+    const auto names = ce::DependencyResolver::collectSecretReferences(project);
+    ASSERT_EQ(names.size(), 1u);
+    EXPECT_EQ(names[0], "API_KEY");
+}
+
+TEST(DependencyResolver, collect_secret_references_scans_actor_auth_and_inject) {
+    auto project = makeProject({
+        {"product", {{"get", makeOp("product", "get")}}},
+    });
+    // Augment the default "user" actor with secret-bearing auth + inject.
+    auto& user = project.actors[ce::ActorId{"user"}];
+    user.authConfig["password"] = "{{secret.USER_PASSWORD}}";
+    user.inject.headers["Authorization"] = "Bearer {{secret.STATIC_TOKEN}}";
+
+    const auto names = ce::DependencyResolver::collectSecretReferences(project);
+    ASSERT_EQ(names.size(), 2u);
+    EXPECT_EQ(names[0], "STATIC_TOKEN");
+    EXPECT_EQ(names[1], "USER_PASSWORD");
+}
+
+TEST(DependencyResolver, collect_secret_references_scans_poll_predicates) {
+    auto op = makeOp("job", "status");
+    ce::PollUntil poll;
+    poll.pathTemplate = "/api/v1/jobs/{{secret.JOB_SIGNER}}";
+    poll.successWhen = "$.status == 'done'";
+    op.pollUntil = std::move(poll);
+
+    auto project = makeProject({
+        {"job", {{"status", std::move(op)}}},
+    });
+
+    const auto names = ce::DependencyResolver::collectSecretReferences(project);
+    ASSERT_EQ(names.size(), 1u);
+    EXPECT_EQ(names[0], "JOB_SIGNER");
+}
+
+TEST(DependencyResolver, collect_secret_references_empty_when_no_secrets) {
+    auto project = makeProject({
+        {"product", {{"get", makeOp("product", "get")}}},
+    });
+
+    const auto names = ce::DependencyResolver::collectSecretReferences(project);
+    EXPECT_TRUE(names.empty());
+}

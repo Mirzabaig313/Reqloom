@@ -67,6 +67,7 @@ add_executable(chainapi-engine-integration-tests
     integration/ExtractionSourcesTest.cpp
     integration/CookieJarTest.cpp
     integration/TransportConfigTest.cpp
+    integration/SecretLoadingTest.cpp
 )
 target_link_libraries(chainapi-engine-integration-tests
     PRIVATE

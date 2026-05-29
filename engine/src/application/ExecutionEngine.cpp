@@ -1042,6 +1042,27 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
         rctx.transport = it->second;
     }
 
+    // Pre-load referenced secrets from the OS keychain into the resolve
+    // context. We read only the names the project actually references —
+    // never a bulk dump — so an unrelated keychain entry can't leak into
+    // a run. A missing key is left unset (surfaces later as VarUnresolved
+    // when the template can't resolve); a backend failure aborts the run
+    // with SecretAccessFailed so the user isn't silently sent unsigned.
+    if (impl_->deps.secrets) {
+        for (const auto& name : DependencyResolver::collectSecretReferences(project)) {
+            auto value = impl_->deps.secrets->read(name);
+            if (!value) {
+                return std::unexpected(ChainApiError{
+                    ErrorCode::SecretAccessFailed,
+                    ErrorClass::Auth,
+                    "secret store: failed to read '" + name + "': " + value.error().detail});
+            }
+            if (value->has_value()) {
+                rctx.secrets[name] = std::move(**value);
+            }
+        }
+    }
+
     impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});
 
     RunResult result;

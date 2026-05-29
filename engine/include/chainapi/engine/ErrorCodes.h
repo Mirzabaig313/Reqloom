@@ -37,6 +37,13 @@ enum class ErrorCode : std::uint8_t {
     // Auth
     SessionRefreshFailed,
 
+    // Secrets
+    /// A `{{secret.X}}` reference could not be loaded from the secret
+    /// store backend (keychain error, not a missing key). A missing key
+    /// is not an error here — it simply leaves the reference unresolved,
+    /// which surfaces later as `VarUnresolved` at request-build time.
+    SecretAccessFailed,
+
     // Hooks
     HookFailure,
     HookTimeout,
