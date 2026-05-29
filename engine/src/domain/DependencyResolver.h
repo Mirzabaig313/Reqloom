@@ -30,6 +30,13 @@ public:
     ///   - the full dependency graph is acyclic, self-loops included →
     ///     else Cycle, listing the operations involved.
     [[nodiscard]] std::expected<void, ChainApiError> validate(const Project& project) const;
+
+    /// Collect the distinct `secret.X` names referenced anywhere in the
+    /// project (operation templates, actor auth config, auth steps,
+    /// refresh blocks, poll predicates). Used at run start to pre-load
+    /// exactly those secrets from the SecretStore into the resolve
+    /// context — we never bulk-dump the keychain. Sorted, de-duplicated.
+    [[nodiscard]] static std::vector<std::string> collectSecretReferences(const Project& project);
 };
 
 }  // namespace chainapi::engine

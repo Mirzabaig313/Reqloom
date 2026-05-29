@@ -6,6 +6,9 @@
 #include <queue>
 #include <regex>
 #include <set>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace chainapi::engine {
 
@@ -402,6 +405,67 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
     }
 
     return {};
+}
+
+std::vector<std::string> DependencyResolver::collectSecretReferences(const Project& project) {
+    std::set<std::string> names;
+
+    // Scan a list of template strings and record every `secret.X` field.
+    const auto scan = [&names](const std::vector<std::string_view>& templates) {
+        for (const auto& ref : scanReferences(templates)) {
+            if (ref.scope == "secret" && !ref.field.empty()) {
+                names.insert(ref.field);
+            }
+        }
+    };
+
+    for (const auto& [_, resource] : project.resources) {
+        for (const auto& [__, op] : resource.operations) {
+            scan(operationTemplates(op));
+            if (op.pollUntil) {
+                std::vector<std::string_view> pollTemplates{op.pollUntil->pathTemplate,
+                                                            op.pollUntil->successWhen};
+                if (op.pollUntil->failWhen) {
+                    pollTemplates.emplace_back(*op.pollUntil->failWhen);
+                }
+                scan(pollTemplates);
+            }
+        }
+    }
+
+    // Actor auth surfaces also resolve `{{secret.X}}` (basic credentials,
+    // api_key, oauth client secrets, signing keys, refresh bodies, and
+    // injected headers like `Authorization: Bearer {{secret.TOKEN}}`).
+    for (const auto& [_, actor] : project.actors) {
+        std::vector<std::string_view> actorTemplates;
+        for (const auto& [__, v] : actor.authConfig) {
+            actorTemplates.emplace_back(v);
+        }
+        for (const auto& [__, v] : actor.inject.headers) {
+            actorTemplates.emplace_back(v);
+        }
+        for (const auto& step : actor.authSteps) {
+            actorTemplates.emplace_back(step.pathTemplate);
+            if (step.bodyTemplate) {
+                actorTemplates.emplace_back(*step.bodyTemplate);
+            }
+            for (const auto& [__, v] : step.headers) {
+                actorTemplates.emplace_back(v);
+            }
+        }
+        if (actor.refresh) {
+            actorTemplates.emplace_back(actor.refresh->pathTemplate);
+            if (actor.refresh->bodyTemplate) {
+                actorTemplates.emplace_back(*actor.refresh->bodyTemplate);
+            }
+            for (const auto& [__, v] : actor.refresh->headers) {
+                actorTemplates.emplace_back(v);
+            }
+        }
+        scan(actorTemplates);
+    }
+
+    return {names.begin(), names.end()};
 }
 
 }  // namespace chainapi::engine

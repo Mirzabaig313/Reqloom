@@ -38,6 +38,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_STATUS_MISMATCH";
         case ErrorCode::SessionRefreshFailed:
             return "E_SESSION_REFRESH_FAILED";
+        case ErrorCode::SecretAccessFailed:
+            return "E_SECRET_ACCESS_FAILED";
         case ErrorCode::HookFailure:
             return "E_HOOK_FAILURE";
         case ErrorCode::HookTimeout:
@@ -66,7 +68,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
     // Reverse of toCodeString, matched against the full enumerator list.
     // The drift guard below fails the build if a code is added without
     // growing this array.
-    constexpr std::array<ErrorCode, 25> kAll = {
+    constexpr std::array<ErrorCode, 26> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,
         ErrorCode::Cycle,
@@ -82,6 +84,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::Http4xx,
         ErrorCode::StatusMismatch,
         ErrorCode::SessionRefreshFailed,
+        ErrorCode::SecretAccessFailed,
         ErrorCode::HookFailure,
         ErrorCode::HookTimeout,
         ErrorCode::ExtractionFailed,
@@ -143,6 +146,9 @@ ErrorClass classify(ErrorCode code) noexcept {
             return ErrorClass::Http;
 
         case ErrorCode::SessionRefreshFailed:
+            return ErrorClass::Auth;
+
+        case ErrorCode::SecretAccessFailed:
             return ErrorClass::Auth;
 
         case ErrorCode::HookFailure:
