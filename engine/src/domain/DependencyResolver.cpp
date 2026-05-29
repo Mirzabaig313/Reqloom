@@ -21,21 +21,25 @@ struct ParsedRef {
 
 /// Collect the templated strings on an operation (path, body, headers,
 /// query params, form fields) into one list for reference scanning.
-std::vector<std::string> operationTemplates(const Operation& op) {
-    std::vector<std::string> templates;
-    templates.push_back(op.pathTemplate);
+/// Returns views into `op`; the caller must keep `op` alive while the
+/// returned list is in use (always synchronous here).
+std::vector<std::string_view> operationTemplates(const Operation& op) {
+    std::vector<std::string_view> templates;
+    templates.reserve(1 + (op.bodyTemplate ? 1U : 0U) + op.headers.size() + op.queryParams.size() +
+                      (op.bodyForm ? op.bodyForm->size() : 0U));
+    templates.emplace_back(op.pathTemplate);
     if (op.bodyTemplate) {
-        templates.push_back(*op.bodyTemplate);
+        templates.emplace_back(*op.bodyTemplate);
     }
     for (const auto& [_, v] : op.headers) {
-        templates.push_back(v);
+        templates.emplace_back(v);
     }
     for (const auto& [_, v] : op.queryParams) {
-        templates.push_back(v);
+        templates.emplace_back(v);
     }
     if (op.bodyForm) {
         for (const auto& [_, v] : *op.bodyForm) {
-            templates.push_back(v);
+            templates.emplace_back(v);
         }
     }
     return templates;
@@ -63,12 +67,12 @@ std::vector<std::string> operationTemplates(const Operation& op) {
 /// and anything nested in their call args resolves (or fails) at send
 /// time, never at load — so "$" satisfies the scope check without
 /// inventing a load error.
-std::vector<ParsedRef> scanReferences(const std::vector<std::string>& templates) {
+std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templates) {
     static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
     std::vector<ParsedRef> refs;
     for (const auto& tmpl : templates) {
-        auto begin = std::sregex_iterator(tmpl.begin(), tmpl.end(), refPattern);
-        auto end = std::sregex_iterator();
+        auto begin = std::cregex_iterator(tmpl.data(), tmpl.data() + tmpl.size(), refPattern);
+        auto end = std::cregex_iterator();
         for (auto it = begin; it != end; ++it) {
             const auto inner = std::string{trimWs((*it)[1].str())};
             if (inner.empty()) {

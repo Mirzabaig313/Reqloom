@@ -114,11 +114,8 @@ std::expected<void, ChainApiError> writeAtomic(const fs::path& target, const std
 
 void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m) {
     e << YAML::BeginMap;
-    std::vector<std::pair<std::string, std::string>> sorted{m.begin(), m.end()};
-    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
-        return a.first < b.first;
-    });
-    for (const auto& [k, v] : sorted) {
+    // std::map already iterates in ascending key order, so no copy/sort.
+    for (const auto& [k, v] : m) {
         e << YAML::Key << k << YAML::Value << v;
     }
     e << YAML::EndMap;

@@ -156,6 +156,41 @@ struct DbDeleter {
 };
 using DbPtr = std::unique_ptr<sqlite3, DbDeleter>;
 
+// Scopes a write to a single transaction. Begins IMMEDIATE on construction;
+// rolls back on destruction unless commit() succeeded. IMMEDIATE acquires
+// the write lock up front so a busy database fails fast at begin() rather
+// than mid-statement. All sqlite3_exec calls here are on trusted, fixed SQL.
+class SqliteTransaction {
+public:
+    explicit SqliteTransaction(sqlite3* db) noexcept : db_(db) {
+        active_ = sqlite3_exec(db_, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) == SQLITE_OK;
+    }
+    ~SqliteTransaction() {
+        if (active_) {
+            sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+        }
+    }
+    SqliteTransaction(const SqliteTransaction&) = delete;
+    SqliteTransaction& operator=(const SqliteTransaction&) = delete;
+    SqliteTransaction(SqliteTransaction&&) = delete;
+    SqliteTransaction& operator=(SqliteTransaction&&) = delete;
+
+    [[nodiscard]] bool began() const noexcept { return active_; }
+
+    [[nodiscard]] bool commit() noexcept {
+        if (!active_) {
+            return false;
+        }
+        const bool ok = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr) == SQLITE_OK;
+        active_ = false;  // committed (or failed) — destructor must not roll back
+        return ok;
+    }
+
+private:
+    sqlite3* db_;
+    bool active_{false};
+};
+
 [[nodiscard]] ChainApiError sqliteError(sqlite3* db, std::string_view what) {
     const char* msg = (db != nullptr) ? sqlite3_errmsg(db) : "no database";
     return ChainApiError{ErrorCode::SchemaInvalid,
@@ -582,6 +617,15 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
 
     const auto env = envelopeOf(event);
 
+    // All three statements below (run row + optional run-ended update +
+    // event insert) commit as one unit. Without this each sqlite3_step ran
+    // in its own implicit transaction — 3 fsyncs per event and a window
+    // where the event row could land without its parent run row.
+    SqliteTransaction txn{impl_->db.get()};
+    if (!txn.began()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: begin append txn"));
+    }
+
     // RunStarted creates the runs row; RunEnded stamps the terminal
     // state; any other event backfills a placeholder row so the FK
     // holds even if events arrive out of order.
@@ -623,7 +667,9 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
         sqlite3_bind_null(impl_->insertRunStmt.get(), 3);
         sqlite3_bind_null(impl_->insertRunStmt.get(), 4);
         sqlite3_bind_int64(impl_->insertRunStmt.get(), 5, 0);
-        sqlite3_step(impl_->insertRunStmt.get());
+        if (sqlite3_step(impl_->insertRunStmt.get()) != SQLITE_DONE) {
+            return std::unexpected(sqliteError(impl_->db.get(), "history: backfill run"));
+        }
     }
 
     if (env.eventType == "RunEnded") {
@@ -662,6 +708,9 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
 
     if (sqlite3_step(impl_->insertEventStmt.get()) != SQLITE_DONE) {
         return std::unexpected(sqliteError(impl_->db.get(), "history: insert event"));
+    }
+    if (!txn.commit()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: commit append txn"));
     }
     return {};
 }

@@ -57,8 +57,12 @@ public:
 /// Pick a concrete authenticator for `actor`. Returns null only when the
 /// actor declares an unsupported `AuthStrategy` enum value — the engine
 /// surfaces that as `SessionRefreshFailed`.
+///
+/// Takes `deps` by value so the caller's `std::move` actually sinks the
+/// EventSink std::function into the chosen authenticator instead of
+/// copying it.
 [[nodiscard]] std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor,
-                                                                 const AuthDependencies& deps);
+                                                                 AuthDependencies deps);
 
 /// Run the actor's `refresh:` block (a single HTTP step with templates,
 /// expected status, and extractions) and return the new variable map
