@@ -183,7 +183,8 @@ struct ExecutionEngine::Impl {
             }
 
             if (actor.refresh) {
-                AuthDependencies refreshDeps{deps.http.get(), &varResolver, sink, runId, stepIndex};
+                AuthDependencies const refreshDeps{
+                    deps.http.get(), &varResolver, sink, runId, stepIndex};
                 auto refreshed = runRefresh(actor, ctx, rctx, refreshDeps);
                 if (refreshed) {
                     ActorSession updated = *existing;
@@ -233,7 +234,7 @@ struct ExecutionEngine::Impl {
                                                            std::size_t stepIndex,
                                                            const HttpResponse& /*initialResponse*/,
                                                            std::vector<StepResult>& attemptRows) {
-        PredicateEvaluator evaluator;
+        PredicateEvaluator const evaluator;
 
         auto successPredicate = evaluator.parse(poll.successWhen);
         if (!successPredicate) {
@@ -507,7 +508,7 @@ struct ExecutionEngine::Impl {
         req.method = op.method;
         req.transport = rctx.transport;
         auto baseUrlIt = rctx.envVars.find("baseUrl");
-        std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
+        std::string const baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
         req.url = baseUrl + resolvedPath.output;
 
         for (const auto& [k, v] : op.headers) {
@@ -823,9 +824,9 @@ struct ExecutionEngine::Impl {
             result.status = StepResult::Status::Failed;
             result.error = (httpResp->status >= 500) ? ErrorCode::Http5xx : ErrorCode::Http4xx;
             constexpr std::size_t kBodyExcerpt = 200;
-            std::string bodyExcerpt = httpResp->body.size() > kBodyExcerpt
-                                          ? httpResp->body.substr(0, kBodyExcerpt) + "..."
-                                          : httpResp->body;
+            std::string const bodyExcerpt = httpResp->body.size() > kBodyExcerpt
+                                                ? httpResp->body.substr(0, kBodyExcerpt) + "..."
+                                                : httpResp->body;
             result.detail = "HTTP " + std::to_string(httpResp->status) + " — " + bodyExcerpt;
             auto elapsed = std::chrono::steady_clock::now() - startTime;
             result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);

@@ -2,18 +2,17 @@
 
 namespace chainapi::desktop {
 
-Bootstrapper::Bootstrapper() {
-    // Wire concrete dependencies into ExecutionEngine via the factory helpers:
-    //
-    //   engine::ExecutionEngine::Dependencies deps {
-    //       engine::makeCurlHttpClient(),
-    //       engine::makeYamlSchemaParser(),
-    //       engine::makeSqliteHistoryStore(),
-    //       engine::makeKeychainSecretStore(),
-    //       engine::makeQuickJsHookRunner(),
-    //   };
-    //   engine_ = std::make_unique<engine::ExecutionEngine>(std::move(deps));
-}
+// Wire concrete dependencies into ExecutionEngine via the factory helpers:
+//
+//   engine::ExecutionEngine::Dependencies deps {
+//       engine::makeCurlHttpClient(),
+//       engine::makeYamlSchemaParser(),
+//       engine::makeSqliteHistoryStore(),
+//       engine::makeKeychainSecretStore(),
+//       engine::makeQuickJsHookRunner(),
+//   };
+//   engine_ = std::make_unique<engine::ExecutionEngine>(std::move(deps));
+Bootstrapper::Bootstrapper() = default;
 
 Bootstrapper::~Bootstrapper() = default;
 

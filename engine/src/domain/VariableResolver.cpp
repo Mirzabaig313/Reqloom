@@ -392,8 +392,8 @@ VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
     output.reserve(input.size());
     std::vector<std::string> unresolved;
 
-    std::sregex_iterator begin(input.begin(), input.end(), refPattern);
-    std::sregex_iterator end;
+    std::sregex_iterator const begin(input.begin(), input.end(), refPattern);
+    std::sregex_iterator const end;
     std::size_t lastPos = 0;
 
     for (auto it = begin; it != end; ++it) {

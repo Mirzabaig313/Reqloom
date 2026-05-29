@@ -37,9 +37,12 @@ void printUsage() {
 
 int main(int argc, char** argv) {
     try {
-        QCoreApplication app(argc, argv);
-        app.setApplicationName(QStringLiteral("chainapi"));
-        app.setApplicationVersion(QStringLiteral("0.1.0"));
+        // The QCoreApplication instance must outlive the argument parsing
+        // below: it initializes the Qt application state that
+        // QCoreApplication::arguments() reads from.
+        [[maybe_unused]] const QCoreApplication app(argc, argv);
+        QCoreApplication::setApplicationName(QStringLiteral("chainapi"));
+        QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
 
         const QStringList args = QCoreApplication::arguments();
         if (args.size() < 2 || args.at(1) == QStringLiteral("--help")) {

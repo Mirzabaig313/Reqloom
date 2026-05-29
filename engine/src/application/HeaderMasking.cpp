@@ -2,6 +2,7 @@
 
 #include "HeaderMasking.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <string>
@@ -48,24 +49,34 @@ constexpr std::array<std::string_view, 5> kSensitiveSubstrings = {
     for (char c : lower) {
         if (c != '-' && c != '_') flat.push_back(c);
     }
-    for (const auto& needle : kSensitiveSubstrings) {
-        if (flat.find(needle) != std::string::npos) return true;
-    }
-    return false;
+    return std::ranges::any_of(kSensitiveSubstrings, [&](const auto& needle) {
+        return flat.find(needle) != std::string::npos;
+    });
 }
 
 }  // namespace
 
 bool isSensitiveHeader(std::string_view name) noexcept {
-    const auto lower = toLowerCopy(name);
-    for (const auto& exact : kSensitiveExactNames) {
-        if (lower == exact) return true;
+    // Fail closed: if classification ever throws (only plausible on OOM,
+    // since the helpers allocate), treat the header as sensitive so a
+    // secret is never logged in the clear. Upholds the noexcept contract.
+    try {
+        const auto lower = toLowerCopy(name);
+        for (const auto& exact : kSensitiveExactNames) {
+            if (lower == exact) return true;
+        }
+        return matchesSubstringPolicy(name);
+    } catch (...) {
+        return true;
     }
-    return matchesSubstringPolicy(name);
 }
 
 bool isSensitiveName(std::string_view name) noexcept {
-    return matchesSubstringPolicy(name);
+    try {
+        return matchesSubstringPolicy(name);
+    } catch (...) {
+        return true;
+    }
 }
 
 std::map<std::string, std::string> maskHeaders(const std::map<std::string, std::string>& headers) {

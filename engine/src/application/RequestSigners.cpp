@@ -28,10 +28,10 @@ std::string randomNonce() {
     for (int i = 0; i < 4; ++i) {
         const auto v = dist(gen);
         for (int j = 0; j < 8; ++j) {
-            constexpr char hex[] = "0123456789abcdef";
+            constexpr char kHex[] = "0123456789abcdef";
             const auto byte = static_cast<unsigned>((v >> (j * 8)) & 0xFFU);
-            nonce.push_back(hex[byte >> 4]);
-            nonce.push_back(hex[byte & 0xF]);
+            nonce.push_back(kHex[byte >> 4]);
+            nonce.push_back(kHex[byte & 0xF]);
         }
     }
     return nonce;
@@ -252,7 +252,7 @@ namespace {
 std::string awsUriEncodePath(std::string_view input) {
     std::string out;
     out.reserve(input.size());
-    constexpr char hex[] = "0123456789ABCDEF";
+    constexpr char kHex[] = "0123456789ABCDEF";
     for (const auto byte : input) {
         const auto u = static_cast<unsigned char>(byte);
         const bool unreserved = (u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') ||
@@ -262,8 +262,8 @@ std::string awsUriEncodePath(std::string_view input) {
             out.push_back(byte);
         } else {
             out.push_back('%');
-            out.push_back(hex[u >> 4]);
-            out.push_back(hex[u & 0xF]);
+            out.push_back(kHex[u >> 4]);
+            out.push_back(kHex[u & 0xF]);
         }
     }
     return out;
@@ -274,7 +274,7 @@ std::string awsUriEncodePath(std::string_view input) {
 std::string awsUriEncodeQuery(std::string_view input) {
     std::string out;
     out.reserve(input.size());
-    constexpr char hex[] = "0123456789ABCDEF";
+    constexpr char kHex[] = "0123456789ABCDEF";
     for (const auto byte : input) {
         const auto u = static_cast<unsigned char>(byte);
         const bool unreserved = (u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') ||
@@ -284,8 +284,8 @@ std::string awsUriEncodeQuery(std::string_view input) {
             out.push_back(byte);
         } else {
             out.push_back('%');
-            out.push_back(hex[u >> 4]);
-            out.push_back(hex[u & 0xF]);
+            out.push_back(kHex[u >> 4]);
+            out.push_back(kHex[u & 0xF]);
         }
     }
     return out;

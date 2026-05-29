@@ -22,7 +22,7 @@ namespace {
 [[nodiscard]] std::string toLowerCopy(std::string_view s) {
     std::string out;
     out.reserve(s.size());
-    for (char c : s) {
+    for (char const c : s) {
         out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     }
     return out;

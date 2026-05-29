@@ -53,12 +53,10 @@ constexpr std::uintmax_t kMaxUploadBytes = 50ULL * 1024 * 1024;  // 50 MiB
 }
 
 [[nodiscard]] bool headerSaysMultipart(const std::map<std::string, std::string>& headers) {
-    for (const auto& [k, v] : headers) {
-        if (toLower(k) == "content-type" && toLower(v).starts_with("multipart/form-data")) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(headers, [](const auto& kv) {
+        return toLower(kv.first) == "content-type" &&
+               toLower(kv.second).starts_with("multipart/form-data");
+    });
 }
 
 [[nodiscard]] bool anyValueIsFileRef(const std::map<std::string, std::string>& resolvedFormFields) {

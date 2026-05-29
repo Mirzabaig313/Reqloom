@@ -4,10 +4,12 @@
 #include <QtWidgets/QApplication>
 
 int main(int argc, char** argv) {
-    QApplication qtApp(argc, argv);
-    qtApp.setApplicationName(QStringLiteral("ChainAPI"));
-    qtApp.setApplicationVersion(QStringLiteral("0.1.0"));
-    qtApp.setOrganizationName(QStringLiteral("ChainAPI"));
+    // The QApplication instance must outlive the UI: it owns the Qt event
+    // loop driven by QApplication::exec() below.
+    [[maybe_unused]] const QApplication qtApp(argc, argv);
+    QApplication::setApplicationName(QStringLiteral("ChainAPI"));
+    QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    QApplication::setOrganizationName(QStringLiteral("ChainAPI"));
 
     chainapi::desktop::App app;
     app.show();

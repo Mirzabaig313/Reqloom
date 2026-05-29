@@ -265,7 +265,7 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
 
     // 3. Cycle detection: if sorted.size() < graph.size(), there's a cycle.
     if (sorted.size() < graph.size()) {
-        std::set<OperationId> sortedSet(sorted.begin(), sorted.end());
+        std::set<OperationId> const sortedSet(sorted.begin(), sorted.end());
         std::string cycleOps;
         for (const auto& [node, _] : graph) {
             if (!sortedSet.contains(node)) {

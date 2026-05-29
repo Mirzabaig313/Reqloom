@@ -72,7 +72,7 @@ std::expected<std::vector<OperationId>, ChainApiError> topologicalSort(
     // Cycle detection: if any node never reached zero in-degree, the
     // remaining nodes form (or feed into) a cycle.
     if (sorted.size() < inDegree.size()) {
-        std::set<OperationId> sortedSet(sorted.begin(), sorted.end());
+        std::set<OperationId> const sortedSet(sorted.begin(), sorted.end());
         std::string cycleOps;
         for (const auto& [node, _] : inDegree) {
             if (!sortedSet.contains(node)) {

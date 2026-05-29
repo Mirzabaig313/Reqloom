@@ -694,19 +694,14 @@ bool compareValues(CompareOp op, const Json& lhs, const Json& rhs) {
             if (!rhs.is_array()) {
                 return false;
             }
-            for (const auto& el : rhs) {
-                if (el == lhs) {
-                    return true;
-                }
-            }
-            return false;
+            return std::ranges::any_of(rhs, [&](const auto& el) { return el == lhs; });
         }
         case CompareOp::Matches: {
             if (!lhs.is_string() || !rhs.is_string()) {
                 return false;
             }
             try {
-                std::regex re{rhs.get<std::string>()};
+                std::regex const re{rhs.get<std::string>()};
                 return std::regex_search(lhs.get<std::string>(), re);
             } catch (const std::regex_error&) {
                 return false;

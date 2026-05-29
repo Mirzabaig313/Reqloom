@@ -176,7 +176,7 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
     }
     if (!op.expectStatusList.empty()) {
         e << YAML::Key << "expect_status" << YAML::Value << YAML::Flow << YAML::BeginSeq;
-        for (int s : op.expectStatusList) {
+        for (int const s : op.expectStatusList) {
             e << s;
         }
         e << YAML::EndSeq;
@@ -364,7 +364,7 @@ std::string emitActor(const Actor& actor) {
         // operation-level expect_status.
         if (!actor.refresh->expectStatusList.empty()) {
             e << YAML::Key << "expect_status" << YAML::Value << YAML::Flow << YAML::BeginSeq;
-            for (int s : actor.refresh->expectStatusList) {
+            for (int const s : actor.refresh->expectStatusList) {
                 e << s;
             }
             e << YAML::EndSeq;

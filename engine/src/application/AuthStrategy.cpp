@@ -324,9 +324,9 @@ std::expected<ActorSession, ChainApiError> executeOAuth2TokenRequest(
     if (response->status < 200 || response->status >= 300) {
         // Surface enough of the body to debug misconfigured credentials.
         constexpr std::size_t kBodyExcerpt = 200;
-        std::string excerpt = response->body.size() > kBodyExcerpt
-                                  ? response->body.substr(0, kBodyExcerpt) + "..."
-                                  : response->body;
+        std::string const excerpt = response->body.size() > kBodyExcerpt
+                                        ? response->body.substr(0, kBodyExcerpt) + "..."
+                                        : response->body;
         return std::unexpected(
             ChainApiError{ErrorCode::SessionRefreshFailed,
                           ErrorClass::Auth,

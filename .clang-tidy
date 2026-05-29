@@ -5,6 +5,7 @@ Checks: >
   cert-*,
   clang-analyzer-*,
   cppcoreguidelines-*,
+  misc-*,
   modernize-*,
   performance-*,
   portability-*,
@@ -15,7 +16,14 @@ Checks: >
   -modernize-use-trailing-return-type,
   -readability-magic-numbers,
   -readability-identifier-length,
-  -readability-named-parameter
+  -readability-named-parameter,
+  -cert-err58-cpp,
+  -cert-dcl58-cpp,
+  -cert-oop54-cpp,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion,
+  -misc-use-anonymous-namespace
 
 WarningsAsErrors: ''
 HeaderFilterRegex: '(engine|cli|desktop)/(include|src)/.*'
@@ -24,28 +32,42 @@ FormatStyle: file
 # Naming aligned with AGENTS.md:
 #   Types               PascalCase
 #   Functions / methods camelCase
-#   Constants           kCamelCase (local) or SCREAMING_SNAKE_CASE (macros only)
+#   Constants           kCamelCase (compile-time) or SCREAMING_SNAKE_CASE (macros only)
 #   Members             camelCase with trailing _ for private/protected
+#
+# Constant casing notes:
+#   1. The `k` prefix is followed by PascalCase (kMaxYamlDepth), so the
+#      case style must be CamelCase, not camelBack. camelBack would demand
+#      a lowercase char after the prefix (kmaxYamlDepth) and reject every
+#      correctly-named constant.
+#   2. The `k` prefix applies to genuine compile-time constants
+#      (ConstexprVariable / GlobalConstant), NOT to every `const`-qualified
+#      local. clang-tidy lumps `const auto x = f();` into "LocalConstant",
+#      so LocalConstant/StaticConstant/ClassConstant stay camelBack (no
+#      prefix) — otherwise hundreds of ordinary const locals get flagged.
 CheckOptions:
-  - { key: readability-identifier-naming.NamespaceCase,           value: lower_case }
-  - { key: readability-identifier-naming.ClassCase,               value: CamelCase }
-  - { key: readability-identifier-naming.StructCase,              value: CamelCase }
-  - { key: readability-identifier-naming.EnumCase,                value: CamelCase }
-  - { key: readability-identifier-naming.EnumConstantCase,        value: CamelCase }
-  - { key: readability-identifier-naming.FunctionCase,            value: camelBack }
-  - { key: readability-identifier-naming.MethodCase,              value: camelBack }
-  - { key: readability-identifier-naming.MemberCase,              value: camelBack }
-  - { key: readability-identifier-naming.PrivateMemberSuffix,     value: _ }
-  - { key: readability-identifier-naming.ProtectedMemberSuffix,   value: _ }
-  - { key: readability-identifier-naming.VariableCase,            value: camelBack }
-  - { key: readability-identifier-naming.ParameterCase,           value: camelBack }
-  - { key: readability-identifier-naming.LocalConstantCase,       value: camelBack }
-  - { key: readability-identifier-naming.LocalConstantPrefix,     value: k }
-  - { key: readability-identifier-naming.ClassConstantCase,       value: camelBack }
-  - { key: readability-identifier-naming.ClassConstantPrefix,     value: k }
-  - { key: readability-identifier-naming.GlobalConstantCase,      value: camelBack }
-  - { key: readability-identifier-naming.GlobalConstantPrefix,    value: k }
-  - { key: readability-identifier-naming.StaticConstantCase,      value: camelBack }
-  - { key: readability-identifier-naming.StaticConstantPrefix,    value: k }
-  - { key: readability-identifier-naming.MacroDefinitionCase,     value: UPPER_CASE }
-  - { key: readability-identifier-naming.TemplateParameterCase,   value: CamelCase }
+  - { key: readability-identifier-naming.NamespaceCase,            value: lower_case }
+  - { key: readability-identifier-naming.ClassCase,                value: CamelCase }
+  - { key: readability-identifier-naming.StructCase,               value: CamelCase }
+  - { key: readability-identifier-naming.EnumCase,                 value: CamelCase }
+  - { key: readability-identifier-naming.EnumConstantCase,         value: CamelCase }
+  - { key: readability-identifier-naming.TypeAliasCase,            value: CamelCase }
+  - { key: readability-identifier-naming.TypedefCase,              value: CamelCase }
+  - { key: readability-identifier-naming.ConceptCase,              value: CamelCase }
+  - { key: readability-identifier-naming.FunctionCase,             value: camelBack }
+  - { key: readability-identifier-naming.MethodCase,               value: camelBack }
+  - { key: readability-identifier-naming.MemberCase,               value: camelBack }
+  - { key: readability-identifier-naming.PrivateMemberSuffix,      value: _ }
+  - { key: readability-identifier-naming.ProtectedMemberSuffix,    value: _ }
+  - { key: readability-identifier-naming.VariableCase,             value: camelBack }
+  - { key: readability-identifier-naming.ParameterCase,            value: camelBack }
+  - { key: readability-identifier-naming.LocalConstantCase,        value: camelBack }
+  - { key: readability-identifier-naming.LocalConstantPointerCase, value: camelBack }
+  - { key: readability-identifier-naming.StaticConstantCase,       value: camelBack }
+  - { key: readability-identifier-naming.ClassConstantCase,        value: camelBack }
+  - { key: readability-identifier-naming.ConstexprVariableCase,    value: CamelCase }
+  - { key: readability-identifier-naming.ConstexprVariablePrefix,  value: k }
+  - { key: readability-identifier-naming.GlobalConstantCase,       value: CamelCase }
+  - { key: readability-identifier-naming.GlobalConstantPrefix,     value: k }
+  - { key: readability-identifier-naming.MacroDefinitionCase,      value: UPPER_CASE }
+  - { key: readability-identifier-naming.TemplateParameterCase,    value: CamelCase }
