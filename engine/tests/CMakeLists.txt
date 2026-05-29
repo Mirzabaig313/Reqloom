@@ -32,6 +32,7 @@ add_executable(chainapi-engine-unit-tests
     unit/HeaderMaskingTest.cpp
     unit/SqliteHistoryStoreTest.cpp
     unit/SchemaValidationTest.cpp
+    unit/SecretEnvTagTest.cpp
 )
 target_include_directories(chainapi-engine-unit-tests
     PRIVATE ${CMAKE_SOURCE_DIR}/engine/src

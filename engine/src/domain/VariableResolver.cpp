@@ -124,7 +124,24 @@ std::string_view trim(std::string_view s) {
 
 using ResolvedRef = std::optional<std::string>;
 
-ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const ResolveContext& rctx);
+ResolvedRef resolveDotted(std::string_view ref,
+                          const RunContext& ctx,
+                          const ResolveContext& rctx,
+                          int depth);
+
+/// Single-pass `{{...}}` substitution shared by the public resolve() and
+/// by the env branch (which re-expands embedded refs like a `!secret`
+/// env value that parsed to `{{secret.NAME}}`). `depth` bounds the
+/// re-expansion so a self-referential env value can't recurse forever.
+std::string substituteRefs(std::string_view input,
+                           const RunContext& ctx,
+                           const ResolveContext& rctx,
+                           std::vector<std::string>& unresolved,
+                           int depth);
+
+// Re-expansion of an env value into one further level (env → secret) is
+// the only nesting we rely on; a small cap leaves margin without cycles.
+constexpr int kMaxResolveDepth = 4;
 
 struct CallParts {
     std::string_view name;
@@ -151,7 +168,8 @@ std::optional<CallParts> splitCall(std::string_view tail) {
 ///   - bareReference         → resolves env.X / secret.X / actor.var / resource.var
 ResolvedRef resolveCallArg(std::string_view arg,
                            const RunContext& ctx,
-                           const ResolveContext& rctx) {
+                           const ResolveContext& rctx,
+                           int depth) {
     arg = trim(arg);
     if (arg.empty()) {
         return std::nullopt;
@@ -164,14 +182,15 @@ ResolvedRef resolveCallArg(std::string_view arg,
         return std::string{arg.substr(1, arg.size() - 2)};
     }
 
-    return resolveDotted(arg, ctx, rctx);
+    return resolveDotted(arg, ctx, rctx, depth);
 }
 
 /// Resolve `$.something[+offset]` builtins (category 1 in the resolution
 /// order). Returns nullopt for unrecognised builtins.
 ResolvedRef resolveBuiltin(std::string_view ref,
                            const RunContext& ctx,
-                           const ResolveContext& rctx) {
+                           const ResolveContext& rctx,
+                           int depth) {
     if (!ref.starts_with("$.")) {
         return std::nullopt;
     }
@@ -184,7 +203,7 @@ ResolvedRef resolveBuiltin(std::string_view ref,
             if (!call) {
                 return std::nullopt;
             }
-            const auto value = resolveCallArg(call->arg, ctx, rctx);
+            const auto value = resolveCallArg(call->arg, ctx, rctx, depth);
             if (!value) {
                 return std::nullopt;
             }
@@ -201,7 +220,7 @@ ResolvedRef resolveBuiltin(std::string_view ref,
             if (!call) {
                 return std::nullopt;
             }
-            const auto value = resolveCallArg(call->arg, ctx, rctx);
+            const auto value = resolveCallArg(call->arg, ctx, rctx, depth);
             if (!value) {
                 return std::nullopt;
             }
@@ -218,7 +237,7 @@ ResolvedRef resolveBuiltin(std::string_view ref,
             if (!call) {
                 return std::nullopt;
             }
-            const auto value = resolveCallArg(call->arg, ctx, rctx);
+            const auto value = resolveCallArg(call->arg, ctx, rctx, depth);
             if (!value) {
                 return std::nullopt;
             }
@@ -237,16 +256,16 @@ ResolvedRef resolveBuiltin(std::string_view ref,
     std::chrono::seconds offset{0};
     bool hasOffset = false;
     {
-        int depth = 0;
+        int parenDepth = 0;
         std::size_t opPos = std::string_view::npos;
         char opCh = '\0';
         for (std::size_t i = 0; i < ref.size(); ++i) {
             const char c = ref[i];
             if (c == '(') {
-                ++depth;
+                ++parenDepth;
             } else if (c == ')') {
-                --depth;
-            } else if (depth == 0 && (c == '+' || c == '-') && i > 1) {
+                --parenDepth;
+            } else if (parenDepth == 0 && (c == '+' || c == '-') && i > 1) {
                 opPos = i;
                 opCh = c;
             }
@@ -304,7 +323,10 @@ ResolvedRef resolveBuiltin(std::string_view ref,
 
 /// Resolve dotted refs (env.X, secret.X, actor.var, resource.var) and
 /// indexed refs (resource[N].var).
-ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const ResolveContext& rctx) {
+ResolvedRef resolveDotted(std::string_view ref,
+                          const RunContext& ctx,
+                          const ResolveContext& rctx,
+                          int depth) {
     const auto dotPos = ref.find('.');
     if (dotPos == std::string_view::npos) {
         return std::nullopt;
@@ -315,10 +337,26 @@ ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const Res
 
     if (scope == "env") {
         auto it = rctx.envVars.find(field);
-        if (it != rctx.envVars.end()) {
-            return it->second;
+        if (it == rctx.envVars.end()) {
+            return std::nullopt;
         }
-        return std::nullopt;
+        // An env value may itself be a reference — e.g. a `!secret NAME`
+        // entry parsed to `{{secret.NAME}}`. Re-expand one level deeper
+        // (bounded by kMaxResolveDepth) so callers see the resolved
+        // secret, not the literal placeholder. If the nested value can't
+        // fully resolve (e.g. the secret wasn't loaded), report this env
+        // ref as unresolved rather than emitting a half-expanded string —
+        // the outer loop then preserves the `{{env.X}}` placeholder and
+        // records it, matching how every other unresolved ref behaves.
+        if (it->second.find("{{") != std::string::npos) {
+            std::vector<std::string> nested;
+            auto expanded = substituteRefs(it->second, ctx, rctx, nested, depth + 1);
+            if (!nested.empty()) {
+                return std::nullopt;
+            }
+            return expanded;
+        }
+        return it->second;
     }
 
     if (scope == "secret") {
@@ -377,35 +415,37 @@ ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const Res
     return std::nullopt;
 }
 
-}  // namespace
-
-VariableResolver::VariableResolver() = default;
-
-VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
-                                                   const RunContext& ctx,
-                                                   const ResolveContext& resolveCtx) const {
+std::string substituteRefs(std::string_view input,
+                           const RunContext& ctx,
+                           const ResolveContext& rctx,
+                           std::vector<std::string>& unresolved,
+                           int depth) {
     static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
-    const std::string input(templateStr);
-    std::string output;
-    // Most templates expand near their original size; reserving the input
-    // length avoids the early reallocations as segments are appended.
-    output.reserve(input.size());
-    std::vector<std::string> unresolved;
+    // Depth guard: a self-referential env value (e.g. one whose value
+    // references itself) would otherwise loop. At the cap, return the
+    // text unchanged rather than recursing further.
+    if (depth >= kMaxResolveDepth) {
+        return std::string{input};
+    }
 
-    std::sregex_iterator const begin(input.begin(), input.end(), refPattern);
+    const std::string in{input};
+    std::string output;
+    output.reserve(in.size());
+
+    std::sregex_iterator const begin(in.begin(), in.end(), refPattern);
     std::sregex_iterator const end;
     std::size_t lastPos = 0;
 
     for (auto it = begin; it != end; ++it) {
         const auto matchPos = static_cast<std::size_t>(it->position());
-        output += input.substr(lastPos, matchPos - lastPos);
+        output += in.substr(lastPos, matchPos - lastPos);
 
         const auto rawRef = (*it)[1].str();
         const auto trimmed = std::string{trim(rawRef)};
 
-        ResolvedRef resolved = resolveBuiltin(trimmed, ctx, resolveCtx);
+        ResolvedRef resolved = resolveBuiltin(trimmed, ctx, rctx, depth);
         if (!resolved) {
-            resolved = resolveDotted(trimmed, ctx, resolveCtx);
+            resolved = resolveDotted(trimmed, ctx, rctx, depth);
         }
 
         if (resolved) {
@@ -418,7 +458,19 @@ VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
         lastPos = matchPos + static_cast<std::size_t>(it->length());
     }
 
-    output += input.substr(lastPos);
+    output += in.substr(lastPos);
+    return output;
+}
+
+}  // namespace
+
+VariableResolver::VariableResolver() = default;
+
+VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
+                                                   const RunContext& ctx,
+                                                   const ResolveContext& resolveCtx) const {
+    std::vector<std::string> unresolved;
+    std::string output = substituteRefs(templateStr, ctx, resolveCtx, unresolved, 0);
     return Result{std::move(output), std::move(unresolved)};
 }
 
