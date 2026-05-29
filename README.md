@@ -32,8 +32,6 @@ chainapi/
 └── tools/                  Format, lint, CI helpers
 ```
 
-The architecture is documented in [`doc/ChainAPI - Project Layout.md`](doc/ChainAPI%20-%20Project%20Layout.md).
-
 ---
 
 ## Architectural Boundary (Why It Matters)
@@ -44,8 +42,9 @@ boundary is mechanically enforced in three places:
 1. **CMake link guards** (`cmake/ChainApiBoundaryGuards.cmake`) — fail
    the configure step if the engine or CLI transitively links Qt
    Widgets / Gui / Quick / QScintilla.
-2. **CI grep job** (`tools/ci/boundary-check.sh`, run by both
-   `appveyor.yml` and the static-checks stage of `azure-pipelines.yml`) —
+2. **CI grep job** (`tools/ci/boundary-check.sh`, run by the static-checks
+   job in `.github/workflows/build.yml` and the static-checks stage of
+   `azure-pipelines.yml`) —
    catches `#include` regressions before they land.
 3. **Public header surface** (`engine/include/chainapi/engine/`) — pImpl
    + value types only, no Qt UI types appear.
@@ -160,7 +159,7 @@ export PATH="/opt/homebrew/opt/llvm@18/bin:$PATH"
 sudo apt-get install -y clang-format-18
 ```
 
-The first command is exactly what runs in `appveyor.yml` and
+The first command is exactly what runs in `.github/workflows/build.yml` and
 `azure-pipelines.yml`. If it exits 0, CI's static-checks job will pass.
 
 ### Build options
@@ -173,6 +172,53 @@ The first command is exactly what runs in `appveyor.yml` and
 | `CHAINAPI_BUILD_IPC`         | OFF     | Build the Phase B IPC server (post-MVP)     |
 | `CHAINAPI_ENABLE_ASAN`       | OFF     | Enable AddressSanitizer in Debug            |
 | `CHAINAPI_ENABLE_UBSAN`      | OFF     | Enable UBSan in Debug                       |
+
+### Secret storage (`{{secret.X}}`)
+
+Projects can reference credentials with `{{secret.NAME}}` in any template
+(headers, body, auth config, poll predicates). At run start the engine
+reads exactly the referenced names from the OS keychain into the run — it
+never bulk-dumps the keychain — and substitutes them into outbound
+requests. Values are masked in events, logs, and on-disk history.
+
+The backend is [QtKeychain](https://github.com/frankosterfeld/qtkeychain)
+(macOS Keychain, Windows Credential Store, libsecret/KWallet on Linux).
+It is **not** part of Qt and is not shipped by aqtinstall, so it resolves
+one of two ways:
+
+1. **System install (used as-is if present).** The top-level
+   `find_package(Qt6Keychain CONFIG QUIET)` picks it up:
+
+   ```bash
+   # macOS
+   brew install qtkeychain
+   # Ubuntu / Debian
+   sudo apt-get install -y qtkeychain-qt6-dev
+   ```
+
+2. **Built from source via FetchContent (the fallback).** When no system
+   QtKeychain is found, `third_party/CMakeLists.txt` fetches and builds it
+   (v0.14.0, ~20-30s) against the already-present Qt6. This is what CI
+   uses — deliberately avoiding the vcpkg `qtkeychain` port, which drags
+   qtbase from source and blows past the CI job time budget.
+
+Either way the engine compiles the real keychain store
+(`CHAINAPI_HAS_QTKEYCHAIN=1`). The build never *requires* QtKeychain: if
+it is somehow absent, the engine falls back to a no-op store and
+`{{secret.X}}` references resolve to empty — handy for CI smoke builds
+that don't exercise secrets, but not a production path.
+
+Confirm which path you got after configuring:
+
+```bash
+grep Qt6Keychain_DIR build/macos-debug/CMakeCache.txt
+# a real path  → system install found (FetchContent skipped)
+# NOTFOUND     → built from source via FetchContent
+```
+
+> **Note:** the first keychain access from a freshly built (unsigned)
+> binary triggers the OS authorization prompt — launch the app or CLI
+> normally and allow it once.
 
 ---
 

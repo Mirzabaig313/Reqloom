@@ -43,14 +43,14 @@ find_package(yaml-cpp CONFIG REQUIRED)
 find_package(CURL REQUIRED GLOBAL)
 find_package(SQLite3 REQUIRED GLOBAL)
 find_package(nlohmann_json CONFIG REQUIRED)
-# Qt6Keychain — optional OS-keychain backend for SecretStore, exposed as
-# `Qt6Keychain::Qt6Keychain`. Kept QUIET/optional on purpose: the vcpkg
-# `qtkeychain` port pulls qtbase from source, which blows past CI's job
-# time budget (see vcpkg.json $qt-comment). Instead, provide it out-of-band
-# alongside the aqtinstall Qt — point CMAKE_PREFIX_PATH at a QtKeychain
-# build, or set -DQt6Keychain_DIR=<path>. When found, the engine compiles
-# the real KeychainSecretStore (CHAINAPI_HAS_QTKEYCHAIN=1); when absent it
-# falls back to the no-op store and {{secret.X}} references stay unresolved.
+# Qt6Keychain — OS-keychain backend for the engine's SecretStore, exposed
+# as `Qt6Keychain::Qt6Keychain`. Tried QUIET first so a system/Homebrew
+# install (or a machine where vcpkg's port is acceptable) is used as-is.
+# When NOT found here, third_party/CMakeLists.txt builds it from source via
+# FetchContent against the already-present Qt6 — deliberately avoiding the
+# vcpkg `qtkeychain` port, which drags qtbase from source and blows past
+# CI's job time budget (see vcpkg.json $qt-comment). Either way the engine
+# ends up with the real KeychainSecretStore (CHAINAPI_HAS_QTKEYCHAIN=1).
 find_package(Qt6Keychain CONFIG QUIET)
 
 # UI-only deps

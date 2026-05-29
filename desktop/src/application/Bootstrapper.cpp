@@ -1,18 +1,13 @@
+// Constructs the ExecutionEngine with default infrastructure. Centralising
+// the wiring keeps view models free of dependency-injection logic.
 #include "Bootstrapper.h"
+
+#include <chainapi/engine/Factories.h>
 
 namespace chainapi::desktop {
 
-// Wire concrete dependencies into ExecutionEngine via the factory helpers:
-//
-//   engine::ExecutionEngine::Dependencies deps {
-//       engine::makeCurlHttpClient(),
-//       engine::makeYamlSchemaParser(),
-//       engine::makeSqliteHistoryStore(),
-//       engine::makeKeychainSecretStore(),
-//       engine::makeQuickJsHookRunner(),
-//   };
-//   engine_ = std::make_unique<engine::ExecutionEngine>(std::move(deps));
-Bootstrapper::Bootstrapper() = default;
+Bootstrapper::Bootstrapper()
+    : engine_(std::make_unique<engine::ExecutionEngine>(engine::makeDefaultDependencies())) {}
 
 Bootstrapper::~Bootstrapper() = default;
 
