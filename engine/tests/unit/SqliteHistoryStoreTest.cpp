@@ -206,6 +206,57 @@ TEST(SqliteHistoryStore, request_response_extraction_events_round_trip) {
     EXPECT_EQ(extBack->variableNames[1], "ts");
 }
 
+TEST(SqliteHistoryStore, captured_response_body_round_trips) {
+    // When a run opts into body capture, the body must survive a replay
+    // so the desktop can show past responses in full (Postman-style
+    // history). A row without a captured body must replay with an empty
+    // optional, not an empty string.
+    TempDb tmp;
+    ce::SqliteHistoryStore store;
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+
+    const ce::RunId rid{11};
+    ce::RunStarted rs;
+    rs.runId = rid;
+    rs.target = ce::OperationId{"order.create"};
+    rs.at = someTimePoint();
+    store.append(rs);
+
+    const std::string payload = R"({"data":{"id":"ord-1","status":"confirmed"}})";
+
+    ce::ResponseReceived captured;
+    captured.runId = rid;
+    captured.stepIndex = 0;
+    captured.status = 201;
+    captured.bodySize = payload.size();
+    captured.elapsed = std::chrono::milliseconds{17};
+    captured.body = payload;
+    captured.at = someTimePoint();
+    ASSERT_TRUE(store.append(captured).has_value());
+
+    ce::ResponseReceived uncaptured;
+    uncaptured.runId = rid;
+    uncaptured.stepIndex = 1;
+    uncaptured.status = 200;
+    uncaptured.bodySize = 56;
+    uncaptured.elapsed = std::chrono::milliseconds{9};
+    uncaptured.at = someTimePoint();
+    ASSERT_TRUE(store.append(uncaptured).has_value());
+
+    auto replayed = store.eventsFor(rid);
+    ASSERT_TRUE(replayed.has_value());
+    ASSERT_EQ(replayed->size(), 3u);  // RunStarted + 2 responses
+
+    const auto* capturedBack = std::get_if<ce::ResponseReceived>(&(*replayed)[1]);
+    ASSERT_NE(capturedBack, nullptr);
+    ASSERT_TRUE(capturedBack->body.has_value());
+    EXPECT_EQ(*capturedBack->body, payload);
+
+    const auto* uncapturedBack = std::get_if<ce::ResponseReceived>(&(*replayed)[2]);
+    ASSERT_NE(uncapturedBack, nullptr);
+    EXPECT_FALSE(uncapturedBack->body.has_value());
+}
+
 TEST(SqliteHistoryStore, step_failed_event_round_trips_with_error_code) {
     TempDb tmp;
     ce::SqliteHistoryStore store;

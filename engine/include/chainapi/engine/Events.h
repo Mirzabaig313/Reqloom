@@ -70,6 +70,16 @@ struct ResponseReceived {
     std::size_t bodySize{};
     std::chrono::milliseconds elapsed{};
     TimePoint at;
+
+    /// Raw response body, populated only when the run opted in via
+    /// `RunOptions::captureResponseBodies`. Empty by default — the
+    /// engine's redaction-first contract keeps bodies off the event
+    /// surface unless a caller explicitly asks for them. When opted in,
+    /// every response is captured, including auth/login/refresh bodies
+    /// (which carry tokens), so a developer can fully debug each call.
+    /// Capped at 5 MiB. Persisted to the history store when present, so
+    /// past responses replay in full (Postman-style history).
+    std::optional<std::string> body{};
 };
 
 struct ExtractionApplied {

@@ -60,7 +60,20 @@ struct RunOptions {
     bool resetExtractions{false};  ///< Clears the extraction cache before running.
     bool resetSessions{false};     ///< Invalidates all sessions before running.
     std::string environment;       ///< Empty → use project default.
+
+    /// Opt-in: include the raw response body on `ResponseReceived` events.
+    /// Off by default — bodies stay off the event surface to honor the
+    /// redaction-first contract. When on, every response is captured,
+    /// including auth/login/refresh responses (which carry tokens) so a
+    /// developer can fully inspect and debug each call. Bodies are capped
+    /// at `kMaxCapturedBodyBytes` and persisted to the history store, so
+    /// past responses can be replayed in full (Postman-style history).
+    bool captureResponseBodies{false};
 };
+
+/// Upper bound on a captured response body (5 MiB). Larger bodies are
+/// truncated to this many bytes on the `ResponseReceived` event.
+inline constexpr std::size_t kMaxCapturedBodyBytes = 5U * 1024U * 1024U;
 
 class ExecutionEngine {
 public:

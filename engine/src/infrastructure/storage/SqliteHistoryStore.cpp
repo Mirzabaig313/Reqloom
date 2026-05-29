@@ -279,6 +279,14 @@ struct EventEnvelope {
                              {"headers", headersToJson(v.headers)},
                              {"bodySize", v.bodySize},
                              {"elapsedMs", v.elapsed.count()}};
+                // `body` is present only when the run opted into capture
+                // (RunOptions::captureResponseBodies). Persist it so the
+                // desktop can replay past responses in full — matching the
+                // Postman-style history a developer expects. Absent by
+                // default, so non-capturing runs keep the slim payload.
+                if (v.body) {
+                    e.payload["body"] = *v.body;
+                }
             } else if constexpr (std::is_same_v<T, ExtractionApplied>) {
                 e.eventType = "ExtractionApplied";
                 e.stepIndex = v.stepIndex;
@@ -397,6 +405,12 @@ struct EventEnvelope {
         ev.headers = headersFromJson(p.value("headers", json::array()));
         ev.bodySize = p.value("bodySize", std::size_t{0});
         ev.elapsed = std::chrono::milliseconds{p.value("elapsedMs", std::int64_t{0})};
+        // Restored only for capture-era rows. Pre-capture rows (and
+        // non-capturing runs) have no "body" key, leaving the optional
+        // empty — the replayed event then matches what was emitted live.
+        if (p.contains("body") && p["body"].is_string()) {
+            ev.body = p["body"].get<std::string>();
+        }
         ev.at = at;
         return ev;
     }
