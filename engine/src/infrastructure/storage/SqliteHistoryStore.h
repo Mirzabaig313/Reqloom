@@ -2,6 +2,8 @@
 
 #include "HistoryStore.h"
 
+#include <memory>
+
 namespace chainapi::engine {
 
 class SqliteHistoryStore final : public HistoryStore {
@@ -17,7 +19,13 @@ public:
     std::expected<void, ChainApiError> append(const RunEvent& event) override;
     [[nodiscard]] std::expected<std::vector<RunEvent>, ChainApiError> eventsFor(
         RunId run) const override;
+    [[nodiscard]] std::expected<std::vector<RunHistoryRow>, ChainApiError> listRuns(
+        std::size_t limit) const override;
     void close() override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace chainapi::engine

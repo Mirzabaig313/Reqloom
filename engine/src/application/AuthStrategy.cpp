@@ -55,7 +55,7 @@ using namespace codecs;
 // in order; each step's response can extract variables for subsequent steps.
 class ChainAuthenticator final : public Authenticator {
 public:
-    explicit ChainAuthenticator(AuthDependencies deps) : deps_(deps) {}
+    explicit ChainAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
@@ -176,7 +176,7 @@ private:
 // and exposes it as session.variables["credential"]. No HTTP call is made.
 class BasicAuthenticator final : public Authenticator {
 public:
-    explicit BasicAuthenticator(AuthDependencies deps) : deps_(deps) {}
+    explicit BasicAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
@@ -236,7 +236,7 @@ private:
 /// Cookie location is rejected — cookie jar is post-MVP.
 class ApiKeyAuthenticator final : public Authenticator {
 public:
-    explicit ApiKeyAuthenticator(AuthDependencies deps) : deps_(deps) {}
+    explicit ApiKeyAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
@@ -422,7 +422,7 @@ std::expected<std::string, ChainApiError> resolveAuthConfigOptional(const Actor&
 // from actor.authConfig; scope is optional.
 class OAuth2ClientCredentialsAuthenticator final : public Authenticator {
 public:
-    explicit OAuth2ClientCredentialsAuthenticator(AuthDependencies deps) : deps_(deps) {}
+    explicit OAuth2ClientCredentialsAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
@@ -480,7 +480,7 @@ private:
 // scope is optional.
 class OAuth2PasswordAuthenticator final : public Authenticator {
 public:
-    explicit OAuth2PasswordAuthenticator(AuthDependencies deps) : deps_(deps) {}
+    explicit OAuth2PasswordAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
@@ -550,7 +550,7 @@ private:
 // realm are optional.
 class OAuth1Authenticator final : public Authenticator {
 public:
-    explicit OAuth1Authenticator(AuthDependencies deps) : deps_(deps) {}
+    explicit OAuth1Authenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
@@ -631,7 +631,7 @@ private:
 /// secret stores at run time.
 class AwsSigV4Authenticator final : public Authenticator {
 public:
-    explicit AwsSigV4Authenticator(AuthDependencies deps) : deps_(deps) {}
+    explicit AwsSigV4Authenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
                                                             RunContext& ctx,
@@ -690,7 +690,8 @@ private:
 
 }  // namespace
 
-std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor, AuthDependencies deps) {
+std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor,
+                                                   const AuthDependencies& deps) {
     switch (actor.strategy) {
         case AuthStrategy::Simple:
         case AuthStrategy::Chain:
@@ -712,7 +713,7 @@ std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor, AuthDepen
 }
 
 std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
-    const Actor& actor, RunContext& ctx, const ResolveContext& rctx, AuthDependencies deps) {
+    const Actor& actor, RunContext& ctx, const ResolveContext& rctx, const AuthDependencies& deps) {
     if (!actor.refresh) {
         return std::unexpected(ChainApiError{
             ErrorCode::SessionRefreshFailed,

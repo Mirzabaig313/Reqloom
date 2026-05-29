@@ -30,6 +30,7 @@ add_executable(chainapi-engine-unit-tests
     unit/QuickJsHookRunnerTest.cpp
     unit/SchemaParserMultiFileTest.cpp
     unit/HeaderMaskingTest.cpp
+    unit/SqliteHistoryStoreTest.cpp
 )
 target_include_directories(chainapi-engine-unit-tests
     PRIVATE ${CMAKE_SOURCE_DIR}/engine/src
@@ -69,6 +70,9 @@ target_link_libraries(chainapi-engine-integration-tests
         nlohmann_json::nlohmann_json
         GTest::gtest
         GTest::gtest_main
+)
+target_include_directories(chainapi-engine-integration-tests
+    PRIVATE ${CMAKE_SOURCE_DIR}/engine/src
 )
 target_compile_definitions(chainapi-engine-integration-tests
     PRIVATE

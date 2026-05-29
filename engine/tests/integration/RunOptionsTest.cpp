@@ -12,6 +12,8 @@
 // flag is not wired through ExecutionEngine::run().
 #include "MockSutHarness.h"
 
+#include "infrastructure/storage/SqliteHistoryStore.h"
+
 #include <chainapi/engine/Factories.h>
 #include <chainapi/engine/PublicApi.h>
 
@@ -20,6 +22,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <type_traits>
+#include <variant>
 
 namespace ce = chainapi::engine;
 namespace ct = chainapi::tests;
@@ -487,10 +491,10 @@ TEST_F(RunOptionsFixture, auth_request_response_events_share_step_index_with_par
     std::vector<ce::RequestPrepared> reqEvents;
     std::vector<ce::ResponseReceived> respEvents;
     engine.subscribe([&](const ce::RunEvent& ev) {
-        if (const auto* e = std::get_if<ce::RequestPrepared>(&ev)) {
-            reqEvents.push_back(*e);
-        } else if (const auto* e = std::get_if<ce::ResponseReceived>(&ev)) {
-            respEvents.push_back(*e);
+        if (const auto* reqEv = std::get_if<ce::RequestPrepared>(&ev)) {
+            reqEvents.push_back(*reqEv);
+        } else if (const auto* respEv = std::get_if<ce::ResponseReceived>(&ev)) {
+            respEvents.push_back(*respEv);
         }
     });
 
@@ -549,7 +553,6 @@ TEST_F(RunOptionsFixture, extraction_applied_event_carries_variable_names_only) 
     }
     EXPECT_TRUE(sawPingExtraction) << "expected ExtractionApplied for ping resource";
 }
-
 
 // ─── Cancellation event surface ──────────────────────────────────────────────
 
@@ -646,4 +649,137 @@ TEST_F(RunOptionsFixture, step_cancelled_event_fires_for_each_cancelled_step) {
     // produces here.
     EXPECT_EQ(cancelEvents[0].op.value, "first.get");
     EXPECT_EQ(cancelEvents[1].op.value, "second.get");
+}
+
+
+// ─── HistoryStore end-to-end ────────────────────────────────────────────────
+// Confirms the executor's emit() path persists every RunEvent into the
+// SQLite store, that the runs table denormalises correctly from the
+// stream, and that a second process (simulated by a second store
+// instance) can read back what the first wrote.
+
+TEST_F(RunOptionsFixture, run_persists_full_event_stream_to_history_store) {
+    const auto dbPath = fs::temp_directory_path() /
+                        ("chainapi-history-itest-" + std::to_string(::getpid()) + ".sqlite");
+    std::error_code ec;
+    fs::remove(dbPath, ec);
+    fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
+    fs::remove(fs::path{dbPath.string() + "-shm"}, ec);
+
+    RunOptionsScratchProject project(kSimpleProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine::Dependencies deps = ce::makeDefaultDependencies();
+    ASSERT_NE(deps.history, nullptr);
+    auto opened = deps.history->open(dbPath);
+    ASSERT_TRUE(opened.has_value()) << opened.error().detail;
+
+    ce::ExecutionEngine engine(std::move(deps));
+    ce::RunContext ctx;
+
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_TRUE(result->succeeded());
+
+    // Open a SECOND store instance against the same file — same shape
+    // the desktop process will use to read the writer's output.
+    ce::SqliteHistoryStore reader;
+    ASSERT_TRUE(reader.open(dbPath).has_value());
+
+    auto runs = reader.listRuns(10);
+    ASSERT_TRUE(runs.has_value()) << runs.error().detail;
+    ASSERT_EQ(runs->size(), 1u);
+    EXPECT_EQ((*runs)[0].targetOp.value, "ping.get");
+    EXPECT_EQ((*runs)[0].outcome, "Succeeded");
+    EXPECT_EQ((*runs)[0].envName, "local");
+
+    auto events = reader.eventsFor((*runs)[0].runId);
+    ASSERT_TRUE(events.has_value());
+
+    // Every variant we emit on the happy path should be present.
+    bool sawRunStarted = false;
+    bool sawStepStarted = false;
+    bool sawRequestPrepared = false;
+    bool sawResponseReceived = false;
+    bool sawExtractionApplied = false;
+    bool sawRunEnded = false;
+    for (const auto& ev : *events) {
+        std::visit(
+            [&](const auto& e) {
+                using T = std::decay_t<decltype(e)>;
+                if constexpr (std::is_same_v<T, ce::RunStarted>) sawRunStarted = true;
+                else if constexpr (std::is_same_v<T, ce::StepStarted>) sawStepStarted = true;
+                else if constexpr (std::is_same_v<T, ce::RequestPrepared>) sawRequestPrepared = true;
+                else if constexpr (std::is_same_v<T, ce::ResponseReceived>) sawResponseReceived = true;
+                else if constexpr (std::is_same_v<T, ce::ExtractionApplied>) sawExtractionApplied = true;
+                else if constexpr (std::is_same_v<T, ce::RunEnded>) sawRunEnded = true;
+            },
+            ev);
+    }
+    EXPECT_TRUE(sawRunStarted);
+    EXPECT_TRUE(sawStepStarted);
+    EXPECT_TRUE(sawRequestPrepared);
+    EXPECT_TRUE(sawResponseReceived);
+    EXPECT_TRUE(sawExtractionApplied);
+    EXPECT_TRUE(sawRunEnded);
+
+    reader.close();
+    fs::remove(dbPath, ec);
+    fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
+    fs::remove(fs::path{dbPath.string() + "-shm"}, ec);
+}
+
+TEST_F(RunOptionsFixture, history_store_persists_request_headers_already_masked) {
+    // The desktop history pane reads headers directly out of the
+    // payload column; the masker that runs at emit time is the only
+    // line of defence between the bearer token and the disk. Pin it.
+    const auto dbPath = fs::temp_directory_path() /
+                        ("chainapi-history-mask-" + std::to_string(::getpid()) + ".sqlite");
+    std::error_code ec;
+    fs::remove(dbPath, ec);
+    fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
+    fs::remove(fs::path{dbPath.string() + "-shm"}, ec);
+
+    RunOptionsScratchProject project(kSimpleProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine::Dependencies deps = ce::makeDefaultDependencies();
+    ASSERT_TRUE(deps.history->open(dbPath).has_value());
+
+    ce::ExecutionEngine engine(std::move(deps));
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+    ASSERT_TRUE(result.has_value());
+
+    ce::SqliteHistoryStore reader;
+    ASSERT_TRUE(reader.open(dbPath).has_value());
+    auto runs = reader.listRuns(10);
+    ASSERT_TRUE(runs.has_value() && !runs->empty());
+
+    auto events = reader.eventsFor((*runs)[0].runId);
+    ASSERT_TRUE(events.has_value());
+
+    bool sawAuthHeaderRedacted = false;
+    for (const auto& ev : *events) {
+        if (const auto* req = std::get_if<ce::RequestPrepared>(&ev)) {
+            for (const auto& [k, v] : req->maskedHeaders) {
+                if (k == "Authorization") {
+                    EXPECT_EQ(v, ce::kRedactedHeaderValue)
+                        << "Authorization value reached disk unredacted";
+                    sawAuthHeaderRedacted = true;
+                }
+            }
+        }
+    }
+    EXPECT_TRUE(sawAuthHeaderRedacted)
+        << "expected at least one persisted RequestPrepared with masked Authorization";
+
+    reader.close();
+    fs::remove(dbPath, ec);
+    fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
+    fs::remove(fs::path{dbPath.string() + "-shm"}, ec);
 }
