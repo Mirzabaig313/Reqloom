@@ -39,10 +39,15 @@ RunController::RunController(ce::ExecutionEngine& engine,
     qRegisterMetaType<RunReport>("RunReport");
 
     // The engine retains this callback for its lifetime (no unsubscribe in the
-    // public API). The callback fires on the worker thread; it only emits
-    // signals, which queue to the GUI thread. RunController is owned for the
-    // app's lifetime and outlives no run, so `this` stays valid here.
-    engine_.subscribe([this](const ce::RunEvent& event) { publishEvent(event); });
+    // public API) and outlives this controller (App member order). The
+    // callback captures a copy of the shared `alive` flag — not a bare `this`
+    // — and bails once `~RunController` clears it, so an event delivered after
+    // destruction can never dereference a freed `this`.
+    engine_.subscribe([this, alive = alive_](const ce::RunEvent& event) {
+        if (alive->load(std::memory_order_acquire)) {
+            publishEvent(event);
+        }
+    });
 
     connect(&watcher_, &QFutureWatcher<RunReport>::finished, this, [this]() {
         const RunReport report = watcher_.result();
@@ -53,6 +58,9 @@ RunController::RunController(ce::ExecutionEngine& engine,
 }
 
 RunController::~RunController() {
+    // Block any further callback work, then drain the worker so an in-flight
+    // run() that is mid-emit can't race the teardown of this object.
+    alive_->store(false, std::memory_order_release);
     if (watcher_.isRunning()) {
         watcher_.waitForFinished();
     }
@@ -104,19 +112,27 @@ void RunController::run(const QString& target,
     options.captureResponseBodies = captureResponseBodies_;
 
     const ce::OperationId targetId{target.toStdString()};
-    const ce::Project& project = project_.project();
+    // Capture a strong handle to the project so a concurrent reload (which
+    // rebinds ProjectModel to a fresh Project) can't dangle the reference the
+    // worker is mid-run against. The UI also blocks reloads while running,
+    // but this makes the lifetime correct independent of that guard.
+    const std::shared_ptr<const ce::Project> project = project_.projectPtr();
     ce::RunContext& ctx = *context_;
 
     running_ = true;
     emit runningChanged(true);
 
-    // engine_.run blocks; run it on a worker. The captured references
-    // (engine, project, ctx) outlive the run: the engine lives for the app
-    // lifetime, the project is pinned while a run is active, and ctx is a
-    // member owned by this controller.
-    auto future = QtConcurrent::run([this, &project, targetId, &ctx, options]() -> RunReport {
+    // Clear any prior run's id before the new run's RunStarted lands, so a
+    // cancelRun() racing the worker startup can't cancel by a stale id.
+    currentRunId_.store(0, std::memory_order_release);
+
+    // engine_.run blocks; run it on a worker. The captured state outlives the
+    // run: the engine lives for the app lifetime, `project` is a shared handle
+    // owned by the lambda, and ctx is a member owned by this controller (whose
+    // destructor drains the worker before teardown).
+    auto future = QtConcurrent::run([this, project, targetId, &ctx, options]() -> RunReport {
         RunReport report;
-        auto result = engine_.run(project, targetId, ctx, options);
+        auto result = engine_.run(*project, targetId, ctx, options);
         if (!result) {
             report.engineError = true;
             report.errorCode = format::errorCode(result.error().code);
@@ -131,8 +147,15 @@ void RunController::run(const QString& target,
 }
 
 void RunController::cancelRun() {
-    if (running_) {
-        engine_.cancel(engine::RunId{currentRunId_.load(std::memory_order_acquire)});
+    if (!running_) {
+        return;
+    }
+    // A run is in flight but its RunStarted may not have arrived yet (id still
+    // 0). Cancelling by a zero id is a no-op in the engine, so only forward a
+    // real id; the worker also checks cancellation each step once it starts.
+    const auto runId = currentRunId_.load(std::memory_order_acquire);
+    if (runId != 0) {
+        engine_.cancel(engine::RunId{runId});
     }
 }
 

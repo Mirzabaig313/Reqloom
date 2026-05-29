@@ -82,7 +82,9 @@ SecretsDialog::SecretsDialog(SecretManager& secrets, const ProjectModel& project
         setButton_->setEnabled(hasSelection);
         clearButton_->setEnabled(hasSelection);
     });
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::accept);
+    // The Close button is a reject action; map it to reject() so the dialog's
+    // result reflects "dismissed" rather than "accepted".
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     if (!secrets_.backendAvailable()) {
         backendBanner_->setText(QStringLiteral(
@@ -141,6 +143,9 @@ void SecretsDialog::refresh() {
         table_->setRowCount(1);
         auto* empty = new QTableWidgetItem(QStringLiteral("This project references no secrets."));
         empty->setForeground(QBrush(QColor(Qt::gray)));
+        // Non-selectable / disabled so it can't be acted on as if it were a
+        // real secret (selectedSecretName would otherwise return this text).
+        empty->setFlags(Qt::NoItemFlags);
         table_->setItem(0, kNameColumn, empty);
         table_->setSpan(0, 0, 1, 2);
     }

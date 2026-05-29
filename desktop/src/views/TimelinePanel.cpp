@@ -54,10 +54,11 @@ QTreeWidgetItem* TimelinePanel::stepRow(int index, const QString& op) {
             return item;
         }
     }
+    // Constructing with `tree_` as parent already inserts the row as a
+    // top-level item — no explicit addTopLevelItem needed.
     auto* item = new QTreeWidgetItem(tree_);
     item->setData(0, kStepIndexRole, index);
     item->setText(0, QStringLiteral("%1. %2").arg(index + 1).arg(op));
-    tree_->addTopLevelItem(item);
     return item;
 }
 

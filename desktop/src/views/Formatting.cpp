@@ -56,8 +56,8 @@ QString runOutcome(engine::RunOutcome outcome) {
 }
 
 QString errorCode(engine::ErrorCode code) {
-    return QString::fromUtf8(engine::toCodeString(code).data(),
-                             static_cast<qsizetype>(engine::toCodeString(code).size()));
+    const auto codeStr = engine::toCodeString(code);
+    return QString::fromUtf8(codeStr.data(), static_cast<qsizetype>(codeStr.size()));
 }
 
 QString extractionSource(engine::Extraction::Source source) {

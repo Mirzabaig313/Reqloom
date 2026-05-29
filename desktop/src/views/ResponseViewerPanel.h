@@ -37,7 +37,7 @@ public slots:
 
 private:
     void renderBody(const QString& body);
-    void populateTree(QTreeWidgetItem* parent, const QString& key, const QJsonValue& value);
+    void populateTree(QTreeWidgetItem* parent, const QJsonValue& value);
     void showBodyPlaceholder(const QString& message);
 
     QLabel* statusLabel_{nullptr};

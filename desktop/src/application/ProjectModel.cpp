@@ -19,24 +19,27 @@ void ProjectModel::loadFromDirectory(const QString& directory) {
     auto parsed = engine::parseProject(yaml);
     if (!parsed) {
         const auto& err = parsed.error();
-        emit loadFailed(
-            QString::fromUtf8(engine::toCodeString(err.code).data(),
-                              static_cast<qsizetype>(engine::toCodeString(err.code).size())),
-            QString::fromStdString(err.detail));
+        const auto codeStr = engine::toCodeString(err.code);
+        emit loadFailed(QString::fromUtf8(codeStr.data(), static_cast<qsizetype>(codeStr.size())),
+                        QString::fromStdString(err.detail));
         return;
     }
 
-    project_ = std::move(*parsed);
+    project_ = std::make_shared<const engine::Project>(std::move(*parsed));
     root_ = dir;
     emit loaded();
 }
 
 bool ProjectModel::hasProject() const noexcept {
-    return project_.has_value();
+    return project_ != nullptr;
 }
 
 const engine::Project& ProjectModel::project() const noexcept {
     return *project_;
+}
+
+std::shared_ptr<const engine::Project> ProjectModel::projectPtr() const noexcept {
+    return project_;
 }
 
 QString ProjectModel::name() const {
