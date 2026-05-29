@@ -73,30 +73,47 @@ void ensureCurlGlobalInit() {
 
 // ─── Callbacks ───────────────────────────────────────────────────────────────
 
-std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
+// libcurl invokes these from its own C stack frames; a C++ exception
+// unwinding through them is undefined behaviour. Both are noexcept and
+// signal failure to libcurl by returning a short count, which surfaces as
+// CURLE_WRITE_ERROR on curl_easy_perform.
+std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) noexcept {
+    const std::size_t total = size * nmemb;
     auto* body = static_cast<std::string*>(userdata);
-    body->append(ptr, size * nmemb);
-    return size * nmemb;
+    try {
+        body->append(ptr, total);
+    } catch (...) {
+        return 0;
+    }
+    return total;
 }
 
-std::size_t headerCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
+std::size_t headerCallback(char* ptr,
+                           std::size_t size,
+                           std::size_t nmemb,
+                           void* userdata) noexcept {
+    const std::size_t total = size * nmemb;
     auto* headers = static_cast<std::vector<std::pair<std::string, std::string>>*>(userdata);
-    std::string line(ptr, size * nmemb);
-    auto colonPos = line.find(':');
-    if (colonPos == std::string::npos) {
-        return size * nmemb;
-    }
+    try {
+        std::string line(ptr, total);
+        auto colonPos = line.find(':');
+        if (colonPos == std::string::npos) {
+            return total;
+        }
 
-    auto key = line.substr(0, colonPos);
-    auto value = line.substr(colonPos + 1);
-    while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
-        value.erase(value.begin());
+        auto key = line.substr(0, colonPos);
+        auto value = line.substr(colonPos + 1);
+        while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
+            value.erase(value.begin());
+        }
+        while (!value.empty() && (value.back() == '\r' || value.back() == '\n')) {
+            value.pop_back();
+        }
+        headers->emplace_back(std::move(key), std::move(value));
+    } catch (...) {
+        return 0;
     }
-    while (!value.empty() && (value.back() == '\r' || value.back() == '\n')) {
-        value.pop_back();
-    }
-    headers->emplace_back(std::move(key), std::move(value));
-    return size * nmemb;
+    return total;
 }
 
 [[nodiscard]] const char* methodString(HttpMethod method) noexcept {

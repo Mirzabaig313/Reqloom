@@ -71,7 +71,9 @@ std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     return result;
 }
 
-nlohmann::json yamlNodeToJsonValue(const YAML::Node& node);
+constexpr int kMaxYamlDepth = 64;  // prevent stack overflow on malicious input
+
+nlohmann::json yamlNodeToJsonValue(const YAML::Node& node, int depth);
 
 nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
     const auto raw = scalar.as<std::string>();
@@ -112,7 +114,11 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
     return nlohmann::json(raw);
 }
 
-nlohmann::json yamlNodeToJsonValue(const YAML::Node& node) {
+nlohmann::json yamlNodeToJsonValue(const YAML::Node& node, int depth) {
+    if (depth > kMaxYamlDepth) {
+        throw YAML::Exception(
+            node.Mark(), "YAML nesting exceeds maximum depth of " + std::to_string(kMaxYamlDepth));
+    }
     if (!node || node.IsNull()) {
         return {nullptr};
     }
@@ -122,14 +128,14 @@ nlohmann::json yamlNodeToJsonValue(const YAML::Node& node) {
     if (node.IsSequence()) {
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& item : node) {
-            arr.push_back(yamlNodeToJsonValue(item));
+            arr.push_back(yamlNodeToJsonValue(item, depth + 1));
         }
         return arr;
     }
     if (node.IsMap()) {
         nlohmann::json obj = nlohmann::json::object();
         for (const auto& kv : node) {
-            obj[kv.first.as<std::string>()] = yamlNodeToJsonValue(kv.second);
+            obj[kv.first.as<std::string>()] = yamlNodeToJsonValue(kv.second, depth + 1);
         }
         return obj;
     }
@@ -140,7 +146,7 @@ std::string nodeToJsonString(const YAML::Node& node) {
     if (!node || node.IsNull()) {
         return "";
     }
-    return yamlNodeToJsonValue(node).dump();
+    return yamlNodeToJsonValue(node, 0).dump();
 }
 
 std::vector<Extraction> parseExtractions(const YAML::Node& node) {
@@ -704,6 +710,34 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
 
 // ─── File loading ────────────────────────────────────────────────────────────
 
+// Cap raw schema document size before handing bytes to yaml-cpp. The YAML
+// layer is an attacker-controlled surface (AGENTS.md §"Reading user input");
+// an unbounded document is a trivial memory-exhaustion vector. 8 MiB is far
+// above any legitimate hand-written schema.
+constexpr std::uintmax_t kMaxYamlBytes = std::uintmax_t{8} * 1024 * 1024;
+
+[[nodiscard]] std::expected<YAML::Node, ChainApiError> loadYamlCapped(const fs::path& file) {
+    std::error_code ec;
+    const auto size = fs::file_size(file, ec);
+    if (ec) {
+        return std::unexpected(
+            ChainApiError{ErrorCode::YamlParse,
+                          ErrorClass::Schema,
+                          "could not stat schema file " + file.string() + ": " + ec.message()});
+    }
+    if (size > kMaxYamlBytes) {
+        return std::unexpected(ChainApiError{ErrorCode::YamlParse,
+                                             ErrorClass::Schema,
+                                             "schema file exceeds 8 MiB cap: " + file.string()});
+    }
+    try {
+        return YAML::LoadFile(file.string());
+    } catch (const YAML::Exception& e) {
+        return std::unexpected(ChainApiError{
+            ErrorCode::YamlParse, ErrorClass::Schema, file.string() + ": " + e.what()});
+    }
+}
+
 std::vector<fs::path> resolveGlob(const fs::path& baseDir, const std::string& pattern) {
     std::vector<fs::path> results;
     auto dir = baseDir / fs::path(pattern).parent_path();
@@ -745,185 +779,192 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
             ErrorCode::YamlParse, ErrorClass::Schema, "File not found: " + rootYaml.string()});
     }
 
-    YAML::Node root;
+    // yaml-cpp's Node::as<T>() (without a default) throws YAML::Exception on
+    // a type mismatch. Those calls are scattered across the parse helpers
+    // below on attacker-controlled input; this guard keeps every one of them
+    // inside the std::expected<Project, ChainApiError> contract instead of
+    // unwinding out of the engine.
     try {
-        root = YAML::LoadFile(rootYaml.string());
+        auto loadedRoot = loadYamlCapped(rootYaml);
+        if (!loadedRoot) {
+            return std::unexpected(loadedRoot.error());
+        }
+        const YAML::Node root = std::move(*loadedRoot);
+
+        auto version = root["version"].as<int>(0);
+        if (version < 1 || version > 3) {
+            return std::unexpected(
+                ChainApiError{ErrorCode::SchemaVersion,
+                              ErrorClass::Schema,
+                              "Unsupported schema version " + std::to_string(version) +
+                                  " (supported: 1–3). Run `chainapi migrate` to upgrade."});
+        }
+
+        Project project;
+        project.name = root["name"].as<std::string>("Unnamed Project");
+        project.defaultEnvironment = root["default_environment"].as<std::string>("local");
+
+        const auto baseDir = rootYaml.parent_path();
+
+        auto loadSubFile = [&](const fs::path& file) -> std::optional<ChainApiError> {
+            auto loadedSub = loadYamlCapped(file);
+            if (!loadedSub) {
+                return loadedSub.error();
+            }
+            const YAML::Node subDoc = std::move(*loadedSub);
+
+            const auto relPath = fs::relative(file, baseDir).string();
+            if (relPath.starts_with("actors/") || relPath.starts_with("actors\\")) {
+                // Two file shapes accepted:
+                //   Form A (flat):    name: vendor\n description: ...\n auth: ...
+                //   Form B (wrapped): vendor:\n   description: ...\n   auth: ...
+                auto actorId = subDoc["name"].as<std::string>("");
+                const YAML::Node actorBody = subDoc["name"] ? subDoc : [&]() {
+                    if (subDoc.IsMap() && subDoc.size() == 1) {
+                        auto it = subDoc.begin();
+                        actorId = it->first.as<std::string>();
+                        return it->second;
+                    }
+                    return subDoc;
+                }();
+                if (actorId.empty()) {
+                    actorId = file.stem().string();
+                }
+                project.actors[ActorId{actorId}] = parseActor(actorId, actorBody);
+            } else if (relPath.starts_with("resources/") || relPath.starts_with("resources\\")) {
+                auto resourceId = subDoc["name"].as<std::string>("");
+                const YAML::Node resourceBody = subDoc["name"] ? subDoc : [&]() {
+                    if (subDoc.IsMap() && subDoc.size() == 1) {
+                        auto it = subDoc.begin();
+                        resourceId = it->first.as<std::string>();
+                        return it->second;
+                    }
+                    return subDoc;
+                }();
+                if (resourceId.empty()) {
+                    resourceId = file.stem().string();
+                }
+                auto parsedResource = parseResource(resourceId, resourceBody, baseDir);
+                if (!parsedResource) {
+                    return parsedResource.error();
+                }
+                project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
+            } else if (relPath.starts_with("environments/") ||
+                       relPath.starts_with("environments\\")) {
+                // Two env file shapes accepted:
+                //   Form A (wrapped): name: local\n variables:\n   baseUrl: ...
+                //   Form B (flat):    baseUrl: ...\n admin_email: ...
+                auto envName = subDoc["name"].as<std::string>(file.stem().string());
+                std::map<std::string, std::string> vars;
+                if (subDoc["variables"] && subDoc["variables"].IsMap()) {
+                    for (const auto& kv : subDoc["variables"]) {
+                        vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
+                    }
+                } else if (subDoc.IsMap()) {
+                    for (const auto& kv : subDoc) {
+                        auto key = kv.first.as<std::string>();
+                        if (key == "name" || key == "transport") {
+                            continue;
+                        }
+                        if (kv.second.IsScalar()) {
+                            vars[key] = kv.second.as<std::string>("");
+                        }
+                    }
+                }
+                project.environments[envName] = std::move(vars);
+
+                // Optional `transport:` block at env level. Sits alongside
+                // `variables:` in the wrapped form, or as a top-level key
+                // in the flat form (which is why we skip it in the flat
+                // loop above — otherwise a YAML map would land in `vars`
+                // as the empty string).
+                if (subDoc["transport"]) {
+                    project.transport[envName] = parseTransport(subDoc["transport"]);
+                }
+            }
+            return std::nullopt;
+        };
+
+        auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ChainApiError> {
+            if (!importsNode) {
+                return std::nullopt;
+            }
+
+            std::vector<std::string> patterns;
+            if (importsNode.IsSequence()) {
+                for (const auto& p : importsNode) {
+                    patterns.push_back(p.as<std::string>());
+                }
+            } else if (importsNode.IsMap()) {
+                for (const auto& kv : importsNode) {
+                    if (kv.second.IsSequence()) {
+                        for (const auto& p : kv.second) {
+                            patterns.push_back(p.as<std::string>());
+                        }
+                    } else if (kv.second.IsScalar()) {
+                        patterns.push_back(kv.second.as<std::string>());
+                    }
+                }
+            }
+
+            for (const auto& pattern : patterns) {
+                auto files = resolveGlob(baseDir, pattern);
+                for (const auto& file : files) {
+                    if (auto err = loadSubFile(file)) {
+                        return err;
+                    }
+                }
+            }
+            return std::nullopt;
+        };
+
+        if (auto err = processImports(root["imports"])) {
+            return std::unexpected(*err);
+        }
+
+        if (root["actors"] && root["actors"].IsMap()) {
+            for (const auto& kv : root["actors"]) {
+                auto actorId = kv.first.as<std::string>();
+                project.actors[ActorId{actorId}] = parseActor(actorId, kv.second);
+            }
+        }
+
+        if (root["resources"] && root["resources"].IsMap()) {
+            for (const auto& kv : root["resources"]) {
+                auto resourceId = kv.first.as<std::string>();
+                auto parsedResource = parseResource(resourceId, kv.second, baseDir);
+                if (!parsedResource) {
+                    return std::unexpected(parsedResource.error());
+                }
+                project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
+            }
+        }
+
+        if (root["environment"] && root["environment"].IsMap()) {
+            std::map<std::string, std::string> vars;
+            for (const auto& kv : root["environment"]) {
+                vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
+            }
+            project.environments[project.defaultEnvironment] = std::move(vars);
+        }
+
+        // Root-level `transport:` block. Applies to the default environment
+        // only — multi-env projects should put the block on each env file.
+        if (root["transport"]) {
+            project.transport[project.defaultEnvironment] = parseTransport(root["transport"]);
+        }
+
+        // Reject undefined references, missing depends_on targets, and
+        // dependency cycles at load time (AC-3.1.4 / 3.1.5 / 3.1.6).
+        if (auto valid = DependencyResolver{}.validate(project); !valid) {
+            return std::unexpected(valid.error());
+        }
+
+        return project;
     } catch (const YAML::Exception& e) {
         return std::unexpected(ChainApiError{
             ErrorCode::YamlParse, ErrorClass::Schema, rootYaml.string() + ": " + e.what()});
     }
-
-    auto version = root["version"].as<int>(0);
-    if (version < 1 || version > 3) {
-        return std::unexpected(
-            ChainApiError{ErrorCode::SchemaVersion,
-                          ErrorClass::Schema,
-                          "Unsupported schema version " + std::to_string(version) +
-                              " (supported: 1–3). Run `chainapi migrate` to upgrade."});
-    }
-
-    Project project;
-    project.name = root["name"].as<std::string>("Unnamed Project");
-    project.defaultEnvironment = root["default_environment"].as<std::string>("local");
-
-    const auto baseDir = rootYaml.parent_path();
-
-    auto loadSubFile = [&](const fs::path& file) -> std::optional<ChainApiError> {
-        YAML::Node subDoc;
-        try {
-            subDoc = YAML::LoadFile(file.string());
-        } catch (const YAML::Exception& e) {
-            return ChainApiError{
-                ErrorCode::YamlParse, ErrorClass::Schema, file.string() + ": " + e.what()};
-        }
-
-        const auto relPath = fs::relative(file, baseDir).string();
-        if (relPath.starts_with("actors/") || relPath.starts_with("actors\\")) {
-            // Two file shapes accepted:
-            //   Form A (flat):    name: vendor\n description: ...\n auth: ...
-            //   Form B (wrapped): vendor:\n   description: ...\n   auth: ...
-            auto actorId = subDoc["name"].as<std::string>("");
-            const YAML::Node actorBody = subDoc["name"] ? subDoc : [&]() {
-                if (subDoc.IsMap() && subDoc.size() == 1) {
-                    auto it = subDoc.begin();
-                    actorId = it->first.as<std::string>();
-                    return it->second;
-                }
-                return subDoc;
-            }();
-            if (actorId.empty()) {
-                actorId = file.stem().string();
-            }
-            project.actors[ActorId{actorId}] = parseActor(actorId, actorBody);
-        } else if (relPath.starts_with("resources/") || relPath.starts_with("resources\\")) {
-            auto resourceId = subDoc["name"].as<std::string>("");
-            const YAML::Node resourceBody = subDoc["name"] ? subDoc : [&]() {
-                if (subDoc.IsMap() && subDoc.size() == 1) {
-                    auto it = subDoc.begin();
-                    resourceId = it->first.as<std::string>();
-                    return it->second;
-                }
-                return subDoc;
-            }();
-            if (resourceId.empty()) {
-                resourceId = file.stem().string();
-            }
-            auto parsedResource = parseResource(resourceId, resourceBody, baseDir);
-            if (!parsedResource) {
-                return parsedResource.error();
-            }
-            project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
-        } else if (relPath.starts_with("environments/") || relPath.starts_with("environments\\")) {
-            // Two env file shapes accepted:
-            //   Form A (wrapped): name: local\n variables:\n   baseUrl: ...
-            //   Form B (flat):    baseUrl: ...\n admin_email: ...
-            auto envName = subDoc["name"].as<std::string>(file.stem().string());
-            std::map<std::string, std::string> vars;
-            if (subDoc["variables"] && subDoc["variables"].IsMap()) {
-                for (const auto& kv : subDoc["variables"]) {
-                    vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
-                }
-            } else if (subDoc.IsMap()) {
-                for (const auto& kv : subDoc) {
-                    auto key = kv.first.as<std::string>();
-                    if (key == "name" || key == "transport") {
-                        continue;
-                    }
-                    if (kv.second.IsScalar()) {
-                        vars[key] = kv.second.as<std::string>("");
-                    }
-                }
-            }
-            project.environments[envName] = std::move(vars);
-
-            // Optional `transport:` block at env level. Sits alongside
-            // `variables:` in the wrapped form, or as a top-level key
-            // in the flat form (which is why we skip it in the flat
-            // loop above — otherwise a YAML map would land in `vars`
-            // as the empty string).
-            if (subDoc["transport"]) {
-                project.transport[envName] = parseTransport(subDoc["transport"]);
-            }
-        }
-        return std::nullopt;
-    };
-
-    auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ChainApiError> {
-        if (!importsNode) {
-            return std::nullopt;
-        }
-
-        std::vector<std::string> patterns;
-        if (importsNode.IsSequence()) {
-            for (const auto& p : importsNode) {
-                patterns.push_back(p.as<std::string>());
-            }
-        } else if (importsNode.IsMap()) {
-            for (const auto& kv : importsNode) {
-                if (kv.second.IsSequence()) {
-                    for (const auto& p : kv.second) {
-                        patterns.push_back(p.as<std::string>());
-                    }
-                } else if (kv.second.IsScalar()) {
-                    patterns.push_back(kv.second.as<std::string>());
-                }
-            }
-        }
-
-        for (const auto& pattern : patterns) {
-            auto files = resolveGlob(baseDir, pattern);
-            for (const auto& file : files) {
-                if (auto err = loadSubFile(file)) {
-                    return err;
-                }
-            }
-        }
-        return std::nullopt;
-    };
-
-    if (auto err = processImports(root["imports"])) {
-        return std::unexpected(*err);
-    }
-
-    if (root["actors"] && root["actors"].IsMap()) {
-        for (const auto& kv : root["actors"]) {
-            auto actorId = kv.first.as<std::string>();
-            project.actors[ActorId{actorId}] = parseActor(actorId, kv.second);
-        }
-    }
-
-    if (root["resources"] && root["resources"].IsMap()) {
-        for (const auto& kv : root["resources"]) {
-            auto resourceId = kv.first.as<std::string>();
-            auto parsedResource = parseResource(resourceId, kv.second, baseDir);
-            if (!parsedResource) {
-                return std::unexpected(parsedResource.error());
-            }
-            project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
-        }
-    }
-
-    if (root["environment"] && root["environment"].IsMap()) {
-        std::map<std::string, std::string> vars;
-        for (const auto& kv : root["environment"]) {
-            vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
-        }
-        project.environments[project.defaultEnvironment] = std::move(vars);
-    }
-
-    // Root-level `transport:` block. Applies to the default environment
-    // only — multi-env projects should put the block on each env file.
-    if (root["transport"]) {
-        project.transport[project.defaultEnvironment] = parseTransport(root["transport"]);
-    }
-
-    // Reject undefined references, missing depends_on targets, and
-    // dependency cycles at load time (AC-3.1.4 / 3.1.5 / 3.1.6).
-    if (auto valid = DependencyResolver{}.validate(project); !valid) {
-        return std::unexpected(valid.error());
-    }
-
-    return project;
 }
 
 }  // namespace chainapi::engine
