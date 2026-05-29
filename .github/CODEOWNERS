@@ -41,7 +41,6 @@
 # A poisoned build or release step ships malware to every user.
 
 /.github/                           @Mirzabaig313
-/appveyor.yml                       @Mirzabaig313
 /azure-pipelines.yml                @Mirzabaig313
 /tools/ci/                          @Mirzabaig313
 /tools/git-hooks/                   @Mirzabaig313
