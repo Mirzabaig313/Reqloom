@@ -12,6 +12,7 @@
 #include <QtWidgets/QTreeWidgetItem>
 
 #include <QtCore/QString>
+#include <QtCore/QtGlobal>
 
 namespace chainapi::desktop::tests {
 
@@ -133,6 +134,15 @@ TEST(ResponseViewerPanel, reset_clears_a_previously_rendered_body) {
 }  // namespace chainapi::desktop::tests
 
 int main(int argc, char** argv) {
+    // Force the offscreen QPA platform before constructing QApplication.
+    // gtest_discover_tests runs this binary to enumerate tests, and that
+    // discovery process does not inherit CTest's ENVIRONMENT property, so on
+    // a headless CI runner Qt would otherwise try the xcb plugin, fail to
+    // connect to a display, and abort. Only set it when the caller hasn't,
+    // so a developer can still force a real platform locally.
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+    }
     QApplication app(argc, argv);
     chainapi::desktop::tests::g_app = &app;
     ::testing::InitGoogleTest(&argc, argv);
