@@ -4,9 +4,11 @@
 #include "../application/EnvironmentSettings.h"
 #include "../application/ProjectModel.h"
 #include "../application/RunController.h"
+#include "../application/SecretManager.h"
 #include "ProjectExplorerWidget.h"
 #include "RequestEditorPanel.h"
 #include "ResponseViewerPanel.h"
+#include "SecretsDialog.h"
 #include "TimelinePanel.h"
 
 #include <chainapi/engine/PublicApi.h>
@@ -33,6 +35,7 @@ MainWindow::MainWindow(engine::ExecutionEngine& engine, ProjectModel& project, Q
     resize(1280, 800);
 
     runController_ = new RunController(engine, project, this);
+    secretManager_ = new SecretManager(this);
 
     buildLayout();
     buildMenusAndToolbar();
@@ -72,18 +75,24 @@ void MainWindow::buildMenusAndToolbar() {
     openAction->setShortcut(QKeySequence::Open);
     connect(openAction, &QAction::triggered, this, &MainWindow::onOpenProject);
 
+    manageSecretsAction_ = new QAction(QStringLiteral("Manage &Secrets…"), this);
+    manageSecretsAction_->setEnabled(false);
+    connect(manageSecretsAction_, &QAction::triggered, this, &MainWindow::onManageSecrets);
+
     auto* quitAction = new QAction(QStringLiteral("&Quit"), this);
     quitAction->setShortcut(QKeySequence::Quit);
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
 
     auto* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
     fileMenu->addAction(openAction);
+    fileMenu->addAction(manageSecretsAction_);
     fileMenu->addSeparator();
     fileMenu->addAction(quitAction);
 
     auto* toolbar = addToolBar(QStringLiteral("Main"));
     toolbar->setMovable(false);
     toolbar->addAction(openAction);
+    toolbar->addAction(manageSecretsAction_);
     toolbar->addSeparator();
 
     toolbar->addWidget(new QLabel(QStringLiteral("  Environment: "), this));
@@ -178,6 +187,14 @@ void MainWindow::openProjectDirectory(const QString& directory) {
     project_.loadFromDirectory(directory);
 }
 
+void MainWindow::onManageSecrets() {
+    if (!project_.hasProject()) {
+        return;
+    }
+    SecretsDialog dialog(*secretManager_, project_, this);
+    dialog.exec();
+}
+
 void MainWindow::onProjectLoaded() {
     explorer_->populate(project_);
     requestEditor_->clearOperation();
@@ -187,6 +204,7 @@ void MainWindow::onProjectLoaded() {
     envCombo_->clear();
     envCombo_->addItems(project_.environmentNames());
     envCombo_->setEnabled(true);
+    manageSecretsAction_->setEnabled(true);
 
     // Restore the environment last used for this project. Falls back to the
     // project default (which environmentNames() lists first, so an unset or
