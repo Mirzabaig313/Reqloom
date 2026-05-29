@@ -451,7 +451,6 @@ struct EventEnvelope {
 
 }  // namespace
 
-
 // ─── Impl ────────────────────────────────────────────────────────────────────
 
 struct SqliteHistoryStore::Impl {
@@ -482,11 +481,7 @@ struct SqliteHistoryStore::Impl {
     [[nodiscard]] std::expected<StmtPtr, ChainApiError> prepare(std::string_view sql) {
         sqlite3_stmt* raw = nullptr;
         const int rc =
-            sqlite3_prepare_v2(db.get(),
-                               sql.data(),
-                               static_cast<int>(sql.size()),
-                               &raw,
-                               nullptr);
+            sqlite3_prepare_v2(db.get(), sql.data(), static_cast<int>(sql.size()), &raw, nullptr);
         if (rc != SQLITE_OK) {
             return std::unexpected(sqliteError(db.get(), "history: prepare"));
         }
@@ -559,13 +554,11 @@ struct SqliteHistoryStore::Impl {
         if (!p3) return std::unexpected(p3.error());
         updateRunStartedStmt = std::move(*p3);
 
-        auto p4 = prepare(
-            "UPDATE runs SET ended_at = ?, outcome = ? WHERE run_id = ?;");
+        auto p4 = prepare("UPDATE runs SET ended_at = ?, outcome = ? WHERE run_id = ?;");
         if (!p4) return std::unexpected(p4.error());
         updateRunEndedStmt = std::move(*p4);
 
-        auto p5 = prepare(
-            "SELECT COALESCE(MAX(seq), 0) + 1 FROM run_events WHERE run_id = ?;");
+        auto p5 = prepare("SELECT COALESCE(MAX(seq), 0) + 1 FROM run_events WHERE run_id = ?;");
         if (!p5) return std::unexpected(p5.error());
         nextSeqStmt = std::move(*p5);
 
@@ -600,11 +593,10 @@ std::expected<void, ChainApiError> SqliteHistoryStore::open(const fs::path& dbPa
 
     sqlite3* raw = nullptr;
     const auto pathStr = dbPath.string();
-    const int rc =
-        sqlite3_open_v2(pathStr.c_str(),
-                        &raw,
-                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
-                        nullptr);
+    const int rc = sqlite3_open_v2(pathStr.c_str(),
+                                   &raw,
+                                   SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
+                                   nullptr);
     if (rc != SQLITE_OK) {
         ChainApiError e = sqliteError(raw, "history: open");
         sqlite3_close(raw);
@@ -633,8 +625,7 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
     // partial history written by older binaries.
     if (env.eventType == "RunStarted") {
         sqlite3_reset(impl_->insertRunStmt.get());
-        sqlite3_bind_int64(impl_->insertRunStmt.get(), 1,
-                           static_cast<sqlite3_int64>(env.runId));
+        sqlite3_bind_int64(impl_->insertRunStmt.get(), 1, static_cast<sqlite3_int64>(env.runId));
         const auto target = env.payload.value("target", std::string{});
         const auto envName = env.payload.value("envName", std::string{});
         const auto chainSize = env.payload.value("chainSize", std::size_t{0});
@@ -649,13 +640,16 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
         // event arrived first; explicitly UPDATE so the descriptive
         // columns reflect the canonical RunStarted payload.
         sqlite3_reset(impl_->updateRunStartedStmt.get());
-        sqlite3_bind_text(impl_->updateRunStartedStmt.get(), 1, target.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(impl_->updateRunStartedStmt.get(), 2, envName.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(impl_->updateRunStartedStmt.get(), 3, env.at.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int64(impl_->updateRunStartedStmt.get(), 4,
-                           static_cast<sqlite3_int64>(chainSize));
-        sqlite3_bind_int64(impl_->updateRunStartedStmt.get(), 5,
-                           static_cast<sqlite3_int64>(env.runId));
+        sqlite3_bind_text(
+            impl_->updateRunStartedStmt.get(), 1, target.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(
+            impl_->updateRunStartedStmt.get(), 2, envName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(
+            impl_->updateRunStartedStmt.get(), 3, env.at.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(
+            impl_->updateRunStartedStmt.get(), 4, static_cast<sqlite3_int64>(chainSize));
+        sqlite3_bind_int64(
+            impl_->updateRunStartedStmt.get(), 5, static_cast<sqlite3_int64>(env.runId));
         if (sqlite3_step(impl_->updateRunStartedStmt.get()) != SQLITE_DONE) {
             return std::unexpected(sqliteError(impl_->db.get(), "history: update run start"));
         }
@@ -664,8 +658,7 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
         // event insert below doesn't violate the FK if events arrive
         // out of order (e.g. test fixtures).
         sqlite3_reset(impl_->insertRunStmt.get());
-        sqlite3_bind_int64(impl_->insertRunStmt.get(), 1,
-                           static_cast<sqlite3_int64>(env.runId));
+        sqlite3_bind_int64(impl_->insertRunStmt.get(), 1, static_cast<sqlite3_int64>(env.runId));
         sqlite3_bind_null(impl_->insertRunStmt.get(), 2);
         sqlite3_bind_null(impl_->insertRunStmt.get(), 3);
         sqlite3_bind_null(impl_->insertRunStmt.get(), 4);
@@ -677,9 +670,10 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
         sqlite3_reset(impl_->updateRunEndedStmt.get());
         sqlite3_bind_text(impl_->updateRunEndedStmt.get(), 1, env.at.c_str(), -1, SQLITE_TRANSIENT);
         const auto outcome = env.payload.value("outcome", std::string{"Failed"});
-        sqlite3_bind_text(impl_->updateRunEndedStmt.get(), 2, outcome.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int64(impl_->updateRunEndedStmt.get(), 3,
-                           static_cast<sqlite3_int64>(env.runId));
+        sqlite3_bind_text(
+            impl_->updateRunEndedStmt.get(), 2, outcome.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(
+            impl_->updateRunEndedStmt.get(), 3, static_cast<sqlite3_int64>(env.runId));
         if (sqlite3_step(impl_->updateRunEndedStmt.get()) != SQLITE_DONE) {
             return std::unexpected(sqliteError(impl_->db.get(), "history: update run end"));
         }
@@ -693,8 +687,8 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
     sqlite3_bind_int64(impl_->insertEventStmt.get(), 2, seq);
     sqlite3_bind_text(impl_->insertEventStmt.get(), 3, env.eventType.c_str(), -1, SQLITE_TRANSIENT);
     if (env.stepIndex) {
-        sqlite3_bind_int64(impl_->insertEventStmt.get(), 4,
-                           static_cast<sqlite3_int64>(*env.stepIndex));
+        sqlite3_bind_int64(
+            impl_->insertEventStmt.get(), 4, static_cast<sqlite3_int64>(*env.stepIndex));
     } else {
         sqlite3_bind_null(impl_->insertEventStmt.get(), 4);
     }
@@ -712,8 +706,7 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
     return {};
 }
 
-std::expected<std::vector<RunEvent>, ChainApiError> SqliteHistoryStore::eventsFor(
-    RunId run) const {
+std::expected<std::vector<RunEvent>, ChainApiError> SqliteHistoryStore::eventsFor(RunId run) const {
     if (!impl_->db) {
         return std::unexpected(ChainApiError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: eventsFor before open"});
@@ -734,10 +727,9 @@ std::expected<std::vector<RunEvent>, ChainApiError> SqliteHistoryStore::eventsFo
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         const auto* eventType = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
         const bool stepIndexNull = (sqlite3_column_type(stmt.get(), 1) == SQLITE_NULL);
-        const auto stepIndex = stepIndexNull
-                                   ? std::optional<std::size_t>{}
-                                   : std::optional<std::size_t>{static_cast<std::size_t>(
-                                         sqlite3_column_int64(stmt.get(), 1))};
+        const auto stepIndex = stepIndexNull ? std::optional<std::size_t>{}
+                                             : std::optional<std::size_t>{static_cast<std::size_t>(
+                                                   sqlite3_column_int64(stmt.get(), 1))};
         const auto* payloadStr = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
         const auto* atStr = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 3));
 
@@ -788,8 +780,8 @@ std::expected<std::vector<RunHistoryRow>, ChainApiError> SqliteHistoryStore::lis
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         RunHistoryRow row;
         row.runId = RunId{static_cast<std::uint64_t>(sqlite3_column_int64(stmt.get(), 0))};
-        row.targetOp = OperationId{
-            reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1))};
+        row.targetOp =
+            OperationId{reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1))};
         row.envName = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
         row.startedAt = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 3));
         row.endedAt = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 4));

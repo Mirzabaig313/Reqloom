@@ -651,7 +651,6 @@ TEST_F(RunOptionsFixture, step_cancelled_event_fires_for_each_cancelled_step) {
     EXPECT_EQ(cancelEvents[1].op.value, "second.get");
 }
 
-
 // ─── HistoryStore end-to-end ────────────────────────────────────────────────
 // Confirms the executor's emit() path persists every RunEvent into the
 // SQLite store, that the runs table denormalises correctly from the
@@ -709,12 +708,18 @@ TEST_F(RunOptionsFixture, run_persists_full_event_stream_to_history_store) {
         std::visit(
             [&](const auto& e) {
                 using T = std::decay_t<decltype(e)>;
-                if constexpr (std::is_same_v<T, ce::RunStarted>) sawRunStarted = true;
-                else if constexpr (std::is_same_v<T, ce::StepStarted>) sawStepStarted = true;
-                else if constexpr (std::is_same_v<T, ce::RequestPrepared>) sawRequestPrepared = true;
-                else if constexpr (std::is_same_v<T, ce::ResponseReceived>) sawResponseReceived = true;
-                else if constexpr (std::is_same_v<T, ce::ExtractionApplied>) sawExtractionApplied = true;
-                else if constexpr (std::is_same_v<T, ce::RunEnded>) sawRunEnded = true;
+                if constexpr (std::is_same_v<T, ce::RunStarted>)
+                    sawRunStarted = true;
+                else if constexpr (std::is_same_v<T, ce::StepStarted>)
+                    sawStepStarted = true;
+                else if constexpr (std::is_same_v<T, ce::RequestPrepared>)
+                    sawRequestPrepared = true;
+                else if constexpr (std::is_same_v<T, ce::ResponseReceived>)
+                    sawResponseReceived = true;
+                else if constexpr (std::is_same_v<T, ce::ExtractionApplied>)
+                    sawExtractionApplied = true;
+                else if constexpr (std::is_same_v<T, ce::RunEnded>)
+                    sawRunEnded = true;
             },
             ev);
     }
