@@ -32,17 +32,34 @@ include(ChainApiSanitizers)
 include(ChainApiBoundaryGuards)
 
 # ─── Dependencies (used by every target) ──────────────────────────────────────
-# GLOBAL on the find-module packages (CURL, SQLite3) so their imported
-# targets are visible in every subdirectory. Without GLOBAL, an imported
-# target created by a find module is only visible in this directory and its
-# subdirectories — and the nested scopes introduced by FetchContent in
-# third_party/ (QtKeychain) can leave SQLite3::SQLite3 / CURL::libcurl
-# unresolved when engine/ links against them (observed on Windows).
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core)
 find_package(yaml-cpp CONFIG REQUIRED)
-find_package(CURL REQUIRED GLOBAL)
-find_package(SQLite3 REQUIRED GLOBAL)
+find_package(CURL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+
+# SQLite3 target normalization.
+#
+# CMake's built-in FindSQLite3 module creates `SQLite3::SQLite3` when it
+# locates the library on disk. vcpkg's sqlite3 port instead ships a config
+# package (`unofficial-sqlite3`) that exposes `unofficial::sqlite3::sqlite3`.
+# Depending on platform / how vcpkg's toolchain steers find_package, the
+# module-mode target may not be created (observed on the Windows CI runner:
+# find_package succeeds but SQLite3::SQLite3 is absent at generate time).
+# Normalize to a single name the engine links against: SQLite3::SQLite3.
+find_package(SQLite3 QUIET)
+if(NOT TARGET SQLite3::SQLite3)
+    find_package(unofficial-sqlite3 CONFIG REQUIRED)
+    if(TARGET unofficial::sqlite3::sqlite3)
+        # Promote to GLOBAL so the alias is usable from any subdirectory.
+        set_target_properties(unofficial::sqlite3::sqlite3
+            PROPERTIES IMPORTED_GLOBAL TRUE)
+        add_library(SQLite3::SQLite3 ALIAS unofficial::sqlite3::sqlite3)
+    else()
+        message(FATAL_ERROR
+            "SQLite3 found but neither SQLite3::SQLite3 nor "
+            "unofficial::sqlite3::sqlite3 target exists.")
+    endif()
+endif()
 # Qt6Keychain — OS-keychain backend for the engine's SecretStore, exposed
 # as `Qt6Keychain::Qt6Keychain`. Tried QUIET first so a system/Homebrew
 # install (or a machine where vcpkg's port is acceptable) is used as-is.
