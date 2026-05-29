@@ -276,9 +276,8 @@ struct RegexResult {
 [[nodiscard]] RegexResult findRegex(std::string_view body, std::string_view pattern) {
     try {
         const std::regex re{std::string{pattern}};
-        std::cmatch match;
-        const std::string bodyStr{body};
-        if (!std::regex_search(bodyStr.c_str(), match, re)) {
+        std::match_results<std::string_view::const_iterator> match;
+        if (!std::regex_search(body.begin(), body.end(), match, re)) {
             return RegexResult{RegexOutcome::NoMatch, {}};
         }
         if (match.size() >= 2 && match[1].matched) {

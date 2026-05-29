@@ -278,7 +278,11 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
         // truncates bodies over 2 GiB on Windows.
         curl_easy_setopt(
             curl.get(), CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(request.body->size()));
-        curl_easy_setopt(curl.get(), CURLOPT_COPYPOSTFIELDS, request.body->c_str());
+        // POSTFIELDS (not COPYPOSTFIELDS) — `request` outlives this
+        // synchronous perform, so libcurl can reference the body in place
+        // instead of copying it. Set the size first so libcurl treats the
+        // buffer as opaque bytes (may contain NULs) rather than a C string.
+        curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, request.body->data());
     }
 
     auto startTime = std::chrono::steady_clock::now();

@@ -11,6 +11,8 @@
 #include <chainapi/engine/Actor.h>
 #include <chainapi/engine/Events.h>
 
+#include <nlohmann/json.hpp>
+
 #include <chrono>
 #include <expected>
 #include <string>
@@ -23,6 +25,7 @@ namespace chainapi::engine {
 namespace {
 
 using namespace codecs;
+using json = nlohmann::json;
 
 // Masked headers as an ordered vector for event emission.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> snapshotMaskedRequestHeaders(
@@ -331,34 +334,44 @@ std::expected<ActorSession, ChainApiError> executeOAuth2TokenRequest(
                               std::to_string(response->status) + " — " + excerpt});
     }
 
-    std::vector<Extraction> wanted;
-    wanted.push_back({"access_token", "$.access_token", Extraction::Source::JsonPath});
-    const auto required = extractFromJson(response->body, wanted);
-    if (!required) {
-        return std::unexpected(
-            ChainApiError{ErrorCode::SessionRefreshFailed,
-                          ErrorClass::Auth,
-                          "auth: " + std::string{strategyLabel} +
-                              " response missing `access_token`: " + required.error().detail});
+    // Parse the token response once and read every field from the single
+    // document — the previous approach re-ran extractFromJson (a full
+    // json::parse) once per optional field, parsing the body up to 5×.
+    json doc;
+    try {
+        doc = json::parse(response->body);
+    } catch (const json::parse_error& e) {
+        return std::unexpected(ChainApiError{
+            ErrorCode::SessionRefreshFailed,
+            ErrorClass::Auth,
+            "auth: " + std::string{strategyLabel} + " response is not valid JSON: " + e.what()});
+    }
+
+    const auto accessTokenIt = doc.find("access_token");
+    if (accessTokenIt == doc.end() || !accessTokenIt->is_string()) {
+        return std::unexpected(ChainApiError{
+            ErrorCode::SessionRefreshFailed,
+            ErrorClass::Auth,
+            "auth: " + std::string{strategyLabel} + " response missing string `access_token`"});
     }
 
     ActorSession session;
     session.state = ActorSession::State::Authenticating;
-    const auto& accessToken = required->at("access_token");
-    session.variables["access_token"] = accessToken;
+    auto accessToken = accessTokenIt->get<std::string>();
 
     // Optional fields — captured one-at-a-time so a missing `expires_in`
-    // doesn't suppress `token_type`.
+    // doesn't suppress `token_type`. A field that is present but not a
+    // string is rendered with dump() to match the prior JSONPath behaviour.
     for (const auto* optionalField : {"expires_in", "token_type", "scope", "refresh_token"}) {
-        std::vector<Extraction> opt;
-        opt.push_back(
-            {optionalField, std::string{"$."} + optionalField, Extraction::Source::JsonPath});
-        if (auto extracted = extractFromJson(response->body, opt); extracted) {
-            session.variables[optionalField] = extracted->at(optionalField);
+        const auto it = doc.find(optionalField);
+        if (it == doc.end() || it->is_null()) {
+            continue;
         }
+        session.variables[optionalField] = it->is_string() ? it->get<std::string>() : it->dump();
     }
 
     session.injectHeaders["Authorization"] = "Bearer " + accessToken;
+    session.variables["access_token"] = std::move(accessToken);
     return session;
 }
 
@@ -684,24 +697,23 @@ private:
 
 }  // namespace
 
-std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor,
-                                                   const AuthDependencies& deps) {
+std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor, AuthDependencies deps) {
     switch (actor.strategy) {
         case AuthStrategy::Simple:
         case AuthStrategy::Chain:
-            return std::make_unique<ChainAuthenticator>(deps);
+            return std::make_unique<ChainAuthenticator>(std::move(deps));
         case AuthStrategy::Basic:
-            return std::make_unique<BasicAuthenticator>(deps);
+            return std::make_unique<BasicAuthenticator>(std::move(deps));
         case AuthStrategy::ApiKey:
-            return std::make_unique<ApiKeyAuthenticator>(deps);
+            return std::make_unique<ApiKeyAuthenticator>(std::move(deps));
         case AuthStrategy::OAuth2ClientCredentials:
-            return std::make_unique<OAuth2ClientCredentialsAuthenticator>(deps);
+            return std::make_unique<OAuth2ClientCredentialsAuthenticator>(std::move(deps));
         case AuthStrategy::OAuth2Password:
-            return std::make_unique<OAuth2PasswordAuthenticator>(deps);
+            return std::make_unique<OAuth2PasswordAuthenticator>(std::move(deps));
         case AuthStrategy::OAuth1:
-            return std::make_unique<OAuth1Authenticator>(deps);
+            return std::make_unique<OAuth1Authenticator>(std::move(deps));
         case AuthStrategy::AwsSigV4:
-            return std::make_unique<AwsSigV4Authenticator>(deps);
+            return std::make_unique<AwsSigV4Authenticator>(std::move(deps));
     }
     return nullptr;
 }

@@ -1019,6 +1019,8 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
     RunResult result;
     result.runId = runId;
     result.outcome = RunOutcome::Succeeded;
+    // One row per chained op at minimum; poll attempts append a few more.
+    result.steps.reserve(chain.size());
 
     for (std::size_t i = 0; i < chain.size(); ++i) {
         const auto& opId = chain[i];
