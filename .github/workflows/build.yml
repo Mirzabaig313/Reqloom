@@ -23,7 +23,8 @@ env:
 
 jobs:
   # ==========================================================================
-  # Static checks — boundary guard + clang-format. Gates the heavy matrix.
+  # Static checks — architectural boundary guard. Gates the heavy matrix.
+  # (clang-format is enforced locally by tools/pre-push-check.sh, not in CI.)
   # ==========================================================================
   static-checks:
     name: Static Checks
@@ -33,27 +34,6 @@ jobs:
 
       - name: Architectural boundary check
         run: ./tools/ci/boundary-check.sh
-
-      - name: Install clang-format-18
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-format-18
-          sudo update-alternatives --install /usr/bin/clang-format clang-format \
-            /usr/bin/clang-format-18 100
-
-      - name: clang-format dry-run
-        run: |
-          set -euo pipefail
-          mapfile -t files < <(
-            find engine cli desktop ipc \
-              \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cc' \) \
-              -not -path '*/build/*' 2>/dev/null
-          )
-          if [[ ${#files[@]} -eq 0 ]]; then
-            echo "No C++ files found — nothing to check."
-            exit 0
-          fi
-          clang-format --dry-run --Werror "${files[@]}"
 
   # ==========================================================================
   # Build matrix — Linux + Windows. Preset chosen by branch.
