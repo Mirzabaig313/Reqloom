@@ -26,4 +26,5 @@ chainapi_forbid_dependencies(chainapi-cli-renderer-tests
 
 gtest_discover_tests(chainapi-cli-renderer-tests
     PROPERTIES LABELS "cli_unit"
+    DISCOVERY_TIMEOUT 60
 )
