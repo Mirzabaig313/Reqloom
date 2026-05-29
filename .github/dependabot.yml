@@ -1,0 +1,52 @@
+# Dependabot keeps dependencies patched automatically.
+#
+# Covered ecosystems: GitHub Actions (workflow pins) and the npm docs site.
+# NOTE: Dependabot does NOT support vcpkg. The C/C++ dependencies in
+# vcpkg.json (curl, openssl, sqlite3, yaml-cpp, nlohmann-json, cpp-httplib,
+# quickjs-ng, gtest) are scanned by the OSV-Scanner workflow and bumped
+# manually by moving the `builtin-baseline` — see SECURITY tooling notes.
+#
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates
+
+version: 2
+updates:
+  # ── GitHub Actions used by workflows ──────────────────────────────────────
+  # Pinned to commit SHAs; Dependabot proposes SHA bumps with the new version
+  # in the PR body.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      # One PR for routine GitHub-owned action bumps to cut review noise.
+      actions-minor:
+        update-types:
+          - minor
+          - patch
+
+  # ── Docs site (Astro Starlight) ───────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /docs-site
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore"
+      include: scope
+    labels:
+      - dependencies
+      - docs-site
+    groups:
+      # Group non-major updates; review majors individually.
+      npm-minor:
+        update-types:
+          - minor
+          - patch
