@@ -57,7 +57,8 @@ ok() {
 
 # 1. clang-format check — runs the same dry-run --Werror that CI runs, over
 #    every C++ source under engine/, cli/, desktop/, ipc/. This mirrors the
-#    static-checks job in azure-pipelines.yml / appveyor.yml. If CI would
+#    static-checks job in .github/workflows/build.yml / azure-pipelines.yml.
+#    If CI would
 #    reject the push for formatting drift, this catches it locally.
 step "1/5  clang-format check"
 
