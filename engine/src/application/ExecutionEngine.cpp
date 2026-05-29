@@ -125,13 +125,15 @@ struct ExecutionEngine::Impl {
 
     /// Build the opt-in body payload for a `ResponseReceived` event.
     /// Returns nullopt unless the run opted in, capping the captured
-    /// bytes at `kMaxCapturedBodyBytes` to bound event/UI memory.
+    /// bytes at `kMaxCapturedBodyBytes` (UTF-8-aware so the in-memory
+    /// string a viewer renders never ends mid-character) to bound
+    /// event/UI memory.
     [[nodiscard]] std::optional<std::string> capturedBody(const std::string& body) const {
         if (!captureResponseBodies) {
             return std::nullopt;
         }
         if (body.size() > kMaxCapturedBodyBytes) {
-            return body.substr(0, kMaxCapturedBodyBytes);
+            return codecs::truncateUtf8(body, kMaxCapturedBodyBytes);
         }
         return body;
     }
@@ -154,10 +156,18 @@ struct ExecutionEngine::Impl {
     void emit(const RunEvent& e) {
         // Persist before fanning out — the event survives a subscriber
         // that crashes the process. Best-effort: a persistence failure
-        // must never break the run (log + continue once §10 logging lands).
+        // must never break the run. append() returns errors via
+        // std::expected, but a serialization edge (e.g. nlohmann dump on
+        // unexpected input) could still throw; swallow it here so a
+        // history hiccup can never abort the chain or escape across the
+        // engine boundary on the worker thread.
         if (deps.history) {
-            // NOLINTNEXTLINE(bugprone-unused-return-value)
-            (void)deps.history->append(e);
+            try {
+                // NOLINTNEXTLINE(bugprone-unused-return-value)
+                (void)deps.history->append(e);
+                // NOLINTNEXTLINE(bugprone-empty-catch)
+            } catch (...) {
+            }
         }
 
         // Snapshot before invoking — avoids re-entrant deadlock if a callback calls subscribe().
@@ -1048,7 +1058,11 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
     // a run. A missing key is left unset (surfaces later as VarUnresolved
     // when the template can't resolve); a backend failure aborts the run
     // with SecretAccessFailed so the user isn't silently sent unsigned.
-    if (impl_->deps.secrets) {
+    //
+    // Skipped on dry runs: a preview must not touch the OS keychain, which
+    // can pop an interactive unlock/authorization prompt. Unresolved
+    // `{{secret.X}}` markers in the previewed chain are expected.
+    if (impl_->deps.secrets && !options.dryRun) {
         for (const auto& name : DependencyResolver::collectSecretReferences(project)) {
             auto value = impl_->deps.secrets->read(name);
             if (!value) {

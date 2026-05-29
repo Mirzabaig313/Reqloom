@@ -10,4 +10,5 @@
 #include <chainapi/engine/Operation.h>
 #include <chainapi/engine/Resource.h>
 #include <chainapi/engine/RunContext.h>
+#include <chainapi/engine/SecretStore.h>
 #include <chainapi/engine/Transport.h>

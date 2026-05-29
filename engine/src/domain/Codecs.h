@@ -45,6 +45,16 @@ namespace chainapi::engine::codecs {
 /// any malformed `%`-escape (truncated or non-hex).
 [[nodiscard]] std::optional<std::string> urlDecode(std::string_view input);
 
+// ─── UTF-8-aware truncation ──────────────────────────────────────────────────
+
+/// Truncate `input` to at most `maxBytes` bytes without splitting a
+/// trailing multibyte UTF-8 sequence: if the cut would land mid-character,
+/// backs off to the start of that character. Returns `input` unchanged
+/// when it already fits. Pure byte logic — invalid UTF-8 is left as-is up
+/// to the (possibly backed-off) boundary; the result is never longer than
+/// `maxBytes`.
+[[nodiscard]] std::string truncateUtf8(std::string_view input, std::size_t maxBytes);
+
 // ─── HTTP method ─────────────────────────────────────────────────────────────
 
 /// HTTP method as a string literal (e.g. `HttpMethod::Post` → `"POST"`).

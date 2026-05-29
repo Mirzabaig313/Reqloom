@@ -281,11 +281,14 @@ struct EventEnvelope {
                              {"elapsedMs", v.elapsed.count()}};
                 // `body` is present only when the run opted into capture
                 // (RunOptions::captureResponseBodies). Persist it so the
-                // desktop can replay past responses in full — matching the
-                // Postman-style history a developer expects. Absent by
-                // default, so non-capturing runs keep the slim payload.
+                // desktop can replay past responses in full
+                // Base64-encoded: captured bodies are arbitrary bytes
+                // (images, gzip, protobuf), and nlohmann's strict UTF-8
+                // dump() throws type_error.316 on a raw non-UTF-8 string.
+                // The `bodyEnc` marker lets replay decode unambiguously.
                 if (v.body) {
-                    e.payload["body"] = *v.body;
+                    e.payload["body"] = codecs::base64Encode(*v.body);
+                    e.payload["bodyEnc"] = "base64";
                 }
             } else if constexpr (std::is_same_v<T, ExtractionApplied>) {
                 e.eventType = "ExtractionApplied";
@@ -408,8 +411,19 @@ struct EventEnvelope {
         // Restored only for capture-era rows. Pre-capture rows (and
         // non-capturing runs) have no "body" key, leaving the optional
         // empty — the replayed event then matches what was emitted live.
+        // Bodies are stored base64 (`bodyEnc: "base64"`) to survive
+        // arbitrary bytes; a missing/other marker is treated as a raw
+        // string for forward-compatibility. A malformed base64 payload
+        // decodes to nullopt and is dropped rather than aborting replay.
         if (p.contains("body") && p["body"].is_string()) {
-            ev.body = p["body"].get<std::string>();
+            const auto raw = p["body"].get<std::string>();
+            if (p.value("bodyEnc", std::string{}) == "base64") {
+                if (auto decoded = codecs::base64Decode(raw); decoded) {
+                    ev.body = std::move(*decoded);
+                }
+            } else {
+                ev.body = raw;
+            }
         }
         ev.at = at;
         return ev;

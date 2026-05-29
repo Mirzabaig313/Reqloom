@@ -11,6 +11,8 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace chainapi::engine {
 
@@ -19,6 +21,12 @@ namespace chainapi::engine {
 [[nodiscard]] std::unique_ptr<HistoryStore> makeSqliteHistoryStore();
 [[nodiscard]] std::unique_ptr<SecretStore> makeKeychainSecretStore();
 [[nodiscard]] std::unique_ptr<HookRunner> makeQuickJsHookRunner();
+
+/// Whether the secret store returned by `makeKeychainSecretStore()` is
+/// backed by a real OS keychain. False when the engine was built without
+/// QtKeychain — in that case the store is a no-op (reads find nothing,
+/// writes are dropped), and a UI should warn rather than imply persistence.
+[[nodiscard]] bool keychainBackendAvailable() noexcept;
 
 class LlmClient;
 
@@ -34,6 +42,14 @@ class LlmClient;
 
 [[nodiscard]] std::expected<Project, ChainApiError> parseProject(
     const std::filesystem::path& chainapiYaml);
+
+/// Collect the distinct `{{secret.NAME}}` references declared anywhere in a
+/// project (operation templates, actor auth config, injected headers, etc.),
+/// sorted and de-duplicated. The desktop secret manager uses this to show
+/// the user exactly which credentials a project needs in the OS keychain —
+/// the engine reads exactly these names at run time and never bulk-dumps the
+/// keychain.
+[[nodiscard]] std::vector<std::string> collectSecretReferences(const Project& project);
 
 /// Write a Project back to a directory as `chainapi.yaml` plus per-entity
 /// sub-files (actors/, resources/, environments/). Round-trips with
