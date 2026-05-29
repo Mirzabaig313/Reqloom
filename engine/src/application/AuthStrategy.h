@@ -32,6 +32,13 @@ struct AuthDependencies {
     EventSink emit;            ///< Auth-flow events (headers already masked).
     RunId runId{};             ///< Parent step's id, stamped on auth events
     std::size_t stepIndex{0};  ///< so the timeline groups them under that op.
+
+    /// When true, the raw auth/login/refresh response body is attached to
+    /// the emitted `ResponseReceived` event. Mirrors
+    /// `RunOptions::captureResponseBodies`. Off by default so auth bodies
+    /// (which carry tokens) stay off the event surface unless the caller
+    /// explicitly opts in.
+    bool captureResponseBodies{false};
 };
 
 class Authenticator {

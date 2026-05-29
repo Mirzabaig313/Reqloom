@@ -477,6 +477,73 @@ TEST_F(RunOptionsFixture, response_received_event_carries_status_and_size) {
     }
 }
 
+TEST_F(RunOptionsFixture, capture_response_bodies_off_by_default_leaves_body_empty) {
+    // Default behavior: bodies stay off the event surface. Every
+    // ResponseReceived must carry an empty body optional.
+    RunOptionsScratchProject project(kSimpleProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+
+    std::vector<ce::ResponseReceived> events;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* e = std::get_if<ce::ResponseReceived>(&ev)) {
+            events.push_back(*e);
+        }
+    });
+
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    ASSERT_FALSE(events.empty());
+    for (const auto& ev : events) {
+        EXPECT_FALSE(ev.body.has_value());
+    }
+}
+
+TEST_F(RunOptionsFixture, capture_response_bodies_includes_auth_and_main_path_bodies) {
+    // Opt-in capture: a developer wants to see every raw body, including
+    // the auth/login response (which carries the token). Both the auth
+    // response (index 0) and the main-path response (index 1) must carry
+    // their bodies verbatim.
+    RunOptionsScratchProject project(kSimpleProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+
+    std::vector<ce::ResponseReceived> events;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* e = std::get_if<ce::ResponseReceived>(&ev)) {
+            events.push_back(*e);
+        }
+    });
+
+    ce::RunContext ctx;
+    ce::RunOptions options;
+    options.captureResponseBodies = true;
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx, options);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    ASSERT_EQ(events.size(), 2u);
+
+    // Auth/login response — the token must be visible in the captured body.
+    const auto& login = events[0];
+    ASSERT_TRUE(login.body.has_value());
+    EXPECT_NE(login.body->find("accessToken"), std::string::npos);
+    EXPECT_NE(login.body->find("tok-1"), std::string::npos);
+
+    // Main-path response.
+    const auto& ping = events[1];
+    ASSERT_TRUE(ping.body.has_value());
+    EXPECT_NE(ping.body->find("bearer-1"), std::string::npos);
+    EXPECT_EQ(ping.body->size(), ping.bodySize);
+}
+
 TEST_F(RunOptionsFixture, auth_request_response_events_share_step_index_with_parent) {
     // Auth-side events ride on the parent step's stepIndex so the
     // desktop timeline groups them under the operation that triggered

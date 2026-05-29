@@ -111,11 +111,29 @@ struct ExecutionEngine::Impl {
     // 0 = nothing cancelled; any other value = the run with that id is being cancelled.
     std::atomic<std::uint64_t> cancelledRunId{0};
 
+    // Set per-run from RunOptions. Runs are serialized on one engine
+    // instance (concurrent run() is unsupported in the MVP), so a plain
+    // member is safe — no run overlaps another's read of this flag.
+    bool captureResponseBodies{false};
+
     explicit Impl(Dependencies d) : deps(std::move(d)) {}
 
     [[nodiscard]] bool isCancelled(RunId runId) const noexcept {
         const auto cancelled = cancelledRunId.load(std::memory_order_acquire);
         return cancelled != 0 && cancelled == runId.value;
+    }
+
+    /// Build the opt-in body payload for a `ResponseReceived` event.
+    /// Returns nullopt unless the run opted in, capping the captured
+    /// bytes at `kMaxCapturedBodyBytes` to bound event/UI memory.
+    [[nodiscard]] std::optional<std::string> capturedBody(const std::string& body) const {
+        if (!captureResponseBodies) {
+            return std::nullopt;
+        }
+        if (body.size() > kMaxCapturedBodyBytes) {
+            return body.substr(0, kMaxCapturedBodyBytes);
+        }
+        return body;
     }
 
     /// Walk a response's Set-Cookie headers and update the actor's jar.
@@ -184,7 +202,7 @@ struct ExecutionEngine::Impl {
 
             if (actor.refresh) {
                 AuthDependencies const refreshDeps{
-                    deps.http.get(), &varResolver, sink, runId, stepIndex};
+                    deps.http.get(), &varResolver, sink, runId, stepIndex, captureResponseBodies};
                 auto refreshed = runRefresh(actor, ctx, rctx, refreshDeps);
                 if (refreshed) {
                     ActorSession updated = *existing;
@@ -204,7 +222,8 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        AuthDependencies authDeps{deps.http.get(), &varResolver, sink, runId, stepIndex};
+        AuthDependencies authDeps{
+            deps.http.get(), &varResolver, sink, runId, stepIndex, captureResponseBodies};
         auto authenticator = selectAuthenticator(actor, std::move(authDeps));
         if (!authenticator) {
             return false;
@@ -377,7 +396,8 @@ struct ExecutionEngine::Impl {
                                   maskHeaders(lastResponse.headers),
                                   lastResponse.body.size(),
                                   lastResponse.elapsed,
-                                  std::chrono::system_clock::now()});
+                                  std::chrono::system_clock::now(),
+                                  capturedBody(lastResponse.body)});
 
             // Update the cookie jar from this poll's Set-Cookie headers.
             // Pollers that issue stateful status checks (rare but real)
@@ -684,7 +704,8 @@ struct ExecutionEngine::Impl {
                                       maskHeaders(httpResp->headers),
                                       httpResp->body.size(),
                                       httpResp->elapsed,
-                                      std::chrono::system_clock::now()});
+                                      std::chrono::system_clock::now(),
+                                      capturedBody(httpResp->body)});
                 // Absorb Set-Cookie headers immediately so any
                 // post_response hook running between here and the next
                 // outbound call sees the up-to-date jar (today the jar
@@ -784,7 +805,8 @@ struct ExecutionEngine::Impl {
                                               maskHeaders(httpResp->headers),
                                               httpResp->body.size(),
                                               httpResp->elapsed,
-                                              std::chrono::system_clock::now()});
+                                              std::chrono::system_clock::now(),
+                                              capturedBody(httpResp->body)});
                         absorbResponseCookies(httpResp->headers, op.actor, ctx);
                     } else {
                         // Network error on the retry — surface the new
@@ -989,6 +1011,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
                                                              RunContext& ctx,
                                                              const RunOptions& options) {
     impl_->cancelledRunId.store(0, std::memory_order_release);
+    impl_->captureResponseBodies = options.captureResponseBodies;
 
     if (options.resetExtractions) {
         ctx.clearExtractions();

@@ -10,11 +10,13 @@
 
 #include <chainapi/engine/Actor.h>
 #include <chainapi/engine/Events.h>
+#include <chainapi/engine/ExecutionEngine.h>  // kMaxCapturedBodyBytes
 
 #include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <expected>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -48,6 +50,19 @@ using json = nlohmann::json;
         return total;
     }
     return req.body ? req.body->size() : 0U;
+}
+
+// Opt-in body payload for an auth-flow `ResponseReceived`. Returns nullopt
+// unless capture is on; caps at `kMaxCapturedBodyBytes`. Auth bodies carry
+// tokens — the caller gates this behind RunOptions::captureResponseBodies.
+[[nodiscard]] std::optional<std::string> capturedBody(const std::string& body, bool capture) {
+    if (!capture) {
+        return std::nullopt;
+    }
+    if (body.size() > kMaxCapturedBodyBytes) {
+        return body.substr(0, kMaxCapturedBodyBytes);
+    }
+    return body;
 }
 
 // Implements AuthStrategy::Simple and AuthStrategy::Chain. Walks actor.authSteps
@@ -120,13 +135,15 @@ public:
             }
 
             if (deps_.emit) {
-                deps_.emit(ResponseReceived{deps_.runId,
-                                            deps_.stepIndex,
-                                            response->status,
-                                            maskHeaders(response->headers),
-                                            response->body.size(),
-                                            response->elapsed,
-                                            std::chrono::system_clock::now()});
+                deps_.emit(
+                    ResponseReceived{deps_.runId,
+                                     deps_.stepIndex,
+                                     response->status,
+                                     maskHeaders(response->headers),
+                                     response->body.size(),
+                                     response->elapsed,
+                                     std::chrono::system_clock::now(),
+                                     capturedBody(response->body, deps_.captureResponseBodies)});
             }
 
             // Absorb Set-Cookie headers from the auth response into the
@@ -783,7 +800,8 @@ std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
                                    maskHeaders(response->headers),
                                    response->body.size(),
                                    response->elapsed,
-                                   std::chrono::system_clock::now()});
+                                   std::chrono::system_clock::now(),
+                                   capturedBody(response->body, deps.captureResponseBodies)});
     }
 
     // Absorb Set-Cookie headers from the refresh response — same
