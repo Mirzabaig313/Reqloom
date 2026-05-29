@@ -1068,7 +1068,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
                     StepResult skipResult;
                     skipResult.op = opId;
                     skipResult.status = StepResult::Status::Skipped;
-                    result.steps.push_back(skipResult);
+                    result.steps.push_back(std::move(skipResult));
                     impl_->emit(StepSkipped{runId,
                                             i,
                                             opId,
@@ -1083,7 +1083,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
             StepResult dryResult;
             dryResult.op = opId;
             dryResult.status = StepResult::Status::Succeeded;
-            result.steps.push_back(dryResult);
+            result.steps.push_back(std::move(dryResult));
             continue;
         }
 
@@ -1113,7 +1113,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
                 StepResult blocked;
                 blocked.op = chain[j];
                 blocked.status = StepResult::Status::Blocked;
-                result.steps.push_back(blocked);
+                result.steps.push_back(std::move(blocked));
             }
             break;
         }
@@ -1125,7 +1125,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
                 StepResult cancelled;
                 cancelled.op = chain[j];
                 cancelled.status = StepResult::Status::Cancelled;
-                result.steps.push_back(cancelled);
+                result.steps.push_back(std::move(cancelled));
                 impl_->emit(StepCancelled{runId, j, chain[j], std::chrono::system_clock::now()});
             }
             break;

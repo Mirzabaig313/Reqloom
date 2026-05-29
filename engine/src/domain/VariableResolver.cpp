@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <format>
 #include <iomanip>
 #include <limits>
 #include <random>
@@ -35,10 +36,7 @@ std::string generateUuid() {
     auto hex = [](std::uint32_t v, int digits) {
         const std::uint64_t mask =
             (digits >= 8) ? std::uint64_t{0xFFFF'FFFFU} : ((std::uint64_t{1} << (digits * 4)) - 1);
-        std::ostringstream ss;
-        ss << std::hex << std::setfill('0') << std::setw(digits)
-           << (static_cast<std::uint64_t>(v) & mask);
-        return ss.str();
+        return std::format("{:0{}x}", static_cast<std::uint64_t>(v) & mask, digits);
     };
 
     return hex(r(), 8) + "-" + hex(r(), 4) + "-4" + hex(r(), 3) + "-" + hex(0x8 | (r() & 0x3), 1) +
@@ -389,6 +387,9 @@ VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
     static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
     const std::string input(templateStr);
     std::string output;
+    // Most templates expand near their original size; reserving the input
+    // length avoids the early reallocations as segments are appended.
+    output.reserve(input.size());
     std::vector<std::string> unresolved;
 
     std::sregex_iterator begin(input.begin(), input.end(), refPattern);

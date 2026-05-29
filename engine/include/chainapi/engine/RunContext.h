@@ -41,7 +41,7 @@ struct ActorSession {
     /// `signOAuth1Request`) after inject merging but before `HttpClient::send`.
     SigningScheme signingScheme{SigningScheme::None};
 
-    std::chrono::steady_clock::time_point expiresAt;
+    std::chrono::steady_clock::time_point expiresAt{};
 };
 
 /// One extracted resource instance. Indexed for `{{R[k].x}}` resolution.

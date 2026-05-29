@@ -103,10 +103,10 @@ public:
     /// whose target step fails at runtime returns a `RunResult` with
     /// `outcome == Failed`, not an error — inspect `steps` to find which
     /// step failed.
-    std::expected<RunResult, ChainApiError> run(const Project& project,
-                                                const OperationId& target,
-                                                RunContext& ctx,
-                                                const RunOptions& options = {});
+    [[nodiscard]] std::expected<RunResult, ChainApiError> run(const Project& project,
+                                                              const OperationId& target,
+                                                              RunContext& ctx,
+                                                              const RunOptions& options = {});
 
     /// Cancel an in-flight run.
     void cancel(RunId run);

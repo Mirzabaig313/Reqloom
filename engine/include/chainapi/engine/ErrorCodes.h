@@ -73,7 +73,7 @@ enum class ErrorClass : std::uint8_t {
 
 /// Stable, human-readable code string (e.g. "E_CYCLE"). Safe in logs and
 /// asserted on by integration tests.
-std::string_view toCodeString(ErrorCode code) noexcept;
+[[nodiscard]] std::string_view toCodeString(ErrorCode code) noexcept;
 
 /// Inverse of `toCodeString`. Returns the matching code, or nullopt for
 /// an unrecognised string (e.g. a code persisted by a newer build).
@@ -83,9 +83,9 @@ std::string_view toCodeString(ErrorCode code) noexcept;
 
 /// Whether a step that fails with this code should be retried per the
 /// per-operation RetryPolicy.
-bool isRetryable(ErrorCode code) noexcept;
+[[nodiscard]] bool isRetryable(ErrorCode code) noexcept;
 
-ErrorClass classify(ErrorCode code) noexcept;
+[[nodiscard]] ErrorClass classify(ErrorCode code) noexcept;
 
 /// Application-layer error type. Infrastructure and application layers
 /// return `std::expected<T, ChainApiError>` rather than throwing.
