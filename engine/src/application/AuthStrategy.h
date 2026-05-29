@@ -19,11 +19,9 @@ class HttpClient;        // forward — defined in infrastructure
 class VariableResolver;  // forward — defined in domain
 struct ResolveContext;   // forward — defined in domain (VariableResolver.h)
 
-/// Sink for engine-side observability events emitted from inside auth
-/// strategies and the refresh path. The executor binds a closure that
-/// dispatches into the engine's emit loop. Empty (default) sink means
-/// "drop the event"; tests that don't care about events leave it
-/// default-constructed.
+/// Sink for observability events emitted from inside the auth flow. The
+/// executor binds a closure into its emit loop; an empty sink drops the
+/// event (tests that don't care leave it default-constructed).
 using EventSink = std::function<void(const RunEvent&)>;
 
 /// Common dependencies every authenticator needs. Non-owning — must not
@@ -31,17 +29,9 @@ using EventSink = std::function<void(const RunEvent&)>;
 struct AuthDependencies {
     HttpClient* http{nullptr};
     VariableResolver* varResolver{nullptr};
-    /// Emit observability events from inside the auth flow. Header
-    /// values are masked by the auth strategy before reaching the
-    /// sink — same contract as the executor's main path.
-    EventSink emit{};
-    /// runId / stepIndex to stamp on auth-side RequestPrepared and
-    /// ResponseReceived events. The desktop timeline groups by these
-    /// fields, so auth events ride on the parent step's index — they
-    /// surface as additional rows under the operation that triggered
-    /// the auth flow.
-    RunId runId{};
-    std::size_t stepIndex{0};
+    EventSink emit{};          ///< Auth-flow events (headers already masked).
+    RunId runId{};             ///< Parent step's id, stamped on auth events
+    std::size_t stepIndex{0};  ///< so the timeline groups them under that op.
 };
 
 class Authenticator {

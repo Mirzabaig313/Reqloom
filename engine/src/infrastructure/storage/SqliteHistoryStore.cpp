@@ -1,24 +1,18 @@
-// SqliteHistoryStore — embedded SQLite-backed run-history persistence.
+// SqliteHistoryStore — SQLite-backed run-history persistence.
 //
-// Storage shape (schema v1):
+// Schema v1:
 //   runs(run_id, target_op, env_name, started_at, ended_at, outcome, chain_size)
 //   run_events(id, run_id, seq, event_type, step_index, op_id, payload, at)
 //
-// Each event is serialised to a JSON document in the `payload` column.
-// JSON-per-event is intentional: the `runs` table denormalises just
-// enough to render the desktop history sidebar without parsing every
-// payload, while the full event variant survives in JSON for replay.
-// Schema upgrades become payload-format upgrades — no ALTER TABLE.
+// Events are stored as JSON in `payload`. The `runs` table denormalises
+// enough to render the history sidebar without parsing payloads; the
+// JSON keeps the full variant for replay, so schema upgrades stay
+// payload-format changes rather than ALTER TABLEs.
 //
-// Concurrency: SQLite is opened in WAL mode with a 5-second busy
-// timeout. The engine drives appends from a single thread (the run
-// thread); reads from the desktop happen on a separate connection and
-// will see committed WAL frames without blocking the writer.
-//
-// Threading: instances are NOT thread-safe. The engine wires one store
-// per ExecutionEngine; cross-thread access must be serialised by the
-// caller (matches AGENTS.md's "engine entry points are single-threaded
-// per run" contract).
+// WAL mode + 5s busy timeout: the engine appends from the run thread
+// while the desktop reads on a separate connection without blocking.
+// Instances are not thread-safe — one store per ExecutionEngine, caller
+// serialises (AGENTS.md: engine entry points are single-threaded per run).
 
 #include "SqliteHistoryStore.h"
 
@@ -51,11 +45,16 @@ namespace {
 using nlohmann::json;
 namespace fs = std::filesystem;
 
+// Compile guard for the visitor below — adding a RunEvent variant
+// without a serialization arm fails the build instead of writing an
+// empty event_type.
+template <typename>
+inline constexpr bool kAlwaysFalse = false;
+
 constexpr int kBusyTimeoutMs = 5000;
 
 [[nodiscard]] std::string isoUtc(TimePoint tp) {
-    // ISO-8601, second precision, UTC. Microsecond precision is
-    // overkill for the timeline UI and bloats every row by ~7 bytes.
+    // Second precision is plenty for the timeline.
     using namespace std::chrono;
     const auto t = system_clock::to_time_t(tp);
     std::tm tm{};
@@ -166,10 +165,8 @@ using DbPtr = std::unique_ptr<sqlite3, DbDeleter>;
 
 // ─── Event → JSON (per variant) ──────────────────────────────────────────────
 //
-// Helpers package each event variant's payload into JSON. Run id /
-// step index / event_type / op_id / at are denormalised into their own
-// columns (so the run-event index can find them without parsing JSON);
-// everything else lives in `payload`.
+// runId / stepIndex / event_type / op_id / at go in their own columns so
+// the index can find rows without parsing JSON; the rest goes in `payload`.
 
 struct EventEnvelope {
     std::uint64_t runId{0};
@@ -272,6 +269,8 @@ struct EventEnvelope {
                 e.eventType = "RunEnded";
                 e.payload = {{"outcome", outcomeToWire(v.outcome)},
                              {"elapsedMs", v.elapsed.count()}};
+            } else {
+                static_assert(kAlwaysFalse<T>, "unhandled RunEvent variant in envelopeOf");
             }
         },
         ev);
@@ -373,49 +372,16 @@ struct EventEnvelope {
         return ev;
     }
     if (eventType == "StepFailed") {
-        // ErrorCode is reconstructed from its string form at read time;
-        // unknown codes (added in later versions) fall back to
-        // SchemaInvalid so the event still surfaces in the timeline.
+        // Unknown codes (written by a newer build) fall back to
+        // SchemaInvalid so the row still shows up.
         StepFailed ev;
         ev.runId = runId;
         ev.stepIndex = stepIndex.value_or(0);
         ev.op = OperationId{p.value("op", std::string{})};
         ev.attempt = p.value("attempt", 1);
         ev.detail = p.value("detail", std::string{});
-        // Best-effort string → code map. Tests round-trip the canonical
-        // codes; future evolution adds entries here.
         const auto codeStr = p.value("code", std::string{"E_SCHEMA_INVALID"});
-        ev.code = ErrorCode::SchemaInvalid;
-        for (auto candidate : {ErrorCode::SchemaInvalid,
-                               ErrorCode::YamlParse,
-                               ErrorCode::Cycle,
-                               ErrorCode::RefUndefined,
-                               ErrorCode::SchemaVersion,
-                               ErrorCode::VarUnresolved,
-                               ErrorCode::IndexedRefOutOfRange,
-                               ErrorCode::NetworkTimeout,
-                               ErrorCode::NetworkDns,
-                               ErrorCode::NetworkTls,
-                               ErrorCode::UploadFileUnreadable,
-                               ErrorCode::Http5xx,
-                               ErrorCode::Http4xx,
-                               ErrorCode::StatusMismatch,
-                               ErrorCode::SessionRefreshFailed,
-                               ErrorCode::HookFailure,
-                               ErrorCode::HookTimeout,
-                               ErrorCode::ExtractionFailed,
-                               ErrorCode::ResponseParse,
-                               ErrorCode::PollTimeout,
-                               ErrorCode::PollMaxAttemptsExceeded,
-                               ErrorCode::PollFailPredicate,
-                               ErrorCode::LlmRequestFailed,
-                               ErrorCode::LlmResponseInvalid,
-                               ErrorCode::Cancelled}) {
-            if (toCodeString(candidate) == codeStr) {
-                ev.code = candidate;
-                break;
-            }
-        }
+        ev.code = fromCodeString(codeStr).value_or(ErrorCode::SchemaInvalid);
         ev.cls = classify(ev.code);
         ev.at = at;
         return ev;
@@ -456,9 +422,8 @@ struct EventEnvelope {
 struct SqliteHistoryStore::Impl {
     DbPtr db;
 
-    // Prepared once on open; reused per append. SQLite's prepared
-    // statement cache is internal but cheap to bypass — owning the
-    // statements directly avoids the per-call hash lookup.
+    // Prepared once on open, reused per append — skips SQLite's per-call
+    // statement-cache lookup.
     StmtPtr insertEventStmt;
     StmtPtr insertRunStmt;
     StmtPtr updateRunStartedStmt;
@@ -524,9 +489,8 @@ struct SqliteHistoryStore::Impl {
         )SQL";
         if (auto r = exec(createSchema); !r) return r;
 
-        // Record / verify the schema version. v1 is the only version
-        // shipped today; later migrations check the row before applying
-        // ALTERs and bump it.
+        // v1 is the only version today; future migrations check this
+        // row before applying ALTERs and bump it.
         if (auto r = exec("INSERT OR IGNORE INTO schema_version(version) VALUES (1);"); !r)
             return r;
 
@@ -618,11 +582,9 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
 
     const auto env = envelopeOf(event);
 
-    // Run-level rollups. RunStarted creates the row (or backfills its
-    // descriptive columns); RunEnded stamps the terminal state. Any
-    // event arriving without a parent row inserts a placeholder so the
-    // FK on run_events stays satisfied — that path covers replays of
-    // partial history written by older binaries.
+    // RunStarted creates the runs row; RunEnded stamps the terminal
+    // state; any other event backfills a placeholder row so the FK
+    // holds even if events arrive out of order.
     if (env.eventType == "RunStarted") {
         sqlite3_reset(impl_->insertRunStmt.get());
         sqlite3_bind_int64(impl_->insertRunStmt.get(), 1, static_cast<sqlite3_int64>(env.runId));
@@ -636,9 +598,8 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
         if (sqlite3_step(impl_->insertRunStmt.get()) != SQLITE_DONE) {
             return std::unexpected(sqliteError(impl_->db.get(), "history: insert run"));
         }
-        // INSERT OR IGNORE leaves an existing row untouched if a stray
-        // event arrived first; explicitly UPDATE so the descriptive
-        // columns reflect the canonical RunStarted payload.
+        // INSERT OR IGNORE won't touch an existing row, so UPDATE the
+        // descriptive columns from the canonical RunStarted payload.
         sqlite3_reset(impl_->updateRunStartedStmt.get());
         sqlite3_bind_text(
             impl_->updateRunStartedStmt.get(), 1, target.c_str(), -1, SQLITE_TRANSIENT);
@@ -654,9 +615,8 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
             return std::unexpected(sqliteError(impl_->db.get(), "history: update run start"));
         }
     } else {
-        // Defensive backfill: ensure a parent runs row exists so the
-        // event insert below doesn't violate the FK if events arrive
-        // out of order (e.g. test fixtures).
+        // Backfill a parent row so the event insert's FK holds when
+        // events arrive out of order (test fixtures do this).
         sqlite3_reset(impl_->insertRunStmt.get());
         sqlite3_bind_int64(impl_->insertRunStmt.get(), 1, static_cast<sqlite3_int64>(env.runId));
         sqlite3_bind_null(impl_->insertRunStmt.get(), 2);
@@ -737,9 +697,7 @@ std::expected<std::vector<RunEvent>, ChainApiError> SqliteHistoryStore::eventsFo
         try {
             payload = json::parse(payloadStr != nullptr ? payloadStr : "{}");
         } catch (const json::parse_error&) {
-            // Skip rows whose payload doesn't parse — defensive against
-            // a future schema corrupting an older row. The desktop
-            // pane shows the rest of the run rather than refusing.
+            // Skip a corrupt row rather than failing the whole replay.
             continue;
         }
         if (auto ev = eventFromRow(eventType != nullptr ? eventType : "",

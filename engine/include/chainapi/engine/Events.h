@@ -24,10 +24,8 @@ using TimePoint = std::chrono::system_clock::time_point;
 
 enum class SkipReason : std::uint8_t { SessionValid, ExtractionCached };
 
-/// Sentinel value that replaces sensitive header values in
-/// `RequestPrepared::maskedHeaders` and `ResponseReceived::headers`.
-/// Stable across releases so timeline renderers, persistence layers,
-/// and integration tests can match on it. Engine Requirement AC-3.6.3.
+/// Replaces redacted header and extraction values in events. Stable
+/// across releases so renderers, persistence, and tests can match on it.
 inline constexpr std::string_view kRedactedHeaderValue = "***REDACTED***";
 
 struct RunStarted {

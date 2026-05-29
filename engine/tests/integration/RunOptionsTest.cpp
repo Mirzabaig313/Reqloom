@@ -788,3 +788,85 @@ TEST_F(RunOptionsFixture, history_store_persists_request_headers_already_masked)
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
     fs::remove(fs::path{dbPath.string() + "-shm"}, ec);
 }
+
+// ─── F1 regression: extracted secret values must not reach disk ─────────────
+
+TEST_F(RunOptionsFixture, extracted_secret_value_is_masked_in_persisted_history) {
+    // An op that extracts a secret-named variable (here `session_token`)
+    // must NOT write the plaintext value into the persisted
+    // ExtractionCompleted event. Masking happens on the event copy only
+    // — the RunContext keeps the real value so downstream templating
+    // still works. Engine Requirement AC-3.6.3.
+    constexpr const char* kTokenExtractYaml = R"YAML(
+version: 1
+name: TokenExtract
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+resources:
+  sess:
+    operations:
+      start:
+        method: GET
+        path: /api/v1/with-bearer
+        expect_status: 200
+        extract:
+          session_token: $.id
+)YAML";
+
+    const auto dbPath = fs::temp_directory_path() /
+                        ("chainapi-history-secret-" + std::to_string(::getpid()) + ".sqlite");
+    std::error_code ec;
+    fs::remove(dbPath, ec);
+    fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
+    fs::remove(fs::path{dbPath.string() + "-shm"}, ec);
+
+    RunOptionsScratchProject project(kTokenExtractYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine::Dependencies deps = ce::makeDefaultDependencies();
+    ASSERT_TRUE(deps.history->open(dbPath).has_value());
+
+    ce::ExecutionEngine engine(std::move(deps));
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"sess.start"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->succeeded());
+
+    // The real value DID land in the run context (downstream templating
+    // depends on it) — the mock returns id "bearer-1".
+    const auto& instances = ctx.instances(ce::ResourceId{"sess"});
+    ASSERT_FALSE(instances.empty());
+    EXPECT_EQ(instances.back().variables.at("session_token"), "bearer-1");
+
+    // But the persisted event copy must be redacted.
+    ce::SqliteHistoryStore reader;
+    ASSERT_TRUE(reader.open(dbPath).has_value());
+    auto runs = reader.listRuns(10);
+    ASSERT_TRUE(runs.has_value() && !runs->empty());
+    auto events = reader.eventsFor((*runs)[0].runId);
+    ASSERT_TRUE(events.has_value());
+
+    bool sawTokenExtraction = false;
+    for (const auto& ev : *events) {
+        if (const auto* ext = std::get_if<ce::ExtractionCompleted>(&ev)) {
+            if (ext->variableName == "session_token") {
+                sawTokenExtraction = true;
+                EXPECT_EQ(ext->outcome, ce::ExtractionCompleted::Outcome::Resolved);
+                EXPECT_EQ(ext->value, ce::kRedactedHeaderValue)
+                    << "extracted token value reached disk unredacted";
+                EXPECT_EQ(ext->value.find("bearer-1"), std::string::npos);
+            }
+        }
+    }
+    EXPECT_TRUE(sawTokenExtraction) << "expected a persisted ExtractionCompleted for session_token";
+
+    reader.close();
+    fs::remove(dbPath, ec);
+    fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
+    fs::remove(fs::path{dbPath.string() + "-shm"}, ec);
+}

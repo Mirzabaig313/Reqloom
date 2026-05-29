@@ -19,6 +19,25 @@ TEST(EngineSmoke, ErrorCodeStringsAreStable) {
     EXPECT_EQ(ce::toCodeString(ce::ErrorCode::Http5xx), "E_HTTP_5XX");
 }
 
+TEST(EngineSmoke, FromCodeStringRoundTripsEveryCode) {
+    // fromCodeString is the inverse used by the history store to
+    // reconstruct StepFailed.code from persisted JSON. Every code must
+    // round-trip; an unknown string yields nullopt.
+    for (const auto code : {ce::ErrorCode::SchemaInvalid,
+                            ce::ErrorCode::Cycle,
+                            ce::ErrorCode::RefUndefined,
+                            ce::ErrorCode::ExtractionFailed,
+                            ce::ErrorCode::SessionRefreshFailed,
+                            ce::ErrorCode::Cancelled,
+                            ce::ErrorCode::LlmResponseInvalid}) {
+        const auto round = ce::fromCodeString(ce::toCodeString(code));
+        ASSERT_TRUE(round.has_value());
+        EXPECT_EQ(*round, code);
+    }
+    EXPECT_FALSE(ce::fromCodeString("E_NOT_A_REAL_CODE").has_value());
+    EXPECT_FALSE(ce::fromCodeString("").has_value());
+}
+
 TEST(EngineSmoke, RetryabilityMatchesSpec) {
     // 5xx and network timeouts retry; 4xx and schema errors do not.
     EXPECT_TRUE(ce::isRetryable(ce::ErrorCode::Http5xx));

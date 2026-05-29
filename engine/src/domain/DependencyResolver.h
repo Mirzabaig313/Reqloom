@@ -20,20 +20,15 @@ public:
     [[nodiscard]] std::expected<std::vector<OperationId>, ChainApiError> resolve(
         const Project& project, const OperationId& target) const;
 
-    /// Whole-project static validation, run at schema load time.
-    ///
-    /// Enforces two load-time contracts so a malformed project is
-    /// rejected before any operation can run
-    ///   - Every `{{X.y}}` reference names a known scope: `$` builtins,
-    ///     `env`, `secret`, a defined actor, or a defined resource.
-    ///     Unknown scope → `RefUndefined`. (Field existence is a
-    ///     runtime concern — a real resource with a typo'd field still
-    ///     loads and surfaces the miss at run time.)
-    ///   - Every `depends_on:` target names an existing operation.
-    ///     Missing target → `RefUndefined`.
-    ///   - The full dependency graph (explicit + implicit edges across
-    ///     all operations) is acyclic. A cycle, including a one-node
-    ///     self-loop, → `Cycle` listing the operations involved.
+    /// Whole-project validation, run at schema load so a malformed
+    /// project is rejected before any operation can run:
+    ///   - every `{{X.y}}` reference names a known scope ($ builtin,
+    ///     env, secret, a defined actor or resource) → else RefUndefined
+    ///     (field existence stays a runtime concern);
+    ///   - every `depends_on:` target names a real operation → else
+    ///     RefUndefined;
+    ///   - the full dependency graph is acyclic, self-loops included →
+    ///     else Cycle, listing the operations involved.
     [[nodiscard]] std::expected<void, ChainApiError> validate(const Project& project) const;
 };
 

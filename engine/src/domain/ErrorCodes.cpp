@@ -1,6 +1,9 @@
 // Stable mapping of ErrorCode → string code, retryability, and class.
 #include <chainapi/engine/ErrorCodes.h>
 
+#include <array>
+#include <optional>
+
 namespace chainapi::engine {
 
 std::string_view toCodeString(ErrorCode code) noexcept {
@@ -57,6 +60,48 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_CANCELLED";
     }
     return "E_UNKNOWN";
+}
+
+std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
+    // Reverse of toCodeString, matched against the full enumerator list.
+    // The drift guard below fails the build if a code is added without
+    // growing this array.
+    constexpr std::array<ErrorCode, 25> kAll = {
+        ErrorCode::SchemaInvalid,
+        ErrorCode::YamlParse,
+        ErrorCode::Cycle,
+        ErrorCode::RefUndefined,
+        ErrorCode::SchemaVersion,
+        ErrorCode::VarUnresolved,
+        ErrorCode::IndexedRefOutOfRange,
+        ErrorCode::NetworkTimeout,
+        ErrorCode::NetworkDns,
+        ErrorCode::NetworkTls,
+        ErrorCode::UploadFileUnreadable,
+        ErrorCode::Http5xx,
+        ErrorCode::Http4xx,
+        ErrorCode::StatusMismatch,
+        ErrorCode::SessionRefreshFailed,
+        ErrorCode::HookFailure,
+        ErrorCode::HookTimeout,
+        ErrorCode::ExtractionFailed,
+        ErrorCode::ResponseParse,
+        ErrorCode::PollTimeout,
+        ErrorCode::PollMaxAttemptsExceeded,
+        ErrorCode::PollFailPredicate,
+        ErrorCode::LlmRequestFailed,
+        ErrorCode::LlmResponseInvalid,
+        ErrorCode::Cancelled,
+    };
+    // Cancelled is the last enumerator, so its value + 1 is the count.
+    static_assert(static_cast<std::size_t>(ErrorCode::Cancelled) + 1 == kAll.size(),
+                  "fromCodeString::kAll is out of sync with the ErrorCode enum");
+    for (const auto c : kAll) {
+        if (toCodeString(c) == code) {
+            return c;
+        }
+    }
+    return std::nullopt;
 }
 
 bool isRetryable(ErrorCode code) noexcept {
