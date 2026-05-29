@@ -76,6 +76,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             autoconf autoconf-archive automake libtool pkg-config \
             ninja-build \
+            libsecret-1-dev \
             libx11-dev libxext-dev libxrender-dev \
             libxkbcommon-dev libxkbcommon-x11-dev \
             libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
@@ -96,12 +97,29 @@ jobs:
       # install-qt-action puts Qt's bin on PATH and exports QT_ROOT_DIR.
       # We also export CMAKE_PREFIX_PATH explicitly below so CMakePresets
       # (which reads it from the environment) finds Qt6 deterministically.
-      - name: Install Qt ${{ env.QT_VERSION }}
+      #
+      # Linux needs the `icu` archive: Qt's own tools (qtpaths, used by
+      # QtKeychain's CMake at configure time) link against libicui18n.so at
+      # runtime. Windows/macOS bake ICU into the Qt libs, so they don't.
+      - name: Install Qt (Linux)
+        if: runner.os == 'Linux'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          archives: qtbase qtdeclarative qtsvg icu
+          cache: true
+
+      - name: Install Qt (Windows / macOS)
+        if: runner.os != 'Linux'
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           archives: qtbase qtdeclarative qtsvg
           cache: true
+
+      - name: Export CMAKE_PREFIX_PATH for Qt
+        shell: bash
+        run: echo "CMAKE_PREFIX_PATH=${QT_ROOT_DIR}" >> "$GITHUB_ENV"
 
       - name: Export CMAKE_PREFIX_PATH for Qt
         shell: bash
