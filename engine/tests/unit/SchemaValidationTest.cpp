@@ -402,3 +402,78 @@ resources:
     EXPECT_EQ(result->resources.size(), 1u);
     EXPECT_EQ(result->resources.at(ce::ResourceId{"order"}).operations.size(), 2u);
 }
+
+// ─── Resource-exhaustion guards (untrusted YAML is an attacker surface) ──────
+//
+// AGENTS.md §"Reading user input" names chainapi.yaml as attacker-controlled
+// and requires depth + document-size caps before parsing. These tests feed
+// the parser hostile input and assert it fails cleanly with a YamlParse error
+// rather than exhausting memory or overflowing the stack.
+
+TEST(SchemaValidation, oversized_schema_document_is_rejected) {
+    // A document past the 8 MiB cap must be refused before yaml-cpp sees it,
+    // so a multi-gigabyte file can't be slurped into memory. We pad a comment
+    // block so the bytes are valid YAML — the size check, not a parse error,
+    // is what must trip.
+    ScratchDir scratch;
+    std::string yaml = "version: 1\nname: Huge\nenvironment:\n  baseUrl: http://localhost:0\n";
+    yaml.reserve(yaml.size() + (9u * 1024 * 1024) + 16);
+    yaml.append("# ");
+    yaml.append(static_cast<std::size_t>(9) * 1024 * 1024, 'x');
+    yaml.push_back('\n');
+    const auto path = scratch.write("chainapi.yaml", yaml);
+
+    auto result = ce::parseProject(path);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::YamlParse);
+    EXPECT_EQ(result.error().cls, ce::ErrorClass::Schema);
+}
+
+TEST(SchemaValidation, deeply_nested_yaml_is_rejected_not_crashing) {
+    // Flow-style nested sequences. yaml-cpp's DepthGuard (default 2000) trips
+    // during LoadFile and throws DeepRecursion (a YAML::Exception subclass),
+    // which parse() maps to a YamlParse error instead of overflowing the
+    // parser's recursion stack.
+    ScratchDir scratch;
+    constexpr int kDepth = 5000;
+    std::string nested(static_cast<std::size_t>(kDepth), '[');
+    nested.append(static_cast<std::size_t>(kDepth), ']');
+    const std::string yaml =
+        "version: 1\nname: DeepNest\nenvironment:\n  baseUrl: http://localhost:0\ndeep: " + nested +
+        "\n";
+    const auto path = scratch.write("chainapi.yaml", yaml);
+
+    auto result = ce::parseProject(path);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::YamlParse);
+}
+
+TEST(SchemaValidation, deeply_nested_operation_body_is_rejected_not_crashing) {
+    // The body→JSON conversion (yamlNodeToJsonValue) recurses independently of
+    // yaml-cpp. Its kMaxYamlDepth cap must reject a body nested past the limit
+    // with a YamlParse error rather than a stack overflow. 200 levels clears
+    // the 64 cap without tripping yaml-cpp's own 2000 structural guard first.
+    ScratchDir scratch;
+    constexpr int kDepth = 200;
+    std::string body(static_cast<std::size_t>(kDepth), '[');
+    body.append(static_cast<std::size_t>(kDepth), ']');
+    const std::string yaml = R"YAML(
+version: 1
+name: DeepBody
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  thing:
+    operations:
+      create:
+        method: POST
+        path: /api/v1/thing
+        expect_status: 200
+        body: )YAML" + body + "\n";
+    const auto path = scratch.write("chainapi.yaml", yaml);
+
+    auto result = ce::parseProject(path);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::YamlParse);
+}

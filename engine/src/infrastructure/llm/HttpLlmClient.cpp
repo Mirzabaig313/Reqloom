@@ -268,16 +268,26 @@ std::expected<LlmResponse, ChainApiError> HttpLlmClient::complete(const LlmReque
     }
 
     std::expected<LlmResponse, ChainApiError> parsed;
-    switch (request.config.provider) {
-        case LlmProvider::OpenAI:
-            parsed = parseOpenAi(doc);
-            break;
-        case LlmProvider::Anthropic:
-            parsed = parseAnthropic(doc);
-            break;
-        case LlmProvider::Ollama:
-            parsed = parseOllama(doc);
-            break;
+    // The provider parsers below call nlohmann::json get<T>(), which throws
+    // json::type_error / json::out_of_range when an untrusted provider
+    // response has the right keys but wrong value types. Contain those here
+    // so they surface as a normal ErrorCode::LlmResponseInvalid rather than
+    // escaping complete()'s std::expected contract.
+    try {
+        switch (request.config.provider) {
+            case LlmProvider::OpenAI:
+                parsed = parseOpenAi(doc);
+                break;
+            case LlmProvider::Anthropic:
+                parsed = parseAnthropic(doc);
+                break;
+            case LlmProvider::Ollama:
+                parsed = parseOllama(doc);
+                break;
+        }
+    } catch (const json::exception& e) {
+        return std::unexpected(
+            responseInvalid(std::string{"provider response has unexpected types: "} + e.what()));
     }
     if (!parsed) {
         return std::unexpected(parsed.error());

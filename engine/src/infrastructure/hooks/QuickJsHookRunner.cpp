@@ -338,9 +338,25 @@ JSValue jsJwtSign(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     return jsStr(ctx, signed_);
 }
 
-void installHelper(
-    JSContext* ctx, JSValueConst parent, const char* name, JSCFunction* fn, int arity) {
-    JSValue f = JS_NewCFunction(ctx, fn, name, arity);
+// QuickJS calls helper functions from its own C stack frames. A C++
+// exception (e.g. std::bad_alloc from the codec/crypto/std::string calls
+// the helpers make) unwinding through those frames is undefined behaviour.
+// Every helper is registered through this noexcept trampoline, which
+// collapses any throw into the helpers' existing "return undefined on
+// failure" contract. Routing registration through installHelper makes the
+// guard impossible to forget for a newly added helper.
+template <JSCFunction* Fn>
+JSValue guardHelper(JSContext* ctx, JSValueConst thisVal, int argc, JSValueConst* argv) noexcept {
+    try {
+        return Fn(ctx, thisVal, argc, argv);
+    } catch (...) {
+        return JS_UNDEFINED;
+    }
+}
+
+template <JSCFunction* Fn>
+void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int arity) {
+    JSValue f = JS_NewCFunction(ctx, &guardHelper<Fn>, name, arity);
     JS_SetPropertyStr(ctx, parent, name, f);
 }
 
@@ -389,37 +405,37 @@ void installHelper(
     // helpers
     {
         JSValue base64 = JS_NewObject(ctx);
-        installHelper(ctx, base64, "encode", jsBase64Encode, 1);
-        installHelper(ctx, base64, "decode", jsBase64Decode, 1);
+        installHelper<jsBase64Encode>(ctx, base64, "encode", 1);
+        installHelper<jsBase64Decode>(ctx, base64, "decode", 1);
         JS_SetPropertyStr(ctx, root, "base64", base64);
     }
     {
         JSValue hex = JS_NewObject(ctx);
-        installHelper(ctx, hex, "encode", jsHexEncode, 1);
-        installHelper(ctx, hex, "decode", jsHexDecode, 1);
+        installHelper<jsHexEncode>(ctx, hex, "encode", 1);
+        installHelper<jsHexDecode>(ctx, hex, "decode", 1);
         JS_SetPropertyStr(ctx, root, "hex", hex);
     }
     {
         JSValue url = JS_NewObject(ctx);
-        installHelper(ctx, url, "encode", jsUrlEncode, 1);
-        installHelper(ctx, url, "decode", jsUrlDecode, 1);
+        installHelper<jsUrlEncode>(ctx, url, "encode", 1);
+        installHelper<jsUrlDecode>(ctx, url, "decode", 1);
         JS_SetPropertyStr(ctx, root, "url", url);
     }
     {
         JSValue hmac = JS_NewObject(ctx);
-        installHelper(ctx, hmac, "sha1", jsHmac<crypto::hmacSha1>, 2);
-        installHelper(ctx, hmac, "sha256", jsHmac<crypto::hmacSha256>, 2);
-        installHelper(ctx, hmac, "sha512", jsHmac<crypto::hmacSha512>, 2);
+        installHelper<jsHmac<crypto::hmacSha1>>(ctx, hmac, "sha1", 2);
+        installHelper<jsHmac<crypto::hmacSha256>>(ctx, hmac, "sha256", 2);
+        installHelper<jsHmac<crypto::hmacSha512>>(ctx, hmac, "sha512", 2);
         JS_SetPropertyStr(ctx, root, "hmac", hmac);
     }
     {
         JSValue hash = JS_NewObject(ctx);
-        installHelper(ctx, hash, "sha256", jsSha256, 1);
+        installHelper<jsSha256>(ctx, hash, "sha256", 1);
         JS_SetPropertyStr(ctx, root, "hash", hash);
     }
     {
         JSValue jwt = JS_NewObject(ctx);
-        installHelper(ctx, jwt, "sign", jsJwtSign, 3);
+        installHelper<jsJwtSign>(ctx, jwt, "sign", 3);
         JS_SetPropertyStr(ctx, root, "jwt", jwt);
     }
 
