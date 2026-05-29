@@ -1,0 +1,57 @@
+# CODEOWNERS — auto-requests review from the listed owners when matching
+# files change in a pull request. Combined with branch protection
+# ("Require review from Code Owners"), this makes review of security-sensitive
+# paths mandatory.
+#
+# Order matters: the LAST matching pattern wins. Keep the catch-all first and
+# the sensitive overrides below it.
+#
+# Docs: https://docs.github.com/articles/about-code-owners
+
+# Default owner for everything in the repo.
+*                                   @Mirzabaig313
+
+# ── Security-sensitive engine surfaces ──────────────────────────────────────
+# These parse untrusted input, execute user JS, or handle secrets. Every change
+# here needs owner review regardless of how small.
+
+# JavaScript hook sandbox — executes user-supplied code.
+/engine/src/infrastructure/hooks/   @Mirzabaig313
+
+# Secret storage — OS keychain adapter and interface.
+/engine/src/infrastructure/secrets/ @Mirzabaig313
+
+# Crypto primitives (HMAC / SHA / JWT signing).
+/engine/src/infrastructure/util/Crypto.cpp  @Mirzabaig313
+/engine/src/infrastructure/util/Crypto.h    @Mirzabaig313
+
+# Untrusted-input parsers.
+/engine/src/infrastructure/schema/  @Mirzabaig313
+/engine/src/application/ImportFromOpenApi.cpp  @Mirzabaig313
+/engine/src/application/ImportFromOpenApi.h    @Mirzabaig313
+
+# Secret redaction before logging / persistence.
+/engine/src/application/HeaderMasking.cpp  @Mirzabaig313
+/engine/src/application/HeaderMasking.h    @Mirzabaig313
+
+# HTTP client — TLS verification behavior lives here.
+/engine/src/infrastructure/http/    @Mirzabaig313
+
+# ── Build, CI, and supply chain ─────────────────────────────────────────────
+# A poisoned build or release step ships malware to every user.
+
+/.github/                           @Mirzabaig313
+/appveyor.yml                       @Mirzabaig313
+/azure-pipelines.yml                @Mirzabaig313
+/tools/ci/                          @Mirzabaig313
+/tools/git-hooks/                   @Mirzabaig313
+/cmake/                             @Mirzabaig313
+**/CMakeLists.txt                   @Mirzabaig313
+/CMakeLists.txt                     @Mirzabaig313
+/CMakePresets.json                  @Mirzabaig313
+/vcpkg.json                         @Mirzabaig313
+
+# Governance and policy files.
+/SECURITY.md                        @Mirzabaig313
+/AGENTS.md                          @Mirzabaig313
+/LICENSE                            @Mirzabaig313
