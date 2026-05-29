@@ -1,6 +1,8 @@
 // YamlSchemaParser — yaml-cpp-backed schema parser.
 #include "YamlSchemaParser.h"
 
+#include "../../domain/DependencyResolver.h"
+
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
 
@@ -176,7 +178,6 @@ std::vector<Extraction> parseExtractions(const YAML::Node& node) {
 /// Parse a non-negative integer using from_chars. Returns nullopt for
 /// any malformed input (non-digit, sign, partial parse, negative).
 /// Used by all the duration parsers below — std::stol throws on bad
-/// input and AGENTS.md mandates std::expected over exceptions.
 [[nodiscard]] std::optional<long> parseNonNegativeLong(std::string_view digits) {
     long value = 0;
     const auto* first = digits.data();
@@ -467,7 +468,7 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
                 actor.authConfig["name"] = auth["name"].as<std::string>();
             }
         } else if (actor.strategy == AuthStrategy::OAuth2ClientCredentials) {
-            // RFC 6749 §4.4: token_url + client_id + client_secret required; scope optional.
+            // RFC 6749 : token_url + client_id + client_secret required; scope optional.
             actor.authConfig["token_url"] = auth["token_url"].as<std::string>("");
             actor.authConfig["client_id"] = auth["client_id"].as<std::string>("");
             actor.authConfig["client_secret"] = auth["client_secret"].as<std::string>("");
@@ -475,7 +476,7 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
                 actor.authConfig["scope"] = auth["scope"].as<std::string>();
             }
         } else if (actor.strategy == AuthStrategy::OAuth2Password) {
-            // RFC 6749 §4.3: same as client_credentials plus username/password.
+            // RFC 6749 : same as client_credentials plus username/password.
             actor.authConfig["token_url"] = auth["token_url"].as<std::string>("");
             actor.authConfig["client_id"] = auth["client_id"].as<std::string>("");
             actor.authConfig["client_secret"] = auth["client_secret"].as<std::string>("");
@@ -914,6 +915,15 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
     // only — multi-env projects should put the block on each env file.
     if (root["transport"]) {
         project.transport[project.defaultEnvironment] = parseTransport(root["transport"]);
+    }
+
+    // Whole-project static validation: undefined references, missing
+    // depends_on targets, and dependency cycles are caught here, at load
+    // time, so a malformed project never reaches the run loop (Engine
+    // Requirement AC-3.1.4 / AC-3.1.5 / AC-3.1.6). The desktop surfaces
+    // these inline on save; the CLI fails `lint` and `run` up front.
+    if (auto valid = DependencyResolver{}.validate(project); !valid) {
+        return std::unexpected(valid.error());
     }
 
     return project;
