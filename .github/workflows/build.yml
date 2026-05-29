@@ -69,11 +69,16 @@ jobs:
           echo "Selected preset: ${{ matrix.name }}-${cfg}"
 
       # ----- Linux build prerequisites ------------------------------------
+      # GCC 14 is mandatory: the codebase uses <print> (std::println), which
+      # libstdc++ ships only from GCC 14 onward. ubuntu-latest (24.04) defaults
+      # to GCC 13, which has no <print> header. Install g++-14 and select it
+      # via CC/CXX below so the CMake preset's compiler detection picks it up.
       - name: Install Linux build prerequisites
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            gcc-14 g++-14 \
             autoconf autoconf-archive automake libtool pkg-config \
             ninja-build \
             libsecret-1-dev \
@@ -86,6 +91,12 @@ jobs:
             libxcb-xinerama0-dev libxcb-xkb-dev libxi-dev \
             libgl1-mesa-dev libegl1-mesa-dev \
             libfontconfig1-dev libfreetype6-dev libdbus-1-dev
+
+      - name: Select GCC 14 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
 
       # ----- CMake 4.x (both OSes) ----------------------------------------
       - name: Set up CMake 4.x + Ninja
