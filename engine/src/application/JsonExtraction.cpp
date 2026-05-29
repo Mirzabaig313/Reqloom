@@ -34,7 +34,7 @@ std::string truncateForTrace(std::string s) {
 [[nodiscard]] std::string toLowerCopy(std::string_view s) {
     std::string out;
     out.reserve(s.size());
-    for (char c : s) {
+    for (char const c : s) {
         out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     }
     return out;
@@ -313,12 +313,8 @@ void resolveJsonPath(const json& doc,
 
 /// Whether at least one extraction in the list needs the JSON body.
 [[nodiscard]] bool anyNeedsJsonParse(const std::vector<Extraction>& extractions) {
-    for (const auto& ext : extractions) {
-        if (ext.source == Extraction::Source::JsonPath) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(
+        extractions, [](const auto& ext) { return ext.source == Extraction::Source::JsonPath; });
 }
 
 }  // namespace

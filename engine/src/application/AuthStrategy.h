@@ -29,7 +29,7 @@ using EventSink = std::function<void(const RunEvent&)>;
 struct AuthDependencies {
     HttpClient* http{nullptr};
     VariableResolver* varResolver{nullptr};
-    EventSink emit{};          ///< Auth-flow events (headers already masked).
+    EventSink emit;            ///< Auth-flow events (headers already masked).
     RunId runId{};             ///< Parent step's id, stamped on auth events
     std::size_t stepIndex{0};  ///< so the timeline groups them under that op.
 };

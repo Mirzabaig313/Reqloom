@@ -171,7 +171,7 @@ void setIntProp(JSContext* ctx, JSValueConst obj, const char* name, int32_t valu
             continue;
         }
 
-        JSValue v = JS_GetProperty(ctx, obj, tab[i].atom);
+        JSValue const v = JS_GetProperty(ctx, obj, tab[i].atom);
 
         if (JS_IsString(v)) {
             out.emplace(key, toCppString(ctx, v));
@@ -297,15 +297,15 @@ JSValue jsJwtSign(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
         // Stringify via the global JSON.stringify so we don't reimplement
         // canonicalisation. The user's expectation is "JS object → JWT
         // payload", which matches plain stringify semantics.
-        JSValue global = JS_GetGlobalObject(ctx);
-        JsValueGuard globalGuard{ctx, global};
-        JSValue jsonObj = JS_GetPropertyStr(ctx, global, "JSON");
-        JsValueGuard jsonGuard{ctx, jsonObj};
-        JSValue stringify = JS_GetPropertyStr(ctx, jsonObj, "stringify");
-        JsValueGuard stringifyGuard{ctx, stringify};
+        JSValue const global = JS_GetGlobalObject(ctx);
+        JsValueGuard const globalGuard{ctx, global};
+        JSValue const jsonObj = JS_GetPropertyStr(ctx, global, "JSON");
+        JsValueGuard const jsonGuard{ctx, jsonObj};
+        JSValue const stringify = JS_GetPropertyStr(ctx, jsonObj, "stringify");
+        JsValueGuard const stringifyGuard{ctx, stringify};
         JSValue args[1] = {argv[0]};
-        JSValue str = JS_Call(ctx, stringify, jsonObj, 1, args);
-        JsValueGuard strGuard{ctx, str};
+        JSValue const str = JS_Call(ctx, stringify, jsonObj, 1, args);
+        JsValueGuard const strGuard{ctx, str};
         if (JS_IsException(str)) {
             return JS_UNDEFINED;
         }
@@ -356,7 +356,7 @@ JSValue guardHelper(JSContext* ctx, JSValueConst thisVal, int argc, JSValueConst
 
 template <JSCFunction* Fn>
 void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int arity) {
-    JSValue f = JS_NewCFunction(ctx, &guardHelper<Fn>, name, arity);
+    JSValue const f = JS_NewCFunction(ctx, &guardHelper<Fn>, name, arity);
     JS_SetPropertyStr(ctx, parent, name, f);
 }
 
@@ -367,7 +367,7 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
 
     // request
     {
-        JSValue req = JS_NewObject(ctx);
+        JSValue const req = JS_NewObject(ctx);
         setStringProp(ctx, req, "method", std::string{codecs::methodToString(hctx.request.method)});
         setStringProp(ctx, req, "url", hctx.request.url);
         JS_SetPropertyStr(ctx, req, "headers", makeStringMap(ctx, hctx.request.headers));
@@ -381,7 +381,7 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
 
     // response (post hooks only)
     if (includeResponse && hctx.response) {
-        JSValue resp = JS_NewObject(ctx);
+        JSValue const resp = JS_NewObject(ctx);
         setIntProp(ctx, resp, "status", hctx.response->status);
         JS_SetPropertyStr(ctx, resp, "headers", makeStringMap(ctx, hctx.response->headers));
         setStringProp(ctx, resp, "body", hctx.response->body);
@@ -392,7 +392,7 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
 
     // actors → { actorName: { var: value, ... }, ... }
     {
-        JSValue actors = JS_NewObject(ctx);
+        JSValue const actors = JS_NewObject(ctx);
         for (const auto& [actor, vars] : hctx.variables) {
             JS_SetPropertyStr(ctx, actors, actor.c_str(), makeStringMap(ctx, vars));
         }
@@ -404,37 +404,37 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
 
     // helpers
     {
-        JSValue base64 = JS_NewObject(ctx);
+        JSValue const base64 = JS_NewObject(ctx);
         installHelper<jsBase64Encode>(ctx, base64, "encode", 1);
         installHelper<jsBase64Decode>(ctx, base64, "decode", 1);
         JS_SetPropertyStr(ctx, root, "base64", base64);
     }
     {
-        JSValue hex = JS_NewObject(ctx);
+        JSValue const hex = JS_NewObject(ctx);
         installHelper<jsHexEncode>(ctx, hex, "encode", 1);
         installHelper<jsHexDecode>(ctx, hex, "decode", 1);
         JS_SetPropertyStr(ctx, root, "hex", hex);
     }
     {
-        JSValue url = JS_NewObject(ctx);
+        JSValue const url = JS_NewObject(ctx);
         installHelper<jsUrlEncode>(ctx, url, "encode", 1);
         installHelper<jsUrlDecode>(ctx, url, "decode", 1);
         JS_SetPropertyStr(ctx, root, "url", url);
     }
     {
-        JSValue hmac = JS_NewObject(ctx);
+        JSValue const hmac = JS_NewObject(ctx);
         installHelper<jsHmac<crypto::hmacSha1>>(ctx, hmac, "sha1", 2);
         installHelper<jsHmac<crypto::hmacSha256>>(ctx, hmac, "sha256", 2);
         installHelper<jsHmac<crypto::hmacSha512>>(ctx, hmac, "sha512", 2);
         JS_SetPropertyStr(ctx, root, "hmac", hmac);
     }
     {
-        JSValue hash = JS_NewObject(ctx);
+        JSValue const hash = JS_NewObject(ctx);
         installHelper<jsSha256>(ctx, hash, "sha256", 1);
         JS_SetPropertyStr(ctx, root, "hash", hash);
     }
     {
-        JSValue jwt = JS_NewObject(ctx);
+        JSValue const jwt = JS_NewObject(ctx);
         installHelper<jsJwtSign>(ctx, jwt, "sign", 3);
         JS_SetPropertyStr(ctx, root, "jwt", jwt);
     }
@@ -445,22 +445,22 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
 // ─── Read mutated request/response back from JS ──────────────────────────────
 
 void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outReq) {
-    JSValue req = JS_GetPropertyStr(ctx, root, "request");
-    JsValueGuard guard{ctx, req};
+    JSValue const req = JS_GetPropertyStr(ctx, root, "request");
+    JsValueGuard const guard{ctx, req};
     if (!JS_IsObject(req)) {
         return;
     }
 
     {
-        JSValue url = JS_GetPropertyStr(ctx, req, "url");
-        JsValueGuard urlGuard{ctx, url};
+        JSValue const url = JS_GetPropertyStr(ctx, req, "url");
+        JsValueGuard const urlGuard{ctx, url};
         if (JS_IsString(url)) {
             outReq.url = toCppString(ctx, url);
         }
     }
     {
-        JSValue body = JS_GetPropertyStr(ctx, req, "body");
-        JsValueGuard bodyGuard{ctx, body};
+        JSValue const body = JS_GetPropertyStr(ctx, req, "body");
+        JsValueGuard const bodyGuard{ctx, body};
         if (JS_IsString(body)) {
             outReq.body = toCppString(ctx, body);
         } else if (JS_IsNull(body) || JS_IsUndefined(body)) {
@@ -468,8 +468,8 @@ void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outR
         }
     }
     {
-        JSValue headers = JS_GetPropertyStr(ctx, req, "headers");
-        JsValueGuard headersGuard{ctx, headers};
+        JSValue const headers = JS_GetPropertyStr(ctx, req, "headers");
+        JsValueGuard const headersGuard{ctx, headers};
         if (JS_IsObject(headers)) {
             outReq.headers = readStringMap(ctx, headers);
         }
@@ -479,15 +479,15 @@ void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outR
 }
 
 void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& outResp) {
-    JSValue resp = JS_GetPropertyStr(ctx, root, "response");
-    JsValueGuard guard{ctx, resp};
+    JSValue const resp = JS_GetPropertyStr(ctx, root, "response");
+    JsValueGuard const guard{ctx, resp};
     if (!JS_IsObject(resp)) {
         return;
     }
 
     {
-        JSValue status = JS_GetPropertyStr(ctx, resp, "status");
-        JsValueGuard statusGuard{ctx, status};
+        JSValue const status = JS_GetPropertyStr(ctx, resp, "status");
+        JsValueGuard const statusGuard{ctx, status};
         if (JS_IsNumber(status)) {
             int32_t s = 0;
             if (JS_ToInt32(ctx, &s, status) == 0) {
@@ -496,15 +496,15 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
         }
     }
     {
-        JSValue body = JS_GetPropertyStr(ctx, resp, "body");
-        JsValueGuard bodyGuard{ctx, body};
+        JSValue const body = JS_GetPropertyStr(ctx, resp, "body");
+        JsValueGuard const bodyGuard{ctx, body};
         if (JS_IsString(body)) {
             outResp.body = toCppString(ctx, body);
         }
     }
     {
-        JSValue headers = JS_GetPropertyStr(ctx, resp, "headers");
-        JsValueGuard headersGuard{ctx, headers};
+        JSValue const headers = JS_GetPropertyStr(ctx, resp, "headers");
+        JsValueGuard const headersGuard{ctx, headers};
         if (JS_IsObject(headers)) {
             outResp.headers = readStringMap(ctx, headers);
         }
@@ -514,15 +514,15 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
 // ─── Error formatting ────────────────────────────────────────────────────────
 
 [[nodiscard]] std::string formatJsException(JSContext* ctx) {
-    JSValue ex = JS_GetException(ctx);
-    JsValueGuard guard{ctx, ex};
+    JSValue const ex = JS_GetException(ctx);
+    JsValueGuard const guard{ctx, ex};
     if (JS_IsNull(ex) || JS_IsUndefined(ex)) {
         return "<unknown>";
     }
 
     auto base = toCppString(ctx, ex);
-    JSValue stack = JS_GetPropertyStr(ctx, ex, "stack");
-    JsValueGuard stackGuard{ctx, stack};
+    JSValue const stack = JS_GetPropertyStr(ctx, ex, "stack");
+    JsValueGuard const stackGuard{ctx, stack};
     if (JS_IsString(stack)) {
         auto stackStr = toCppString(ctx, stack);
         if (!stackStr.empty()) {
@@ -570,7 +570,7 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
 [[nodiscard]] std::expected<HookOutcome, ChainApiError> runScript(const std::string& script,
                                                                   HookContext context,
                                                                   bool includeResponse) {
-    JsRuntimePtr rt{JS_NewRuntime()};
+    JsRuntimePtr const rt{JS_NewRuntime()};
     if (!rt) {
         return std::unexpected(
             ChainApiError{ErrorCode::HookFailure, ErrorClass::Hook, "JS_NewRuntime returned null"});
@@ -580,7 +580,7 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
     InterruptState ist{std::chrono::steady_clock::now() + kHookTimeout};
     JS_SetInterruptHandler(rt.get(), interruptCallback, &ist);
 
-    JsContextPtr jsctx{JS_NewContext(rt.get())};
+    JsContextPtr const jsctx{JS_NewContext(rt.get())};
     if (!jsctx) {
         return std::unexpected(
             ChainApiError{ErrorCode::HookFailure, ErrorClass::Hook, "JS_NewContext returned null"});
@@ -591,11 +591,11 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
     // Build the `ctx` object and stash it on the global as `__chainapi_ctx`
     // so wrapper code can reach it whether the script is a module or an
     // inline body.
-    JSValue hookCtxObj = buildHookCtx(c, context, includeResponse);
-    JSValue global = JS_GetGlobalObject(c);
-    JsValueGuard globalGuard{c, global};
+    JSValue const hookCtxObj = buildHookCtx(c, context, includeResponse);
+    JSValue const global = JS_GetGlobalObject(c);
+    JsValueGuard const globalGuard{c, global};
     JS_SetPropertyStr(c, global, "__chainapi_ctx", JS_DupValue(c, hookCtxObj));
-    JsValueGuard hookCtxGuard{c, hookCtxObj};
+    JsValueGuard const hookCtxGuard{c, hookCtxObj};
 
     auto fail = [&](ErrorCode code, std::string detail) {
         return std::unexpected(ChainApiError{code, ErrorClass::Hook, std::move(detail)});
@@ -604,16 +604,16 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
     if (looksLikeModule(script)) {
         // Compile the module and trigger evaluation. The user's default
         // export is invoked via a thin script that imports it back.
-        JSValue compiled = JS_Eval(c,
-                                   script.data(),
-                                   script.size(),
-                                   "hook.mjs",
-                                   JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+        JSValue const compiled = JS_Eval(c,
+                                         script.data(),
+                                         script.size(),
+                                         "hook.mjs",
+                                         JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
         if (JS_IsException(compiled)) {
             JS_FreeValue(c, compiled);
             return fail(ErrorCode::HookFailure, "hook compile failed: " + formatJsException(c));
         }
-        JSValue evalOk = JS_EvalFunction(c, compiled);
+        JSValue const evalOk = JS_EvalFunction(c, compiled);
         if (JS_IsException(evalOk)) {
             JS_FreeValue(c, evalOk);
             const auto err = formatJsException(c);
@@ -628,7 +628,7 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
         const std::string driver =
             "import fn from 'hook.mjs';\n"
             "globalThis.__chainapi_invoke = () => fn(globalThis.__chainapi_ctx);\n";
-        JSValue driverEval =
+        JSValue const driverEval =
             JS_Eval(c, driver.data(), driver.size(), "<driver>", JS_EVAL_TYPE_MODULE);
         if (JS_IsException(driverEval)) {
             JS_FreeValue(c, driverEval);
@@ -637,13 +637,13 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
         }
         JS_FreeValue(c, driverEval);
 
-        JSValue invoke = JS_GetPropertyStr(c, global, "__chainapi_invoke");
-        JsValueGuard invokeGuard{c, invoke};
+        JSValue const invoke = JS_GetPropertyStr(c, global, "__chainapi_invoke");
+        JsValueGuard const invokeGuard{c, invoke};
         if (!JS_IsFunction(c, invoke)) {
             return fail(ErrorCode::HookFailure, "module did not export a default function");
         }
-        JSValue result = JS_Call(c, invoke, JS_UNDEFINED, 0, nullptr);
-        JsValueGuard resultGuard{c, result};
+        JSValue const result = JS_Call(c, invoke, JS_UNDEFINED, 0, nullptr);
+        JsValueGuard const resultGuard{c, result};
         if (JS_IsException(result)) {
             const auto err = formatJsException(c);
             if (err.find("interrupted") != std::string::npos) {
@@ -658,9 +658,9 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
         // snippets. Crypto helpers don't care either way.
         const std::string wrapped =
             "(function(ctx){\n" + script + "\n}).call(undefined, globalThis.__chainapi_ctx);\n";
-        JSValue evalRes =
+        JSValue const evalRes =
             JS_Eval(c, wrapped.data(), wrapped.size(), "hook.js", JS_EVAL_TYPE_GLOBAL);
-        JsValueGuard evalGuard{c, evalRes};
+        JsValueGuard const evalGuard{c, evalRes};
         if (JS_IsException(evalRes)) {
             const auto err = formatJsException(c);
             if (err.find("interrupted") != std::string::npos) {

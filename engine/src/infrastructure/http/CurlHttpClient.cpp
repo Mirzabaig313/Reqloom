@@ -95,7 +95,7 @@ std::size_t headerCallback(char* ptr,
     const std::size_t total = size * nmemb;
     auto* headers = static_cast<std::vector<std::pair<std::string, std::string>>*>(userdata);
     try {
-        std::string line(ptr, total);
+        std::string const line(ptr, total);
         auto colonPos = line.find(':');
         if (colonPos == std::string::npos) {
             return total;
@@ -163,7 +163,7 @@ CurlHttpClient::CurlHttpClient() {
 CurlHttpClient::~CurlHttpClient() = default;
 
 std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpRequest& request) {
-    CurlEasyHandle curl{curl_easy_init()};
+    CurlEasyHandle const curl{curl_easy_init()};
     if (!curl) {
         return std::unexpected(ChainApiError{
             ErrorCode::NetworkTimeout, ErrorClass::Network, "Failed to initialize curl handle"});
@@ -286,7 +286,7 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
     }
 
     auto startTime = std::chrono::steady_clock::now();
-    CURLcode res = curl_easy_perform(curl.get());
+    CURLcode const res = curl_easy_perform(curl.get());
     auto elapsed = std::chrono::steady_clock::now() - startTime;
 
     if (res != CURLE_OK) {

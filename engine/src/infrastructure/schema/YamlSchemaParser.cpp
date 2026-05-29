@@ -99,7 +99,7 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
         }
         try {
             std::size_t pos = 0;
-            double d = std::stod(raw, &pos);
+            double const d = std::stod(raw, &pos);
             if (pos == raw.size()) {
                 return nlohmann::json(d);
             }
@@ -789,7 +789,7 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         if (!loadedRoot) {
             return std::unexpected(loadedRoot.error());
         }
-        const YAML::Node root = std::move(*loadedRoot);
+        const YAML::Node root = *loadedRoot;
 
         auto version = root["version"].as<int>(0);
         if (version < 1 || version > 3) {
@@ -811,7 +811,7 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
             if (!loadedSub) {
                 return loadedSub.error();
             }
-            const YAML::Node subDoc = std::move(*loadedSub);
+            const YAML::Node subDoc = *loadedSub;
 
             const auto relPath = fs::relative(file, baseDir).string();
             if (relPath.starts_with("actors/") || relPath.starts_with("actors\\")) {

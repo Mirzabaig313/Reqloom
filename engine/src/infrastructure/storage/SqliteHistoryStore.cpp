@@ -64,7 +64,12 @@ constexpr int kBusyTimeoutMs = 5000;
     gmtime_r(&t, &tm);
 #endif
     char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    if (std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm) == 0) {
+        // strftime returns 0 if the result (incl. NUL) exceeds the buffer.
+        // The fixed format above always fits in 21 bytes, so this is a
+        // defensive guard rather than a reachable path.
+        return {};
+    }
     return std::string{buf};
 }
 
@@ -72,7 +77,9 @@ constexpr int kBusyTimeoutMs = 5000;
     std::tm tm{};
     std::stringstream ss{std::string{s}};
     ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
-    if (ss.fail()) return {};
+    if (ss.fail()) {
+        return {};
+    }
 #if defined(_WIN32)
     const auto t = _mkgmtime(&tm);
 #else
@@ -86,12 +93,24 @@ constexpr int kBusyTimeoutMs = 5000;
 }
 
 [[nodiscard]] HttpMethod methodFromWire(std::string_view s) noexcept {
-    if (s == "POST") return HttpMethod::Post;
-    if (s == "PUT") return HttpMethod::Put;
-    if (s == "PATCH") return HttpMethod::Patch;
-    if (s == "DELETE") return HttpMethod::Delete;
-    if (s == "HEAD") return HttpMethod::Head;
-    if (s == "OPTIONS") return HttpMethod::Options;
+    if (s == "POST") {
+        return HttpMethod::Post;
+    }
+    if (s == "PUT") {
+        return HttpMethod::Put;
+    }
+    if (s == "PATCH") {
+        return HttpMethod::Patch;
+    }
+    if (s == "DELETE") {
+        return HttpMethod::Delete;
+    }
+    if (s == "HEAD") {
+        return HttpMethod::Head;
+    }
+    if (s == "OPTIONS") {
+        return HttpMethod::Options;
+    }
     return HttpMethod::Get;
 }
 
@@ -116,8 +135,12 @@ constexpr int kBusyTimeoutMs = 5000;
 }
 
 [[nodiscard]] RunOutcome outcomeFromWire(std::string_view s) noexcept {
-    if (s == "Succeeded") return RunOutcome::Succeeded;
-    if (s == "Cancelled") return RunOutcome::Cancelled;
+    if (s == "Succeeded") {
+        return RunOutcome::Succeeded;
+    }
+    if (s == "Cancelled") {
+        return RunOutcome::Cancelled;
+    }
     return RunOutcome::Failed;
 }
 
@@ -133,7 +156,9 @@ constexpr int kBusyTimeoutMs = 5000;
 
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> headersFromJson(const json& j) {
     std::vector<std::pair<std::string, std::string>> out;
-    if (!j.is_array()) return out;
+    if (!j.is_array()) {
+        return out;
+    }
     for (const auto& item : j) {
         out.emplace_back(item.value("k", std::string{}), item.value("v", std::string{}));
     }
@@ -144,14 +169,18 @@ constexpr int kBusyTimeoutMs = 5000;
 
 struct StmtDeleter {
     void operator()(sqlite3_stmt* s) const noexcept {
-        if (s != nullptr) sqlite3_finalize(s);
+        if (s != nullptr) {
+            sqlite3_finalize(s);
+        }
     }
 };
 using StmtPtr = std::unique_ptr<sqlite3_stmt, StmtDeleter>;
 
 struct DbDeleter {
     void operator()(sqlite3* db) const noexcept {
-        if (db != nullptr) sqlite3_close(db);
+        if (db != nullptr) {
+            sqlite3_close(db);
+        }
     }
 };
 using DbPtr = std::unique_ptr<sqlite3, DbDeleter>;
@@ -162,9 +191,9 @@ using DbPtr = std::unique_ptr<sqlite3, DbDeleter>;
 // than mid-statement. All sqlite3_exec calls here are on trusted, fixed SQL.
 class SqliteTransaction {
 public:
-    explicit SqliteTransaction(sqlite3* db) noexcept : db_(db) {
-        active_ = sqlite3_exec(db_, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) == SQLITE_OK;
-    }
+    explicit SqliteTransaction(sqlite3* db) noexcept
+        : db_(db),
+          active_(sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) == SQLITE_OK) {}
     ~SqliteTransaction() {
         if (active_) {
             sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
@@ -392,16 +421,17 @@ struct EventEnvelope {
         ev.variableName = p.value("variableName", std::string{});
         ev.sourcePath = p.value("sourcePath", std::string{});
         const auto o = p.value("outcome", std::string{"Missing"});
-        if (o == "Resolved")
+        if (o == "Resolved") {
             ev.outcome = ExtractionCompleted::Outcome::Resolved;
-        else if (o == "Null")
+        } else if (o == "Null") {
             ev.outcome = ExtractionCompleted::Outcome::Null;
-        else if (o == "InvalidPattern")
+        } else if (o == "InvalidPattern") {
             ev.outcome = ExtractionCompleted::Outcome::InvalidPattern;
-        else if (o == "Unsupported")
+        } else if (o == "Unsupported") {
             ev.outcome = ExtractionCompleted::Outcome::Unsupported;
-        else
+        } else {
             ev.outcome = ExtractionCompleted::Outcome::Missing;
+        }
         ev.value = p.value("value", std::string{});
         ev.at = at;
         return ev;
@@ -465,7 +495,7 @@ struct SqliteHistoryStore::Impl {
     StmtPtr updateRunEndedStmt;
     StmtPtr nextSeqStmt;
 
-    [[nodiscard]] std::expected<void, ChainApiError> exec(std::string_view sql) {
+    [[nodiscard]] std::expected<void, ChainApiError> exec(std::string_view sql) const {
         char* err = nullptr;
         const int rc = sqlite3_exec(db.get(), std::string{sql}.c_str(), nullptr, nullptr, &err);
         if (rc != SQLITE_OK) {
@@ -478,7 +508,7 @@ struct SqliteHistoryStore::Impl {
         return {};
     }
 
-    [[nodiscard]] std::expected<StmtPtr, ChainApiError> prepare(std::string_view sql) {
+    [[nodiscard]] std::expected<StmtPtr, ChainApiError> prepare(std::string_view sql) const {
         sqlite3_stmt* raw = nullptr;
         const int rc =
             sqlite3_prepare_v2(db.get(), sql.data(), static_cast<int>(sql.size()), &raw, nullptr);
@@ -489,9 +519,15 @@ struct SqliteHistoryStore::Impl {
     }
 
     [[nodiscard]] std::expected<void, ChainApiError> ensureSchema() {
-        if (auto r = exec("PRAGMA journal_mode = WAL;"); !r) return r;
-        if (auto r = exec("PRAGMA foreign_keys = ON;"); !r) return r;
-        if (auto r = exec("PRAGMA synchronous = NORMAL;"); !r) return r;
+        if (auto r = exec("PRAGMA journal_mode = WAL;"); !r) {
+            return r;
+        }
+        if (auto r = exec("PRAGMA foreign_keys = ON;"); !r) {
+            return r;
+        }
+        if (auto r = exec("PRAGMA synchronous = NORMAL;"); !r) {
+            return r;
+        }
 
         const char* createSchema = R"SQL(
             CREATE TABLE IF NOT EXISTS schema_version (
@@ -522,12 +558,15 @@ struct SqliteHistoryStore::Impl {
             CREATE INDEX IF NOT EXISTS idx_runs_started_at
                 ON runs(started_at DESC);
         )SQL";
-        if (auto r = exec(createSchema); !r) return r;
+        if (auto r = exec(createSchema); !r) {
+            return r;
+        }
 
         // v1 is the only version today; future migrations check this
         // row before applying ALTERs and bump it.
-        if (auto r = exec("INSERT OR IGNORE INTO schema_version(version) VALUES (1);"); !r)
+        if (auto r = exec("INSERT OR IGNORE INTO schema_version(version) VALUES (1);"); !r) {
             return r;
+        }
 
         return {};
     }
@@ -537,37 +576,49 @@ struct SqliteHistoryStore::Impl {
             "INSERT INTO run_events"
             "  (run_id, seq, event_type, step_index, op_id, payload, at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?);");
-        if (!p1) return std::unexpected(p1.error());
+        if (!p1) {
+            return std::unexpected(p1.error());
+        }
         insertEventStmt = std::move(*p1);
 
         auto p2 = prepare(
             "INSERT OR IGNORE INTO runs"
             "  (run_id, target_op, env_name, started_at, chain_size) "
             "VALUES (?, ?, ?, ?, ?);");
-        if (!p2) return std::unexpected(p2.error());
+        if (!p2) {
+            return std::unexpected(p2.error());
+        }
         insertRunStmt = std::move(*p2);
 
         auto p3 = prepare(
             "UPDATE runs SET target_op = ?, env_name = ?, "
             "started_at = ?, chain_size = ? WHERE run_id = ?;");
-        if (!p3) return std::unexpected(p3.error());
+        if (!p3) {
+            return std::unexpected(p3.error());
+        }
         updateRunStartedStmt = std::move(*p3);
 
         auto p4 = prepare("UPDATE runs SET ended_at = ?, outcome = ? WHERE run_id = ?;");
-        if (!p4) return std::unexpected(p4.error());
+        if (!p4) {
+            return std::unexpected(p4.error());
+        }
         updateRunEndedStmt = std::move(*p4);
 
         auto p5 = prepare("SELECT COALESCE(MAX(seq), 0) + 1 FROM run_events WHERE run_id = ?;");
-        if (!p5) return std::unexpected(p5.error());
+        if (!p5) {
+            return std::unexpected(p5.error());
+        }
         nextSeqStmt = std::move(*p5);
 
         return {};
     }
 
-    [[nodiscard]] std::int64_t nextSeq(std::uint64_t runId) {
+    [[nodiscard]] std::int64_t nextSeq(std::uint64_t runId) const {
         sqlite3_reset(nextSeqStmt.get());
         sqlite3_bind_int64(nextSeqStmt.get(), 1, static_cast<sqlite3_int64>(runId));
-        if (sqlite3_step(nextSeqStmt.get()) != SQLITE_ROW) return 1;
+        if (sqlite3_step(nextSeqStmt.get()) != SQLITE_ROW) {
+            return 1;
+        }
         return sqlite3_column_int64(nextSeqStmt.get(), 0);
     }
 };
@@ -604,8 +655,12 @@ std::expected<void, ChainApiError> SqliteHistoryStore::open(const fs::path& dbPa
     impl_->db.reset(raw);
     sqlite3_busy_timeout(impl_->db.get(), kBusyTimeoutMs);
 
-    if (auto r = impl_->ensureSchema(); !r) return r;
-    if (auto r = impl_->prepareStatements(); !r) return r;
+    if (auto r = impl_->ensureSchema(); !r) {
+        return r;
+    }
+    if (auto r = impl_->prepareStatements(); !r) {
+        return r;
+    }
     return {};
 }
 
@@ -728,7 +783,7 @@ std::expected<std::vector<RunEvent>, ChainApiError> SqliteHistoryStore::eventsFo
     if (sqlite3_prepare_v2(impl_->db.get(), sql, -1, &raw, nullptr) != SQLITE_OK) {
         return std::unexpected(sqliteError(impl_->db.get(), "history: prepare eventsFor"));
     }
-    StmtPtr stmt{raw};
+    StmtPtr const stmt{raw};
 
     sqlite3_bind_int64(stmt.get(), 1, static_cast<sqlite3_int64>(run.value));
 
@@ -781,7 +836,7 @@ std::expected<std::vector<RunHistoryRow>, ChainApiError> SqliteHistoryStore::lis
     if (sqlite3_prepare_v2(impl_->db.get(), sql.c_str(), -1, &raw, nullptr) != SQLITE_OK) {
         return std::unexpected(sqliteError(impl_->db.get(), "history: prepare listRuns"));
     }
-    StmtPtr stmt{raw};
+    StmtPtr const stmt{raw};
 
     std::vector<RunHistoryRow> out;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {

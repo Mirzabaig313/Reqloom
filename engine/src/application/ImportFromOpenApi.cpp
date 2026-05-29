@@ -499,7 +499,7 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
                                        std::to_string(specSize) + " bytes)"));
     }
 
-    std::ifstream in(*canonical);
+    std::ifstream const in(*canonical);
     if (!in) {
         return std::unexpected(invalid("openapi import: cannot open spec: " + canonical->string()));
     }
@@ -629,7 +629,7 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             }
 
             if (!op.extractions.empty() && exampleNode) {
-                Verifier verifier;
+                Verifier const verifier;
                 SampleResponse sample;
                 sample.kind = Provenance::VerifiedAgainst::OpenApiExample;
                 sample.statusCode = op.expectStatus.value_or(200);
