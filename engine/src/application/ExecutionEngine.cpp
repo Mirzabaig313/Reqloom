@@ -136,6 +136,19 @@ struct ExecutionEngine::Impl {
     }
 
     void emit(const RunEvent& e) {
+        // Persist before fanning out to subscribers. If a subscriber
+        // crashes the process, the event is durably on disk for the
+        // history pane and post-mortem inspection. A persistence
+        // failure is logged but never fails the run — observability
+        // must never break execution.
+        if (deps.history) {
+            // Best-effort. If history->append returns an error we
+            // silently drop it for now; once the engine logger lands
+            // (Engine Requirement §10) this becomes log + continue.
+            // NOLINTNEXTLINE(bugprone-unused-return-value)
+            (void)deps.history->append(e);
+        }
+
         // Snapshot before invoking — avoids re-entrant deadlock if a callback calls subscribe().
         std::vector<EventCallback> snapshot;
         {

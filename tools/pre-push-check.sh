@@ -132,7 +132,7 @@ step "4/5  ctest"
 if [[ "${SKIP_TESTS:-0}" == "1" ]]; then
   yellow "  SKIP_TESTS=1 — skipped"
 else
-  ctest --preset "$preset" --output-on-failure 2>&1 | tail -30
+  ctest --test-dir "$build_dir" -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)" --output-on-failure 2>&1 | tail -30
   test_status=${PIPESTATUS[0]}
   [[ $test_status -eq 0 ]] || fail "tests failed (exit $test_status)"
   ok "all tests passed"

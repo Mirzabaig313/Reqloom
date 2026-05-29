@@ -68,7 +68,7 @@ public:
 /// actor declares an unsupported `AuthStrategy` enum value — the engine
 /// surfaces that as `SessionRefreshFailed`.
 [[nodiscard]] std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor,
-                                                                 AuthDependencies deps);
+                                                                 const AuthDependencies& deps);
 
 /// Run the actor's `refresh:` block (a single HTTP step with templates,
 /// expected status, and extractions) and return the new variable map
@@ -83,6 +83,6 @@ public:
 /// (e.g. `{{user.refresh_token}}`), so the caller must keep the session
 /// in the RunContext's cache while calling.
 [[nodiscard]] std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
-    const Actor& actor, RunContext& ctx, const ResolveContext& rctx, AuthDependencies deps);
+    const Actor& actor, RunContext& ctx, const ResolveContext& rctx, const AuthDependencies& deps);
 
 }  // namespace chainapi::engine
