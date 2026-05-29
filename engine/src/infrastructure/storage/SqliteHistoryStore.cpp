@@ -518,7 +518,7 @@ struct SqliteHistoryStore::Impl {
         return StmtPtr{raw};
     }
 
-    [[nodiscard]] std::expected<void, ChainApiError> ensureSchema() {
+    [[nodiscard]] std::expected<void, ChainApiError> ensureSchema() const {
         if (auto r = exec("PRAGMA journal_mode = WAL;"); !r) {
             return r;
         }

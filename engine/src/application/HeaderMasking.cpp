@@ -36,7 +36,7 @@ constexpr std::array<std::string_view, 5> kSensitiveSubstrings = {
 [[nodiscard]] std::string toLowerCopy(std::string_view s) {
     std::string out;
     out.reserve(s.size());
-    for (char c : s) {
+    for (const char c : s) {
         out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     }
     return out;
@@ -46,8 +46,10 @@ constexpr std::array<std::string_view, 5> kSensitiveSubstrings = {
     const auto lower = toLowerCopy(name);
     std::string flat;
     flat.reserve(lower.size());
-    for (char c : lower) {
-        if (c != '-' && c != '_') flat.push_back(c);
+    for (const char c : lower) {
+        if (c != '-' && c != '_') {
+            flat.push_back(c);
+        }
     }
     return std::ranges::any_of(kSensitiveSubstrings, [&](const auto& needle) {
         return flat.find(needle) != std::string::npos;
@@ -63,7 +65,9 @@ bool isSensitiveHeader(std::string_view name) noexcept {
     try {
         const auto lower = toLowerCopy(name);
         for (const auto& exact : kSensitiveExactNames) {
-            if (lower == exact) return true;
+            if (lower == exact) {
+                return true;
+            }
         }
         return matchesSubstringPolicy(name);
     } catch (...) {
