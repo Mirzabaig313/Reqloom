@@ -187,9 +187,10 @@ build_script:
       cmake --preset "$PRESET"
       cmake --build --preset "$PRESET"
 
-  - cmd: |
-      cmake --preset %PRESET% || exit /b
-      cmake --build --preset %PRESET% || exit /b
+  # Windows configure+build+test runs in one .cmd that first activates the
+  # MSVC toolchain (vcvars64). Tests are handled inside the script, so the
+  # test_script: phase below is a no-op on Windows.
+  - cmd: tools\ci\appveyor-build-windows.cmd
 
 test_script:
   - sh: |
@@ -203,9 +204,4 @@ test_script:
         echo "Skipping tests on release preset."
       fi
 
-  - cmd: |
-      if "%PRESET:~-6%" == "-debug" (
-        ctest --preset %PRESET% || exit /b
-      ) else (
-        echo Skipping tests on release preset.
-      )
+  - cmd: echo Windows tests already ran in build_script.
