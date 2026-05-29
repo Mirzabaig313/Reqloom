@@ -10,8 +10,6 @@
 #include <QtWidgets/QTreeWidgetItem>
 #include <QtWidgets/QVBoxLayout>
 
-#include <functional>
-
 namespace chainapi::desktop {
 
 namespace {
@@ -20,6 +18,25 @@ namespace {
 constexpr int kOperationIdRole = Qt::UserRole + 1;
 // Marks a row as an operation (vs. a category/actor/resource header).
 constexpr int kIsOperationRole = Qt::UserRole + 2;
+
+/// Recursively show rows that match `needle` (or have a matching descendant)
+/// and hide the rest. Returns whether `item` ended up visible. A free helper
+/// rather than a std::function so the recursion doesn't heap-allocate.
+bool applyFilterTo(QTreeWidgetItem* item, const QString& needle) {
+    bool anyChildVisible = false;
+    for (int i = 0; i < item->childCount(); ++i) {
+        anyChildVisible = applyFilterTo(item->child(i), needle) || anyChildVisible;
+    }
+    const bool isOperation = item->data(0, kIsOperationRole).toBool();
+    bool selfMatches = needle.isEmpty();
+    if (!selfMatches && isOperation) {
+        selfMatches = item->text(0).contains(needle, Qt::CaseInsensitive) ||
+                      item->text(1).contains(needle, Qt::CaseInsensitive);
+    }
+    const bool visible = selfMatches || anyChildVisible;
+    item->setHidden(!visible);
+    return visible;
+}
 
 }  // namespace
 
@@ -113,24 +130,8 @@ void ProjectExplorerWidget::applyFilter(const QString& text) {
     const QString needle = text.trimmed();
     // Walk every operation leaf; hide non-matches and any now-empty parents.
     // A category/resource stays visible if at least one descendant matches.
-    const std::function<bool(QTreeWidgetItem*)> filterItem = [&](QTreeWidgetItem* item) -> bool {
-        bool anyChildVisible = false;
-        for (int i = 0; i < item->childCount(); ++i) {
-            anyChildVisible = filterItem(item->child(i)) || anyChildVisible;
-        }
-        const bool isOperation = item->data(0, kIsOperationRole).toBool();
-        bool selfMatches = needle.isEmpty();
-        if (!selfMatches && isOperation) {
-            selfMatches = item->text(0).contains(needle, Qt::CaseInsensitive) ||
-                          item->text(1).contains(needle, Qt::CaseInsensitive);
-        }
-        const bool visible = selfMatches || anyChildVisible;
-        item->setHidden(!visible);
-        return visible;
-    };
-
     for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
-        filterItem(tree_->topLevelItem(i));
+        applyFilterTo(tree_->topLevelItem(i), needle);
     }
 }
 

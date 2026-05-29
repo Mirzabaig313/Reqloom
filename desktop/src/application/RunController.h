@@ -106,6 +106,13 @@ private:
     // Written on the worker thread (RunStarted handler), read on the GUI
     // thread (cancelRun) — atomic to avoid a data race on the run id.
     std::atomic<std::uint64_t> currentRunId_{0};
+
+    // Lifetime guard for the engine event callback. The engine retains the
+    // callback for its whole life with no unsubscribe, and (per App's member
+    // order) outlives this controller. The callback captures a copy of this
+    // shared flag and skips emitting once the destructor clears it, so an
+    // event fired after `~RunController` can never touch a freed `this`.
+    std::shared_ptr<std::atomic_bool> alive_{std::make_shared<std::atomic_bool>(true)};
 };
 
 }  // namespace chainapi::desktop

@@ -29,9 +29,14 @@ chainapi_set_warnings(chainapi-desktop-ui-tests)
 chainapi_apply_sanitizers(chainapi-desktop-ui-tests)
 
 gtest_discover_tests(chainapi-desktop-ui-tests
+    # PRE_TEST defers test enumeration to ctest run time. The default
+    # POST_BUILD mode executes the binary during the build, before the
+    # ENVIRONMENT property below applies, so Qt would try the xcb plugin,
+    # find no display on CI, and abort. PRE_TEST runs discovery with the
+    # offscreen platform in effect.
+    DISCOVERY_MODE PRE_TEST
     PROPERTIES
         LABELS "desktop_ui"
-        # Headless: no display server on CI runners.
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     DISCOVERY_TIMEOUT 60
 )

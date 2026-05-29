@@ -152,10 +152,10 @@ void ResponseViewerPanel::renderBody(const QString& body) {
     auto* root = new QTreeWidgetItem(bodyTree_);
     if (doc.isObject()) {
         root->setText(0, QStringLiteral("{ } object"));
-        populateTree(root, QString{}, doc.object());
+        populateTree(root, doc.object());
     } else if (doc.isArray()) {
         root->setText(0, QStringLiteral("[ ] array"));
-        populateTree(root, QString{}, doc.array());
+        populateTree(root, doc.array());
     } else {
         root->setText(0, QStringLiteral("value"));
         root->setText(1, scalarText(QJsonValue::fromVariant(doc.toVariant())));
@@ -163,16 +163,14 @@ void ResponseViewerPanel::renderBody(const QString& body) {
     bodyTree_->expandToDepth(2);
 }
 
-void ResponseViewerPanel::populateTree(QTreeWidgetItem* parent,
-                                       const QString& key,
-                                       const QJsonValue& value) {
+void ResponseViewerPanel::populateTree(QTreeWidgetItem* parent, const QJsonValue& value) {
     if (value.isObject()) {
         const QJsonObject obj = value.toObject();
         for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
             auto* child = new QTreeWidgetItem(parent);
             child->setText(0, it.key());
             if (it.value().isObject() || it.value().isArray()) {
-                populateTree(child, it.key(), it.value());
+                populateTree(child, it.value());
             } else {
                 child->setText(1, scalarText(it.value()));
             }
@@ -183,7 +181,7 @@ void ResponseViewerPanel::populateTree(QTreeWidgetItem* parent,
             auto* child = new QTreeWidgetItem(parent);
             child->setText(0, QStringLiteral("[%1]").arg(i));
             if (arr[i].isObject() || arr[i].isArray()) {
-                populateTree(child, child->text(0), arr[i]);
+                populateTree(child, arr[i]);
             } else {
                 child->setText(1, scalarText(arr[i]));
             }
@@ -191,7 +189,6 @@ void ResponseViewerPanel::populateTree(QTreeWidgetItem* parent,
     } else {
         parent->setText(1, scalarText(value));
     }
-    Q_UNUSED(key);
 }
 
 }  // namespace chainapi::desktop

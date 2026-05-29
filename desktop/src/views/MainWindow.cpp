@@ -95,10 +95,14 @@ void MainWindow::buildMenusAndToolbar() {
     toolbar->addAction(manageSecretsAction_);
     toolbar->addSeparator();
 
-    toolbar->addWidget(new QLabel(QStringLiteral("  Environment: "), this));
+    auto* envLabel = new QLabel(QStringLiteral("Environment:"), this);
+    envLabel->setContentsMargins(8, 0, 4, 0);
+    toolbar->addWidget(envLabel);
     envCombo_ = new QComboBox(this);
     envCombo_->setMinimumWidth(160);
     envCombo_->setEnabled(false);
+    envCombo_->setAccessibleName(QStringLiteral("Environment"));
+    envLabel->setBuddy(envCombo_);
     toolbar->addWidget(envCombo_);
 
     toolbar->addSeparator();

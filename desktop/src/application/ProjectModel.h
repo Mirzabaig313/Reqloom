@@ -10,7 +10,7 @@
 #include <QtCore/QStringList>
 
 #include <filesystem>
-#include <optional>
+#include <memory>
 
 namespace chainapi::desktop {
 
@@ -35,6 +35,14 @@ public:
 
     [[nodiscard]] bool hasProject() const noexcept;
     [[nodiscard]] const engine::Project& project() const noexcept;
+
+    /// Shared, immutable handle to the current project. A consumer that runs
+    /// work outliving the GUI's `isRunning()` guard (e.g. the off-thread
+    /// engine run) captures this so a concurrent `loadFromDirectory` — which
+    /// rebinds the model to a fresh project — can't dangle the in-flight run.
+    /// Empty before the first successful load.
+    [[nodiscard]] std::shared_ptr<const engine::Project> projectPtr() const noexcept;
+
     [[nodiscard]] QString name() const;
 
     /// Absolute project directory the current project was loaded from.
@@ -55,7 +63,7 @@ signals:
     void loadFailed(QString code, QString detail);
 
 private:
-    std::optional<engine::Project> project_;
+    std::shared_ptr<const engine::Project> project_;
     std::filesystem::path root_;
 };
 
