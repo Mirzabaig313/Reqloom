@@ -253,8 +253,8 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
         ready.pop();
         sorted.push_back(node);
 
-        if (dependents.contains(node)) {
-            for (const auto& dependent : dependents[node]) {
+        if (const auto it = dependents.find(node); it != dependents.end()) {
+            for (const auto& dependent : it->second) {
                 inDegree[dependent]--;
                 if (inDegree[dependent] == 0) {
                     ready.push(dependent);

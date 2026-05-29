@@ -326,7 +326,7 @@ private:
 
 class Parser {
 public:
-    Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
+    explicit Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
 
     std::expected<NodePtr, std::string> parseExpr() {
         auto root = parseLogicOr();
