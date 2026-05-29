@@ -6,6 +6,7 @@
 
 #include <QtWidgets/QMainWindow>
 
+class QAction;
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -18,6 +19,7 @@ namespace chainapi::desktop {
 
 class ProjectModel;
 class RunController;
+class SecretManager;
 class ProjectExplorerWidget;
 class RequestEditorPanel;
 class ResponseViewerPanel;
@@ -45,6 +47,7 @@ private:
     void connectSignals();
 
     void onOpenProject();
+    void onManageSecrets();
     void onProjectLoaded();
     void onProjectLoadFailed(const QString& code, const QString& detail);
     void onRunRequested(const QString& operationId, bool clean, bool dryRun);
@@ -58,12 +61,14 @@ private:
 
     ProjectModel& project_;
     RunController* runController_{nullptr};
+    SecretManager* secretManager_{nullptr};
 
     ProjectExplorerWidget* explorer_{nullptr};
     RequestEditorPanel* requestEditor_{nullptr};
     ResponseViewerPanel* responseViewer_{nullptr};
     TimelinePanel* timeline_{nullptr};
 
+    QAction* manageSecretsAction_{nullptr};
     QComboBox* envCombo_{nullptr};
     QCheckBox* captureBodiesCheck_{nullptr};
     QLabel* statusLabel_{nullptr};

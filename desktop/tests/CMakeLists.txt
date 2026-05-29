@@ -35,3 +35,35 @@ gtest_discover_tests(chainapi-desktop-ui-tests
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     DISCOVERY_TIMEOUT 60
 )
+
+# SecretManager test: needs the engine (SecretStore interface, project parse,
+# secret enumeration) and ProjectModel. Uses an in-memory SecretStore, so no
+# real OS keychain is touched. Separate target from the Qt-only UI tests
+# because it links chainapi::engine.
+add_executable(chainapi-desktop-secret-tests
+    unit/SecretManagerTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.h
+)
+target_include_directories(chainapi-desktop-secret-tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+target_link_libraries(chainapi-desktop-secret-tests
+    PRIVATE
+        chainapi::engine
+        Qt6::Core
+        GTest::gtest
+)
+set_target_properties(chainapi-desktop-secret-tests PROPERTIES
+    AUTOMOC ON
+)
+chainapi_set_warnings(chainapi-desktop-secret-tests)
+chainapi_apply_sanitizers(chainapi-desktop-secret-tests)
+
+gtest_discover_tests(chainapi-desktop-secret-tests
+    PROPERTIES
+        LABELS "desktop_unit"
+    DISCOVERY_TIMEOUT 60
+)

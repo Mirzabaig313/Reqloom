@@ -12,6 +12,8 @@ qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
     src/application/RunController.h
     src/application/EnvironmentSettings.cpp
     src/application/EnvironmentSettings.h
+    src/application/SecretManager.cpp
+    src/application/SecretManager.h
     src/views/Formatting.cpp
     src/views/Formatting.h
     src/views/MainWindow.cpp
@@ -22,6 +24,8 @@ qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
     src/views/RequestEditorPanel.h
     src/views/ResponseViewerPanel.cpp
     src/views/ResponseViewerPanel.h
+    src/views/SecretsDialog.cpp
+    src/views/SecretsDialog.h
     src/views/TimelinePanel.cpp
     src/views/TimelinePanel.h
 )
