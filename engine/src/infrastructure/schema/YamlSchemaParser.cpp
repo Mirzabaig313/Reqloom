@@ -71,6 +71,24 @@ std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     return result;
 }
 
+/// Read an environment-variable scalar, honoring the `!secret` YAML tag.
+///
+/// `key: !secret NAME` binds the variable to a keychain secret rather than
+/// a literal: the value becomes the reference `{{secret.NAME}}`, which the
+/// variable resolver expands at run time (and which `collectSecretReferences`
+/// picks up so the engine pre-loads NAME from the secret store). Without
+/// this, yaml-cpp drops the tag and the env var would hold the literal
+/// string "NAME" — PRD §5.4. An untagged scalar passes through verbatim.
+[[nodiscard]] std::string readEnvScalar(const YAML::Node& scalar) {
+    // yaml-cpp reports an explicit local tag as "!secret"; the implicit
+    // tags for plain scalars are "?"/"!", which we treat as untagged.
+    if (scalar.Tag() == "!secret") {
+        const auto name = scalar.as<std::string>("");
+        return name.empty() ? std::string{} : "{{secret." + name + "}}";
+    }
+    return scalar.as<std::string>("");
+}
+
 constexpr int kMaxYamlDepth = 64;  // prevent stack overflow on malicious input
 
 nlohmann::json yamlNodeToJsonValue(const YAML::Node& node, int depth);
@@ -858,7 +876,7 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
                 std::map<std::string, std::string> vars;
                 if (subDoc["variables"] && subDoc["variables"].IsMap()) {
                     for (const auto& kv : subDoc["variables"]) {
-                        vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
+                        vars[kv.first.as<std::string>()] = readEnvScalar(kv.second);
                     }
                 } else if (subDoc.IsMap()) {
                     for (const auto& kv : subDoc) {
@@ -867,7 +885,7 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
                             continue;
                         }
                         if (kv.second.IsScalar()) {
-                            vars[key] = kv.second.as<std::string>("");
+                            vars[key] = readEnvScalar(kv.second);
                         }
                     }
                 }
@@ -943,7 +961,7 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         if (root["environment"] && root["environment"].IsMap()) {
             std::map<std::string, std::string> vars;
             for (const auto& kv : root["environment"]) {
-                vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
+                vars[kv.first.as<std::string>()] = readEnvScalar(kv.second);
             }
             project.environments[project.defaultEnvironment] = std::move(vars);
         }

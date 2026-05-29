@@ -26,8 +26,16 @@ namespace {
 // the OS keychain and don't collide with other apps' entries.
 constexpr const char* kKeychainService = "com.chainapi.secrets";
 
+// Runs an async QtKeychain job to completion on a local event loop.
+// Returns false when there is no QCoreApplication — QtKeychain jobs need
+// one to deliver `finished`, and without it loop.exec() would block
+// forever. Callers treat that as a backend-unavailable condition rather
+// than hanging (e.g. headless test binaries that never spin a Qt app).
 template <typename Job>
-void runJobBlocking(Job& job) {
+[[nodiscard]] bool runJobBlocking(Job& job) {
+    if (QCoreApplication::instance() == nullptr) {
+        return false;
+    }
     QEventLoop loop;
     bool done = false;
     QObject::connect(&job, &Job::finished, &loop, [&loop, &done]() {
@@ -38,6 +46,7 @@ void runJobBlocking(Job& job) {
     if (!done) {
         loop.exec();
     }
+    return true;
 }
 
 [[nodiscard]] QString toQt(const std::string& s) {
@@ -58,7 +67,12 @@ std::expected<std::optional<std::string>, ChainApiError> KeychainSecretStore::re
     QKeychain::ReadPasswordJob job{QString::fromUtf8(kKeychainService)};
     job.setAutoDelete(false);
     job.setKey(toQt(name));
-    runJobBlocking(job);
+    if (!runJobBlocking(job)) {
+        // No event loop to drive the job — treat as "secret not present"
+        // rather than blocking. Surfaces downstream as VarUnresolved, the
+        // same as a genuinely missing key.
+        return std::optional<std::string>{};
+    }
 
     if (job.error() == QKeychain::EntryNotFound) {
         return std::optional<std::string>{};
@@ -76,7 +90,11 @@ std::expected<void, ChainApiError> KeychainSecretStore::write(const std::string&
     job.setAutoDelete(false);
     job.setKey(toQt(name));
     job.setTextData(toQt(value));
-    runJobBlocking(job);
+    if (!runJobBlocking(job)) {
+        return std::unexpected(ChainApiError{ErrorCode::SecretAccessFailed,
+                                             ErrorClass::Auth,
+                                             "keychain write requires a running QCoreApplication"});
+    }
 
     if (job.error() != QKeychain::NoError) {
         return std::unexpected(ChainApiError{
@@ -89,7 +107,12 @@ std::expected<void, ChainApiError> KeychainSecretStore::remove(const std::string
     QKeychain::DeletePasswordJob job{QString::fromUtf8(kKeychainService)};
     job.setAutoDelete(false);
     job.setKey(toQt(name));
-    runJobBlocking(job);
+    if (!runJobBlocking(job)) {
+        return std::unexpected(
+            ChainApiError{ErrorCode::SecretAccessFailed,
+                          ErrorClass::Auth,
+                          "keychain delete requires a running QCoreApplication"});
+    }
 
     // A missing entry is not an error for remove() — the post-condition
     // (the key is absent) already holds.

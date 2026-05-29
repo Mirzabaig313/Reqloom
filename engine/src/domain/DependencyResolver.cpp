@@ -433,6 +433,19 @@ std::vector<std::string> DependencyResolver::collectSecretReferences(const Proje
         }
     }
 
+    // Environment values can themselves be secret references — a
+    // `key: !secret NAME` env entry is parsed into `{{secret.NAME}}`, and
+    // an operation that references `{{env.key}}` expands to it. Scan them
+    // so NAME is pre-loaded from the secret store.
+    for (const auto& [_, vars] : project.environments) {
+        std::vector<std::string_view> envValues;
+        envValues.reserve(vars.size());
+        for (const auto& [__, value] : vars) {
+            envValues.emplace_back(value);
+        }
+        scan(envValues);
+    }
+
     // Actor auth surfaces also resolve `{{secret.X}}` (basic credentials,
     // api_key, oauth client secrets, signing keys, refresh bodies, and
     // injected headers like `Authorization: Bearer {{secret.TOKEN}}`).
