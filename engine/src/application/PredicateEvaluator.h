@@ -50,6 +50,32 @@ private:
     std::unique_ptr<Node> root_;
 };
 
+/// Pre-parsed response body. Holds the parsed JSON document (and the
+/// "was it valid JSON" outcome) so a single body can be evaluated against
+/// several predicates without re-parsing each time — the hot path is the
+/// poll loop, which checks both a success and a fail predicate per attempt.
+///
+/// Opaque + move-only on purpose: the nlohmann::json type stays in the
+/// .cpp so it never leaks onto the application-layer public surface.
+class ParsedBody {
+public:
+    ParsedBody();
+    ~ParsedBody();
+
+    ParsedBody(ParsedBody&&) noexcept;
+    ParsedBody& operator=(ParsedBody&&) noexcept;
+
+    ParsedBody(const ParsedBody&) = delete;
+    ParsedBody& operator=(const ParsedBody&) = delete;
+
+    struct Impl;  ///< Defined in PredicateEvaluator.cpp.
+
+private:
+    friend class PredicateEvaluator;
+    explicit ParsedBody(std::unique_ptr<Impl> impl);
+    std::unique_ptr<Impl> impl_;
+};
+
 class PredicateEvaluator {
 public:
     PredicateEvaluator();
@@ -59,8 +85,25 @@ public:
     [[nodiscard]] std::expected<ParsedPredicate, ChainApiError> parse(
         std::string_view expression) const;
 
+    /// Parse a response body once for reuse across multiple `evaluate`
+    /// calls. Total + noexcept: a malformed / non-JSON body is captured as
+    /// an empty object so `$.status_code`-only predicates still evaluate,
+    /// exactly matching the string_view `evaluate` overload's fallback.
+    [[nodiscard]] ParsedBody parseBody(std::string_view jsonBody) const noexcept;
+
+    /// Evaluate a previously-parsed expression against a previously-parsed
+    /// body. Total: never throws, never returns an error. Use this (with a
+    /// shared `ParsedBody`) when checking several predicates against the
+    /// same response to avoid re-parsing the body each time.
+    ///
+    /// `statusCode` is exposed inside expressions as `$.status_code`.
+    [[nodiscard]] PredicateValue evaluate(const ParsedPredicate& predicate,
+                                          const ParsedBody& body,
+                                          int statusCode = 0) const noexcept;
+
     /// Evaluate a previously-parsed expression against a JSON document.
-    /// Total: never throws, never returns an error.
+    /// Total: never throws, never returns an error. Convenience wrapper
+    /// that parses `jsonBody` and forwards to the `ParsedBody` overload.
     ///
     /// `statusCode` is exposed inside expressions as `$.status_code`.
     /// Pass 0 when there is no associated HTTP status.
