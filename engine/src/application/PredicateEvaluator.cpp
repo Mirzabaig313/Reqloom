@@ -782,6 +782,18 @@ ParsedPredicate::ParsedPredicate(ParsedPredicate&&) noexcept = default;
 ParsedPredicate& ParsedPredicate::operator=(ParsedPredicate&&) noexcept = default;
 ParsedPredicate::ParsedPredicate(std::unique_ptr<Node> root) : root_(std::move(root)) {}
 
+// ParsedBody — holds the parsed document out of the header's sight.
+
+struct ParsedBody::Impl {
+    Json body{Json::object()};  ///< Empty object when the source wasn't valid JSON.
+};
+
+ParsedBody::ParsedBody() = default;
+ParsedBody::~ParsedBody() = default;
+ParsedBody::ParsedBody(ParsedBody&&) noexcept = default;
+ParsedBody& ParsedBody::operator=(ParsedBody&&) noexcept = default;
+ParsedBody::ParsedBody(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+
 // Public API
 
 PredicateEvaluator::PredicateEvaluator() = default;
@@ -803,29 +815,39 @@ std::expected<ParsedPredicate, ChainApiError> PredicateEvaluator::parse(
     return ParsedPredicate{std::move(*root)};
 }
 
+ParsedBody PredicateEvaluator::parseBody(std::string_view jsonBody) const noexcept {
+    auto impl = std::make_unique<ParsedBody::Impl>();
+    if (!jsonBody.empty()) {
+        try {
+            impl->body = Json::parse(jsonBody);
+        } catch (...) {
+            // text/plain (or otherwise malformed) bodies still let
+            // $.status_code-only predicates evaluate — keep the empty
+            // object the Impl is default-constructed with.
+            impl->body = Json::object();
+        }
+    }
+    return ParsedBody{std::move(impl)};
+}
+
 PredicateValue PredicateEvaluator::evaluate(const ParsedPredicate& predicate,
-                                            std::string_view jsonBody,
+                                            const ParsedBody& body,
                                             int statusCode) const noexcept {
     try {
-        Json body;
-        if (!jsonBody.empty()) {
-            try {
-                body = Json::parse(jsonBody);
-            } catch (const std::exception&) {
-                // text/plain bodies still work for predicates that only touch $.status_code.
-                body = Json::object();
-            }
-        } else {
-            body = Json::object();
-        }
-        if (!predicate.root_) {
+        if (!predicate.root_ || !body.impl_) {
             return PredicateValue::False;
         }
-        return evalNode(*predicate.root_, body, statusCode) ? PredicateValue::True
-                                                            : PredicateValue::False;
+        return evalNode(*predicate.root_, body.impl_->body, statusCode) ? PredicateValue::True
+                                                                        : PredicateValue::False;
     } catch (...) {
         return PredicateValue::False;
     }
+}
+
+PredicateValue PredicateEvaluator::evaluate(const ParsedPredicate& predicate,
+                                            std::string_view jsonBody,
+                                            int statusCode) const noexcept {
+    return evaluate(predicate, parseBody(jsonBody), statusCode);
 }
 
 std::expected<PredicateValue, ChainApiError> PredicateEvaluator::eval(std::string_view expression,

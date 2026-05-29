@@ -387,13 +387,17 @@ struct ExecutionEngine::Impl {
             }
 
             // Each poll attempt is a timeline row alongside the parent step.
+            // Parse the body once per attempt and evaluate both predicates
+            // against it — evaluate() would otherwise re-parse the same
+            // body for each predicate.
+            const auto parsedBody = evaluator.parseBody(lastResponse.body);
             const auto failMatched =
                 failPredicate &&
-                evaluator.evaluate(*failPredicate, lastResponse.body, lastResponse.status) ==
+                evaluator.evaluate(*failPredicate, parsedBody, lastResponse.status) ==
                     PredicateValue::True;
             const auto successMatched =
                 !failMatched &&
-                evaluator.evaluate(*successPredicate, lastResponse.body, lastResponse.status) ==
+                evaluator.evaluate(*successPredicate, parsedBody, lastResponse.status) ==
                     PredicateValue::True;
 
             StepResult attemptRow;
