@@ -3,6 +3,8 @@
 
 #include "Verifier.h"
 
+#include "../domain/DependencyResolver.h"
+
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
 
@@ -704,6 +706,17 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
 
     if (outcome.project.resources.empty()) {
         return std::unexpected(invalid("openapi import: spec yielded zero importable operations"));
+    }
+
+    // Defense in depth: the importer constructs a Project directly
+    // rather than going through YamlSchemaParser, so it doesn't get the
+    // parser's load-time validation for free. Today the importer only
+    // emits JsonPath extractions and simple ops, which can't form a
+    // cycle or an undefined reference — but a future change to the
+    // generation logic (or a hand-edited spec that drives it) could.
+    // Validating here keeps the same load-time guarantee on both paths
+    if (auto valid = DependencyResolver{}.validate(outcome.project); !valid) {
+        return std::unexpected(valid.error());
     }
 
     std::ostringstream wbuf;

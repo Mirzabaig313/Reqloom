@@ -28,8 +28,8 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        const auto unique =
-            "chainapi-schema-valid-" + std::to_string(::getpid()) + "-" + std::to_string(counter_++);
+        const auto unique = "chainapi-schema-valid-" + std::to_string(::getpid()) + "-" +
+                            std::to_string(counter_++);
         path_ = fs::temp_directory_path() / unique;
         fs::create_directories(path_);
     }
