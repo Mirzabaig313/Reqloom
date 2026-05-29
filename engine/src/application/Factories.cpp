@@ -3,6 +3,7 @@
 
 #include "ImportFromOpenApi.h"
 
+#include "../domain/DependencyResolver.h"
 #include "../infrastructure/hooks/HookRunner.h"
 #include "../infrastructure/hooks/QuickJsHookRunner.h"
 #include "../infrastructure/http/CurlHttpClient.h"
@@ -59,6 +60,10 @@ std::unique_ptr<SecretStore> makeKeychainSecretStore() {
     return std::make_unique<KeychainSecretStore>();
 }
 
+bool keychainBackendAvailable() noexcept {
+    return KeychainSecretStore::backendAvailable();
+}
+
 std::unique_ptr<HookRunner> makeQuickJsHookRunner() {
     return std::make_unique<QuickJsHookRunner>();
 }
@@ -80,6 +85,10 @@ ExecutionEngine::Dependencies makeDefaultDependencies() {
 std::expected<Project, ChainApiError> parseProject(const std::filesystem::path& chainapiYaml) {
     YamlSchemaParser parser;
     return parser.parse(chainapiYaml);
+}
+
+std::vector<std::string> collectSecretReferences(const Project& project) {
+    return DependencyResolver::collectSecretReferences(project);
 }
 
 std::expected<std::filesystem::path, ChainApiError> writeProject(

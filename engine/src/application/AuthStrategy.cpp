@@ -53,14 +53,15 @@ using json = nlohmann::json;
 }
 
 // Opt-in body payload for an auth-flow `ResponseReceived`. Returns nullopt
-// unless capture is on; caps at `kMaxCapturedBodyBytes`. Auth bodies carry
-// tokens — the caller gates this behind RunOptions::captureResponseBodies.
+// unless capture is on; caps at `kMaxCapturedBodyBytes` (UTF-8-aware so the
+// truncated string stays valid for display). Auth bodies carry tokens — the
+// caller gates this behind RunOptions::captureResponseBodies.
 [[nodiscard]] std::optional<std::string> capturedBody(const std::string& body, bool capture) {
     if (!capture) {
         return std::nullopt;
     }
     if (body.size() > kMaxCapturedBodyBytes) {
-        return body.substr(0, kMaxCapturedBodyBytes);
+        return truncateUtf8(body, kMaxCapturedBodyBytes);
     }
     return body;
 }

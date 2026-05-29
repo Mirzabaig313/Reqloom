@@ -26,17 +26,18 @@ namespace {
 // the OS keychain and don't collide with other apps' entries.
 constexpr const char* kKeychainService = "com.chainapi.secrets";
 
-// QtKeychain jobs are asynchronous: they need a running event loop to
-// deliver the `finished` signal. The engine's SecretStore API is
-// synchronous, so we spin a local QEventLoop until the job completes.
-// QtKeychain also requires a QCoreApplication instance to exist; the
-// desktop/CLI hosts always create one before constructing the engine.
 template <typename Job>
 void runJobBlocking(Job& job) {
     QEventLoop loop;
-    QObject::connect(&job, &Job::finished, &loop, [&loop]() { loop.quit(); });
+    bool done = false;
+    QObject::connect(&job, &Job::finished, &loop, [&loop, &done]() {
+        done = true;
+        loop.quit();
+    });
     job.start();
-    loop.exec();
+    if (!done) {
+        loop.exec();
+    }
 }
 
 [[nodiscard]] QString toQt(const std::string& s) {
@@ -47,6 +48,10 @@ void runJobBlocking(Job& job) {
 
 KeychainSecretStore::KeychainSecretStore() = default;
 KeychainSecretStore::~KeychainSecretStore() = default;
+
+bool KeychainSecretStore::backendAvailable() noexcept {
+    return true;
+}
 
 std::expected<std::optional<std::string>, ChainApiError> KeychainSecretStore::read(
     const std::string& name) {
@@ -103,6 +108,10 @@ namespace chainapi::engine {
 
 KeychainSecretStore::KeychainSecretStore() = default;
 KeychainSecretStore::~KeychainSecretStore() = default;
+
+bool KeychainSecretStore::backendAvailable() noexcept {
+    return false;
+}
 
 std::expected<std::optional<std::string>, ChainApiError> KeychainSecretStore::read(
     const std::string& /*name*/) {

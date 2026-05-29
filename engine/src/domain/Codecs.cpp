@@ -2,6 +2,7 @@
 #include "Codecs.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -226,6 +227,20 @@ std::optional<std::string> urlDecode(std::string_view input) {
         }
     }
     return out;
+}
+
+std::string truncateUtf8(std::string_view input, std::size_t maxBytes) {
+    if (input.size() <= maxBytes) {
+        return std::string{input};
+    }
+    std::size_t cut = maxBytes;
+
+    std::size_t steps = 0;
+    while (cut > 0 && steps < 3 && (static_cast<unsigned char>(input[cut]) & 0xC0U) == 0x80U) {
+        --cut;
+        ++steps;
+    }
+    return std::string{input.substr(0, cut)};
 }
 
 }  // namespace chainapi::engine::codecs

@@ -257,6 +257,48 @@ TEST(SqliteHistoryStore, captured_response_body_round_trips) {
     EXPECT_FALSE(uncapturedBack->body.has_value());
 }
 
+TEST(SqliteHistoryStore, captured_binary_body_round_trips_without_throwing) {
+    // Captured bodies are arbitrary bytes (images, gzip, protobuf). A raw
+    // non-UTF-8 string would make nlohmann's strict dump() throw; the store
+    // base64-encodes the body so append() succeeds and replay restores the
+    // exact bytes. This is the regression guard for that path.
+    TempDb tmp;
+    ce::SqliteHistoryStore store;
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+
+    const ce::RunId rid{12};
+    ce::RunStarted rs;
+    rs.runId = rid;
+    rs.target = ce::OperationId{"blob.get"};
+    rs.at = someTimePoint();
+    store.append(rs);
+
+    // Every byte value 0x00..0xFF — deliberately invalid UTF-8.
+    std::string binary;
+    binary.reserve(256);
+    for (int i = 0; i < 256; ++i) {
+        binary.push_back(static_cast<char>(i));
+    }
+
+    ce::ResponseReceived resp;
+    resp.runId = rid;
+    resp.stepIndex = 0;
+    resp.status = 200;
+    resp.bodySize = binary.size();
+    resp.body = binary;
+    resp.at = someTimePoint();
+    ASSERT_TRUE(store.append(resp).has_value());
+
+    auto replayed = store.eventsFor(rid);
+    ASSERT_TRUE(replayed.has_value());
+    ASSERT_EQ(replayed->size(), 2u);
+
+    const auto* back = std::get_if<ce::ResponseReceived>(&(*replayed)[1]);
+    ASSERT_NE(back, nullptr);
+    ASSERT_TRUE(back->body.has_value());
+    EXPECT_EQ(*back->body, binary);
+}
+
 TEST(SqliteHistoryStore, step_failed_event_round_trips_with_error_code) {
     TempDb tmp;
     ce::SqliteHistoryStore store;

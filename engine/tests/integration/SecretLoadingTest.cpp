@@ -172,3 +172,22 @@ TEST(SecretLoading, missing_secret_leaves_reference_unresolved_without_crashing)
     // reference is a runtime concern handled on the request path.
     ASSERT_TRUE(result.has_value()) << result.error().detail;
 }
+
+TEST(SecretLoading, dry_run_does_not_touch_the_secret_store) {
+    // A dry run previews the resolved chain without sending requests, so it
+    // must not hit the keychain (which can pop an interactive unlock
+    // prompt). Even a backend that would fail on read must not be consulted.
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->failOn("API_KEY");
+
+    auto project = makeProjectWithSecretHeader();
+    ce::RunContext ctx;
+    ce::RunOptions options;
+    options.dryRun = true;
+    auto result = engine.run(project, ce::OperationId{"item.get"}, ctx, options);
+
+    // No SecretAccessFailed: the store was never read. Dry run succeeds.
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_TRUE(fakes.http->requests().empty());
+}
