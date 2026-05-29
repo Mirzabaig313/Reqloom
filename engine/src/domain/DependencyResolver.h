@@ -23,7 +23,7 @@ public:
     /// Whole-project static validation, run at schema load time.
     ///
     /// Enforces two load-time contracts so a malformed project is
-    /// rejected before any operation can run 
+    /// rejected before any operation can run
     ///   - Every `{{X.y}}` reference names a known scope: `$` builtins,
     ///     `env`, `secret`, a defined actor, or a defined resource.
     ///     Unknown scope → `RefUndefined`. (Field existence is a

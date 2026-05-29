@@ -272,7 +272,10 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
                         ErrorClass::Schema,
                         std::format("Operation '{}' references undefined symbol '{}.{}': "
                                     "no actor, resource, env, or secret named '{}'",
-                                    opId.value, ref.scope, ref.field, ref.scope)});
+                                    opId.value,
+                                    ref.scope,
+                                    ref.field,
+                                    ref.scope)});
                 }
             }
 
@@ -290,12 +293,13 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
                     }
                 }
                 if (!exists) {
-                    return std::unexpected(ChainApiError{
-                        ErrorCode::RefUndefined,
-                        ErrorClass::Schema,
-                        std::format("Operation '{}' declares depends_on '{}', "
-                                    "which is not a defined operation",
-                                    opId.value, dep.value)});
+                    return std::unexpected(
+                        ChainApiError{ErrorCode::RefUndefined,
+                                      ErrorClass::Schema,
+                                      std::format("Operation '{}' declares depends_on '{}', "
+                                                  "which is not a defined operation",
+                                                  opId.value,
+                                                  dep.value)});
                 }
                 allDeps.insert(dep);
             }
