@@ -349,7 +349,22 @@ TransportConfig parseTransport(const YAML::Node& node) {
     }
 
     const fs::path raw{value};
-    if (raw.is_absolute()) {
+    // is_absolute() is host-dependent: on Windows it returns false for a
+    // POSIX-rooted path like "/etc/passwd.js", letting an escape attempt
+    // slip past. Reject any leading separator or a Windows drive/UNC prefix
+    // regardless of the host OS so the guard behaves identically everywhere.
+    const auto hasRootedPrefix = [](std::string_view s) {
+        if (s.starts_with('/') || s.starts_with('\\')) {
+            return true;
+        }
+        // Drive-letter root: "C:\..." or "C:/...".
+        if (s.size() >= 3 && std::isalpha(static_cast<unsigned char>(s[0])) && s[1] == ':' &&
+            (s[2] == '\\' || s[2] == '/')) {
+            return true;
+        }
+        return false;
+    };
+    if (raw.is_absolute() || hasRootedPrefix(value)) {
         return std::unexpected(
             ChainApiError{ErrorCode::SchemaInvalid,
                           ErrorClass::Schema,
