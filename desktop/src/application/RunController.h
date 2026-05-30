@@ -24,6 +24,31 @@ namespace chainapi::desktop {
 
 class ProjectModel;
 
+/// One-shot request override for an Override-Mode run (DESIGN.md §6.3). When
+/// `active`, the controller deep-copies the project, patches the target
+/// operation with these values, and runs against the copy — the loaded project
+/// is never mutated, so the override applies to this run only.
+struct RequestOverride {
+    bool active{false};
+
+    QString method;                                  ///< e.g. "POST" (empty → unchanged)
+    QString path;                                    ///< path template (empty → unchanged)
+    std::map<std::string, std::string> headers;      ///< replaces op headers
+    std::map<std::string, std::string> queryParams;  ///< replaces op query params
+
+    /// Body. When `bodyIsForm` is false, `body` is a raw template (empty →
+    /// no body). When true, `formFields` is sent as form-data/multipart and
+    /// `body` is ignored.
+    bool bodyIsForm{false};
+    QString body;
+    std::map<std::string, std::string> formFields;
+
+    QString actor;           ///< actor id to run as (empty → unchanged)
+    QString expectStatus;    ///< comma-separated codes, e.g. "200,201" (empty → unchanged)
+    int timeoutMs{0};        ///< per-op timeout in ms (0 → unchanged)
+    bool forceReRun{false};  ///< ignore the extraction cache for this op
+};
+
 /// Outcome of one run, handed from the worker back to the GUI thread.
 struct RunReport {
     bool engineError{false};  ///< true → schema-time failure, see errorCode.
@@ -65,6 +90,14 @@ public slots:
     /// `clean` invalidates sessions + extractions before running. No-op if a
     /// run is already in flight.
     void run(const QString& target, const QString& environment, bool clean, bool dryRun);
+
+    /// Run with a one-shot override applied to the target operation (§6.3).
+    /// When `override.active` is false this behaves exactly like `run`.
+    void runWithOverride(const QString& target,
+                         const QString& environment,
+                         bool clean,
+                         bool dryRun,
+                         const RequestOverride& requestOverride);
 
     /// Cancel the in-flight run, if any.
     void cancelRun();
