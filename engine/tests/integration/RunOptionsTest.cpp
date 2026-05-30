@@ -724,8 +724,7 @@ TEST_F(RunOptionsFixture, step_cancelled_event_fires_for_each_cancelled_step) {
 // instance) can read back what the first wrote.
 
 TEST_F(RunOptionsFixture, run_persists_full_event_stream_to_history_store) {
-    const auto dbPath =
-        ct::uniqueTempPath("chainapi-history-itest", ".sqlite");
+    const auto dbPath = ct::uniqueTempPath("chainapi-history-itest", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
@@ -806,8 +805,7 @@ TEST_F(RunOptionsFixture, history_store_persists_request_headers_already_masked)
     // The desktop history pane reads headers directly out of the
     // payload column; the masker that runs at emit time is the only
     // line of defence between the bearer token and the disk. Pin it.
-    const auto dbPath =
-        ct::uniqueTempPath("chainapi-history-mask", ".sqlite");
+    const auto dbPath = ct::uniqueTempPath("chainapi-history-mask", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
@@ -882,8 +880,7 @@ resources:
           session_token: $.id
 )YAML";
 
-    const auto dbPath =
-        ct::uniqueTempPath("chainapi-history-secret", ".sqlite");
+    const auto dbPath = ct::uniqueTempPath("chainapi-history-secret", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);

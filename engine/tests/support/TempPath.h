@@ -25,8 +25,8 @@ namespace chainapi::tests {
 /// caller wanting an extension passes ".sqlite". Uniqueness comes from the
 /// process token plus a monotonic counter, so repeated calls within one
 /// process never alias.
-[[nodiscard]] inline std::filesystem::path
-uniqueTempPath(std::string_view prefix, std::string_view suffix = "") {
+[[nodiscard]] inline std::filesystem::path uniqueTempPath(std::string_view prefix,
+                                                          std::string_view suffix = "") {
     static std::atomic<unsigned long long> counter{0};
     std::string name;
     name.append(prefix);

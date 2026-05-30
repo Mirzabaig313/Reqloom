@@ -2,10 +2,12 @@
 #include "MainWindow.h"
 
 #include "../application/EnvironmentSettings.h"
+#include "../application/LayoutSettings.h"
 #include "../application/ProjectModel.h"
 #include "../application/RunController.h"
 #include "../application/SecretManager.h"
 #include "../theming/ThemeManager.h"
+#include "../widgets/EmptyState.h"
 #include "ProjectExplorerWidget.h"
 #include "RequestEditorPanel.h"
 #include "ResponseViewerPanel.h"
@@ -17,13 +19,16 @@
 #include <QtCore/QSettings>
 #include <QtGui/QAction>
 #include <QtGui/QActionGroup>
+#include <QtGui/QCloseEvent>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QSplitter>
+#include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QToolBar>
@@ -46,6 +51,13 @@ MainWindow::MainWindow(engine::ExecutionEngine& engine,
     buildMenusAndToolbar();
     connectSignals();
 
+    // Restore persisted window prefs before the first show so there's no
+    // visible re-layout flash.
+    QSettings settings;
+    density_ = LayoutSettings::loadDensity(settings);
+    applyDensity(density_);
+    restoreSplitterSizes();
+
     // Push the already-resolved theme into the custom-painted panels so their
     // status colours and fonts match the QSS chrome from the first frame.
     onThemeChanged(themeManager_.theme());
@@ -54,6 +66,13 @@ MainWindow::MainWindow(engine::ExecutionEngine& engine,
 }
 
 MainWindow::~MainWindow() = default;
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    // Persist the user's splitter layout so the workbench opens where they
+    // left it. Density and environment are saved at change time.
+    persistSplitterSizes();
+    QMainWindow::closeEvent(event);
+}
 
 void MainWindow::buildLayout() {
     explorer_ = new ProjectExplorerWidget(this);
@@ -67,16 +86,32 @@ void MainWindow::buildLayout() {
     rightTabs->addTab(responseViewer_, QStringLiteral("Response"));
     rightTabs->addTab(timeline_, QStringLiteral("Timeline"));
 
-    auto* splitter = new QSplitter(Qt::Horizontal, this);
-    splitter->addWidget(explorer_);
-    splitter->addWidget(requestEditor_);
-    splitter->addWidget(rightTabs);
-    splitter->setStretchFactor(0, 2);
-    splitter->setStretchFactor(1, 4);
-    splitter->setStretchFactor(2, 4);
-    splitter->setChildrenCollapsible(false);
+    // Three-pane workbench (DESIGN.md §5.2): explorer | request editor |
+    // response/timeline tabs. Default ratio 22 / 44 / 34; the user's drag is
+    // persisted to QSettings and restored on next launch.
+    mainSplitter_ = new QSplitter(Qt::Horizontal, this);
+    mainSplitter_->setObjectName(QStringLiteral("mainSplitter"));
+    mainSplitter_->addWidget(explorer_);
+    mainSplitter_->addWidget(requestEditor_);
+    mainSplitter_->addWidget(rightTabs);
+    mainSplitter_->setStretchFactor(0, 22);
+    mainSplitter_->setStretchFactor(1, 44);
+    mainSplitter_->setStretchFactor(2, 34);
+    mainSplitter_->setChildrenCollapsible(false);
 
-    setCentralWidget(splitter);
+    // First-run / no-project surface (DESIGN.md §10, PRD §12): teach the next
+    // step instead of showing empty panels. Swapped out once a project loads.
+    emptyState_ = new widgets::EmptyState(this);
+    emptyState_->setTitle(QStringLiteral("No project open"));
+    emptyState_->setMessage(QStringLiteral(
+        "Open a ChainAPI project folder to explore its actors, resources, and operations, "
+        "then run any endpoint with its full dependency chain resolved for you."));
+    emptyState_->setAction(QStringLiteral("Open Project…"), [this]() { onOpenProject(); });
+
+    rootStack_ = new QStackedWidget(this);
+    rootStack_->addWidget(emptyState_);    // index 0
+    rootStack_->addWidget(mainSplitter_);  // index 1
+    setCentralWidget(rootStack_);
 }
 
 void MainWindow::buildMenusAndToolbar() {
@@ -149,6 +184,44 @@ void MainWindow::buildAppearanceMenu() {
     addMode(QStringLiteral("&Light"), Mode::Light);
     addMode(QStringLiteral("&Dark"), Mode::Dark);
     addMode(QStringLiteral("&System"), Mode::System);
+
+    buildDensityMenu();
+}
+
+void MainWindow::buildDensityMenu() {
+    // Reuse the View menu created by buildAppearanceMenu rather than adding a
+    // second one.
+    QMenu* targetMenu = nullptr;
+    const auto menus = menuBar()->findChildren<QMenu*>();
+    for (auto* menu : menus) {
+        if (menu->title() == QStringLiteral("&View")) {
+            targetMenu = menu;
+            break;
+        }
+    }
+    if (targetMenu == nullptr) {
+        targetMenu = menuBar()->addMenu(QStringLiteral("&View"));
+    }
+
+    auto* densityMenu = targetMenu->addMenu(QStringLiteral("&Density"));
+    auto* group = new QActionGroup(this);
+    group->setExclusive(true);
+
+    const auto addDensity = [&](const QString& label, Density density) {
+        auto* action = densityMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(density_ == density);
+        group->addAction(action);
+        connect(action, &QAction::triggered, this, [this, density]() {
+            density_ = density;
+            applyDensity(density);
+            QSettings settings;
+            LayoutSettings::saveDensity(settings, density);
+        });
+    };
+
+    addDensity(QStringLiteral("&Comfortable"), Density::Comfortable);
+    addDensity(QStringLiteral("Co&mpact"), Density::Compact);
 }
 
 void MainWindow::connectSignals() {
@@ -208,10 +281,8 @@ void MainWindow::connectSignals() {
     connect(runController_, &RunController::runningChanged, this, &MainWindow::onRunningChanged);
     connect(runController_, &RunController::runFinished, this, &MainWindow::onRunFinished);
 
-    connect(&themeManager_,
-            &theming::ThemeManager::themeChanged,
-            this,
-            &MainWindow::onThemeChanged);
+    connect(
+        &themeManager_, &theming::ThemeManager::themeChanged, this, &MainWindow::onThemeChanged);
 }
 
 void MainWindow::onOpenProject() {
@@ -243,6 +314,37 @@ void MainWindow::onThemeChanged(const theming::Theme& theme) {
     requestEditor_->applyTheme(theme);
     responseViewer_->applyTheme(theme);
     timeline_->applyTheme(theme);
+    emptyState_->setTheme(theme);
+}
+
+void MainWindow::restoreSplitterSizes() {
+    QSettings settings;
+    const QList<int> sizes = LayoutSettings::loadSplitter(settings, QStringLiteral("mainSplitter"));
+    if (sizes.size() == mainSplitter_->count()) {
+        mainSplitter_->setSizes(sizes);
+    }
+}
+
+void MainWindow::persistSplitterSizes() {
+    QSettings settings;
+    LayoutSettings::saveSplitter(settings, QStringLiteral("mainSplitter"), mainSplitter_->sizes());
+}
+
+void MainWindow::applyDensity(Density density) {
+    // Compact tightens list-row vertical padding for users with hundreds of
+    // operations (DESIGN.md §5.3). Driven by a dynamic property the central
+    // QSS keys on, so it's a token-consistent restyle, not per-widget hacks.
+    const auto value =
+        density == Density::Compact ? QStringLiteral("compact") : QStringLiteral("comfortable");
+    setProperty("density", value);
+    if (explorer_ != nullptr) {
+        explorer_->setProperty("density", value);
+    }
+    // Re-polish so the QSS density selectors take effect immediately.
+    if (auto* s = style()) {
+        s->unpolish(this);
+        s->polish(this);
+    }
 }
 
 void MainWindow::onProjectLoaded() {
@@ -250,6 +352,9 @@ void MainWindow::onProjectLoaded() {
     requestEditor_->clearOperation();
     responseViewer_->reset();
     timeline_->reset();
+
+    // Swap from the first-run empty state to the workbench.
+    rootStack_->setCurrentWidget(mainSplitter_);
 
     envCombo_->clear();
     envCombo_->addItems(project_.environmentNames());

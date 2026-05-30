@@ -4,12 +4,16 @@
 // constructs the engine + model and hands them in.
 #pragma once
 
+#include "../application/LayoutSettings.h"
+
 #include <QtWidgets/QMainWindow>
 
 class QAction;
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QSplitter;
+class QStackedWidget;
 
 namespace chainapi::engine {
 class ExecutionEngine;
@@ -21,6 +25,10 @@ namespace theming {
 class ThemeManager;
 class Theme;
 }  // namespace theming
+
+namespace widgets {
+class EmptyState;
+}  // namespace widgets
 
 class ProjectModel;
 class RunController;
@@ -49,10 +57,14 @@ public:
     /// with the bundled sample.
     void openProjectDirectory(const QString& directory);
 
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
 private:
     void buildLayout();
     void buildMenusAndToolbar();
     void buildAppearanceMenu();
+    void buildDensityMenu();
     void connectSignals();
 
     void onOpenProject();
@@ -69,11 +81,18 @@ private:
     [[nodiscard]] QString loadSavedEnvironment() const;
     void saveSelectedEnvironment(const QString& env);
 
+    void restoreSplitterSizes();
+    void persistSplitterSizes();
+    void applyDensity(Density density);
+
     ProjectModel& project_;
     RunController* runController_{nullptr};
     SecretManager* secretManager_{nullptr};
     theming::ThemeManager& themeManager_;
 
+    QStackedWidget* rootStack_{nullptr};
+    widgets::EmptyState* emptyState_{nullptr};
+    QSplitter* mainSplitter_{nullptr};
     ProjectExplorerWidget* explorer_{nullptr};
     RequestEditorPanel* requestEditor_{nullptr};
     ResponseViewerPanel* responseViewer_{nullptr};
@@ -83,6 +102,7 @@ private:
     QComboBox* envCombo_{nullptr};
     QCheckBox* captureBodiesCheck_{nullptr};
     QLabel* statusLabel_{nullptr};
+    Density density_{Density::Comfortable};
 
     // Set while programmatically restoring the saved environment on project
     // load, so the combo's change handler doesn't echo the value back to

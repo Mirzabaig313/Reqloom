@@ -15,6 +15,10 @@ class QTreeWidgetItem;
 
 namespace chainapi::desktop {
 
+namespace widgets {
+class PanelHeader;
+}  // namespace widgets
+
 class ProjectModel;
 
 class ProjectExplorerWidget : public QWidget {
@@ -50,6 +54,7 @@ private:
 
     QLineEdit* filter_{nullptr};
     QTreeWidget* tree_{nullptr};
+    widgets::PanelHeader* header_{nullptr};
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 

@@ -104,9 +104,8 @@ void StatusBadge::updatePulse() {
         // Ping-pong by flipping direction at each loop boundary.
         connect(pulse_, &QVariantAnimation::currentLoopChanged, this, [this](int) {
             const auto dir = pulse_->direction();
-            pulse_->setDirection(dir == QAbstractAnimation::Forward
-                                     ? QAbstractAnimation::Backward
-                                     : QAbstractAnimation::Forward);
+            pulse_->setDirection(dir == QAbstractAnimation::Forward ? QAbstractAnimation::Backward
+                                                                    : QAbstractAnimation::Forward);
         });
     }
     pulse_->start();
@@ -117,8 +116,10 @@ QSize StatusBadge::sizeHint() const {
         return {kDotDiameter + 4, kDotDiameter + 4};
     }
     const QFontMetrics metrics(font());
-    const QString label = glyph(status_) + (text_.isEmpty() ? QString{} : QStringLiteral(" ") + text_);
-    const int width = metrics.horizontalAdvance(label) + (theming::Theme::space(theming::Space::Sm) * 2);
+    const QString label =
+        glyph(status_) + (text_.isEmpty() ? QString{} : QStringLiteral(" ") + text_);
+    const int width =
+        metrics.horizontalAdvance(label) + (theming::Theme::space(theming::Space::Sm) * 2);
     const int height = metrics.height() + theming::Theme::space(theming::Space::Xs);
     return {width, height};
 }

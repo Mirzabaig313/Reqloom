@@ -129,7 +129,9 @@ QFont Theme::font(TextStyle style) const {
     QFont base = QApplication::font();
     const double basePt = base.pointSizeF() > 0 ? base.pointSizeF() : 13.0;
 
-    const auto scaled = [basePt](double ratio) { return basePt * ratio; };
+    const auto scaled = [basePt](double ratio) {
+        return basePt * ratio;
+    };
 
     switch (style) {
         case TextStyle::Title:
@@ -156,6 +158,9 @@ QFont Theme::font(TextStyle style) const {
             QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
             mono.setPointSizeF(scaled(0.92));
             mono.setStyleHint(QFont::Monospace);
+            // Tabular figures so columns of status codes, durations, and byte
+            // counts don't jitter as digit widths vary (DESIGN.md §4.3).
+            mono.setFeature("tnum", 1);
             return mono;
         }
     }
@@ -164,7 +169,9 @@ QFont Theme::font(TextStyle style) const {
 
 QString Theme::styleSheet() const {
     const Palette& p = palette_;
-    const auto hex = [](const QColor& c) { return c.name(QColor::HexRgb); };
+    const auto hex = [](const QColor& c) {
+        return c.name(QColor::HexRgb);
+    };
 
     // Spacing pulled from the scale so QSS padding stays consistent with §5.1.
     const int sm = space(Space::Sm);
@@ -382,26 +389,34 @@ QToolTip {
     border: 1px solid %3;
     padding: %7px;
 }
+
+/* Compact density (DESIGN.md §5.3): tighten tree/list row padding for users
+   with hundreds of operations. Keyed on a dynamic property the shell sets. */
+QWidget[density="compact"] QTreeWidget::item,
+QWidget[density="compact"] QListWidget::item,
+QWidget[density="compact"] QTableWidget::item {
+    padding: 1px %7px;
+}
 )")
-        .arg(hex(p.surfaceBase),       // %1
-             hex(p.textPrimary),       // %2
-             hex(p.borderSubtle),      // %3
-             hex(p.surfaceRaised),     // %4
-             QString::number(sm),      // %5
-             QString::number(md),      // %6
-             QString::number(xs))      // %7
-        .arg(hex(p.accentMuted),       // %8
-             hex(p.borderStrong),      // %9
-             hex(p.surfaceOverlay),    // %10
-             hex(p.accentMuted),       // %11  selected row tint
-             hex(p.textInverse),       // %12
-             hex(p.textSecondary),     // %13
-             hex(p.surfaceSunken),     // %14
-             hex(p.accentBase))        // %15
-        .arg(hex(p.borderStrong),      // %16
+        .arg(hex(p.surfaceBase),                 // %1
+             hex(p.textPrimary),                 // %2
+             hex(p.borderSubtle),                // %3
+             hex(p.surfaceRaised),               // %4
+             QString::number(sm),                // %5
+             QString::number(md),                // %6
+             QString::number(xs))                // %7
+        .arg(hex(p.accentMuted),                 // %8
+             hex(p.borderStrong),                // %9
+             hex(p.surfaceOverlay),              // %10
+             hex(p.accentMuted),                 // %11  selected row tint
+             hex(p.textInverse),                 // %12
+             hex(p.textSecondary),               // %13
+             hex(p.surfaceSunken),               // %14
+             hex(p.accentBase))                  // %15
+        .arg(hex(p.borderStrong),                // %16
              QString::number(space(Space::Lg)),  // %17
-             hex(p.textDisabled),      // %18
-             hex(p.accentHover));      // %19
+             hex(p.textDisabled),                // %18
+             hex(p.accentHover));                // %19
 }
 
 }  // namespace chainapi::desktop::theming
