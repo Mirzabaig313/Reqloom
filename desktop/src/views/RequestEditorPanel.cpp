@@ -1,4 +1,4 @@
-// RequestEditorPanel — see header. Read-only preview + Override Mode editor.
+// RequestEditorPanel — see header. Read-only preview + in-place editor.
 #include "RequestEditorPanel.h"
 
 #include "../application/ProjectModel.h"
@@ -10,17 +10,20 @@
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QFormLayout>
-#include <QtWidgets/QGroupBox>
+#include <QtWidgets/QFrame>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QListWidget>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QScrollArea>
 #include <QtWidgets/QSpinBox>
 #include <QtWidgets/QStackedWidget>
+#include <QtWidgets/QTabWidget>
 #include <QtWidgets/QVBoxLayout>
 
+#include <cstddef>
 #include <vector>
 
 namespace chainapi::desktop {
@@ -41,81 +44,117 @@ constexpr int kBodyForm = 1;
     return out;
 }
 
+/// A lightweight section heading — a label, not a framed group box. DESIGN.md
+/// §5 bans nested cards; sections are signalled by a heading + spacing.
+[[nodiscard]] QLabel* sectionHeading(const QString& text, QWidget* parent) {
+    auto* label = new QLabel(text, parent);
+    label->setProperty("role", QStringLiteral("sectionHeading"));
+    return label;
+}
+
 }  // namespace
 
 RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
-    auto* layout = new QVBoxLayout(this);
+    auto* outer = new QVBoxLayout(this);
     const int gap = theming::Theme::space(theming::Space::Md);
-    layout->setContentsMargins(gap, gap, gap, gap);
-    layout->setSpacing(theming::Theme::space(theming::Space::Sm));
+    outer->setContentsMargins(gap, gap, gap, gap);
+    outer->setSpacing(theming::Theme::space(theming::Space::Sm));
 
-    title_ = new QLabel(QStringLiteral("No operation selected"), this);
+    outer->addWidget(buildHeaderRow());
+
+    // Scrollable detail (so the panel can shrink without clipping).
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* scrollBody = new QWidget(scroll);
+    auto* detail = new QVBoxLayout(scrollBody);
+    detail->setContentsMargins(0, 0, 0, 0);
+    detail->setSpacing(theming::Theme::space(theming::Space::Md));
+
+    detail->addWidget(sectionHeading(QStringLiteral("Dependencies"), scrollBody));
+    chainList_ = new QListWidget(scrollBody);
+    chainList_->setMaximumHeight(90);
+    chainList_->setFont(theme_.font(theming::TextStyle::Mono));
+    detail->addWidget(chainList_);
+
+    requestStack_ = new QStackedWidget(scrollBody);
+    requestStack_->addWidget(buildPreviewPage());  // index 0
+    requestStack_->addWidget(buildEditPage());     // index 1
+    detail->addWidget(requestStack_, 1);
+
+    scroll->setWidget(scrollBody);
+    outer->addWidget(scroll, 1);
+
+    outer->addWidget(buildActionRow());
+
+    wireConnections();
+    clearOperation();
+}
+
+QWidget* RequestEditorPanel::buildHeaderRow() {
+    auto* container = new QWidget(this);
+    auto* layout = new QVBoxLayout(container);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(theming::Theme::space(theming::Space::Xs));
+
+    title_ = new QLabel(QStringLiteral("No operation selected"), container);
     title_->setFont(theme_.font(theming::TextStyle::Title));
+    title_->setWordWrap(true);
     title_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(title_);
 
     auto* metaRow = new QHBoxLayout;
-    actorLabel_ = new QLabel(this);
+    actorLabel_ = new QLabel(container);
     actorLabel_->setFont(theme_.font(theming::TextStyle::Caption));
     actorLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     metaRow->addWidget(actorLabel_);
     metaRow->addStretch(1);
-    overrideToggle_ = new QCheckBox(QStringLiteral("Override Mode"), this);
+    overrideToggle_ = new QCheckBox(QStringLiteral("Edit"), container);
     overrideToggle_->setToolTip(QStringLiteral(
-        "Edit this request (method, path, query, headers, body, etc.) for a one-shot run. The "
-        "saved project is not modified; the override applies only to the next Send."));
+        "Edit this request (method, path, query, headers, body, etc.). Send applies the edits to "
+        "the next run; Save to Project writes them to disk."));
     metaRow->addWidget(overrideToggle_);
     layout->addLayout(metaRow);
 
     overrideBanner_ = new QLabel(
-        QStringLiteral(
-            "Override active — edits apply to the next run only, not the saved project."),
-        this);
+        QStringLiteral("Editing — Send applies changes to the next run; Save writes them to the "
+                       "project."),
+        container);
     overrideBanner_->setWordWrap(true);
     overrideBanner_->setVisible(false);
     layout->addWidget(overrideBanner_);
+    return container;
+}
 
-    auto* chainBox = new QGroupBox(QStringLiteral("Declared dependencies"), this);
-    auto* chainLayout = new QVBoxLayout(chainBox);
-    chainList_ = new QListWidget(chainBox);
-    chainList_->setMaximumHeight(100);
-    chainList_->setFont(theme_.font(theming::TextStyle::Mono));
-    chainLayout->addWidget(chainList_);
-    layout->addWidget(chainBox);
-
-    // The request body of the panel swaps between a read-only preview (page 0)
-    // and the editable Override form (page 1).
-    requestStack_ = new QStackedWidget(this);
-
-    // ── Page 0: read-only preview ────────────────────────────────────────
-    auto* previewPage = new QWidget(requestStack_);
+QWidget* RequestEditorPanel::buildPreviewPage() {
+    auto* previewPage = new QWidget(this);
     auto* previewLayout = new QVBoxLayout(previewPage);
     previewLayout->setContentsMargins(0, 0, 0, 0);
-
-    auto* headersBox = new QGroupBox(QStringLiteral("Headers"), previewPage);
-    auto* headersLayout = new QVBoxLayout(headersBox);
-    headersView_ = new QPlainTextEdit(headersBox);
+    previewLayout->setSpacing(theming::Theme::space(theming::Space::Md));
+    previewLayout->addWidget(sectionHeading(QStringLiteral("Headers"), previewPage));
+    headersView_ = new QPlainTextEdit(previewPage);
     headersView_->setReadOnly(true);
     headersView_->setMaximumHeight(120);
     headersView_->setFont(theme_.font(theming::TextStyle::Mono));
-    headersLayout->addWidget(headersView_);
-    previewLayout->addWidget(headersBox);
-
-    auto* bodyBox = new QGroupBox(QStringLiteral("Body template"), previewPage);
-    auto* bodyLayout = new QVBoxLayout(bodyBox);
-    bodyView_ = new QPlainTextEdit(bodyBox);
+    previewLayout->addWidget(headersView_);
+    previewLayout->addWidget(sectionHeading(QStringLiteral("Body"), previewPage));
+    bodyView_ = new QPlainTextEdit(previewPage);
     bodyView_->setReadOnly(true);
     bodyView_->setFont(theme_.font(theming::TextStyle::Mono));
-    bodyLayout->addWidget(bodyView_);
-    previewLayout->addWidget(bodyBox, 1);
-    requestStack_->addWidget(previewPage);
+    previewLayout->addWidget(bodyView_, 1);
+    return previewPage;
+}
 
-    // ── Page 1: editable Override form ───────────────────────────────────
-    auto* editPage = new QWidget(requestStack_);
+QWidget* RequestEditorPanel::buildEditPage() {
+    auto* editPage = new QWidget(this);
     auto* editLayout = new QVBoxLayout(editPage);
     editLayout->setContentsMargins(0, 0, 0, 0);
+    editLayout->setSpacing(theming::Theme::space(theming::Space::Sm));
 
-    auto* topForm = new QFormLayout;
+    // Method + path bar (the Postman "request line").
+    auto* lineRow = new QHBoxLayout;
+    lineRow->setSpacing(theming::Theme::space(theming::Space::Xs));
     methodCombo_ = new QComboBox(editPage);
     methodCombo_->addItems({QStringLiteral("GET"),
                             QStringLiteral("POST"),
@@ -124,66 +163,92 @@ RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
                             QStringLiteral("DELETE"),
                             QStringLiteral("HEAD"),
                             QStringLiteral("OPTIONS")});
+    methodCombo_->setObjectName(QStringLiteral("methodCombo"));
     pathEdit_ = new QLineEdit(editPage);
-    actorCombo_ = new QComboBox(editPage);
-    expectStatusEdit_ = new QLineEdit(editPage);
-    expectStatusEdit_->setPlaceholderText(QStringLiteral("e.g. 200,201"));
-    timeoutSpin_ = new QSpinBox(editPage);
-    timeoutSpin_->setRange(0, 600000);
-    timeoutSpin_->setSingleStep(500);
-    timeoutSpin_->setSuffix(QStringLiteral(" ms"));
-    timeoutSpin_->setSpecialValueText(QStringLiteral("default"));
-    forceCheck_ = new QCheckBox(QStringLiteral("Force re-run (ignore extraction cache)"), editPage);
-    topForm->addRow(QStringLiteral("Method"), methodCombo_);
-    topForm->addRow(QStringLiteral("Path"), pathEdit_);
-    topForm->addRow(QStringLiteral("Actor"), actorCombo_);
-    topForm->addRow(QStringLiteral("Expect status"), expectStatusEdit_);
-    topForm->addRow(QStringLiteral("Timeout"), timeoutSpin_);
-    topForm->addRow(QString{}, forceCheck_);
-    editLayout->addLayout(topForm);
+    pathEdit_->setPlaceholderText(QStringLiteral("/api/v1/…"));
+    lineRow->addWidget(methodCombo_);
+    lineRow->addWidget(pathEdit_, 1);
+    editLayout->addLayout(lineRow);
 
-    auto* queryBox = new QGroupBox(QStringLiteral("Query parameters"), editPage);
-    auto* queryLayout = new QVBoxLayout(queryBox);
-    queryEditor_ = new widgets::KeyValueEditor(queryBox);
-    queryLayout->addWidget(queryEditor_);
-    editLayout->addWidget(queryBox);
+    editTabs_ = new QTabWidget(editPage);
+    editTabs_->setDocumentMode(true);
 
-    auto* hdrBox = new QGroupBox(QStringLiteral("Headers"), editPage);
-    auto* hdrLayout = new QVBoxLayout(hdrBox);
-    headersEditor_ = new widgets::KeyValueEditor(hdrBox);
-    hdrLayout->addWidget(headersEditor_);
-    editLayout->addWidget(hdrBox);
+    queryEditor_ = new widgets::KeyValueEditor(editTabs_);
+    editTabs_->addTab(queryEditor_, QStringLiteral("Params"));
 
-    auto* bodyEditBox = new QGroupBox(QStringLiteral("Body"), editPage);
-    auto* bodyEditLayout = new QVBoxLayout(bodyEditBox);
-    bodyKindCombo_ = new QComboBox(bodyEditBox);
+    headersEditor_ = new widgets::KeyValueEditor(editTabs_);
+    editTabs_->addTab(headersEditor_, QStringLiteral("Headers"));
+
+    // Body tab: kind selector + raw/form stack.
+    auto* bodyTab = new QWidget(editTabs_);
+    auto* bodyTabLayout = new QVBoxLayout(bodyTab);
+    bodyTabLayout->setContentsMargins(0, theming::Theme::space(theming::Space::Sm), 0, 0);
+    auto* bodyKindRow = new QHBoxLayout;
+    bodyKindCombo_ = new QComboBox(bodyTab);
     bodyKindCombo_->addItems({QStringLiteral("Raw / JSON"), QStringLiteral("Form data")});
-    bodyEditLayout->addWidget(bodyKindCombo_);
-    bodyStack_ = new QStackedWidget(bodyEditBox);
+    bodyKindRow->addWidget(bodyKindCombo_);
+    bodyKindRow->addStretch(1);
+    bodyTabLayout->addLayout(bodyKindRow);
+    bodyStack_ = new QStackedWidget(bodyTab);
     bodyRawEdit_ = new QPlainTextEdit(bodyStack_);
     bodyRawEdit_->setFont(theme_.font(theming::TextStyle::Mono));
+    bodyRawEdit_->setPlaceholderText(QStringLiteral("{ }"));
     bodyStack_->addWidget(bodyRawEdit_);  // kBodyRaw
     formEditor_ = new widgets::KeyValueEditor(bodyStack_);
     formEditor_->setMode(widgets::KeyValueEditor::Mode::FileCapable);
     bodyStack_->addWidget(formEditor_);  // kBodyForm
-    bodyEditLayout->addWidget(bodyStack_);
-    editLayout->addWidget(bodyEditBox, 1);
-    requestStack_->addWidget(editPage);
+    bodyTabLayout->addWidget(bodyStack_, 1);
+    editTabs_->addTab(bodyTab, QStringLiteral("Body"));
 
-    layout->addWidget(requestStack_, 1);
+    // Options tab: actor / expect status / timeout / force.
+    auto* optionsTab = new QWidget(editTabs_);
+    auto* optionsForm = new QFormLayout(optionsTab);
+    optionsForm->setContentsMargins(theming::Theme::space(theming::Space::Sm),
+                                    theming::Theme::space(theming::Space::Md),
+                                    theming::Theme::space(theming::Space::Sm),
+                                    theming::Theme::space(theming::Space::Sm));
+    optionsForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    optionsForm->setLabelAlignment(Qt::AlignLeft);
+    actorCombo_ = new QComboBox(optionsTab);
+    expectStatusEdit_ = new QLineEdit(optionsTab);
+    expectStatusEdit_->setPlaceholderText(QStringLiteral("e.g. 200,201"));
+    timeoutSpin_ = new QSpinBox(optionsTab);
+    timeoutSpin_->setRange(0, 600000);
+    timeoutSpin_->setSingleStep(500);
+    timeoutSpin_->setSuffix(QStringLiteral(" ms"));
+    timeoutSpin_->setSpecialValueText(QStringLiteral("default"));
+    forceCheck_ =
+        new QCheckBox(QStringLiteral("Force re-run (ignore extraction cache)"), optionsTab);
+    optionsForm->addRow(QStringLiteral("Actor"), actorCombo_);
+    optionsForm->addRow(QStringLiteral("Expect status"), expectStatusEdit_);
+    optionsForm->addRow(QStringLiteral("Timeout"), timeoutSpin_);
+    optionsForm->addRow(QString{}, forceCheck_);
+    editTabs_->addTab(optionsTab, QStringLiteral("Options"));
 
-    auto* buttonRow = new QHBoxLayout;
-    sendButton_ = new QPushButton(QStringLiteral("Send"), this);
+    editLayout->addWidget(editTabs_, 1);
+    return editPage;
+}
+
+QWidget* RequestEditorPanel::buildActionRow() {
+    auto* container = new QWidget(this);
+    auto* buttonRow = new QHBoxLayout(container);
+    buttonRow->setContentsMargins(0, 0, 0, 0);
+    sendButton_ = new QPushButton(QStringLiteral("Send"), container);
     sendButton_->setObjectName(QStringLiteral("primaryAction"));
     sendButton_->setDefault(true);
-    sendCleanButton_ = new QPushButton(QStringLiteral("Send Cleanly"), this);
-    dryRunButton_ = new QPushButton(QStringLiteral("Dry Run"), this);
+    sendCleanButton_ = new QPushButton(QStringLiteral("Send Cleanly"), container);
+    dryRunButton_ = new QPushButton(QStringLiteral("Dry Run"), container);
+    saveButton_ = new QPushButton(QStringLiteral("Save to Project"), container);
+    saveButton_->setVisible(false);  // only meaningful in edit mode
     buttonRow->addWidget(sendButton_);
     buttonRow->addWidget(sendCleanButton_);
     buttonRow->addWidget(dryRunButton_);
     buttonRow->addStretch(1);
-    layout->addLayout(buttonRow);
+    buttonRow->addWidget(saveButton_);
+    return container;
+}
 
+void RequestEditorPanel::wireConnections() {
     connect(sendButton_, &QPushButton::clicked, this, [this]() {
         if (!currentOp_.isEmpty()) {
             emit runRequested(currentOp_, /*clean=*/false, /*dryRun=*/false);
@@ -199,12 +264,22 @@ RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
             emit runRequested(currentOp_, /*clean=*/false, /*dryRun=*/true);
         }
     });
+    connect(saveButton_, &QPushButton::clicked, this, [this]() {
+        if (!currentOp_.isEmpty()) {
+            emit saveRequested(currentOp_);
+        }
+    });
     connect(overrideToggle_, &QCheckBox::toggled, this, [this](bool on) { setOverrideMode(on); });
     connect(bodyKindCombo_, &QComboBox::currentIndexChanged, this, [this](int idx) {
         bodyStack_->setCurrentIndex(idx == 1 ? kBodyForm : kBodyRaw);
+        refreshTabBadges();
     });
-
-    clearOperation();
+    connect(
+        queryEditor_, &widgets::KeyValueEditor::changed, this, [this]() { refreshTabBadges(); });
+    connect(
+        headersEditor_, &widgets::KeyValueEditor::changed, this, [this]() { refreshTabBadges(); });
+    connect(formEditor_, &widgets::KeyValueEditor::changed, this, [this]() { refreshTabBadges(); });
+    connect(bodyRawEdit_, &QPlainTextEdit::textChanged, this, [this]() { refreshTabBadges(); });
 }
 
 RequestEditorPanel::~RequestEditorPanel() = default;
@@ -212,6 +287,7 @@ RequestEditorPanel::~RequestEditorPanel() = default;
 void RequestEditorPanel::setOverrideMode(bool on) {
     overrideActive_ = on;
     overrideBanner_->setVisible(on);
+    saveButton_->setVisible(on);
     requestStack_->setCurrentIndex(on ? 1 : 0);
 }
 
@@ -270,6 +346,7 @@ void RequestEditorPanel::setRunEnabled(bool enabled) {
     sendButton_->setEnabled(enabled && hasOp);
     sendCleanButton_->setEnabled(enabled && hasOp);
     dryRunButton_->setEnabled(enabled && hasOp);
+    saveButton_->setEnabled(enabled && hasOp);
 }
 
 void RequestEditorPanel::clearOperation() {
@@ -292,7 +369,7 @@ void RequestEditorPanel::showOperation(const ProjectModel& project, const QStrin
         return;
     }
 
-    // Switching operations cancels any pending override.
+    // Switching operations cancels any pending edit.
     overrideToggle_->setChecked(false);
     overrideToggle_->setEnabled(true);
 
@@ -333,8 +410,8 @@ void RequestEditorPanel::showOperation(const ProjectModel& project, const QStrin
 
 void RequestEditorPanel::loadOverrideFields(const ProjectModel& project,
                                             const engine::Operation& op) {
-    // Seed the editable controls from the operation so a fresh Override Mode
-    // starts as a faithful copy the user then tweaks.
+    // Seed the editable controls from the operation so a fresh edit starts as a
+    // faithful copy the user then tweaks.
     methodCombo_->setCurrentText(format::method(op.method));
     pathEdit_->setText(QString::fromStdString(op.pathTemplate));
 
@@ -377,6 +454,27 @@ void RequestEditorPanel::loadOverrideFields(const ProjectModel& project,
                                                    : QString{});
         formEditor_->clear();
     }
+
+    refreshTabBadges();
+}
+
+void RequestEditorPanel::refreshTabBadges() {
+    if (editTabs_ == nullptr) {
+        return;
+    }
+    // Tab order: 0 Params, 1 Headers, 2 Body, 3 Options. Show a count when a
+    // section has content, Postman-style ("Headers 8"), and a dot on Body.
+    const auto withCount = [](const QString& base, std::size_t n) {
+        return n > 0 ? QStringLiteral("%1  %2").arg(base).arg(n) : base;
+    };
+    editTabs_->setTabText(0, withCount(QStringLiteral("Params"), queryEditor_->toStdMap().size()));
+    editTabs_->setTabText(1,
+                          withCount(QStringLiteral("Headers"), headersEditor_->toStdMap().size()));
+
+    const bool hasBody = (bodyKindCombo_->currentIndex() == 1)
+                             ? !formEditor_->toStdMap().empty()
+                             : !bodyRawEdit_->toPlainText().trimmed().isEmpty();
+    editTabs_->setTabText(2, hasBody ? QStringLiteral("Body  ●") : QStringLiteral("Body"));
 }
 
 void RequestEditorPanel::renderChainPreview(const ProjectModel& project,

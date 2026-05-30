@@ -77,6 +77,7 @@ private:
     void onProjectLoaded();
     void onProjectLoadFailed(const QString& code, const QString& detail);
     void onRunRequested(const QString& operationId, bool clean, bool dryRun);
+    void onSaveRequested(const QString& operationId);
     void onRunningChanged(bool running);
     void onRunFinished(const RunReport& report);
 

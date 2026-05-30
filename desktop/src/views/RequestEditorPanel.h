@@ -19,6 +19,7 @@ class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
 class QListWidget;
+class QScrollArea;
 class QSpinBox;
 class QStackedWidget;
 class QTabWidget;
@@ -67,12 +68,25 @@ public:
 
 signals:
     void runRequested(QString operationId, bool clean, bool dryRun);
+    /// Persist the current Override edits to the saved project (FR: in-app
+    /// endpoint editing instead of hand-editing YAML).
+    void saveRequested(QString operationId);
 
 private:
     void renderChainPreview(const ProjectModel& project, const engine::OperationId& target);
     void setOverrideMode(bool on);
     /// Load the editable Override controls from operation `op` of `project`.
     void loadOverrideFields(const ProjectModel& project, const engine::Operation& op);
+    /// Refresh the edit-tab labels with live counts (Postman-style "Headers 8").
+    void refreshTabBadges();
+
+    // Constructor helpers — keep the ctor under the function-length limit by
+    // building each region in its own method.
+    [[nodiscard]] QWidget* buildHeaderRow();
+    [[nodiscard]] QWidget* buildPreviewPage();
+    [[nodiscard]] QWidget* buildEditPage();
+    [[nodiscard]] QWidget* buildActionRow();
+    void wireConnections();
 
     QLabel* title_{nullptr};
     QLabel* actorLabel_{nullptr};
@@ -85,9 +99,10 @@ private:
     QPlainTextEdit* headersView_{nullptr};
     QPlainTextEdit* bodyView_{nullptr};
 
-    // Editable Override controls (shown when Override Mode is on).
+    // Editable controls (shown when Override Mode is on).
     QComboBox* methodCombo_{nullptr};
     QLineEdit* pathEdit_{nullptr};
+    QTabWidget* editTabs_{nullptr};
     QComboBox* actorCombo_{nullptr};
     QLineEdit* expectStatusEdit_{nullptr};
     QSpinBox* timeoutSpin_{nullptr};
@@ -102,6 +117,7 @@ private:
     QPushButton* sendButton_{nullptr};
     QPushButton* sendCleanButton_{nullptr};
     QPushButton* dryRunButton_{nullptr};
+    QPushButton* saveButton_{nullptr};
 
     QString currentOp_;
     bool overrideActive_{false};

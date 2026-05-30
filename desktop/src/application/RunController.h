@@ -49,6 +49,11 @@ struct RequestOverride {
     bool forceReRun{false};  ///< ignore the extraction cache for this op
 };
 
+/// Apply a RequestOverride's fields onto an operation in place. Shared by the
+/// one-shot run path (patches a throwaway project copy) and the Save-to-Project
+/// path (patches the real operation before writing YAML).
+void applyOverrideToOperation(engine::Operation& op, const RequestOverride& ov);
+
 /// Outcome of one run, handed from the worker back to the GUI thread.
 struct RunReport {
     bool engineError{false};  ///< true → schema-time failure, see errorCode.
