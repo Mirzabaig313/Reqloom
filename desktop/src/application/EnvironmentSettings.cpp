@@ -20,6 +20,11 @@ void EnvironmentSettings::save(QSettings& settings, const QString& projectKey, c
     settings.beginGroup(QString::fromUtf8(kGroup));
     settings.setValue(projectKey, env);
     settings.endGroup();
+    // Flush to backing store immediately. Without this a second QSettings
+    // instance opened over the same file (as the round-trip test does) can
+    // read stale content on Windows, where the write is otherwise buffered
+    // until destruction.
+    settings.sync();
 }
 
 QString EnvironmentSettings::load(QSettings& settings, const QString& projectKey) {
