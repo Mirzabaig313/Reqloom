@@ -3,6 +3,8 @@
 
 #include "Verifier.h"
 
+#include "../domain/DependencyResolver.h"
+
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
 
@@ -70,7 +72,9 @@ std::expected<fs::path, ChainApiError> canonicalSpecPath(const fs::path& spec,
 std::string toLowerAscii(std::string_view s) {
     std::string out{s};
     for (auto& c : out) {
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c + ('a' - 'A'));
+        }
     }
     return out;
 }
@@ -102,8 +106,12 @@ std::vector<std::string> splitPathSegments(std::string_view path) {
         const auto next = path.find('/', i);
         const auto piece =
             path.substr(i, next == std::string_view::npos ? std::string_view::npos : next - i);
-        if (!piece.empty()) out.emplace_back(piece);
-        if (next == std::string_view::npos) break;
+        if (!piece.empty()) {
+            out.emplace_back(piece);
+        }
+        if (next == std::string_view::npos) {
+            break;
+        }
         i = next + 1;
     }
     return out;
@@ -118,7 +126,9 @@ struct ResourceDerivation {
 ResourceDerivation deriveResourceIdDetailed(std::string_view path) {
     const auto segments = splitPathSegments(path);
     for (auto it = segments.rbegin(); it != segments.rend(); ++it) {
-        if (it->starts_with("{") || it->starts_with(":")) continue;
+        if (it->starts_with("{") || it->starts_with(":")) {
+            continue;
+        }
         const auto lowered = toLowerAscii(*it);
         const auto sing = singulariseDetailed(lowered);
         return {sing.value, *it, sing.modified};
@@ -131,23 +141,49 @@ std::string deriveOperationName(std::string_view methodLower, std::string_view p
     const bool endsWithParam =
         !segments.empty() && (segments.back().starts_with("{") || segments.back().starts_with(":"));
 
-    if (methodLower == "get") return endsWithParam ? "get" : "list";
-    if (methodLower == "post") return "create";
-    if (methodLower == "put") return "update";
-    if (methodLower == "patch") return "patch";
-    if (methodLower == "delete") return "delete";
-    if (methodLower == "head") return "head";
-    if (methodLower == "options") return "options";
+    if (methodLower == "get") {
+        return endsWithParam ? "get" : "list";
+    }
+    if (methodLower == "post") {
+        return "create";
+    }
+    if (methodLower == "put") {
+        return "update";
+    }
+    if (methodLower == "patch") {
+        return "patch";
+    }
+    if (methodLower == "delete") {
+        return "delete";
+    }
+    if (methodLower == "head") {
+        return "head";
+    }
+    if (methodLower == "options") {
+        return "options";
+    }
     return std::string{methodLower};
 }
 
 HttpMethod parseHttpMethod(std::string_view methodLower) {
-    if (methodLower == "post") return HttpMethod::Post;
-    if (methodLower == "put") return HttpMethod::Put;
-    if (methodLower == "patch") return HttpMethod::Patch;
-    if (methodLower == "delete") return HttpMethod::Delete;
-    if (methodLower == "head") return HttpMethod::Head;
-    if (methodLower == "options") return HttpMethod::Options;
+    if (methodLower == "post") {
+        return HttpMethod::Post;
+    }
+    if (methodLower == "put") {
+        return HttpMethod::Put;
+    }
+    if (methodLower == "patch") {
+        return HttpMethod::Patch;
+    }
+    if (methodLower == "delete") {
+        return HttpMethod::Delete;
+    }
+    if (methodLower == "head") {
+        return HttpMethod::Head;
+    }
+    if (methodLower == "options") {
+        return HttpMethod::Options;
+    }
     return HttpMethod::Get;
 }
 
@@ -158,7 +194,9 @@ constexpr bool isOpenApiMethod(std::string_view m) noexcept {
 
 // Pick the first 2xx status declared on the operation, falling back to 200.
 int pickExpectedStatus(const YAML::Node& responses) {
-    if (!responses || !responses.IsMap()) return 200;
+    if (!responses || !responses.IsMap()) {
+        return 200;
+    }
     for (const auto& kv : responses) {
         const auto code = kv.first.as<std::string>("");
         if (code.size() == 3 && code[0] == '2') {
@@ -194,9 +232,13 @@ std::string nowIso8601Utc() {
 /// slices can offer environment-per-server.
 std::string firstServerUrl(const YAML::Node& root) {
     const auto& servers = root["servers"];
-    if (!servers || !servers.IsSequence() || servers.size() == 0) return "/";
+    if (!servers || !servers.IsSequence() || servers.size() == 0) {
+        return "/";
+    }
     const auto& first = servers[0];
-    if (!first || !first.IsMap()) return "/";
+    if (!first || !first.IsMap()) {
+        return "/";
+    }
     return first["url"].as<std::string>("/");
 }
 
@@ -241,16 +283,26 @@ PathRewriteResult rewritePathParams(std::string_view pathTemplate, std::string_v
 
 YAML::Node firstJsonResponseSchema(const YAML::Node& opNode) {
     const auto& responses = opNode["responses"];
-    if (!responses || !responses.IsMap()) return {};
+    if (!responses || !responses.IsMap()) {
+        return {};
+    }
     for (const auto& kv : responses) {
         const auto code = kv.first.as<std::string>("");
-        if (code.size() != 3 || code[0] != '2') continue;
+        if (code.size() != 3 || code[0] != '2') {
+            continue;
+        }
         const auto& resp = kv.second;
-        if (!resp || !resp.IsMap()) continue;
+        if (!resp || !resp.IsMap()) {
+            continue;
+        }
         const auto& content = resp["content"];
-        if (!content || !content.IsMap()) continue;
+        if (!content || !content.IsMap()) {
+            continue;
+        }
         const auto& json = content["application/json"];
-        if (!json || !json.IsMap()) continue;
+        if (!json || !json.IsMap()) {
+            continue;
+        }
         return json["schema"];
     }
     return {};
@@ -258,17 +310,27 @@ YAML::Node firstJsonResponseSchema(const YAML::Node& opNode) {
 
 std::optional<YAML::Node> firstJsonResponseExample(const YAML::Node& opNode) {
     const auto& responses = opNode["responses"];
-    if (!responses || !responses.IsMap()) return std::nullopt;
+    if (!responses || !responses.IsMap()) {
+        return std::nullopt;
+    }
     for (const auto& kv : responses) {
         const auto code = kv.first.as<std::string>("");
-        if (code.size() != 3 || code[0] != '2') continue;
+        if (code.size() != 3 || code[0] != '2') {
+            continue;
+        }
         const auto& resp = kv.second;
-        if (!resp || !resp.IsMap()) continue;
+        if (!resp || !resp.IsMap()) {
+            continue;
+        }
         const auto& content = resp["content"];
-        if (!content || !content.IsMap()) continue;
+        if (!content || !content.IsMap()) {
+            continue;
+        }
         const auto& json = content["application/json"];
-        if (!json || !json.IsMap()) continue;
-        if (const auto example = json["example"]; example.IsDefined() && !example.IsNull()) {
+        if (!json || !json.IsMap()) {
+            continue;
+        }
+        if (auto example = json["example"]; example.IsDefined() && !example.IsNull()) {
             return example;
         }
         if (const auto examples = json["examples"];
@@ -286,6 +348,11 @@ bool isScalarSchemaType(std::string_view t) noexcept {
     return t == "string" || t == "integer" || t == "number" || t == "boolean";
 }
 
+// YAML::Node's destructor is not marked noexcept upstream (yaml-cpp 0.8),
+// so the implicit ~UnwrappedSchema is noexcept-suspect. In practice
+// yaml-cpp's destructor only releases ref-counted nodes and cannot throw.
+// Silenced locally rather than wrapping a noexcept dtor in try/catch.
+// NOLINTNEXTLINE(bugprone-exception-escape)
 struct UnwrappedSchema {
     YAML::Node schema;
     bool wrappedInData{false};
@@ -293,10 +360,16 @@ struct UnwrappedSchema {
 
 UnwrappedSchema unwrapSchema(const YAML::Node& schema) {
     UnwrappedSchema out{schema, false};
-    if (!schema || !schema.IsMap()) return out;
-    if (schema["type"].as<std::string>("") != "object") return out;
+    if (!schema || !schema.IsMap()) {
+        return out;
+    }
+    if (schema["type"].as<std::string>("") != "object") {
+        return out;
+    }
     const auto& props = schema["properties"];
-    if (!props || !props.IsMap()) return out;
+    if (!props || !props.IsMap()) {
+        return out;
+    }
     if (props.size() == 1 && props["data"]) {
         const auto& inner = props["data"];
         if (inner && inner.IsMap() && inner["type"].as<std::string>("") == "object") {
@@ -312,20 +385,30 @@ std::vector<std::pair<std::string, std::string>> inferExtractionsFromSchema(
     std::vector<std::pair<std::string, std::string>> out;
     const auto unwrapped = unwrapSchema(schemaIn);
     const auto& schema = unwrapped.schema;
-    if (!schema || !schema.IsMap()) return out;
-    if (schema["type"].as<std::string>("") != "object") return out;
+    if (!schema || !schema.IsMap()) {
+        return out;
+    }
+    if (schema["type"].as<std::string>("") != "object") {
+        return out;
+    }
 
     const auto& props = schema["properties"];
-    if (!props || !props.IsMap()) return out;
+    if (!props || !props.IsMap()) {
+        return out;
+    }
 
     const std::string root = unwrapped.wrappedInData ? "$.data." : "$.";
 
     for (const auto& kv : props) {
         const auto name = kv.first.as<std::string>("");
         const auto& propSchema = kv.second;
-        if (name.empty() || !propSchema || !propSchema.IsMap()) continue;
+        if (name.empty() || !propSchema || !propSchema.IsMap()) {
+            continue;
+        }
         const auto type = propSchema["type"].as<std::string>("");
-        if (!isScalarSchemaType(type)) continue;
+        if (!isScalarSchemaType(type)) {
+            continue;
+        }
         out.emplace_back(name, root + name);
     }
     return out;
@@ -334,14 +417,24 @@ std::vector<std::pair<std::string, std::string>> inferExtractionsFromSchema(
 constexpr int kMaxYamlToJsonDepth = 64;
 
 nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
-    if (depth > kMaxYamlToJsonDepth) return nlohmann::json{nullptr};
-    if (!node || node.IsNull()) return nlohmann::json{nullptr};
+    if (depth > kMaxYamlToJsonDepth) {
+        return nlohmann::json{nullptr};
+    }
+    if (!node || node.IsNull()) {
+        return nlohmann::json{nullptr};
+    }
 
     if (node.IsScalar()) {
-        const auto raw = node.Scalar();
-        if (raw == "true") return nlohmann::json(true);
-        if (raw == "false") return nlohmann::json(false);
-        if (raw == "null" || raw == "~") return nlohmann::json{nullptr};
+        const auto& raw = node.Scalar();
+        if (raw == "true") {
+            return nlohmann::json(true);
+        }
+        if (raw == "false") {
+            return nlohmann::json(false);
+        }
+        if (raw == "null" || raw == "~") {
+            return nlohmann::json{nullptr};
+        }
 
         if (!raw.empty()) {
             const auto* first = raw.data();
@@ -366,7 +459,9 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
 
     if (node.IsSequence()) {
         nlohmann::json arr = nlohmann::json::array();
-        for (const auto& item : node) arr.push_back(yamlToJson(item, depth + 1));
+        for (const auto& item : node) {
+            arr.push_back(yamlToJson(item, depth + 1));
+        }
         return arr;
     }
 
@@ -386,12 +481,14 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
 std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
     const fs::path& spec, const fs::path& projectRoot) const {
     auto canonical = canonicalSpecPath(spec, projectRoot);
-    if (!canonical) return std::unexpected(canonical.error());
+    if (!canonical) {
+        return std::unexpected(canonical.error());
+    }
 
     // 8 MiB cap. Real-world OpenAPI specs (Stripe, GitHub) clock in around
     // 5 MiB; anything bigger is almost certainly an attack or a runaway
     // generator. yaml-cpp will happily allocate gigabytes if we let it.
-    constexpr std::uintmax_t kMaxSpecBytes = 8 * 1024 * 1024;
+    constexpr std::uintmax_t kMaxSpecBytes = std::uintmax_t{8} * 1024 * 1024;
     std::error_code sizeEc;
     const auto specSize = fs::file_size(*canonical, sizeEc);
     if (sizeEc) {
@@ -402,7 +499,7 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
                                        std::to_string(specSize) + " bytes)"));
     }
 
-    std::ifstream in(*canonical);
+    std::ifstream const in(*canonical);
     if (!in) {
         return std::unexpected(invalid("openapi import: cannot open spec: " + canonical->string()));
     }
@@ -451,19 +548,27 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
     for (const auto& pathKv : paths) {
         const auto pathTemplate = pathKv.first.as<std::string>("");
         const auto& pathItem = pathKv.second;
-        if (pathTemplate.empty() || !pathItem || !pathItem.IsMap()) continue;
+        if (pathTemplate.empty() || !pathItem || !pathItem.IsMap()) {
+            continue;
+        }
 
         const auto derivation = deriveResourceIdDetailed(pathTemplate);
         const auto& resourceId = derivation.id;
         auto& resource = outcome.project.resources[ResourceId{resourceId}];
-        if (resource.id.value.empty()) resource.id = ResourceId{resourceId};
+        if (resource.id.value.empty()) {
+            resource.id = ResourceId{resourceId};
+        }
 
         for (const auto& methodKv : pathItem) {
             const auto methodLower = toLowerAscii(methodKv.first.as<std::string>(""));
-            if (!isOpenApiMethod(methodLower)) continue;
+            if (!isOpenApiMethod(methodLower)) {
+                continue;
+            }
 
             const auto& opNode = methodKv.second;
-            if (!opNode || !opNode.IsMap()) continue;
+            if (!opNode || !opNode.IsMap()) {
+                continue;
+            }
 
             auto opName = deriveOperationName(methodLower, pathTemplate);
             // Disambiguate collisions (e.g. two GETs on different paths
@@ -471,13 +576,13 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             std::string uniqueName = opName;
             int suffix = 2;
             while (resource.operations.contains(uniqueName) ||
-                   seenOpIds.contains(resourceId + "." + uniqueName)) {
-                uniqueName = opName + "_" + std::to_string(suffix++);
+                   seenOpIds.contains(std::format("{}.{}", resourceId, uniqueName))) {
+                uniqueName = std::format("{}_{}", opName, suffix++);
             }
-            seenOpIds.insert(resourceId + "." + uniqueName);
+            seenOpIds.insert(std::format("{}.{}", resourceId, uniqueName));
 
             Operation op;
-            op.id = OperationId{resourceId + "." + uniqueName};
+            op.id = OperationId{std::format("{}.{}", resourceId, uniqueName)};
             op.resource = ResourceId{resourceId};
             op.method = parseHttpMethod(methodLower);
 
@@ -490,9 +595,8 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
             prov.importedAt = importedAt;
             if (derivation.singularised && !derivation.fromSegment.empty()) {
-                prov.evidence["resource_derivation"] = "singularised path segment '" +
-                                                       derivation.fromSegment + "' to '" +
-                                                       resourceId + "'";
+                prov.evidence["resource_derivation"] = std::format(
+                    "singularised path segment '{}' to '{}'", derivation.fromSegment, resourceId);
             }
             if (const auto opSummary = opNode["summary"].as<std::string>(""); !opSummary.empty()) {
                 prov.evidence["summary"] = opSummary;
@@ -502,11 +606,12 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
                 prov.evidence["operationId"] = opIdSpec;
             }
             for (const auto& param : pathRewrite.paramNames) {
-                prov.evidence["path_param." + param] = "rewritten to {{" + resourceId + "." +
-                                                       param +
-                                                       "}}; "
-                                                       "ensure an upstream operation extracts " +
-                                                       param;
+                prov.evidence["path_param." + param] = std::format(
+                    "rewritten to {{{{{}.{}}}}}; "
+                    "ensure an upstream operation extracts {}",
+                    resourceId,
+                    param,
+                    param);
             }
 
             // Top-level scalar response fields become candidate extractions.
@@ -524,7 +629,7 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             }
 
             if (!op.extractions.empty() && exampleNode) {
-                Verifier verifier;
+                Verifier const verifier;
                 SampleResponse sample;
                 sample.kind = Provenance::VerifiedAgainst::OpenApiExample;
                 sample.statusCode = op.expectStatus.value_or(200);
@@ -561,20 +666,22 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
                         prov.verifiedAgainst = Provenance::VerifiedAgainst::OpenApiExample;
                     }
                     if (anyFailure) {
-                        warnings.push_back("operation " + op.id.value +
-                                           ": one or more inferred extractions did not "
-                                           "match the response example — review before "
-                                           "running");
+                        warnings.push_back(
+                            std::format("operation {}: one or more inferred extractions did not "
+                                        "match the response example — review before running",
+                                        op.id.value));
                     }
                 } else {
-                    warnings.push_back("operation " + op.id.value + ": verifier rejected sample (" +
-                                       report.error().detail + ")");
+                    warnings.push_back(std::format("operation {}: verifier rejected sample ({})",
+                                                   op.id.value,
+                                                   report.error().detail));
                 }
             } else if (!op.extractions.empty()) {
-                warnings.push_back("operation " + op.id.value + ": " +
-                                   std::to_string(op.extractions.size()) +
-                                   " extraction(s) inferred from schema but no response "
-                                   "example was available to verify them");
+                warnings.push_back(std::format(
+                    "operation {}: {} extraction(s) inferred from schema but no response "
+                    "example was available to verify them",
+                    op.id.value,
+                    op.extractions.size()));
             }
 
             op.provenance = std::move(prov);
@@ -582,10 +689,15 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             // Each rewritten path parameter shows up as one warning so the
             // user's review loop sees exactly what needs to be linked.
             for (const auto& param : pathRewrite.paramNames) {
-                warnings.push_back("operation " + op.id.value + ": path parameter `" + param +
-                                   "` resolves to {{" + resourceId + "." + param +
-                                   "}} — wire an upstream operation that extracts `" + param +
-                                   "` into resource `" + resourceId + "`");
+                warnings.push_back(std::format(
+                    "operation {}: path parameter `{}` resolves to {{{{{}.{}}}}} — wire an "
+                    "upstream operation that extracts `{}` into resource `{}`",
+                    op.id.value,
+                    param,
+                    resourceId,
+                    param,
+                    param,
+                    resourceId));
             }
 
             resource.operations.emplace(uniqueName, std::move(op));
@@ -596,8 +708,17 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
         return std::unexpected(invalid("openapi import: spec yielded zero importable operations"));
     }
 
+    // Same load-time validation the YAML parser runs — the importer
+    // builds a Project directly and would otherwise skip it. Harmless
+    // today (generated ops can't cycle), cheap insurance for later.
+    if (auto valid = DependencyResolver{}.validate(outcome.project); !valid) {
+        return std::unexpected(valid.error());
+    }
+
     std::ostringstream wbuf;
-    for (const auto& w : warnings) wbuf << w << '\n';
+    for (const auto& w : warnings) {
+        wbuf << w << '\n';
+    }
     outcome.warnings = wbuf.str();
     return outcome;
 }

@@ -218,3 +218,73 @@ TEST(PredicateEvaluator, integer_compare_preserves_int64_precision) {
     // Same comparison with floats falls back to double — must still work.
     EXPECT_EQ(e.eval("$.x < 1.5", R"({"x":1.0})").value(), ce::PredicateValue::True);
 }
+
+// ─── Pre-parsed body (parse-once) overload ──────────────────────────────────
+//
+// The poll loop parses a response body once and evaluates both the success
+// and fail predicates against it. The ParsedBody overload must produce the
+// same result as the string_view overload for every body shape, and a single
+// ParsedBody must be reusable across predicates.
+
+TEST(PredicateEvaluator, parsed_body_overload_matches_string_view_for_json) {
+    ce::PredicateEvaluator e;
+    const auto pred = e.parse("$.status == 'COMPLETED'");
+    ASSERT_TRUE(pred.has_value());
+
+    const std::string body = R"({"status":"COMPLETED"})";
+    const auto parsedBody = e.parseBody(body);
+
+    EXPECT_EQ(e.evaluate(*pred, parsedBody), e.evaluate(*pred, body));
+    EXPECT_EQ(e.evaluate(*pred, parsedBody), ce::PredicateValue::True);
+}
+
+TEST(PredicateEvaluator, parsed_body_overload_matches_string_view_for_status_only) {
+    // A non-JSON body must still let $.status_code predicates evaluate —
+    // parseBody captures the empty-object fallback, same as the string_view
+    // path's internal fallback.
+    ce::PredicateEvaluator e;
+    const auto pred = e.parse("$.status_code == 200");
+    ASSERT_TRUE(pred.has_value());
+
+    const std::string body = "this is not json";
+    const auto parsedBody = e.parseBody(body);
+
+    EXPECT_EQ(e.evaluate(*pred, parsedBody, 200), e.evaluate(*pred, body, 200));
+    EXPECT_EQ(e.evaluate(*pred, parsedBody, 200), ce::PredicateValue::True);
+    EXPECT_EQ(e.evaluate(*pred, parsedBody, 500), ce::PredicateValue::False);
+}
+
+TEST(PredicateEvaluator, one_parsed_body_evaluates_against_multiple_predicates) {
+    // The reuse contract the poll loop depends on: parse the body once,
+    // evaluate a success predicate and a fail predicate against the same
+    // ParsedBody, both giving correct independent answers.
+    ce::PredicateEvaluator e;
+    const auto successPred = e.parse("$.status == 'COMPLETED'");
+    const auto failPred = e.parse("$.status in ['FAILED','CANCELLED']");
+    ASSERT_TRUE(successPred.has_value());
+    ASSERT_TRUE(failPred.has_value());
+
+    const auto inProgress = e.parseBody(R"({"status":"PROCESSING"})");
+    EXPECT_EQ(e.evaluate(*successPred, inProgress), ce::PredicateValue::False);
+    EXPECT_EQ(e.evaluate(*failPred, inProgress), ce::PredicateValue::False);
+
+    const auto done = e.parseBody(R"({"status":"COMPLETED"})");
+    EXPECT_EQ(e.evaluate(*successPred, done), ce::PredicateValue::True);
+    EXPECT_EQ(e.evaluate(*failPred, done), ce::PredicateValue::False);
+
+    const auto failed = e.parseBody(R"({"status":"CANCELLED"})");
+    EXPECT_EQ(e.evaluate(*successPred, failed), ce::PredicateValue::False);
+    EXPECT_EQ(e.evaluate(*failPred, failed), ce::PredicateValue::True);
+}
+
+TEST(PredicateEvaluator, parsed_body_overload_is_total_against_unparseable_body) {
+    // The noexcept/total contract must hold on the ParsedBody path too.
+    ce::PredicateEvaluator e;
+    const auto pred = e.parse("$.status == 'COMPLETED'");
+    ASSERT_TRUE(pred.has_value());
+
+    std::string giant{"{"};
+    giant.append(10'000, 'x');
+    const auto parsedBody = e.parseBody(giant);
+    EXPECT_EQ(e.evaluate(*pred, parsedBody), ce::PredicateValue::False);
+}

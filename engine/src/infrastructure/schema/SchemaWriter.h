@@ -15,6 +15,11 @@ using SchemaWriteResult = std::expected<std::filesystem::path, ChainApiError>;
 
 class SchemaWriter {
 public:
+    SchemaWriter() = default;
+    SchemaWriter(const SchemaWriter&) = delete;
+    SchemaWriter& operator=(const SchemaWriter&) = delete;
+    SchemaWriter(SchemaWriter&&) = delete;
+    SchemaWriter& operator=(SchemaWriter&&) = delete;
     virtual ~SchemaWriter() = default;
 
     /// Write `project` into `targetDir`. Creates the directory if needed,

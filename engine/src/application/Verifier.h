@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <expected>
 #include <map>
 #include <optional>
@@ -20,7 +21,7 @@
 namespace chainapi::engine {
 
 /// One extraction's verification outcome.
-enum class VerificationStatus {
+enum class VerificationStatus : std::uint8_t {
     Verified,      ///< JSONPath resolved to a non-null scalar of plausible type
     Null,          ///< JSONPath structurally valid but produced null or empty
     NoMatch,       ///< JSONPath did not resolve at all
@@ -83,7 +84,6 @@ struct SampleResponse {
 class Verifier {
 public:
     Verifier();
-    ~Verifier();
 
     /// Returns `ChainApiError{SchemaInvalid}` only when an extraction source
     /// path is malformed. A path that doesn't match the sample is NOT an
@@ -93,7 +93,12 @@ public:
 
     /// Verify with an empty sample. Every extraction comes back tagged
     /// `NoSample`. Used when no sample of any kind is available.
-    [[nodiscard]] VerificationReport verifyWithoutSample(const Operation& op) const noexcept;
+    ///
+    /// Not noexcept: building the report allocates strings and grows a
+    /// vector. On OOM the standard exception propagates — callers in the
+    /// engine treat that as unrecoverable, matching the rest of the
+    /// application layer.
+    [[nodiscard]] VerificationReport verifyWithoutSample(const Operation& op) const;
 };
 
 }  // namespace chainapi::engine

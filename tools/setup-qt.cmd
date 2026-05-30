@@ -34,8 +34,10 @@ if exist "%QT_PREFIX%" (
     echo Qt %QT_VERSION% already installed at: %QT_PREFIX%
 ) else (
     echo Installing Qt %QT_VERSION% (windows/win64_msvc2022_64) into %QT_DIR%...
+    REM Match the archives list used in CI (appveyor.yml).
     aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 ^
-        --outputdir "%QT_DIR%"
+        --outputdir "%QT_DIR%" ^
+        --archives qtbase qtdeclarative qtsvg
 )
 
 echo.

@@ -2,6 +2,7 @@
 #include "Codecs.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -16,10 +17,16 @@ constexpr std::string_view kBase64Alphabet =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 constexpr std::array<std::uint8_t, 256> makeBase64DecodeTable() {
+    static_assert(kBase64Alphabet.size() <= 0xFF,
+                  "Base64 alphabet must fit in uint8_t for decode-table indexing");
     std::array<std::uint8_t, 256> t{};
-    for (auto& v : t) v = 0xFF;
-    for (std::uint8_t i = 0; i < kBase64Alphabet.size(); ++i) {
-        t[static_cast<std::uint8_t>(kBase64Alphabet[i])] = i;
+    for (auto& v : t) {
+        v = 0xFF;
+    }
+    // Loop counter is std::size_t to satisfy bugprone-too-small-loop-variable;
+    // the static_assert above guarantees the cast back to uint8_t is lossless.
+    for (std::size_t i = 0; i < kBase64Alphabet.size(); ++i) {
+        t[static_cast<std::uint8_t>(kBase64Alphabet[i])] = static_cast<std::uint8_t>(i);
     }
     return t;
 }
@@ -69,14 +76,20 @@ std::optional<std::string> base64Decode(std::string_view input) {
             ++padding;
             continue;
         }
-        if (padding > 0) return std::nullopt;
+        if (padding > 0) {
+            return std::nullopt;
+        }
         if (kTable[static_cast<std::uint8_t>(c)] == 0xFF) {
-            if (c == '\n' || c == '\r' || c == ' ' || c == '\t') continue;
+            if (c == '\n' || c == '\r' || c == ' ' || c == '\t') {
+                continue;
+            }
             return std::nullopt;
         }
         buf.push_back(c);
     }
-    if (padding > 2) return std::nullopt;
+    if (padding > 2) {
+        return std::nullopt;
+    }
 
     std::string out;
     out.reserve((buf.size() * 3) / 4);
@@ -93,8 +106,12 @@ std::optional<std::string> base64Decode(std::string_view input) {
         i += 4;
     }
     const auto rem = buf.size() - i;
-    if (rem == 0) return out;
-    if (rem == 1) return std::nullopt;
+    if (rem == 0) {
+        return out;
+    }
+    if (rem == 1) {
+        return std::nullopt;
+    }
     if (rem == 2) {
         const auto v0 = kTable[static_cast<std::uint8_t>(buf[i])];
         const auto v1 = kTable[static_cast<std::uint8_t>(buf[i + 1])];
@@ -124,12 +141,20 @@ std::string hexEncode(std::string_view input) {
 }
 
 std::optional<std::string> hexDecode(std::string_view input) {
-    if (input.size() % 2 != 0) return std::nullopt;
+    if (input.size() % 2 != 0) {
+        return std::nullopt;
+    }
 
     auto value = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        if (c >= 'A' && c <= 'F') {
+            return c - 'A' + 10;
+        }
         return -1;
     };
 
@@ -138,7 +163,9 @@ std::optional<std::string> hexDecode(std::string_view input) {
     for (std::size_t i = 0; i < input.size(); i += 2) {
         const int hi = value(input[i]);
         const int lo = value(input[i + 1]);
-        if (hi < 0 || lo < 0) return std::nullopt;
+        if (hi < 0 || lo < 0) {
+            return std::nullopt;
+        }
         out.push_back(static_cast<char>((hi << 4) | lo));
     }
     return out;
@@ -166,9 +193,15 @@ std::string urlEncode(std::string_view input) {
 
 std::optional<std::string> urlDecode(std::string_view input) {
     auto value = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        if (c >= 'A' && c <= 'F') {
+            return c - 'A' + 10;
+        }
         return -1;
     };
 
@@ -179,10 +212,14 @@ std::optional<std::string> urlDecode(std::string_view input) {
         if (c == '+') {
             out.push_back(' ');
         } else if (c == '%') {
-            if (i + 2 >= input.size()) return std::nullopt;
+            if (i + 2 >= input.size()) {
+                return std::nullopt;
+            }
             const int hi = value(input[i + 1]);
             const int lo = value(input[i + 2]);
-            if (hi < 0 || lo < 0) return std::nullopt;
+            if (hi < 0 || lo < 0) {
+                return std::nullopt;
+            }
             out.push_back(static_cast<char>((hi << 4) | lo));
             i += 2;
         } else {
@@ -190,6 +227,20 @@ std::optional<std::string> urlDecode(std::string_view input) {
         }
     }
     return out;
+}
+
+std::string truncateUtf8(std::string_view input, std::size_t maxBytes) {
+    if (input.size() <= maxBytes) {
+        return std::string{input};
+    }
+    std::size_t cut = maxBytes;
+
+    std::size_t steps = 0;
+    while (cut > 0 && steps < 3 && (static_cast<unsigned char>(input[cut]) & 0xC0U) == 0x80U) {
+        --cut;
+        ++steps;
+    }
+    return std::string{input.substr(0, cut)};
 }
 
 }  // namespace chainapi::engine::codecs

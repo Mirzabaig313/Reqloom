@@ -36,6 +36,7 @@ struct HookContext {
     std::optional<HookResponseView> response;  ///< Set only for post_response.
     std::map<std::string, std::map<std::string, std::string>> variables;
     std::map<std::string, std::string> env;
+    std::map<std::string, std::string> secrets;
 };
 
 struct HookOutcome {
@@ -45,6 +46,11 @@ struct HookOutcome {
 
 class HookRunner {
 public:
+    HookRunner() = default;
+    HookRunner(const HookRunner&) = delete;
+    HookRunner& operator=(const HookRunner&) = delete;
+    HookRunner(HookRunner&&) = delete;
+    HookRunner& operator=(HookRunner&&) = delete;
     virtual ~HookRunner() = default;
 
     virtual std::expected<HookOutcome, ChainApiError> runPreRequest(const std::string& script,

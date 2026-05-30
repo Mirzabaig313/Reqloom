@@ -1,0 +1,61 @@
+version: 1
+name: Refresh Smoke Project
+default_environment: local
+
+environments:
+  local:
+    baseUrl: http://placeholder.invalid
+
+actors:
+  user:
+    auth:
+      strategy: simple
+      method: POST
+      path: /api/v1/auth/login
+      body:
+        email: "u@x.test"
+        password: "p"
+      expect_status: 200
+      extract:
+        token: $.data.accessToken
+        refresh_token: $.data.refreshToken
+    session:
+      ttl: 0s
+      refresh:
+        method: POST
+        path: /api/v1/auth/refresh
+        body:
+          refresh_token: "{{user.refresh_token}}"
+        extract:
+          token: $.data.accessToken
+          refresh_token: $.data.refreshToken
+    inject:
+      headers:
+        Authorization: "Bearer {{user.token}}"
+
+resources:
+  me:
+    operations:
+      get_first:
+        method: GET
+        path: /api/v1/me
+        actor: user
+        expect_status: 200
+        extract:
+          id: $.data.id
+
+      get_after_expiry:
+        method: GET
+        path: /api/v1/me
+        actor: user
+        expect_status: 200
+
+  protected:
+    operations:
+      reads_protected:
+        method: GET
+        path: /api/v1/protected
+        actor: user
+        expect_status: 200
+        extract:
+          id: $.data.id

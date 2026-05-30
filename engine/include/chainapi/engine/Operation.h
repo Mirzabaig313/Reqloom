@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <compare>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -31,11 +32,11 @@ struct ActorId {
     auto operator<=>(const ActorId&) const = default;
 };
 
-enum class HttpMethod { Get, Post, Put, Patch, Delete, Head, Options };
+enum class HttpMethod : std::uint8_t { Get, Post, Put, Patch, Delete, Head, Options };
 
 /// Where to pull a value out of a response.
 struct Extraction {
-    enum class Source { JsonPath, XPath, Header, StatusCode, Regex, Cookie };
+    enum class Source : std::uint8_t { JsonPath, XPath, Header, StatusCode, Regex, Cookie };
 
     std::string variableName;  ///< Stored as <resource>.<variableName>.
     std::string sourcePath;    ///< JSONPath / XPath / header name / regex.
@@ -93,7 +94,7 @@ struct PollUntil {
 /// must not change execution semantics.
 struct Provenance {
     /// How this operation entered the project.
-    enum class Source {
+    enum class Source : std::uint8_t {
         HandWritten,    ///< default; equivalent to "no provenance".
         OpenApiImport,  ///< direct (non-LLM) importer
         PostmanImport,
@@ -105,7 +106,7 @@ struct Provenance {
 
     /// What kind of sample response (if any) the verifier used to confirm
     /// extractions when this op was written.
-    enum class VerifiedAgainst {
+    enum class VerifiedAgainst : std::uint8_t {
         None,  ///< verification was not run
         OpenApiExample,
         PostmanResponse,

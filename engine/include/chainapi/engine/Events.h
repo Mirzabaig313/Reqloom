@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -21,7 +22,11 @@ struct RunId {
 
 using TimePoint = std::chrono::system_clock::time_point;
 
-enum class SkipReason { SessionValid, ExtractionCached };
+enum class SkipReason : std::uint8_t { SessionValid, ExtractionCached };
+
+/// Replaces redacted header and extraction values in events. Stable
+/// across releases so renderers, persistence, and tests can match on it.
+inline constexpr std::string_view kRedactedHeaderValue = "***REDACTED***";
 
 struct RunStarted {
     RunId runId;
@@ -65,6 +70,16 @@ struct ResponseReceived {
     std::size_t bodySize{};
     std::chrono::milliseconds elapsed{};
     TimePoint at;
+
+    /// Raw response body, populated only when the run opted in via
+    /// `RunOptions::captureResponseBodies`. Empty by default — the
+    /// engine's redaction-first contract keeps bodies off the event
+    /// surface unless a caller explicitly asks for them. When opted in,
+    /// every response is captured, including auth/login/refresh bodies
+    /// (which carry tokens), so a developer can fully debug each call.
+    /// Capped at 5 MiB. Persisted to the history store when present, so
+    /// past responses replay in full (Postman-style history).
+    std::optional<std::string> body{};
 };
 
 struct ExtractionApplied {
@@ -80,7 +95,7 @@ struct ExtractionApplied {
 /// surface resolved values, nulls, and missing fields per step instead
 /// of the coarse-grained `ExtractionApplied` summary.
 struct ExtractionCompleted {
-    enum class Outcome { Resolved, Null, Missing, Unsupported };
+    enum class Outcome : std::uint8_t { Resolved, Null, Missing, InvalidPattern, Unsupported };
 
     RunId runId;
     std::size_t stepIndex{};
@@ -113,7 +128,7 @@ struct StepCancelled {
 };
 
 struct SessionRefreshed {
-    enum class Trigger { Expiry, Unauthorized };
+    enum class Trigger : std::uint8_t { Expiry, Unauthorized };
 
     RunId runId;
     ActorId actor;
@@ -121,7 +136,7 @@ struct SessionRefreshed {
     TimePoint at;
 };
 
-enum class RunOutcome { Succeeded, Failed, Cancelled };
+enum class RunOutcome : std::uint8_t { Succeeded, Failed, Cancelled };
 
 struct RunEnded {
     RunId runId;

@@ -32,15 +32,15 @@ struct ArrayNode;
 
 using NodePtr = std::unique_ptr<ParsedPredicate::Node>;
 
-enum class CompareOp { Eq, Neq, Lt, Le, Gt, Ge, In, Matches };
-enum class LogicOp { And, Or };
+enum class CompareOp : std::uint8_t { Eq, Neq, Lt, Le, Gt, Ge, In, Matches };
+enum class LogicOp : std::uint8_t { And, Or };
 
 struct LiteralNode {
     Json value;
 };
 struct JsonPathNode {
     // Stored as segments so evaluation walks the JSON tree without re-tokenising.
-    enum class SegKind { Field, Index };
+    enum class SegKind : std::uint8_t { Field, Index };
     struct Seg {
         SegKind kind;
         std::string field;
@@ -78,7 +78,7 @@ namespace {
 
 // Tokenizer
 
-enum class Tok {
+enum class Tok : std::uint8_t {
     End,
     LParen,
     RParen,
@@ -119,7 +119,7 @@ public:
         std::vector<Token> out;
         while (pos_ < src_.size()) {
             const char c = src_[pos_];
-            if (std::isspace(static_cast<unsigned char>(c))) {
+            if (std::isspace(static_cast<unsigned char>(c)) != 0) {
                 ++pos_;
                 continue;
             }
@@ -163,15 +163,15 @@ public:
                 } else {
                     return std::unexpected(std::move(t).error());
                 }
-            } else if (std::isdigit(static_cast<unsigned char>(c)) ||
+            } else if ((std::isdigit(static_cast<unsigned char>(c)) != 0) ||
                        (c == '-' && pos_ + 1 < src_.size() &&
-                        std::isdigit(static_cast<unsigned char>(src_[pos_ + 1])))) {
+                        (std::isdigit(static_cast<unsigned char>(src_[pos_ + 1])) != 0))) {
                 if (auto t = readNumber(); t) {
                     out.push_back(std::move(*t));
                 } else {
                     return std::unexpected(std::move(t).error());
                 }
-            } else if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+            } else if ((std::isalpha(static_cast<unsigned char>(c)) != 0) || c == '_') {
                 out.push_back(readIdentOrKeyword());
             } else {
                 return std::unexpected("unexpected character at position " + std::to_string(pos_));
@@ -260,12 +260,14 @@ private:
 
     std::expected<Token, std::string> readNumber() {
         const auto start = pos_;
-        if (src_[pos_] == '-') ++pos_;
+        if (src_[pos_] == '-') {
+            ++pos_;
+        }
         bool sawDigit = false;
         bool sawDot = false;
         while (pos_ < src_.size()) {
             const char c = src_[pos_];
-            if (std::isdigit(static_cast<unsigned char>(c))) {
+            if (std::isdigit(static_cast<unsigned char>(c)) != 0) {
                 sawDigit = true;
                 ++pos_;
             } else if (c == '.' && !sawDot) {
@@ -285,20 +287,34 @@ private:
         const auto start = pos_;
         while (pos_ < src_.size()) {
             const char c = src_[pos_];
-            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
+            if ((std::isalnum(static_cast<unsigned char>(c)) != 0) || c == '_') {
                 ++pos_;
             } else {
                 break;
             }
         }
         std::string text{src_.substr(start, pos_ - start)};
-        if (text == "true") return Token{Tok::True, {}, start};
-        if (text == "false") return Token{Tok::False, {}, start};
-        if (text == "null") return Token{Tok::Null, {}, start};
-        if (text == "in") return Token{Tok::In, {}, start};
-        if (text == "matches") return Token{Tok::Matches, {}, start};
-        if (text == "and") return Token{Tok::And, {}, start};
-        if (text == "or") return Token{Tok::Or, {}, start};
+        if (text == "true") {
+            return Token{Tok::True, {}, start};
+        }
+        if (text == "false") {
+            return Token{Tok::False, {}, start};
+        }
+        if (text == "null") {
+            return Token{Tok::Null, {}, start};
+        }
+        if (text == "in") {
+            return Token{Tok::In, {}, start};
+        }
+        if (text == "matches") {
+            return Token{Tok::Matches, {}, start};
+        }
+        if (text == "and") {
+            return Token{Tok::And, {}, start};
+        }
+        if (text == "or") {
+            return Token{Tok::Or, {}, start};
+        }
         return Token{Tok::Ident, std::move(text), start};
     }
 
@@ -310,11 +326,13 @@ private:
 
 class Parser {
 public:
-    Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
+    explicit Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
 
     std::expected<NodePtr, std::string> parseExpr() {
         auto root = parseLogicOr();
-        if (!root) return std::unexpected(std::move(root).error());
+        if (!root) {
+            return std::unexpected(std::move(root).error());
+        }
         if (peek().kind != Tok::End) {
             return std::unexpected("unexpected trailing tokens at position " +
                                    std::to_string(peek().pos));
@@ -325,11 +343,15 @@ public:
 private:
     std::expected<NodePtr, std::string> parseLogicOr() {
         auto lhs = parseLogicAnd();
-        if (!lhs) return lhs;
+        if (!lhs) {
+            return lhs;
+        }
         while (peek().kind == Tok::Or) {
             consume();
             auto rhs = parseLogicAnd();
-            if (!rhs) return rhs;
+            if (!rhs) {
+                return rhs;
+            }
             auto node = std::make_unique<ParsedPredicate::Node>();
             node->kind = LogicNode{LogicOp::Or, std::move(*lhs), std::move(*rhs)};
             lhs = std::move(node);
@@ -339,11 +361,15 @@ private:
 
     std::expected<NodePtr, std::string> parseLogicAnd() {
         auto lhs = parseCompare();
-        if (!lhs) return lhs;
+        if (!lhs) {
+            return lhs;
+        }
         while (peek().kind == Tok::And) {
             consume();
             auto rhs = parseCompare();
-            if (!rhs) return rhs;
+            if (!rhs) {
+                return rhs;
+            }
             auto node = std::make_unique<ParsedPredicate::Node>();
             node->kind = LogicNode{LogicOp::And, std::move(*lhs), std::move(*rhs)};
             lhs = std::move(node);
@@ -353,7 +379,9 @@ private:
 
     std::expected<NodePtr, std::string> parseCompare() {
         auto lhs = parseTerm();
-        if (!lhs) return lhs;
+        if (!lhs) {
+            return lhs;
+        }
 
         const auto k = peek().kind;
         const bool isCompareOp = k == Tok::Eq || k == Tok::Neq || k == Tok::Lt || k == Tok::Le ||
@@ -362,7 +390,7 @@ private:
             // Bare term — must be a JSONPath truthiness check.
             // Bare literals cannot stand on their own as a predicate.
             const auto* path = std::get_if<JsonPathNode>(&((*lhs)->kind));
-            if (!path) {
+            if (path == nullptr) {
                 return std::unexpected("expected comparison operator at position " +
                                        std::to_string(peek().pos));
             }
@@ -373,7 +401,9 @@ private:
 
         const Tok opTok = consume().kind;
         auto rhs = parseTerm();
-        if (!rhs) return rhs;
+        if (!rhs) {
+            return rhs;
+        }
 
         CompareOp op = CompareOp::Eq;
         switch (opTok) {
@@ -499,7 +529,9 @@ private:
         if (peek().kind != Tok::RBracket) {
             for (;;) {
                 auto item = parseTerm();
-                if (!item) return item;
+                if (!item) {
+                    return item;
+                }
                 arr.items.push_back(std::move(*item));
                 if (peek().kind == Tok::Comma) {
                     consume();
@@ -523,7 +555,7 @@ private:
         return out;
     }
 
-    const Token& peek() const { return toks_[idx_]; }
+    [[nodiscard]] const Token& peek() const { return toks_[idx_]; }
     Token consume() { return toks_[idx_++]; }
 
     std::vector<Token> toks_;
@@ -536,13 +568,21 @@ std::optional<Json> walk(const Json& root, const JsonPathNode& path) {
     const Json* cur = &root;
     for (const auto& seg : path.segments) {
         if (seg.kind == JsonPathNode::SegKind::Field) {
-            if (!cur->is_object()) return std::nullopt;
+            if (!cur->is_object()) {
+                return std::nullopt;
+            }
             auto it = cur->find(seg.field);
-            if (it == cur->end()) return std::nullopt;
+            if (it == cur->end()) {
+                return std::nullopt;
+            }
             cur = &(*it);
         } else {
-            if (!cur->is_array()) return std::nullopt;
-            if (seg.index >= cur->size()) return std::nullopt;
+            if (!cur->is_array()) {
+                return std::nullopt;
+            }
+            if (seg.index >= cur->size()) {
+                return std::nullopt;
+            }
             cur = &((*cur)[seg.index]);
         }
     }
@@ -552,7 +592,9 @@ std::optional<Json> walk(const Json& root, const JsonPathNode& path) {
 std::optional<Json> resolvePath(const JsonPathNode& path, const Json& body, int statusCode) {
     if (path.isStatusCode) {
         // Body field takes precedence if present.
-        if (auto bodyHit = walk(body, path); bodyHit) return bodyHit;
+        if (auto bodyHit = walk(body, path); bodyHit) {
+            return bodyHit;
+        }
         // Use parens, not braces — brace form produces a one-element array.
         return std::optional<Json>{Json(statusCode)};
     }
@@ -571,7 +613,9 @@ std::optional<Json> evalTerm(const ParsedPredicate::Node& node, const Json& body
                 Json arr = Json::array();
                 for (const auto& item : n.items) {
                     auto v = evalTerm(*item, body, statusCode);
-                    if (!v) return std::nullopt;
+                    if (!v) {
+                        return std::nullopt;
+                    }
                     arr.push_back(std::move(*v));
                 }
                 return std::optional<Json>{std::move(arr)};
@@ -647,16 +691,17 @@ bool compareValues(CompareOp op, const Json& lhs, const Json& rhs) {
             return false;
         }
         case CompareOp::In: {
-            if (!rhs.is_array()) return false;
-            for (const auto& el : rhs) {
-                if (el == lhs) return true;
+            if (!rhs.is_array()) {
+                return false;
             }
-            return false;
+            return std::ranges::any_of(rhs, [&](const auto& el) { return el == lhs; });
         }
         case CompareOp::Matches: {
-            if (!lhs.is_string() || !rhs.is_string()) return false;
+            if (!lhs.is_string() || !rhs.is_string()) {
+                return false;
+            }
             try {
-                std::regex re{rhs.get<std::string>()};
+                std::regex const re{rhs.get<std::string>()};
                 return std::regex_search(lhs.get<std::string>(), re);
             } catch (const std::regex_error&) {
                 return false;
@@ -667,12 +712,24 @@ bool compareValues(CompareOp op, const Json& lhs, const Json& rhs) {
 }
 
 bool isTruthy(const Json& v) {
-    if (v.is_null()) return false;
-    if (v.is_boolean()) return v.get<bool>();
-    if (v.is_number()) return v.get<double>() != 0.0;
-    if (v.is_string()) return !v.get<std::string>().empty();
-    if (v.is_array()) return !v.empty();
-    if (v.is_object()) return !v.empty();
+    if (v.is_null()) {
+        return false;
+    }
+    if (v.is_boolean()) {
+        return v.get<bool>();
+    }
+    if (v.is_number()) {
+        return v.get<double>() != 0.0;
+    }
+    if (v.is_string()) {
+        return !v.get<std::string>().empty();
+    }
+    if (v.is_array()) {
+        return !v.empty();
+    }
+    if (v.is_object()) {
+        return !v.empty();
+    }
     return false;
 }
 
@@ -682,17 +739,25 @@ bool evalNode(const ParsedPredicate::Node& node, const Json& body, int statusCod
             using T = std::decay_t<decltype(n)>;
             if constexpr (std::is_same_v<T, LogicNode>) {
                 const bool lhs = evalNode(*n.lhs, body, statusCode);
-                if (n.op == LogicOp::And && !lhs) return false;
-                if (n.op == LogicOp::Or && lhs) return true;
+                if (n.op == LogicOp::And && !lhs) {
+                    return false;
+                }
+                if (n.op == LogicOp::Or && lhs) {
+                    return true;
+                }
                 return evalNode(*n.rhs, body, statusCode);
             } else if constexpr (std::is_same_v<T, CompareNode>) {
                 const auto lhs = evalTerm(*n.lhs, body, statusCode);
                 const auto rhs = evalTerm(*n.rhs, body, statusCode);
-                if (!lhs || !rhs) return false;
+                if (!lhs || !rhs) {
+                    return false;
+                }
                 return compareValues(n.op, *lhs, *rhs);
             } else if constexpr (std::is_same_v<T, TruthyNode>) {
                 const auto v = evalTerm(*n.inner, body, statusCode);
-                if (!v) return false;
+                if (!v) {
+                    return false;
+                }
                 return isTruthy(*v);
             } else {
                 const auto v = evalTerm(node, body, statusCode);
@@ -712,10 +777,21 @@ ParsedPredicate::ParsedPredicate(ParsedPredicate&&) noexcept = default;
 ParsedPredicate& ParsedPredicate::operator=(ParsedPredicate&&) noexcept = default;
 ParsedPredicate::ParsedPredicate(std::unique_ptr<Node> root) : root_(std::move(root)) {}
 
+// ParsedBody — holds the parsed document out of the header's sight.
+
+struct ParsedBody::Impl {
+    Json body{Json::object()};  ///< Empty object when the source wasn't valid JSON.
+};
+
+ParsedBody::ParsedBody() = default;
+ParsedBody::~ParsedBody() = default;
+ParsedBody::ParsedBody(ParsedBody&&) noexcept = default;
+ParsedBody& ParsedBody::operator=(ParsedBody&&) noexcept = default;
+ParsedBody::ParsedBody(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+
 // Public API
 
 PredicateEvaluator::PredicateEvaluator() = default;
-PredicateEvaluator::~PredicateEvaluator() = default;
 
 std::expected<ParsedPredicate, ChainApiError> PredicateEvaluator::parse(
     std::string_view expression) const {
@@ -734,34 +810,48 @@ std::expected<ParsedPredicate, ChainApiError> PredicateEvaluator::parse(
     return ParsedPredicate{std::move(*root)};
 }
 
+ParsedBody PredicateEvaluator::parseBody(std::string_view jsonBody) const noexcept {
+    auto impl = std::make_unique<ParsedBody::Impl>();
+    if (!jsonBody.empty()) {
+        try {
+            impl->body = Json::parse(jsonBody);
+        } catch (...) {
+            // text/plain (or otherwise malformed) bodies still let
+            // $.status_code-only predicates evaluate — keep the empty
+            // object the Impl is default-constructed with.
+            impl->body = Json::object();
+        }
+    }
+    return ParsedBody{std::move(impl)};
+}
+
 PredicateValue PredicateEvaluator::evaluate(const ParsedPredicate& predicate,
-                                            std::string_view jsonBody,
+                                            const ParsedBody& body,
                                             int statusCode) const noexcept {
     try {
-        Json body;
-        if (!jsonBody.empty()) {
-            try {
-                body = Json::parse(jsonBody);
-            } catch (const std::exception&) {
-                // text/plain bodies still work for predicates that only touch $.status_code.
-                body = Json::object();
-            }
-        } else {
-            body = Json::object();
+        if (!predicate.root_ || !body.impl_) {
+            return PredicateValue::False;
         }
-        if (!predicate.root_) return PredicateValue::False;
-        return evalNode(*predicate.root_, body, statusCode) ? PredicateValue::True
-                                                            : PredicateValue::False;
+        return evalNode(*predicate.root_, body.impl_->body, statusCode) ? PredicateValue::True
+                                                                        : PredicateValue::False;
     } catch (...) {
         return PredicateValue::False;
     }
+}
+
+PredicateValue PredicateEvaluator::evaluate(const ParsedPredicate& predicate,
+                                            std::string_view jsonBody,
+                                            int statusCode) const noexcept {
+    return evaluate(predicate, parseBody(jsonBody), statusCode);
 }
 
 std::expected<PredicateValue, ChainApiError> PredicateEvaluator::eval(std::string_view expression,
                                                                       std::string_view jsonBody,
                                                                       int statusCode) const {
     auto p = parse(expression);
-    if (!p) return std::unexpected(p.error());
+    if (!p) {
+        return std::unexpected(p.error());
+    }
     return evaluate(*p, jsonBody, statusCode);
 }
 

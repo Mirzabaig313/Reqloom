@@ -1,0 +1,22 @@
+{
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "status": 200,
+      "body": { "data": { "accessToken": "tok-1", "user": { "id": "u-1" } } }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/uploads",
+      "status": 201,
+      "body": { "data": { "id": "upload-1" } }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/forms",
+      "status": 200,
+      "body": { "data": { "id": "form-1" } }
+    }
+  ]
+}

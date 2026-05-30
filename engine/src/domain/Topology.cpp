@@ -15,7 +15,9 @@ namespace chainapi::engine {
 std::expected<std::vector<OperationId>, ChainApiError> topologicalSort(
     const std::map<OperationId, std::vector<OperationId>>& edges) {
     // Empty graph trivially satisfies any topological order.
-    if (edges.empty()) return std::vector<OperationId>{};
+    if (edges.empty()) {
+        return std::vector<OperationId>{};
+    }
 
     // Build the in-degree table and reverse-edge map. Nodes that appear
     // only as dependency targets (never as a key in `edges`) still need
@@ -24,11 +26,15 @@ std::expected<std::vector<OperationId>, ChainApiError> topologicalSort(
     std::map<OperationId, std::vector<OperationId>> dependents;
 
     for (const auto& [node, deps] : edges) {
-        if (!inDegree.contains(node)) inDegree[node] = 0;
+        if (!inDegree.contains(node)) {
+            inDegree[node] = 0;
+        }
         for (const auto& dep : deps) {
             dependents[dep].push_back(node);
             ++inDegree[node];
-            if (!inDegree.contains(dep)) inDegree[dep] = 0;
+            if (!inDegree.contains(dep)) {
+                inDegree[dep] = 0;
+            }
         }
     }
 
@@ -41,7 +47,9 @@ std::expected<std::vector<OperationId>, ChainApiError> topologicalSort(
     std::priority_queue<OperationId, std::vector<OperationId>, decltype(cmp)> ready(cmp);
 
     for (const auto& [node, degree] : inDegree) {
-        if (degree == 0) ready.push(node);
+        if (degree == 0) {
+            ready.push(node);
+        }
     }
 
     std::vector<OperationId> sorted;
@@ -54,7 +62,9 @@ std::expected<std::vector<OperationId>, ChainApiError> topologicalSort(
 
         if (auto it = dependents.find(node); it != dependents.end()) {
             for (const auto& dependent : it->second) {
-                if (--inDegree[dependent] == 0) ready.push(dependent);
+                if (--inDegree[dependent] == 0) {
+                    ready.push(dependent);
+                }
             }
         }
     }
@@ -62,11 +72,13 @@ std::expected<std::vector<OperationId>, ChainApiError> topologicalSort(
     // Cycle detection: if any node never reached zero in-degree, the
     // remaining nodes form (or feed into) a cycle.
     if (sorted.size() < inDegree.size()) {
-        std::set<OperationId> sortedSet(sorted.begin(), sorted.end());
+        std::set<OperationId> const sortedSet(sorted.begin(), sorted.end());
         std::string cycleOps;
         for (const auto& [node, _] : inDegree) {
             if (!sortedSet.contains(node)) {
-                if (!cycleOps.empty()) cycleOps += " → ";
+                if (!cycleOps.empty()) {
+                    cycleOps += " → ";
+                }
                 cycleOps += node.value;
             }
         }

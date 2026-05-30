@@ -33,7 +33,9 @@ namespace {
 /// HMAC via the legacy convenience wrapper. `HMAC()` is documented to
 /// remain in OpenSSL 3.x and is simpler than EVP_MAC.
 std::string hmacWith(const EVP_MD* md, std::string_view key, std::string_view data) {
-    if (md == nullptr) return {};
+    if (md == nullptr) {
+        return {};
+    }
 
     unsigned int outLen = 0;
     std::array<unsigned char, EVP_MAX_MD_SIZE> buf{};
@@ -47,21 +49,25 @@ std::string hmacWith(const EVP_MD* md, std::string_view key, std::string_view da
                               data.size(),
                               buf.data(),
                               &outLen);
-    if (result == nullptr || outLen == 0) return {};
-    return std::string(reinterpret_cast<const char*>(buf.data()), outLen);
+    if (result == nullptr || outLen == 0) {
+        return {};
+    }
+    return {reinterpret_cast<const char*>(buf.data()), outLen};
 }
 
 /// One-shot SHA via EVP_Digest. Returns empty on the (vanishingly unlikely)
 /// OpenSSL failure path.
 std::string hashWith(const EVP_MD* md, std::string_view data) {
-    if (md == nullptr) return {};
+    if (md == nullptr) {
+        return {};
+    }
 
     unsigned int outLen = 0;
     std::array<unsigned char, EVP_MAX_MD_SIZE> buf{};
     if (EVP_Digest(data.data(), data.size(), buf.data(), &outLen, md, nullptr) != 1) {
         return {};
     }
-    return std::string(reinterpret_cast<const char*>(buf.data()), outLen);
+    return {reinterpret_cast<const char*>(buf.data()), outLen};
 }
 
 /// JWT base64url (RFC 7515 Appendix C): standard base64 with `+`→`-`,
@@ -69,12 +75,15 @@ std::string hashWith(const EVP_MD* md, std::string_view data) {
 std::string base64UrlEncode(std::string_view data) {
     std::string s = codecs::base64Encode(data);
     for (auto& c : s) {
-        if (c == '+')
+        if (c == '+') {
             c = '-';
-        else if (c == '/')
+        } else if (c == '/') {
             c = '_';
+        }
     }
-    while (!s.empty() && s.back() == '=') s.pop_back();
+    while (!s.empty() && s.back() == '=') {
+        s.pop_back();
+    }
     return s;
 }
 
@@ -94,7 +103,9 @@ std::string jwtSignHs(std::string_view payloadJson,
     signingInput.append(base64UrlEncode(payloadJson));
 
     const auto signature = hmacWith(md, key, signingInput);
-    if (signature.empty()) return {};
+    if (signature.empty()) {
+        return {};
+    }
 
     signingInput.push_back('.');
     signingInput.append(base64UrlEncode(signature));

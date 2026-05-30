@@ -48,6 +48,7 @@ target_include_directories(chainapi-engine-infrastructure
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 find_package(OpenSSL REQUIRED)
+find_package(qjs CONFIG REQUIRED)
 target_link_libraries(chainapi-engine-infrastructure
     PUBLIC  chainapi-engine-domain
     PRIVATE
@@ -57,6 +58,7 @@ target_link_libraries(chainapi-engine-infrastructure
         SQLite3::SQLite3
         nlohmann_json::nlohmann_json
         OpenSSL::Crypto
+        qjs
 )
 if(TARGET Qt6Keychain::Qt6Keychain)
     target_link_libraries(chainapi-engine-infrastructure
@@ -77,8 +79,11 @@ add_library(chainapi-engine-application OBJECT
     src/application/PredicateEvaluator.cpp
     src/application/Verifier.cpp
     src/application/AuthStrategy.cpp
+    src/application/Cookies.cpp
     src/application/JsonExtraction.cpp
+    src/application/MultipartBuilder.cpp
     src/application/RequestSigners.cpp
+    src/application/HeaderMasking.cpp
 )
 target_include_directories(chainapi-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

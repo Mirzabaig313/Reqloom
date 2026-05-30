@@ -22,6 +22,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TempPath.h>
+
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -34,9 +36,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        const auto unique =
-            "chainapi-multifile-" + std::to_string(::getpid()) + "-" + std::to_string(counter_++);
-        path_ = fs::temp_directory_path() / unique;
+        path_ = chainapi::tests::uniqueTempPath("chainapi-multifile");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -56,7 +56,6 @@ public:
 
 private:
     fs::path path_;
-    inline static int counter_{0};
 };
 
 }  // namespace
@@ -832,6 +831,138 @@ resources:
     EXPECT_FALSE(user.refresh.has_value());
 }
 
+TEST(SchemaParserSessionFields, session_refresh_expect_status_scalar_is_parsed) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: RefreshExpectStatusScalar
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@test.com" }
+      extract: { token: $.data.accessToken }
+    session:
+      ttl: 15m
+      refresh:
+        method: POST
+        path: /api/v1/auth/refresh
+        body: { refresh_token: "{{user.refresh_token}}" }
+        expect_status: 204
+        extract: { token: $.data.accessToken }
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: user
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& refresh = *result->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_EQ(refresh.expectStatus, 204);
+    EXPECT_TRUE(refresh.expectStatusList.empty()) << "scalar form must not populate the list field";
+}
+
+TEST(SchemaParserSessionFields, session_refresh_expect_status_list_is_parsed) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: RefreshExpectStatusList
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@test.com" }
+      extract: { token: $.data.accessToken }
+    session:
+      ttl: 15m
+      refresh:
+        method: POST
+        path: /api/v1/auth/refresh
+        body: { refresh_token: "{{user.refresh_token}}" }
+        expect_status: [200, 202, 204]
+        extract: { token: $.data.accessToken }
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: user
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& refresh = *result->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_FALSE(refresh.expectStatus.has_value())
+        << "list form must not also populate the scalar field";
+    EXPECT_EQ(refresh.expectStatusList, (std::vector<int>{200, 202, 204}));
+}
+
+TEST(SchemaParserSessionFields, session_refresh_without_expect_status_leaves_both_fields_empty) {
+    // Backwards compatibility: schemas that pre-date `refresh.expect_status`
+    // must continue to parse cleanly. runRefresh's "any 2xx is success"
+    // default keeps their behaviour unchanged.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: RefreshNoExpectStatus
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@test.com" }
+      extract: { token: $.data.accessToken }
+    session:
+      ttl: 15m
+      refresh:
+        method: POST
+        path: /api/v1/auth/refresh
+        body: { refresh_token: "{{user.refresh_token}}" }
+        extract: { token: $.data.accessToken }
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: user
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& refresh = *result->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_FALSE(refresh.expectStatus.has_value());
+    EXPECT_TRUE(refresh.expectStatusList.empty());
+}
+
 // ─── Schema version validation ───────────────────────────────────────────────
 
 TEST(SchemaParserVersion, version_zero_is_rejected) {
@@ -868,4 +999,267 @@ TEST(SchemaParserVersion, missing_file_returns_yaml_parse_error) {
     auto result = ce::parseProject(nonexistent);
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::YamlParse);
+}
+
+// ─── Extraction source auto-detection ──────────────────────────────────────
+//
+// The parser tags an Extraction's source kind based on its `sourcePath`
+// prefix. Hand-written schemas don't carry an explicit `source:` field
+// today, so this convention is the only way headers / cookies / status
+// codes light up.
+
+TEST(SchemaParserExtractionSource, jsonpath_is_the_default) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: ExtSrcDefault
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/thing
+        actor: user
+        extract:
+          id: $.data.id
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& ext =
+        result->resources.at(ce::ResourceId{"thing"}).operations.at("get").extractions[0];
+    EXPECT_EQ(ext.source, ce::Extraction::Source::JsonPath);
+    EXPECT_EQ(ext.sourcePath, "$.data.id");
+}
+
+TEST(SchemaParserExtractionSource, dollar_headers_prefix_tags_header_source) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: ExtSrcHeader
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/thing
+        actor: user
+        extract:
+          location: $.headers.Location
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& ext =
+        result->resources.at(ce::ResourceId{"thing"}).operations.at("get").extractions[0];
+    EXPECT_EQ(ext.source, ce::Extraction::Source::Header);
+    EXPECT_EQ(ext.sourcePath, "$.headers.Location");
+}
+
+TEST(SchemaParserExtractionSource, dollar_cookies_prefix_tags_cookie_source) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: ExtSrcCookie
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/thing
+        actor: user
+        extract:
+          session: $.cookies.SESSIONID
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& ext =
+        result->resources.at(ce::ResourceId{"thing"}).operations.at("get").extractions[0];
+    EXPECT_EQ(ext.source, ce::Extraction::Source::Cookie);
+    EXPECT_EQ(ext.sourcePath, "$.cookies.SESSIONID");
+}
+
+TEST(SchemaParserExtractionSource, exact_dollar_status_code_tags_status_code_source) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: ExtSrcStatus
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/thing
+        actor: user
+        extract:
+          last_status: $.status_code
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& ext =
+        result->resources.at(ce::ResourceId{"thing"}).operations.at("get").extractions[0];
+    EXPECT_EQ(ext.source, ce::Extraction::Source::StatusCode);
+}
+
+// ─── Transport (per-environment) ────────────────────────────────────────────
+//
+// `transport:` block lives inside an environment file (or at the root
+// for single-env projects) and configures TLS verification, an outbound
+// proxy, an optional CA bundle, and the TCP connect timeout. Defaults
+// match libcurl's safe defaults (TLS verified, no proxy, 5s connect),
+// so schemas that omit `transport:` keep their previous behavior
+// verbatim.
+
+TEST(SchemaParserTransport, root_transport_block_parses_all_fields) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: TransportRoot
+default_environment: local
+environment: { baseUrl: https://api.test }
+
+transport:
+  tls_verify: false
+  tls_verify_host: false
+  ca_bundle: /etc/ssl/corporate-root.pem
+  proxy: http://proxy.test:3128
+  connect_timeout: 12s
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/ping
+        actor: user
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    ASSERT_TRUE(result->transport.contains("local"));
+    const auto& t = result->transport.at("local");
+    EXPECT_FALSE(t.tlsVerify);
+    EXPECT_FALSE(t.tlsVerifyHost);
+    ASSERT_TRUE(t.caBundlePath.has_value());
+    EXPECT_EQ(*t.caBundlePath, "/etc/ssl/corporate-root.pem");
+    ASSERT_TRUE(t.proxy.has_value());
+    EXPECT_EQ(*t.proxy, "http://proxy.test:3128");
+    EXPECT_EQ(t.connectTimeout, std::chrono::milliseconds{12'000});
+}
+
+TEST(SchemaParserTransport, missing_block_yields_default_constructed_config) {
+    // Project with no `transport:` anywhere — `project.transport` must
+    // not contain an entry for `local`. The executor will then fall
+    // back to a default-constructed TransportConfig, which is exactly
+    // what the engine did before this slice landed.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: NoTransport
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->transport.contains("local"));
+}
+
+TEST(SchemaParserTransport, accepts_milliseconds_for_connect_timeout) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: TransportMs
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+transport:
+  connect_timeout: 750ms
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->transport.contains("local"));
+    EXPECT_EQ(result->transport.at("local").connectTimeout, std::chrono::milliseconds{750});
+}
+
+TEST(SchemaParserTransport, environment_file_transport_block_is_picked_up) {
+    ScratchDir scratch;
+    scratch.write("chainapi.yaml", R"YAML(
+version: 1
+name: TransportPerEnv
+default_environment: local
+imports:
+  - environments/*.yaml
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+)YAML");
+    const auto envFile = scratch.path() / "environments" / "local.yaml";
+    fs::create_directories(envFile.parent_path());
+    {
+        std::ofstream out{envFile};
+        out << R"YAML(
+name: local
+variables:
+  baseUrl: https://api.test
+transport:
+  tls_verify: false
+  proxy: socks5h://proxy.test:1080
+  connect_timeout: 30s
+)YAML";
+    }
+
+    auto result = ce::parseProject(scratch.path() / "chainapi.yaml");
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->transport.contains("local"));
+    const auto& t = result->transport.at("local");
+    EXPECT_FALSE(t.tlsVerify);
+    ASSERT_TRUE(t.proxy.has_value());
+    EXPECT_EQ(*t.proxy, "socks5h://proxy.test:1080");
+    EXPECT_EQ(t.connectTimeout, std::chrono::milliseconds{30'000});
 }

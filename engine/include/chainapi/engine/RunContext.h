@@ -7,6 +7,7 @@
 #include <chainapi/engine/Operation.h>
 
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -17,14 +18,14 @@ namespace chainapi::engine {
 
 /// One actor session, lifecycled per run.
 struct ActorSession {
-    enum class State { None, Authenticating, Live, Refreshing };
+    enum class State : std::uint8_t { None, Authenticating, Live, Refreshing };
 
     /// Per-request signing scheme. Most strategies leave this as `None`
     /// and rely on `injectHeaders` for static auth values. OAuth 1.0a
     /// and AWS SigV4 are the exceptions — their signature depends on the
     /// request URL / method / params / body, so the executor calls a
     /// signer right before each send.
-    enum class SigningScheme { None, OAuth1HmacSha1, AwsSigV4 };
+    enum class SigningScheme : std::uint8_t { None, OAuth1HmacSha1, AwsSigV4 };
 
     State state{State::None};
     std::map<std::string, std::string> variables;  ///< token, user_id, etc.
@@ -40,7 +41,7 @@ struct ActorSession {
     /// `signOAuth1Request`) after inject merging but before `HttpClient::send`.
     SigningScheme signingScheme{SigningScheme::None};
 
-    std::chrono::steady_clock::time_point expiresAt{};
+    std::chrono::steady_clock::time_point expiresAt;
 };
 
 /// One extracted resource instance. Indexed for `{{R[k].x}}` resolution.
@@ -50,7 +51,15 @@ struct ResourceInstance {
 
 /// One step in a chain.
 struct StepResult {
-    enum class Status { Pending, Ready, Skipped, Succeeded, Failed, Cancelled, Blocked };
+    enum class Status : std::uint8_t {
+        Pending,
+        Ready,
+        Skipped,
+        Succeeded,
+        Failed,
+        Cancelled,
+        Blocked
+    };
 
     OperationId op;
     Status status{Status::Pending};
@@ -65,17 +74,13 @@ struct StepResult {
     std::optional<int> pollAttempt;
 };
 
-/// One extraction's runtime outcome, recorded by the executor each time
-/// it evaluates an `extract:` entry. Powers the timeline UI.
-/// and the AI-importer diagnostic loop — when an inferred extraction
-/// resolves to `null` at runtime, the user can see it without re-running
-/// against the schema.
 struct ExtractionTrace {
-    enum class Outcome {
-        Resolved,     ///< Source path resolved to a non-null value.
-        Null,         ///< Source path resolved but the value was null.
-        Missing,      ///< Source path did not resolve at all.
-        Unsupported,  ///< Source kind cannot be resolved by this engine build.
+    enum class Outcome : std::uint8_t {
+        Resolved,        ///< Source path resolved to a non-null value.
+        Null,            ///< Source path resolved but the value was null.
+        Missing,         ///< Source path did not resolve at all.
+        InvalidPattern,  ///< Source kind is regex/xpath and the pattern is malformed.
+        Unsupported,     ///< Source kind cannot be resolved by this engine build.
     };
 
     OperationId op;
@@ -90,6 +95,7 @@ struct ExtractionTrace {
 };
 
 /// The mutable state of a single run.
+
 class RunContext {
 public:
     RunContext();
@@ -103,6 +109,16 @@ public:
     [[nodiscard]] const ActorSession* session(const ActorId& actor) const noexcept;
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
+
+    /// Snapshot of the actor's current cookies. Empty when no jar.
+    [[nodiscard]] std::map<std::string, std::string> cookies(const ActorId& actor) const;
+
+    /// Insert or replace a cookie. Mirrors RFC 6265 §5.3 step 11:
+    /// the latest Set-Cookie wins on name collision.
+    void setCookie(const ActorId& actor, std::string name, std::string value);
+
+    /// Drop the actor's entire jar. Called by `invalidateSession`.
+    void clearCookies(const ActorId& actor);
 
     // Extraction cache — list of instances per resource
     [[nodiscard]] const std::vector<ResourceInstance>& instances(

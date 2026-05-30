@@ -19,6 +19,25 @@ TEST(EngineSmoke, ErrorCodeStringsAreStable) {
     EXPECT_EQ(ce::toCodeString(ce::ErrorCode::Http5xx), "E_HTTP_5XX");
 }
 
+TEST(EngineSmoke, FromCodeStringRoundTripsEveryCode) {
+    // fromCodeString is the inverse used by the history store to
+    // reconstruct StepFailed.code from persisted JSON. Every code must
+    // round-trip; an unknown string yields nullopt.
+    for (const auto code : {ce::ErrorCode::SchemaInvalid,
+                            ce::ErrorCode::Cycle,
+                            ce::ErrorCode::RefUndefined,
+                            ce::ErrorCode::ExtractionFailed,
+                            ce::ErrorCode::SessionRefreshFailed,
+                            ce::ErrorCode::Cancelled,
+                            ce::ErrorCode::LlmResponseInvalid}) {
+        const auto round = ce::fromCodeString(ce::toCodeString(code));
+        ASSERT_TRUE(round.has_value());
+        EXPECT_EQ(*round, code);
+    }
+    EXPECT_FALSE(ce::fromCodeString("E_NOT_A_REAL_CODE").has_value());
+    EXPECT_FALSE(ce::fromCodeString("").has_value());
+}
+
 TEST(EngineSmoke, RetryabilityMatchesSpec) {
     // 5xx and network timeouts retry; 4xx and schema errors do not.
     EXPECT_TRUE(ce::isRetryable(ce::ErrorCode::Http5xx));
@@ -79,4 +98,87 @@ TEST(EngineSmoke, ChainApiErrorIsCarriedThroughExpected) {
     EXPECT_EQ(result.error().code, ce::ErrorCode::VarUnresolved);
     EXPECT_EQ(result.error().cls, ce::ErrorClass::Resolution);
     EXPECT_NE(result.error().detail.find("order.order_id"), std::string::npos);
+}
+
+// ─── Cookie jar API ─────────────────────────────────────────────────────────
+//
+// Per-actor jar lives on RunContext alongside the session cache. It
+// accumulates Set-Cookie values across the run so subsequent operations
+// AS the same actor automatically carry the cookie.
+
+TEST(EngineSmoke, RunContextCookieJarIsPerActor) {
+    ce::RunContext ctx;
+    const ce::ActorId admin{"admin"};
+    const ce::ActorId customer{"customer"};
+
+    EXPECT_TRUE(ctx.cookies(admin).empty());
+
+    ctx.setCookie(admin, "session", "admin-sess-1");
+    ctx.setCookie(customer, "session", "cust-sess-1");
+
+    // Each actor sees its own cookie, not the other actor's.
+    ASSERT_EQ(ctx.cookies(admin).size(), 1u);
+    EXPECT_EQ(ctx.cookies(admin).at("session"), "admin-sess-1");
+    ASSERT_EQ(ctx.cookies(customer).size(), 1u);
+    EXPECT_EQ(ctx.cookies(customer).at("session"), "cust-sess-1");
+}
+
+TEST(EngineSmoke, RunContextCookieJarLastWriteWinsOnNameCollision) {
+    // Mirrors RFC 6265 §5.3 step 11. The executor relies on this when
+    // the same response carries two Set-Cookie entries for one name.
+    ce::RunContext ctx;
+    const ce::ActorId actor{"u"};
+
+    ctx.setCookie(actor, "tok", "old");
+    ctx.setCookie(actor, "tok", "new");
+
+    ASSERT_EQ(ctx.cookies(actor).size(), 1u);
+    EXPECT_EQ(ctx.cookies(actor).at("tok"), "new");
+}
+
+TEST(EngineSmoke, RunContextInvalidateSessionAlsoDropsCookies) {
+    // 401-recovery invalidates the session and re-auths. Carrying the
+    // pre-recovery jar forward would leak stale cookies onto the
+    // retry, so invalidateSession drops the jar too.
+    ce::RunContext ctx;
+    const ce::ActorId actor{"u"};
+
+    ce::ActorSession sess;
+    sess.state = ce::ActorSession::State::Live;
+    ctx.putSession(actor, sess);
+    ctx.setCookie(actor, "session", "stale");
+
+    ASSERT_FALSE(ctx.cookies(actor).empty());
+    ctx.invalidateSession(actor);
+    EXPECT_TRUE(ctx.cookies(actor).empty());
+    EXPECT_EQ(ctx.session(actor), nullptr);
+}
+
+TEST(EngineSmoke, RunContextCookieJarIgnoresEmptyName) {
+    // Defensive: a malformed Set-Cookie that produces an empty name
+    // should never enter the jar. The Cookies::parseSetCookie helper
+    // already returns nullopt for these, but this is a belt-and-braces
+    // check that the jar API itself is also safe to call directly.
+    ce::RunContext ctx;
+    const ce::ActorId actor{"u"};
+
+    ctx.setCookie(actor, "", "value");
+    EXPECT_TRUE(ctx.cookies(actor).empty());
+}
+
+TEST(EngineSmoke, RunContextClearCookiesDropsTheJarWithoutTouchingSession) {
+    ce::RunContext ctx;
+    const ce::ActorId actor{"u"};
+
+    ce::ActorSession sess;
+    sess.state = ce::ActorSession::State::Live;
+    sess.variables["token"] = "alive";
+    ctx.putSession(actor, sess);
+    ctx.setCookie(actor, "tok", "v");
+
+    ctx.clearCookies(actor);
+
+    EXPECT_TRUE(ctx.cookies(actor).empty());
+    ASSERT_NE(ctx.session(actor), nullptr) << "clearCookies must not touch the session";
+    EXPECT_EQ(ctx.session(actor)->variables.at("token"), "alive");
 }

@@ -14,7 +14,7 @@ public:
     /// Returns the matched value as a stringified scalar; nullopt on miss.
     /// Returns `ChainApiError{ResponseParse, ...}` if the JSON itself is
     /// malformed.
-    std::expected<std::optional<std::string>, ChainApiError> evaluate(
+    [[nodiscard]] std::expected<std::optional<std::string>, ChainApiError> evaluate(
         std::string_view json, std::string_view jsonpath) const;
 };
 

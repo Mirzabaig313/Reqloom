@@ -1,6 +1,8 @@
 // YamlSchemaParser — yaml-cpp-backed schema parser.
 #include "YamlSchemaParser.h"
 
+#include "../../domain/DependencyResolver.h"
+
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
 
@@ -10,6 +12,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <optional>
 #include <set>
@@ -26,19 +29,35 @@ namespace {
 // Helpers
 
 HttpMethod parseMethod(const std::string& m) {
-    if (m == "GET" || m == "get") return HttpMethod::Get;
-    if (m == "POST" || m == "post") return HttpMethod::Post;
-    if (m == "PUT" || m == "put") return HttpMethod::Put;
-    if (m == "PATCH" || m == "patch") return HttpMethod::Patch;
-    if (m == "DELETE" || m == "delete") return HttpMethod::Delete;
-    if (m == "HEAD" || m == "head") return HttpMethod::Head;
-    if (m == "OPTIONS" || m == "options") return HttpMethod::Options;
+    if (m == "GET" || m == "get") {
+        return HttpMethod::Get;
+    }
+    if (m == "POST" || m == "post") {
+        return HttpMethod::Post;
+    }
+    if (m == "PUT" || m == "put") {
+        return HttpMethod::Put;
+    }
+    if (m == "PATCH" || m == "patch") {
+        return HttpMethod::Patch;
+    }
+    if (m == "DELETE" || m == "delete") {
+        return HttpMethod::Delete;
+    }
+    if (m == "HEAD" || m == "head") {
+        return HttpMethod::Head;
+    }
+    if (m == "OPTIONS" || m == "options") {
+        return HttpMethod::Options;
+    }
     return HttpMethod::Get;
 }
 
 std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     std::map<std::string, std::string> result;
-    if (!node || !node.IsMap()) return result;
+    if (!node || !node.IsMap()) {
+        return result;
+    }
     for (const auto& kv : node) {
         auto key = kv.first.as<std::string>();
         if (kv.second.IsScalar()) {
@@ -52,16 +71,42 @@ std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     return result;
 }
 
-nlohmann::json yamlNodeToJsonValue(const YAML::Node& node);
+/// Read an environment-variable scalar, honoring the `!secret` YAML tag.
+///
+/// `key: !secret NAME` binds the variable to a keychain secret rather than
+/// a literal: the value becomes the reference `{{secret.NAME}}`, which the
+/// variable resolver expands at run time (and which `collectSecretReferences`
+/// picks up so the engine pre-loads NAME from the secret store). Without
+/// this, yaml-cpp drops the tag and the env var would hold the literal
+/// string "NAME" — PRD §5.4. An untagged scalar passes through verbatim.
+[[nodiscard]] std::string readEnvScalar(const YAML::Node& scalar) {
+    // yaml-cpp reports an explicit local tag as "!secret"; the implicit
+    // tags for plain scalars are "?"/"!", which we treat as untagged.
+    if (scalar.Tag() == "!secret") {
+        const auto name = scalar.as<std::string>("");
+        return name.empty() ? std::string{} : "{{secret." + name + "}}";
+    }
+    return scalar.as<std::string>("");
+}
+
+constexpr int kMaxYamlDepth = 64;  // prevent stack overflow on malicious input
+
+nlohmann::json yamlNodeToJsonValue(const YAML::Node& node, int depth);
 
 nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
     const auto raw = scalar.as<std::string>();
     // Use parens, not braces — nlohmann::json{x} treats braces as an
     // initializer-list and produces a one-element array.
-    if (raw == "true") return nlohmann::json(true);
-    if (raw == "false") return nlohmann::json(false);
-    if (raw == "null" || raw == "~") return nlohmann::json(nullptr);
-    if (!raw.empty() && (std::isdigit(static_cast<unsigned char>(raw.front())) ||
+    if (raw == "true") {
+        return nlohmann::json(true);
+    }
+    if (raw == "false") {
+        return nlohmann::json(false);
+    }
+    if (raw == "null" || raw == "~") {
+        return {nullptr};
+    }
+    if (!raw.empty() && ((std::isdigit(static_cast<unsigned char>(raw.front())) != 0) ||
                          raw.front() == '-' || raw.front() == '+')) {
         long long ll = 0;
         const auto* first = raw.data();
@@ -72,71 +117,203 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
         }
         try {
             std::size_t pos = 0;
-            double d = std::stod(raw, &pos);
-            if (pos == raw.size()) return nlohmann::json(d);
+            double const d = std::stod(raw, &pos);
+            if (pos == raw.size()) {
+                return nlohmann::json(d);
+            }
+            // std::stod throws on non-numeric input; that's our signal to
+            // fall through and treat the scalar as a string. No log needed
+            // — every YAML string starting with a digit-like character
+            // takes this path.
+            // NOLINTNEXTLINE(bugprone-empty-catch)
         } catch (...) {
-            // fall through to string
         }
     }
     return nlohmann::json(raw);
 }
 
-nlohmann::json yamlNodeToJsonValue(const YAML::Node& node) {
-    if (!node || node.IsNull()) return nlohmann::json(nullptr);
-    if (node.IsScalar()) return yamlScalarToJsonValue(node);
+nlohmann::json yamlNodeToJsonValue(const YAML::Node& node, int depth) {
+    if (depth > kMaxYamlDepth) {
+        throw YAML::Exception(
+            node.Mark(), "YAML nesting exceeds maximum depth of " + std::to_string(kMaxYamlDepth));
+    }
+    if (!node || node.IsNull()) {
+        return {nullptr};
+    }
+    if (node.IsScalar()) {
+        return yamlScalarToJsonValue(node);
+    }
     if (node.IsSequence()) {
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& item : node) {
-            arr.push_back(yamlNodeToJsonValue(item));
+            arr.push_back(yamlNodeToJsonValue(item, depth + 1));
         }
         return arr;
     }
     if (node.IsMap()) {
         nlohmann::json obj = nlohmann::json::object();
         for (const auto& kv : node) {
-            obj[kv.first.as<std::string>()] = yamlNodeToJsonValue(kv.second);
+            obj[kv.first.as<std::string>()] = yamlNodeToJsonValue(kv.second, depth + 1);
         }
         return obj;
     }
-    return nlohmann::json(nullptr);
+    return {nullptr};
 }
 
 std::string nodeToJsonString(const YAML::Node& node) {
-    if (!node || node.IsNull()) return "";
-    return yamlNodeToJsonValue(node).dump();
+    if (!node || node.IsNull()) {
+        return "";
+    }
+    return yamlNodeToJsonValue(node, 0).dump();
 }
 
 std::vector<Extraction> parseExtractions(const YAML::Node& node) {
     std::vector<Extraction> result;
-    if (!node || !node.IsMap()) return result;
+    if (!node || !node.IsMap()) {
+        return result;
+    }
     for (const auto& kv : node) {
         Extraction ext;
         ext.variableName = kv.first.as<std::string>();
         ext.sourcePath = kv.second.as<std::string>();
+
+        // Auto-detect the extraction source from the path prefix. Users
+        // can override by setting `source:` explicitly when the YAML
+        // shape doesn't fit (post-MVP — once we support map-form
+        // extractions). Convention:
+        //   $.headers.X     → Source::Header   (header X, case-insensitive)
+        //   $.cookies.X     → Source::Cookie   (Set-Cookie X)
+        //   $.status_code   → Source::StatusCode
+        //   $... else        → Source::JsonPath (default)
+        // Regex / XPath are not auto-detected — they require an
+        // explicit annotation that hand-written schemas don't carry yet.
         if (ext.sourcePath.starts_with("$.headers.")) {
             ext.source = Extraction::Source::Header;
+        } else if (ext.sourcePath.starts_with("$.cookies.")) {
+            ext.source = Extraction::Source::Cookie;
+        } else if (ext.sourcePath == "$.status_code") {
+            ext.source = Extraction::Source::StatusCode;
         }
         result.push_back(std::move(ext));
     }
     return result;
 }
 
+/// Parse a non-negative integer using from_chars. Returns nullopt for
+/// any malformed input (non-digit, sign, partial parse, negative).
+/// Used by all the duration parsers below — std::stol throws on bad
+[[nodiscard]] std::optional<long> parseNonNegativeLong(std::string_view digits) {
+    long value = 0;
+    const auto* first = digits.data();
+    const auto* last = first + digits.size();
+    const auto fc = std::from_chars(first, last, value);
+    if (fc.ec != std::errc{} || fc.ptr != last || value < 0) {
+        return std::nullopt;
+    }
+    return value;
+}
+
 std::chrono::seconds parseDuration(const std::string& s) {
-    if (s.empty()) return std::chrono::seconds{900};  // default 15m
-    auto value = std::stol(s.substr(0, s.size() - 1));
-    char unit = s.back();
+    constexpr std::chrono::seconds kDefault{900};  // 15m — used when input is malformed
+    if (s.empty()) {
+        return kDefault;
+    }
+
+    const auto digits = std::string_view{s}.substr(0, s.size() - 1);
+    const auto value = parseNonNegativeLong(digits);
+    if (!value) {
+        return kDefault;
+    }
+
+    const char unit = s.back();
     switch (unit) {
         case 's':
-            return std::chrono::seconds{value};
+            return std::chrono::seconds{*value};
         case 'm':
-            return std::chrono::seconds{value * 60};
+            return std::chrono::seconds{*value * 60};
         case 'h':
-            return std::chrono::seconds{value * 3600};
+            return std::chrono::seconds{*value * 3600};
         case 'd':
-            return std::chrono::seconds{value * 86400};
+            return std::chrono::seconds{*value * 86400};
         default:
-            return std::chrono::seconds{value};
+            return std::chrono::seconds{*value};
     }
+}
+
+/// Parse a duration literal in either milliseconds (`750ms`) or
+/// seconds-and-up (`5s`, `1m`, `1h`, `1d`). Returns `fallback` when
+/// the literal is malformed. Centralised so the schema parser doesn't
+/// sprinkle `std::stol` calls (which throw) across every poll /
+/// transport / refresh field.
+[[nodiscard]] std::chrono::milliseconds parseDurationMs(const std::string& literal,
+                                                        std::chrono::milliseconds fallback) {
+    if (literal.empty()) {
+        return fallback;
+    }
+    if (literal.ends_with("ms")) {
+        const auto digits = std::string_view{literal}.substr(0, literal.size() - 2);
+        if (auto ms = parseNonNegativeLong(digits)) {
+            return std::chrono::milliseconds{*ms};
+        }
+        return fallback;
+    }
+    // Fall through to second-grained parser. Empty unit (just digits)
+    // is treated as seconds by parseDuration.
+    if (literal.size() < 2) {
+        return fallback;
+    }
+    const auto digits = std::string_view{literal}.substr(0, literal.size() - 1);
+    if (!parseNonNegativeLong(digits)) {
+        return fallback;  // malformed; don't trust parseDuration
+    }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(parseDuration(literal));
+}
+
+/// Parse a `transport:` block.
+///
+/// Recognised keys:
+///   tls_verify:       bool              (default true)
+///   tls_verify_host:  bool              (default true)
+///   ca_bundle:        string (path)     (optional)
+///   proxy:            string (URL)      (optional)
+///   connect_timeout:  duration ("5s")   (default 5s, also accepts "500ms")
+///
+/// Unknown keys are silently ignored — same forward-compat policy used
+/// for poll_until and other extension blocks. A fully-empty / missing
+/// block parses to a default-constructed `TransportConfig` so absent
+/// schema declarations preserve the engine's prior behaviour exactly.
+TransportConfig parseTransport(const YAML::Node& node) {
+    TransportConfig out;
+    if (!node || !node.IsMap()) {
+        return out;
+    }
+
+    if (node["tls_verify"]) {
+        out.tlsVerify = node["tls_verify"].as<bool>(true);
+    }
+    if (node["tls_verify_host"]) {
+        out.tlsVerifyHost = node["tls_verify_host"].as<bool>(true);
+    }
+
+    if (node["ca_bundle"]) {
+        const auto path = node["ca_bundle"].as<std::string>("");
+        if (!path.empty()) {
+            out.caBundlePath = path;
+        }
+    }
+    if (node["proxy"]) {
+        const auto proxy = node["proxy"].as<std::string>("");
+        if (!proxy.empty()) {
+            out.proxy = proxy;
+        }
+    }
+
+    if (node["connect_timeout"]) {
+        const auto literal = node["connect_timeout"].as<std::string>("");
+        out.connectTimeout = parseDurationMs(literal, out.connectTimeout);
+    }
+
+    return out;
 }
 
 // Resolve a hook-script value: if it looks like a relative path to a .js/.mjs
@@ -145,20 +322,49 @@ std::chrono::seconds parseDuration(const std::string& s) {
 // root. File size capped at 1 MiB.
 [[nodiscard]] std::expected<std::string, ChainApiError> resolveHookScript(const std::string& value,
                                                                           const fs::path& baseDir) {
-    if (value.empty()) return value;
+    if (value.empty()) {
+        return value;
+    }
 
     const auto looksLikeRelativePath = [](std::string_view s) {
-        if (s.starts_with("./") || s.starts_with("../")) return true;
-        if (s.find('\n') != std::string_view::npos) return false;
-        if (s.find('{') != std::string_view::npos) return false;
-        if (s.find('(') != std::string_view::npos) return false;
-        if (s.find('=') != std::string_view::npos) return false;
+        if (s.starts_with("./") || s.starts_with("../")) {
+            return true;
+        }
+        if (s.find('\n') != std::string_view::npos) {
+            return false;
+        }
+        if (s.find('{') != std::string_view::npos) {
+            return false;
+        }
+        if (s.find('(') != std::string_view::npos) {
+            return false;
+        }
+        if (s.find('=') != std::string_view::npos) {
+            return false;
+        }
         return s.ends_with(".js") || s.ends_with(".mjs");
     };
-    if (!looksLikeRelativePath(value)) return value;
+    if (!looksLikeRelativePath(value)) {
+        return value;
+    }
 
     const fs::path raw{value};
-    if (raw.is_absolute()) {
+    // is_absolute() is host-dependent: on Windows it returns false for a
+    // POSIX-rooted path like "/etc/passwd.js", letting an escape attempt
+    // slip past. Reject any leading separator or a Windows drive/UNC prefix
+    // regardless of the host OS so the guard behaves identically everywhere.
+    const auto hasRootedPrefix = [](std::string_view s) {
+        if (s.starts_with('/') || s.starts_with('\\')) {
+            return true;
+        }
+        // Drive-letter root: "C:\..." or "C:/...".
+        if (s.size() >= 3 && std::isalpha(static_cast<unsigned char>(s[0])) && s[1] == ':' &&
+            (s[2] == '\\' || s[2] == '/')) {
+            return true;
+        }
+        return false;
+    };
+    if (raw.is_absolute() || hasRootedPrefix(value)) {
         return std::unexpected(
             ChainApiError{ErrorCode::SchemaInvalid,
                           ErrorClass::Schema,
@@ -212,7 +418,7 @@ std::chrono::seconds parseDuration(const std::string& s) {
                           "hook script is not a regular file: " + canonical.string()});
     }
 
-    constexpr std::uintmax_t kMaxHookBytes = 1 * 1024 * 1024;  // 1 MiB
+    constexpr std::uintmax_t kMaxHookBytes = std::uintmax_t{1} * 1024 * 1024;  // 1 MiB
     const auto size = fs::file_size(canonical, ec);
     if (ec) {
         return std::unexpected(ChainApiError{
@@ -301,7 +507,7 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
                 actor.authConfig["name"] = auth["name"].as<std::string>();
             }
         } else if (actor.strategy == AuthStrategy::OAuth2ClientCredentials) {
-            // RFC 6749 §4.4: token_url + client_id + client_secret required; scope optional.
+            // RFC 6749 : token_url + client_id + client_secret required; scope optional.
             actor.authConfig["token_url"] = auth["token_url"].as<std::string>("");
             actor.authConfig["client_id"] = auth["client_id"].as<std::string>("");
             actor.authConfig["client_secret"] = auth["client_secret"].as<std::string>("");
@@ -309,7 +515,7 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
                 actor.authConfig["scope"] = auth["scope"].as<std::string>();
             }
         } else if (actor.strategy == AuthStrategy::OAuth2Password) {
-            // RFC 6749 §4.3: same as client_credentials plus username/password.
+            // RFC 6749 : same as client_credentials plus username/password.
             actor.authConfig["token_url"] = auth["token_url"].as<std::string>("");
             actor.authConfig["client_id"] = auth["client_id"].as<std::string>("");
             actor.authConfig["client_secret"] = auth["client_secret"].as<std::string>("");
@@ -322,10 +528,15 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             // RFC 5849 two-legged + optional preacquired access token.
             actor.authConfig["consumer_key"] = auth["consumer_key"].as<std::string>("");
             actor.authConfig["consumer_secret"] = auth["consumer_secret"].as<std::string>("");
-            if (auth["token"]) actor.authConfig["token"] = auth["token"].as<std::string>();
-            if (auth["token_secret"])
+            if (auth["token"]) {
+                actor.authConfig["token"] = auth["token"].as<std::string>();
+            }
+            if (auth["token_secret"]) {
                 actor.authConfig["token_secret"] = auth["token_secret"].as<std::string>();
-            if (auth["realm"]) actor.authConfig["realm"] = auth["realm"].as<std::string>();
+            }
+            if (auth["realm"]) {
+                actor.authConfig["realm"] = auth["realm"].as<std::string>();
+            }
         } else if (actor.strategy == AuthStrategy::AwsSigV4) {
             // AWS SigV4 (AWS4-HMAC-SHA256). Long-lived keys are discouraged;
             // prefer {{X.y}} references that pull from a secret store.
@@ -367,6 +578,19 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             if (r["body"]) {
                 refresh.bodyTemplate = nodeToJsonString(r["body"]);
             }
+            // expect_status accepts a scalar or an array — same surface
+            // as Operation's field. When unset, runRefresh treats any
+            // 2xx as success (backwards-compatible default).
+            if (r["expect_status"]) {
+                const auto& es = r["expect_status"];
+                if (es.IsSequence()) {
+                    for (const auto& s : es) {
+                        refresh.expectStatusList.push_back(s.as<int>());
+                    }
+                } else if (es.IsScalar()) {
+                    refresh.expectStatus = es.as<int>();
+                }
+            }
             refresh.extractions = parseExtractions(r["extract"]);
             actor.refresh = std::move(refresh);
         }
@@ -389,14 +613,16 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
     resource.description = node["description"].as<std::string>("");
 
     const auto& ops = node["operations"];
-    if (!ops || !ops.IsMap()) return resource;
+    if (!ops || !ops.IsMap()) {
+        return resource;
+    }
 
     for (const auto& kv : ops) {
         auto opName = kv.first.as<std::string>();
         const auto& opNode = kv.second;
 
         Operation op;
-        op.id = OperationId{resourceId + "." + opName};
+        op.id = OperationId{std::format("{}.{}", resourceId, opName)};
         op.resource = ResourceId{resourceId};
         op.method = parseMethod(opNode["method"].as<std::string>("GET"));
         op.pathTemplate = opNode["path"].as<std::string>("");
@@ -442,49 +668,24 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
                 poll.failWhen = p["fail_when"].as<std::string>();
             }
             if (p["interval"]) {
-                // parseDuration returns seconds; read milliseconds directly
-                // when the literal ends in 'ms'.
                 const auto literal = p["interval"].as<std::string>("2s");
-                if (literal.ends_with("ms")) {
-                    poll.interval =
-                        std::chrono::milliseconds{std::stol(literal.substr(0, literal.size() - 2))};
-                } else {
-                    poll.interval = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        parseDuration(literal));
-                }
+                poll.interval = parseDurationMs(literal, poll.interval);
             }
             if (p["backoff"]) {
                 const auto& b = p["backoff"];
                 if (b["base"]) {
                     const auto literal = b["base"].as<std::string>("500ms");
-                    if (literal.ends_with("ms")) {
-                        poll.backoffBase = std::chrono::milliseconds{
-                            std::stol(literal.substr(0, literal.size() - 2))};
-                    } else {
-                        poll.backoffBase = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            parseDuration(literal));
-                    }
+                    poll.backoffBase = parseDurationMs(
+                        literal, poll.backoffBase.value_or(std::chrono::milliseconds{500}));
                 }
                 if (b["max"]) {
                     const auto literal = b["max"].as<std::string>("30s");
-                    if (literal.ends_with("ms")) {
-                        poll.backoffMax = std::chrono::milliseconds{
-                            std::stol(literal.substr(0, literal.size() - 2))};
-                    } else {
-                        poll.backoffMax = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            parseDuration(literal));
-                    }
+                    poll.backoffMax = parseDurationMs(literal, poll.backoffMax);
                 }
             }
             if (p["timeout"]) {
                 const auto literal = p["timeout"].as<std::string>("60s");
-                if (literal.ends_with("ms")) {
-                    poll.timeout =
-                        std::chrono::milliseconds{std::stol(literal.substr(0, literal.size() - 2))};
-                } else {
-                    poll.timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        parseDuration(literal));
-                }
+                poll.timeout = parseDurationMs(literal, poll.timeout);
             }
             if (p["max_attempts"]) {
                 poll.maxAttempts = p["max_attempts"].as<int>();
@@ -505,18 +706,24 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
         // heuristic and security checks.
         if (opNode["pre_request"]) {
             auto resolved = resolveHookScript(opNode["pre_request"].as<std::string>(), baseDir);
-            if (!resolved) return std::unexpected(resolved.error());
+            if (!resolved) {
+                return std::unexpected(resolved.error());
+            }
             op.preRequestScript = std::move(*resolved);
         }
         if (opNode["post_response"]) {
             auto resolved = resolveHookScript(opNode["post_response"].as<std::string>(), baseDir);
-            if (!resolved) return std::unexpected(resolved.error());
+            if (!resolved) {
+                return std::unexpected(resolved.error());
+            }
             op.postResponseScript = std::move(*resolved);
         }
 
         if (opNode["retry"]) {
             const auto& retryNode = opNode["retry"];
-            if (retryNode["max"]) op.retry.maxAttempts = retryNode["max"].as<int>();
+            if (retryNode["max"]) {
+                op.retry.maxAttempts = retryNode["max"].as<int>();
+            }
             if (retryNode["backoff"]) {
                 op.retry.baseBackoff = std::chrono::milliseconds{retryNode["backoff"].as<int>(500)};
             }
@@ -536,12 +743,42 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
 
 // ─── File loading ────────────────────────────────────────────────────────────
 
+// Cap raw schema document size before handing bytes to yaml-cpp. The YAML
+// layer is an attacker-controlled surface (AGENTS.md §"Reading user input");
+// an unbounded document is a trivial memory-exhaustion vector. 8 MiB is far
+// above any legitimate hand-written schema.
+constexpr std::uintmax_t kMaxYamlBytes = std::uintmax_t{8} * 1024 * 1024;
+
+[[nodiscard]] std::expected<YAML::Node, ChainApiError> loadYamlCapped(const fs::path& file) {
+    std::error_code ec;
+    const auto size = fs::file_size(file, ec);
+    if (ec) {
+        return std::unexpected(
+            ChainApiError{ErrorCode::YamlParse,
+                          ErrorClass::Schema,
+                          "could not stat schema file " + file.string() + ": " + ec.message()});
+    }
+    if (size > kMaxYamlBytes) {
+        return std::unexpected(ChainApiError{ErrorCode::YamlParse,
+                                             ErrorClass::Schema,
+                                             "schema file exceeds 8 MiB cap: " + file.string()});
+    }
+    try {
+        return YAML::LoadFile(file.string());
+    } catch (const YAML::Exception& e) {
+        return std::unexpected(ChainApiError{
+            ErrorCode::YamlParse, ErrorClass::Schema, file.string() + ": " + e.what()});
+    }
+}
+
 std::vector<fs::path> resolveGlob(const fs::path& baseDir, const std::string& pattern) {
     std::vector<fs::path> results;
     auto dir = baseDir / fs::path(pattern).parent_path();
     auto ext = fs::path(pattern).filename().string();
 
-    if (!fs::exists(dir)) return results;
+    if (!fs::exists(dir)) {
+        return results;
+    }
 
     if (ext == "*.yaml" || ext == "*.yml") {
         for (const auto& entry : fs::directory_iterator(dir)) {
@@ -575,154 +812,192 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
             ErrorCode::YamlParse, ErrorClass::Schema, "File not found: " + rootYaml.string()});
     }
 
-    YAML::Node root;
+    // yaml-cpp's Node::as<T>() (without a default) throws YAML::Exception on
+    // a type mismatch. Those calls are scattered across the parse helpers
+    // below on attacker-controlled input; this guard keeps every one of them
+    // inside the std::expected<Project, ChainApiError> contract instead of
+    // unwinding out of the engine.
     try {
-        root = YAML::LoadFile(rootYaml.string());
+        auto loadedRoot = loadYamlCapped(rootYaml);
+        if (!loadedRoot) {
+            return std::unexpected(loadedRoot.error());
+        }
+        const YAML::Node root = *loadedRoot;
+
+        auto version = root["version"].as<int>(0);
+        if (version < 1 || version > 3) {
+            return std::unexpected(
+                ChainApiError{ErrorCode::SchemaVersion,
+                              ErrorClass::Schema,
+                              "Unsupported schema version " + std::to_string(version) +
+                                  " (supported: 1–3). Run `chainapi migrate` to upgrade."});
+        }
+
+        Project project;
+        project.name = root["name"].as<std::string>("Unnamed Project");
+        project.defaultEnvironment = root["default_environment"].as<std::string>("local");
+
+        const auto baseDir = rootYaml.parent_path();
+
+        auto loadSubFile = [&](const fs::path& file) -> std::optional<ChainApiError> {
+            auto loadedSub = loadYamlCapped(file);
+            if (!loadedSub) {
+                return loadedSub.error();
+            }
+            const YAML::Node subDoc = *loadedSub;
+
+            const auto relPath = fs::relative(file, baseDir).string();
+            if (relPath.starts_with("actors/") || relPath.starts_with("actors\\")) {
+                // Two file shapes accepted:
+                //   Form A (flat):    name: vendor\n description: ...\n auth: ...
+                //   Form B (wrapped): vendor:\n   description: ...\n   auth: ...
+                auto actorId = subDoc["name"].as<std::string>("");
+                const YAML::Node actorBody = subDoc["name"] ? subDoc : [&]() {
+                    if (subDoc.IsMap() && subDoc.size() == 1) {
+                        auto it = subDoc.begin();
+                        actorId = it->first.as<std::string>();
+                        return it->second;
+                    }
+                    return subDoc;
+                }();
+                if (actorId.empty()) {
+                    actorId = file.stem().string();
+                }
+                project.actors[ActorId{actorId}] = parseActor(actorId, actorBody);
+            } else if (relPath.starts_with("resources/") || relPath.starts_with("resources\\")) {
+                auto resourceId = subDoc["name"].as<std::string>("");
+                const YAML::Node resourceBody = subDoc["name"] ? subDoc : [&]() {
+                    if (subDoc.IsMap() && subDoc.size() == 1) {
+                        auto it = subDoc.begin();
+                        resourceId = it->first.as<std::string>();
+                        return it->second;
+                    }
+                    return subDoc;
+                }();
+                if (resourceId.empty()) {
+                    resourceId = file.stem().string();
+                }
+                auto parsedResource = parseResource(resourceId, resourceBody, baseDir);
+                if (!parsedResource) {
+                    return parsedResource.error();
+                }
+                project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
+            } else if (relPath.starts_with("environments/") ||
+                       relPath.starts_with("environments\\")) {
+                // Two env file shapes accepted:
+                //   Form A (wrapped): name: local\n variables:\n   baseUrl: ...
+                //   Form B (flat):    baseUrl: ...\n admin_email: ...
+                auto envName = subDoc["name"].as<std::string>(file.stem().string());
+                std::map<std::string, std::string> vars;
+                if (subDoc["variables"] && subDoc["variables"].IsMap()) {
+                    for (const auto& kv : subDoc["variables"]) {
+                        vars[kv.first.as<std::string>()] = readEnvScalar(kv.second);
+                    }
+                } else if (subDoc.IsMap()) {
+                    for (const auto& kv : subDoc) {
+                        auto key = kv.first.as<std::string>();
+                        if (key == "name" || key == "transport") {
+                            continue;
+                        }
+                        if (kv.second.IsScalar()) {
+                            vars[key] = readEnvScalar(kv.second);
+                        }
+                    }
+                }
+                project.environments[envName] = std::move(vars);
+
+                // Optional `transport:` block at env level. Sits alongside
+                // `variables:` in the wrapped form, or as a top-level key
+                // in the flat form (which is why we skip it in the flat
+                // loop above — otherwise a YAML map would land in `vars`
+                // as the empty string).
+                if (subDoc["transport"]) {
+                    project.transport[envName] = parseTransport(subDoc["transport"]);
+                }
+            }
+            return std::nullopt;
+        };
+
+        auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ChainApiError> {
+            if (!importsNode) {
+                return std::nullopt;
+            }
+
+            std::vector<std::string> patterns;
+            if (importsNode.IsSequence()) {
+                for (const auto& p : importsNode) {
+                    patterns.push_back(p.as<std::string>());
+                }
+            } else if (importsNode.IsMap()) {
+                for (const auto& kv : importsNode) {
+                    if (kv.second.IsSequence()) {
+                        for (const auto& p : kv.second) {
+                            patterns.push_back(p.as<std::string>());
+                        }
+                    } else if (kv.second.IsScalar()) {
+                        patterns.push_back(kv.second.as<std::string>());
+                    }
+                }
+            }
+
+            for (const auto& pattern : patterns) {
+                auto files = resolveGlob(baseDir, pattern);
+                for (const auto& file : files) {
+                    if (auto err = loadSubFile(file)) {
+                        return err;
+                    }
+                }
+            }
+            return std::nullopt;
+        };
+
+        if (auto err = processImports(root["imports"])) {
+            return std::unexpected(*err);
+        }
+
+        if (root["actors"] && root["actors"].IsMap()) {
+            for (const auto& kv : root["actors"]) {
+                auto actorId = kv.first.as<std::string>();
+                project.actors[ActorId{actorId}] = parseActor(actorId, kv.second);
+            }
+        }
+
+        if (root["resources"] && root["resources"].IsMap()) {
+            for (const auto& kv : root["resources"]) {
+                auto resourceId = kv.first.as<std::string>();
+                auto parsedResource = parseResource(resourceId, kv.second, baseDir);
+                if (!parsedResource) {
+                    return std::unexpected(parsedResource.error());
+                }
+                project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
+            }
+        }
+
+        if (root["environment"] && root["environment"].IsMap()) {
+            std::map<std::string, std::string> vars;
+            for (const auto& kv : root["environment"]) {
+                vars[kv.first.as<std::string>()] = readEnvScalar(kv.second);
+            }
+            project.environments[project.defaultEnvironment] = std::move(vars);
+        }
+
+        // Root-level `transport:` block. Applies to the default environment
+        // only — multi-env projects should put the block on each env file.
+        if (root["transport"]) {
+            project.transport[project.defaultEnvironment] = parseTransport(root["transport"]);
+        }
+
+        // Reject undefined references, missing depends_on targets, and
+        // dependency cycles at load time (AC-3.1.4 / 3.1.5 / 3.1.6).
+        if (auto valid = DependencyResolver{}.validate(project); !valid) {
+            return std::unexpected(valid.error());
+        }
+
+        return project;
     } catch (const YAML::Exception& e) {
         return std::unexpected(ChainApiError{
             ErrorCode::YamlParse, ErrorClass::Schema, rootYaml.string() + ": " + e.what()});
     }
-
-    auto version = root["version"].as<int>(0);
-    if (version < 1 || version > 3) {
-        return std::unexpected(
-            ChainApiError{ErrorCode::SchemaVersion,
-                          ErrorClass::Schema,
-                          "Unsupported schema version " + std::to_string(version) +
-                              " (supported: 1–3). Run `chainapi migrate` to upgrade."});
-    }
-
-    Project project;
-    project.name = root["name"].as<std::string>("Unnamed Project");
-    project.defaultEnvironment = root["default_environment"].as<std::string>("local");
-
-    const auto baseDir = rootYaml.parent_path();
-
-    auto loadSubFile = [&](const fs::path& file) -> std::optional<ChainApiError> {
-        YAML::Node subDoc;
-        try {
-            subDoc = YAML::LoadFile(file.string());
-        } catch (const YAML::Exception& e) {
-            return ChainApiError{
-                ErrorCode::YamlParse, ErrorClass::Schema, file.string() + ": " + e.what()};
-        }
-
-        const auto relPath = fs::relative(file, baseDir).string();
-        if (relPath.starts_with("actors/") || relPath.starts_with("actors\\")) {
-            // Two file shapes accepted:
-            //   Form A (flat):    name: vendor\n description: ...\n auth: ...
-            //   Form B (wrapped): vendor:\n   description: ...\n   auth: ...
-            auto actorId = subDoc["name"].as<std::string>("");
-            const YAML::Node actorBody = subDoc["name"] ? subDoc : [&]() {
-                if (subDoc.IsMap() && subDoc.size() == 1) {
-                    auto it = subDoc.begin();
-                    actorId = it->first.as<std::string>();
-                    return it->second;
-                }
-                return subDoc;
-            }();
-            if (actorId.empty()) actorId = file.stem().string();
-            project.actors[ActorId{actorId}] = parseActor(actorId, actorBody);
-        } else if (relPath.starts_with("resources/") || relPath.starts_with("resources\\")) {
-            auto resourceId = subDoc["name"].as<std::string>("");
-            const YAML::Node resourceBody = subDoc["name"] ? subDoc : [&]() {
-                if (subDoc.IsMap() && subDoc.size() == 1) {
-                    auto it = subDoc.begin();
-                    resourceId = it->first.as<std::string>();
-                    return it->second;
-                }
-                return subDoc;
-            }();
-            if (resourceId.empty()) resourceId = file.stem().string();
-            auto parsedResource = parseResource(resourceId, resourceBody, baseDir);
-            if (!parsedResource) return parsedResource.error();
-            project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
-        } else if (relPath.starts_with("environments/") || relPath.starts_with("environments\\")) {
-            // Two env file shapes accepted:
-            //   Form A (wrapped): name: local\n variables:\n   baseUrl: ...
-            //   Form B (flat):    baseUrl: ...\n admin_email: ...
-            auto envName = subDoc["name"].as<std::string>(file.stem().string());
-            std::map<std::string, std::string> vars;
-            if (subDoc["variables"] && subDoc["variables"].IsMap()) {
-                for (const auto& kv : subDoc["variables"]) {
-                    vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
-                }
-            } else if (subDoc.IsMap()) {
-                for (const auto& kv : subDoc) {
-                    auto key = kv.first.as<std::string>();
-                    if (key == "name") continue;
-                    if (kv.second.IsScalar()) {
-                        vars[key] = kv.second.as<std::string>("");
-                    }
-                }
-            }
-            project.environments[envName] = std::move(vars);
-        }
-        return std::nullopt;
-    };
-
-    auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ChainApiError> {
-        if (!importsNode) return std::nullopt;
-
-        std::vector<std::string> patterns;
-        if (importsNode.IsSequence()) {
-            for (const auto& p : importsNode) {
-                patterns.push_back(p.as<std::string>());
-            }
-        } else if (importsNode.IsMap()) {
-            for (const auto& kv : importsNode) {
-                if (kv.second.IsSequence()) {
-                    for (const auto& p : kv.second) {
-                        patterns.push_back(p.as<std::string>());
-                    }
-                } else if (kv.second.IsScalar()) {
-                    patterns.push_back(kv.second.as<std::string>());
-                }
-            }
-        }
-
-        for (const auto& pattern : patterns) {
-            auto files = resolveGlob(baseDir, pattern);
-            for (const auto& file : files) {
-                if (auto err = loadSubFile(file)) {
-                    return err;
-                }
-            }
-        }
-        return std::nullopt;
-    };
-
-    if (auto err = processImports(root["imports"])) {
-        return std::unexpected(*err);
-    }
-
-    if (root["actors"] && root["actors"].IsMap()) {
-        for (const auto& kv : root["actors"]) {
-            auto actorId = kv.first.as<std::string>();
-            project.actors[ActorId{actorId}] = parseActor(actorId, kv.second);
-        }
-    }
-
-    if (root["resources"] && root["resources"].IsMap()) {
-        for (const auto& kv : root["resources"]) {
-            auto resourceId = kv.first.as<std::string>();
-            auto parsedResource = parseResource(resourceId, kv.second, baseDir);
-            if (!parsedResource) {
-                return std::unexpected(parsedResource.error());
-            }
-            project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
-        }
-    }
-
-    if (root["environment"] && root["environment"].IsMap()) {
-        std::map<std::string, std::string> vars;
-        for (const auto& kv : root["environment"]) {
-            vars[kv.first.as<std::string>()] = kv.second.as<std::string>("");
-        }
-        project.environments[project.defaultEnvironment] = std::move(vars);
-    }
-
-    return project;
 }
 
 }  // namespace chainapi::engine
