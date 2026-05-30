@@ -55,6 +55,8 @@ struct Palette {
     // Tint tokens (§2.9) — precomputed opaque values, never alpha composites.
     QColor tintCache;
     QColor tintSubstituted;
+    QColor tintDiffAdd;
+    QColor tintDiffRemove;
 };
 
 /// Spacing scale step (DESIGN.md §5.1).
@@ -73,6 +75,11 @@ public:
 
     /// Status hue resolved to a QColor for the active appearance.
     [[nodiscard]] QColor status(StatusToken token) const noexcept;
+
+    /// An opaque, low-emphasis background tint for a status (DESIGN.md §2.9:
+    /// precomputed opaque values, never alpha composites). Used as the fill
+    /// behind status pills and chips so they stay legible on any surface.
+    [[nodiscard]] QColor statusTint(StatusToken token) const noexcept;
 
     /// Spacing in device-independent px (pre-OS-scaling; Qt scales fonts/DPI).
     [[nodiscard]] static int space(Space step) noexcept;

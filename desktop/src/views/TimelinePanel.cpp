@@ -10,6 +10,8 @@
 #include <QtWidgets/QTreeWidgetItem>
 #include <QtWidgets/QVBoxLayout>
 
+#include <functional>
+
 namespace chainapi::desktop {
 
 namespace {
@@ -17,6 +19,12 @@ namespace {
 // Stash the step index on a top-level row so streamed events for the same
 // step annotate the existing row instead of appending a duplicate.
 constexpr int kStepIndexRole = Qt::UserRole + 1;
+// The status token a row's column-1 colour was derived from, so a runtime
+// theme switch can re-resolve the colour rather than leave it stale.
+constexpr int kStatusTokenRole = Qt::UserRole + 2;
+// Marks column 2 as carrying error-coloured detail text (failed steps), so it
+// too re-colours on a theme switch.
+constexpr int kDetailErrorRole = Qt::UserRole + 3;
 
 }  // namespace
 
@@ -46,6 +54,24 @@ TimelinePanel::~TimelinePanel() = default;
 void TimelinePanel::applyTheme(const theming::Theme& theme) {
     theme_ = theme;
     header_->setFont(theme_.font(theming::TextStyle::Subtitle));
+    // Re-resolve every row's status colour from the stored token so an
+    // already-rendered timeline restyles on a runtime Light/Dark switch.
+    const std::function<void(QTreeWidgetItem*)> recolor = [&](QTreeWidgetItem* item) {
+        const QVariant token = item->data(0, kStatusTokenRole);
+        if (token.isValid()) {
+            const auto t = static_cast<theming::StatusToken>(token.toInt());
+            item->setForeground(1, QBrush(theme_.status(t)));
+        }
+        if (item->data(0, kDetailErrorRole).toBool()) {
+            item->setForeground(2, QBrush(theme_.status(theming::StatusToken::Error)));
+        }
+        for (int i = 0; i < item->childCount(); ++i) {
+            recolor(item->child(i));
+        }
+    };
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        recolor(tree_->topLevelItem(i));
+    }
 }
 
 void TimelinePanel::reset() {
@@ -59,6 +85,7 @@ void TimelinePanel::setStatusCell(QTreeWidgetItem* row,
     const QString glyph = widgets::StatusBadge::glyph(token);
     row->setText(1, QStringLiteral("%1 %2").arg(glyph, label));
     row->setForeground(1, QBrush(theme_.status(token)));
+    row->setData(0, kStatusTokenRole, static_cast<int>(token));
 }
 
 QTreeWidgetItem* TimelinePanel::stepRow(int index, const QString& op) {
@@ -160,6 +187,7 @@ void TimelinePanel::onStepFailed(int index, QString op, QString code, QString de
     setStatusCell(row, theming::StatusToken::Error, QStringLiteral("failed"));
     row->setText(2, QStringLiteral("[%1] %2").arg(code, detail));
     row->setForeground(2, QBrush(theme_.status(theming::StatusToken::Error)));
+    row->setData(0, kDetailErrorRole, true);
 }
 
 void TimelinePanel::onRunEnded(QString outcome) {

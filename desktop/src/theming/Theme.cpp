@@ -42,6 +42,10 @@ constexpr double kAccentHue = 285.0;
     // Tint tokens (§2.9): accent hue, surface-level lightness, opaque.
     p.tintCache = oklch(0.955, 0.020, kAccentHue);
     p.tintSubstituted = oklch(0.945, 0.035, kAccentHue);
+    // Diff tints: success/error hue at a light, low-saturation surface
+    // lightness so text stays readable on top (§2.9 / §6.4).
+    p.tintDiffAdd = oklch(0.930, 0.040, 150.0);
+    p.tintDiffRemove = oklch(0.930, 0.045, 27.0);
     return p;
 }
 
@@ -72,6 +76,10 @@ constexpr double kAccentHue = 285.0;
 
     p.tintCache = oklch(0.280, 0.040, kAccentHue);
     p.tintSubstituted = oklch(0.300, 0.055, kAccentHue);
+    // Diff tints: success/error hue at a low, low-saturation surface lightness
+    // so light text stays readable on top in dark mode (§2.9 / §6.4).
+    p.tintDiffAdd = oklch(0.300, 0.050, 150.0);
+    p.tintDiffRemove = oklch(0.310, 0.060, 27.0);
     return p;
 }
 
@@ -104,6 +112,21 @@ QColor Theme::status(StatusToken token) const noexcept {
             return palette_.statusIdle;
     }
     return palette_.statusIdle;
+}
+
+QColor Theme::statusTint(StatusToken token) const noexcept {
+    // Opaque mix of the status colour toward the raised surface — a precomputed
+    // tint rather than an alpha composite (DESIGN.md §2.9), so contrast is
+    // predictable regardless of what sits behind the pill. ~16% status weight.
+    const QColor base = status(token);
+    const QColor surface = palette_.surfaceRaised;
+    constexpr double kStatusWeight = 0.16;
+    const auto mix = [&](int s, int b) {
+        return static_cast<int>((s * kStatusWeight) + (b * (1.0 - kStatusWeight)));
+    };
+    return QColor{mix(base.red(), surface.red()),
+                  mix(base.green(), surface.green()),
+                  mix(base.blue(), surface.blue())};
 }
 
 int Theme::space(Space step) noexcept {
@@ -144,7 +167,7 @@ QFont Theme::font(TextStyle style) const {
             break;
         case TextStyle::Body:
             base.setPointSizeF(scaled(1.00));
-            base.setWeight(appearance_ == Appearance::Dark ? QFont::Normal : QFont::Normal);
+            base.setWeight(QFont::Normal);
             break;
         case TextStyle::Label:
             base.setPointSizeF(scaled(0.92));
@@ -382,6 +405,32 @@ QScrollBar::handle:horizontal {
     min-width: 24px;
 }
 QScrollBar::handle:horizontal:hover { background-color: %13; }
+
+/* Command palette: a floating overlay surface, soft border, no window chrome */
+QWidget#commandPalette {
+    background-color: %10;
+    border: 1px solid %16;
+    border-radius: 10px;
+}
+QLineEdit#paletteSearch {
+    background-color: %14;
+    border: 1px solid %3;
+    border-radius: 6px;
+    padding: %6px;
+}
+QLineEdit#paletteSearch:focus { border: 1px solid %15; }
+QListWidget#paletteList {
+    background-color: transparent;
+    border: none;
+}
+QListWidget#paletteList::item {
+    padding: %7px %6px;
+    border-radius: 6px;
+}
+QListWidget#paletteList::item:selected {
+    background-color: %11;
+    color: %2;
+}
 
 QToolTip {
     background-color: %10;

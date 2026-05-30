@@ -26,7 +26,7 @@ void PanelHeader::setTitle(const QString& title) {
 }
 
 void PanelHeader::addTrailingWidget(QWidget* widget) {
-    widget->setParent(this);
+    // addWidget reparents into this header's layout; no manual setParent.
     layout_->addWidget(widget);
 }
 

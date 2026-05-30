@@ -12,6 +12,7 @@ class QAction;
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QMenu;
 class QSplitter;
 class QStackedWidget;
 
@@ -28,6 +29,8 @@ class Theme;
 
 namespace widgets {
 class EmptyState;
+class CommandPalette;
+struct PaletteItem;
 }  // namespace widgets
 
 class ProjectModel;
@@ -65,6 +68,7 @@ private:
     void buildMenusAndToolbar();
     void buildAppearanceMenu();
     void buildDensityMenu();
+    void buildShortcuts();
     void connectSignals();
 
     void onOpenProject();
@@ -75,6 +79,10 @@ private:
     void onRunRequested(const QString& operationId, bool clean, bool dryRun);
     void onRunningChanged(bool running);
     void onRunFinished(const RunReport& report);
+
+    void openCommandPalette();
+    void onPaletteItemChosen(const widgets::PaletteItem& item);
+    void runCurrentOperation(bool clean, bool dryRun);
 
     /// Per-project active-environment persistence, keyed by project path
     /// in QSettings. Restored on load, saved when the user changes it.
@@ -99,6 +107,8 @@ private:
     TimelinePanel* timeline_{nullptr};
 
     QAction* manageSecretsAction_{nullptr};
+    QMenu* viewMenu_{nullptr};
+    widgets::CommandPalette* palette_{nullptr};
     QComboBox* envCombo_{nullptr};
     QCheckBox* captureBodiesCheck_{nullptr};
     QLabel* statusLabel_{nullptr};

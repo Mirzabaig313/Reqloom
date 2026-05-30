@@ -28,6 +28,14 @@ qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
     src/widgets/PanelHeader.h
     src/widgets/EmptyState.cpp
     src/widgets/EmptyState.h
+    src/widgets/FuzzyMatch.cpp
+    src/widgets/FuzzyMatch.h
+    src/widgets/CommandPalette.cpp
+    src/widgets/CommandPalette.h
+    src/widgets/Toast.cpp
+    src/widgets/Toast.h
+    src/widgets/LineDiff.cpp
+    src/widgets/LineDiff.h
     src/views/Formatting.cpp
     src/views/Formatting.h
     src/views/MainWindow.cpp
