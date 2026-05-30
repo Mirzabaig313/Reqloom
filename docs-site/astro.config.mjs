@@ -2,16 +2,14 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
-// Site URL is set per-deploy via the SITE env var so the same config works
-// for chainapi.github.io (org page) and <user>.github.io/chainapi (project page).
-//
-// CI sets:
-//   SITE  = https://chainapi.github.io      (org)   or
-//   SITE  = https://<user>.github.io        (project)
-//   BASE  = /                                       or
-//   BASE  = /chainapi
-const site = process.env.SITE ?? "https://chainapi.github.io";
-const base = process.env.BASE ?? "/";
+// Site URL is set per-deploy via the SITE/BASE env vars (see deploy-docs.yml).
+// Defaults target the project page at https://mirzabaig313.github.io/ChainAPi/
+// so a local or non-CI build still produces correct, prefixed internal links.
+// CI overrides these:
+//   SITE = https://<user>.github.io   BASE = /ChainAPi/   (project page)
+//   SITE = https://<user>.github.io   BASE = /            (org page)
+const site = process.env.SITE ?? "https://mirzabaig313.github.io";
+const base = process.env.BASE ?? "/ChainAPi/";
 
 export default defineConfig({
     site,
@@ -27,12 +25,12 @@ export default defineConfig({
                 {
                     icon: "github",
                     label: "GitHub",
-                    href: "https://github.com/chainapi/chainapi",
+                    href: "https://github.com/Mirzabaig313/ChainAPi",
                 },
             ],
             editLink: {
                 baseUrl:
-                    "https://github.com/chainapi/chainapi/edit/main/docs-site/",
+                    "https://github.com/Mirzabaig313/ChainAPi/edit/main/docs-site/",
             },
             customCss: ["./src/styles/custom.css"],
             head: [
