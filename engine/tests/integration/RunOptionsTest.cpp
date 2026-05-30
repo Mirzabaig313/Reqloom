@@ -19,6 +19,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TempPath.h>
+
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -38,9 +40,7 @@ namespace {
 class RunOptionsScratchProject {
 public:
     explicit RunOptionsScratchProject(const std::string& yamlBody) {
-        const auto unique = "chainapi-runopts-itest-" + std::to_string(::getpid()) + "-" +
-                            std::to_string(counter_++);
-        path_ = fs::temp_directory_path() / unique;
+        path_ = ct::uniqueTempPath("chainapi-runopts-itest");
         fs::create_directories(path_);
         std::ofstream{path_ / "chainapi.yaml"} << yamlBody;
     }
@@ -54,7 +54,6 @@ public:
 
 private:
     fs::path path_;
-    inline static int counter_{0};
 };
 
 /// Minimal project YAML with a single operation that extracts a value.
@@ -725,8 +724,8 @@ TEST_F(RunOptionsFixture, step_cancelled_event_fires_for_each_cancelled_step) {
 // instance) can read back what the first wrote.
 
 TEST_F(RunOptionsFixture, run_persists_full_event_stream_to_history_store) {
-    const auto dbPath = fs::temp_directory_path() /
-                        ("chainapi-history-itest-" + std::to_string(::getpid()) + ".sqlite");
+    const auto dbPath =
+        ct::uniqueTempPath("chainapi-history-itest", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
@@ -807,8 +806,8 @@ TEST_F(RunOptionsFixture, history_store_persists_request_headers_already_masked)
     // The desktop history pane reads headers directly out of the
     // payload column; the masker that runs at emit time is the only
     // line of defence between the bearer token and the disk. Pin it.
-    const auto dbPath = fs::temp_directory_path() /
-                        ("chainapi-history-mask-" + std::to_string(::getpid()) + ".sqlite");
+    const auto dbPath =
+        ct::uniqueTempPath("chainapi-history-mask", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
@@ -883,8 +882,8 @@ resources:
           session_token: $.id
 )YAML";
 
-    const auto dbPath = fs::temp_directory_path() /
-                        ("chainapi-history-secret-" + std::to_string(::getpid()) + ".sqlite");
+    const auto dbPath =
+        ct::uniqueTempPath("chainapi-history-secret", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);

@@ -14,6 +14,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TempPath.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -28,9 +30,7 @@ namespace {
 class ScratchProject {
 public:
     explicit ScratchProject(const std::string& body) {
-        const auto unique =
-            "chainapi-secret-env-" + std::to_string(::getpid()) + "-" + std::to_string(counter_++);
-        path_ = fs::temp_directory_path() / unique;
+        path_ = chainapi::tests::uniqueTempPath("chainapi-secret-env");
         fs::create_directories(path_);
         std::ofstream{path_ / "chainapi.yaml"} << body;
     }
@@ -45,7 +45,6 @@ public:
 
 private:
     fs::path path_;
-    inline static int counter_{0};
 };
 
 constexpr const char* kSecretEnvYaml = R"YAML(

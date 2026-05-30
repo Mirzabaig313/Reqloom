@@ -14,6 +14,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TempPath.h>
+
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -27,8 +29,7 @@ namespace {
 class TempDb {
 public:
     TempDb() {
-        path_ = fs::temp_directory_path() / ("chainapi-history-" + std::to_string(::getpid()) +
-                                             "-" + std::to_string(counter_++) + ".sqlite");
+        path_ = chainapi::tests::uniqueTempPath("chainapi-history", ".sqlite");
     }
     ~TempDb() {
         std::error_code ec;
@@ -44,7 +45,6 @@ public:
 
 private:
     fs::path path_;
-    inline static int counter_{0};
 };
 
 [[nodiscard]] ce::TimePoint someTimePoint() {
@@ -74,7 +74,7 @@ TEST(SqliteHistoryStore, open_creates_parent_directory_if_missing) {
     // which often doesn't exist on a fresh install. Open must create
     // the parent rather than failing with "no such file or directory".
     const auto root =
-        fs::temp_directory_path() / ("chainapi-history-mkdir-" + std::to_string(::getpid()));
+        chainapi::tests::uniqueTempPath("chainapi-history-mkdir");
     const auto nested = root / "deep" / "history.sqlite";
     std::error_code ec;
     fs::remove_all(root, ec);
