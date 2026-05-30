@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TimeUtil.h>
+
 #include <chrono>
 #include <iomanip>
 #include <regex>
@@ -48,7 +50,8 @@ TEST(VariableResolver, resolves_now_plus_offset_to_iso_in_the_future) {
     is >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
     ASSERT_FALSE(is.fail()) << "could not parse: " << m[1].str();
 
-    const auto resolvedTime = std::chrono::system_clock::from_time_t(timegm(&tm));
+    const auto resolvedTime =
+        std::chrono::system_clock::from_time_t(chainapi::tests::timegmUtc(&tm));
     EXPECT_GE(resolvedTime - before, std::chrono::seconds{5 * 60 - 1});
     EXPECT_LE(resolvedTime - after, std::chrono::seconds{5 * 60 + 5});
 }
@@ -67,7 +70,8 @@ TEST(VariableResolver, resolves_now_minus_offset_to_iso_in_the_past) {
     is >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
     ASSERT_FALSE(is.fail()) << "could not parse: " << result.output;
 
-    const auto resolvedTime = std::chrono::system_clock::from_time_t(timegm(&tm));
+    const auto resolvedTime =
+        std::chrono::system_clock::from_time_t(chainapi::tests::timegmUtc(&tm));
     EXPECT_LE(resolvedTime, before - std::chrono::seconds{3600 - 5});
 }
 

@@ -527,7 +527,14 @@ void MainWindow::onRunRequested(const QString& operationId, bool clean, bool dry
     }
     responseViewer_->reset();
     const QString env = envCombo_->currentText();
-    runController_->run(operationId, env, clean, dryRun);
+
+    // Carry the editor's one-shot override (if Override Mode is on) for the
+    // operation actually being run. The override is ignored for other ops.
+    RequestOverride override;
+    if (requestEditor_->overrideActive() && requestEditor_->currentOperationId() == operationId) {
+        override = requestEditor_->buildOverride();
+    }
+    runController_->runWithOverride(operationId, env, clean, dryRun, override);
 }
 
 void MainWindow::onRunningChanged(bool running) {

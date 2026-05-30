@@ -12,6 +12,7 @@ add_executable(chainapi-desktop-ui-tests
     unit/LayoutSettingsTest.cpp
     unit/FuzzyMatchTest.cpp
     unit/LineDiffTest.cpp
+    unit/KeyValueEditorTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/EnvironmentSettings.cpp
@@ -28,6 +29,8 @@ add_executable(chainapi-desktop-ui-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/FuzzyMatch.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LineDiff.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LineDiff.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/KeyValueEditor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/KeyValueEditor.h
 )
 target_include_directories(chainapi-desktop-ui-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src

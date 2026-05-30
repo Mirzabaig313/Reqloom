@@ -6,9 +6,12 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <chrono>
+#include <map>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace chainapi::desktop {
 
@@ -96,6 +99,125 @@ void RunController::run(const QString& target,
                         const QString& environment,
                         bool clean,
                         bool dryRun) {
+    runWithOverride(target, environment, clean, dryRun, RequestOverride{});
+}
+
+namespace {
+
+/// Map a method label to the engine enum. Unknown → GET (the safe default).
+[[nodiscard]] ce::HttpMethod methodFromLabel(const QString& label) {
+    const QString m = label.trimmed().toUpper();
+    if (m == QStringLiteral("POST")) {
+        return ce::HttpMethod::Post;
+    }
+    if (m == QStringLiteral("PUT")) {
+        return ce::HttpMethod::Put;
+    }
+    if (m == QStringLiteral("PATCH")) {
+        return ce::HttpMethod::Patch;
+    }
+    if (m == QStringLiteral("DELETE")) {
+        return ce::HttpMethod::Delete;
+    }
+    if (m == QStringLiteral("HEAD")) {
+        return ce::HttpMethod::Head;
+    }
+    if (m == QStringLiteral("OPTIONS")) {
+        return ce::HttpMethod::Options;
+    }
+    return ce::HttpMethod::Get;
+}
+
+/// Parse a comma-separated status list ("200,201") into the engine's vector.
+/// Non-numeric tokens are skipped.
+[[nodiscard]] std::vector<int> parseStatusList(const QString& text) {
+    std::vector<int> out;
+    const auto tokens = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString& token : tokens) {
+        bool ok = false;
+        const int code = token.trimmed().toInt(&ok);
+        if (ok) {
+            out.push_back(code);
+        }
+    }
+    return out;
+}
+
+/// Apply a one-shot override to a copy of `base`, patching the target
+/// operation's request fields. Returns a fresh Project; `base` is untouched.
+[[nodiscard]] std::shared_ptr<const ce::Project> patchedProject(const ce::Project& base,
+                                                                const ce::OperationId& target,
+                                                                const RequestOverride& ov) {
+    auto copy = std::make_shared<ce::Project>(base);
+
+    const auto dot = target.value.find('.');
+    if (dot == std::string::npos) {
+        return copy;
+    }
+    const ce::ResourceId resId{target.value.substr(0, dot)};
+    const auto opName = target.value.substr(dot + 1);
+
+    auto resIt = copy->resources.find(resId);
+    if (resIt == copy->resources.end()) {
+        return copy;
+    }
+    auto opIt = resIt->second.operations.find(opName);
+    if (opIt == resIt->second.operations.end()) {
+        return copy;
+    }
+    ce::Operation& op = opIt->second;
+
+    if (!ov.method.isEmpty()) {
+        op.method = methodFromLabel(ov.method);
+    }
+    if (!ov.path.isEmpty()) {
+        op.pathTemplate = ov.path.toStdString();
+    }
+    // Headers / query params: the editor shows the full set, so a patch
+    // replaces them wholesale (what you see is what gets sent).
+    op.headers = ov.headers;
+    op.queryParams = ov.queryParams;
+
+    // Body: form vs raw are mutually exclusive shapes.
+    if (ov.bodyIsForm) {
+        op.bodyForm = ov.formFields;
+        op.bodyTemplate.reset();
+    } else {
+        op.bodyForm.reset();
+        const QString trimmed = ov.body.trimmed();
+        if (trimmed.isEmpty() || trimmed == QStringLiteral("(no body)")) {
+            op.bodyTemplate.reset();
+        } else {
+            op.bodyTemplate = trimmed.toStdString();
+        }
+    }
+
+    if (!ov.actor.isEmpty()) {
+        op.actor = ce::ActorId{ov.actor.toStdString()};
+    }
+
+    const auto codes = parseStatusList(ov.expectStatus);
+    if (!codes.empty()) {
+        op.expectStatusList = codes;
+        op.expectStatus = codes.front();
+    }
+
+    if (ov.timeoutMs > 0) {
+        op.timeout = std::chrono::milliseconds{ov.timeoutMs};
+    }
+    if (ov.forceReRun) {
+        op.force = true;
+    }
+    return copy;
+}
+
+}  // namespace
+
+void RunController::runWithOverride(const QString& target,
+                                    const QString& environment,
+                                    bool clean,
+                                    bool dryRun,
+                                    const RequestOverride& requestOverride) {
     if (running_ || !project_.hasProject()) {
         return;
     }
@@ -112,11 +234,13 @@ void RunController::run(const QString& target,
     options.captureResponseBodies = captureResponseBodies_;
 
     const ce::OperationId targetId{target.toStdString()};
-    // Capture a strong handle to the project so a concurrent reload (which
-    // rebinds ProjectModel to a fresh Project) can't dangle the reference the
-    // worker is mid-run against. The UI also blocks reloads while running,
-    // but this makes the lifetime correct independent of that guard.
-    const std::shared_ptr<const ce::Project> project = project_.projectPtr();
+    // Strong handle to the project the worker runs against. For an override
+    // run this is a patched deep copy (one-shot); otherwise it's the shared
+    // loaded project. Either way the worker owns a strong ref, so a concurrent
+    // reload can't dangle it.
+    const std::shared_ptr<const ce::Project> project =
+        requestOverride.active ? patchedProject(project_.project(), targetId, requestOverride)
+                               : project_.projectPtr();
     ce::RunContext& ctx = *context_;
 
     running_ = true;

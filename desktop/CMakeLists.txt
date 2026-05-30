@@ -36,6 +36,8 @@ qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
     src/widgets/Toast.h
     src/widgets/LineDiff.cpp
     src/widgets/LineDiff.h
+    src/widgets/KeyValueEditor.cpp
+    src/widgets/KeyValueEditor.h
     src/views/Formatting.cpp
     src/views/Formatting.h
     src/views/MainWindow.cpp
