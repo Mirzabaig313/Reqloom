@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <format>
 #include <iomanip>
 #include <limits>
 #include <random>
@@ -34,11 +35,8 @@ std::string generateUuid() {
     };
     auto hex = [](std::uint32_t v, int digits) {
         const std::uint64_t mask =
-            (digits >= 8) ? std::uint64_t{0xFFFF'FFFFu} : ((std::uint64_t{1} << (digits * 4)) - 1);
-        std::ostringstream ss;
-        ss << std::hex << std::setfill('0') << std::setw(digits)
-           << (static_cast<std::uint64_t>(v) & mask);
-        return ss.str();
+            (digits >= 8) ? std::uint64_t{0xFFFF'FFFFU} : ((std::uint64_t{1} << (digits * 4)) - 1);
+        return std::format("{:0{}x}", static_cast<std::uint64_t>(v) & mask, digits);
     };
 
     return hex(r(), 8) + "-" + hex(r(), 4) + "-4" + hex(r(), 3) + "-" + hex(0x8 | (r() & 0x3), 1) +
@@ -67,7 +65,9 @@ std::string nowIso() {
 /// for malformed input. Overflow-safe: absurdly large values return nullopt
 /// rather than triggering signed overflow UB.
 std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
-    if (literal.size() < 2) return std::nullopt;
+    if (literal.size() < 2) {
+        return std::nullopt;
+    }
 
     const char unit = literal.back();
     auto digits = literal.substr(0, literal.size() - 1);
@@ -81,7 +81,9 @@ std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
     }
 
     auto safeMul = [](long long v, long long factor) -> std::optional<long long> {
-        if (factor == 0) return 0;
+        if (factor == 0) {
+            return 0;
+        }
         if (v > std::numeric_limits<long long>::max() / factor) {
             return std::nullopt;
         }
@@ -92,13 +94,19 @@ std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
         case 's':
             return std::chrono::seconds{value};
         case 'm':
-            if (auto r = safeMul(value, 60); r) return std::chrono::seconds{*r};
+            if (auto r = safeMul(value, 60); r) {
+                return std::chrono::seconds{*r};
+            }
             return std::nullopt;
         case 'h':
-            if (auto r = safeMul(value, 3600); r) return std::chrono::seconds{*r};
+            if (auto r = safeMul(value, 3600); r) {
+                return std::chrono::seconds{*r};
+            }
             return std::nullopt;
         case 'd':
-            if (auto r = safeMul(value, 86400); r) return std::chrono::seconds{*r};
+            if (auto r = safeMul(value, 86400); r) {
+                return std::chrono::seconds{*r};
+            }
             return std::nullopt;
         default:
             return std::nullopt;
@@ -107,14 +115,33 @@ std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
 
 std::string_view trim(std::string_view s) {
     auto begin = s.find_first_not_of(" \t");
-    if (begin == std::string_view::npos) return {};
+    if (begin == std::string_view::npos) {
+        return {};
+    }
     auto end = s.find_last_not_of(" \t");
     return s.substr(begin, end - begin + 1);
 }
 
 using ResolvedRef = std::optional<std::string>;
 
-ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const ResolveContext& rctx);
+ResolvedRef resolveDotted(std::string_view ref,
+                          const RunContext& ctx,
+                          const ResolveContext& rctx,
+                          int depth);
+
+/// Single-pass `{{...}}` substitution shared by the public resolve() and
+/// by the env branch (which re-expands embedded refs like a `!secret`
+/// env value that parsed to `{{secret.NAME}}`). `depth` bounds the
+/// re-expansion so a self-referential env value can't recurse forever.
+std::string substituteRefs(std::string_view input,
+                           const RunContext& ctx,
+                           const ResolveContext& rctx,
+                           std::vector<std::string>& unresolved,
+                           int depth);
+
+// Re-expansion of an env value into one further level (env → secret) is
+// the only nesting we rely on; a small cap leaves margin without cycles.
+constexpr int kMaxResolveDepth = 4;
 
 struct CallParts {
     std::string_view name;
@@ -123,8 +150,12 @@ struct CallParts {
 
 std::optional<CallParts> splitCall(std::string_view tail) {
     const auto open = tail.find('(');
-    if (open == std::string_view::npos) return std::nullopt;
-    if (tail.back() != ')') return std::nullopt;
+    if (open == std::string_view::npos) {
+        return std::nullopt;
+    }
+    if (tail.back() != ')') {
+        return std::nullopt;
+    }
 
     CallParts parts;
     parts.name = trim(tail.substr(0, open));
@@ -137,53 +168,85 @@ std::optional<CallParts> splitCall(std::string_view tail) {
 ///   - bareReference         → resolves env.X / secret.X / actor.var / resource.var
 ResolvedRef resolveCallArg(std::string_view arg,
                            const RunContext& ctx,
-                           const ResolveContext& rctx) {
+                           const ResolveContext& rctx,
+                           int depth) {
     arg = trim(arg);
-    if (arg.empty()) return std::nullopt;
+    if (arg.empty()) {
+        return std::nullopt;
+    }
 
     if ((arg.front() == '"' && arg.back() == '"') || (arg.front() == '\'' && arg.back() == '\'')) {
-        if (arg.size() < 2) return std::nullopt;
+        if (arg.size() < 2) {
+            return std::nullopt;
+        }
         return std::string{arg.substr(1, arg.size() - 2)};
     }
 
-    return resolveDotted(arg, ctx, rctx);
+    return resolveDotted(arg, ctx, rctx, depth);
 }
 
 /// Resolve `$.something[+offset]` builtins (category 1 in the resolution
 /// order). Returns nullopt for unrecognised builtins.
 ResolvedRef resolveBuiltin(std::string_view ref,
                            const RunContext& ctx,
-                           const ResolveContext& rctx) {
-    if (!ref.starts_with("$.")) return std::nullopt;
+                           const ResolveContext& rctx,
+                           int depth) {
+    if (!ref.starts_with("$.")) {
+        return std::nullopt;
+    }
 
     // Function-call form: `$.ns.name(arg)`. Dispatch first because the
     // offset-stripping below must not run inside parentheses.
     if (ref.find('(') != std::string_view::npos) {
         if (ref.starts_with("$.base64.")) {
             const auto call = splitCall(ref.substr(9));
-            if (!call) return std::nullopt;
-            const auto value = resolveCallArg(call->arg, ctx, rctx);
-            if (!value) return std::nullopt;
-            if (call->name == "encode") return base64Encode(*value);
-            if (call->name == "decode") return base64Decode(*value);
+            if (!call) {
+                return std::nullopt;
+            }
+            const auto value = resolveCallArg(call->arg, ctx, rctx, depth);
+            if (!value) {
+                return std::nullopt;
+            }
+            if (call->name == "encode") {
+                return base64Encode(*value);
+            }
+            if (call->name == "decode") {
+                return base64Decode(*value);
+            }
             return std::nullopt;
         }
         if (ref.starts_with("$.hex.")) {
             const auto call = splitCall(ref.substr(6));
-            if (!call) return std::nullopt;
-            const auto value = resolveCallArg(call->arg, ctx, rctx);
-            if (!value) return std::nullopt;
-            if (call->name == "encode") return hexEncode(*value);
-            if (call->name == "decode") return hexDecode(*value);
+            if (!call) {
+                return std::nullopt;
+            }
+            const auto value = resolveCallArg(call->arg, ctx, rctx, depth);
+            if (!value) {
+                return std::nullopt;
+            }
+            if (call->name == "encode") {
+                return hexEncode(*value);
+            }
+            if (call->name == "decode") {
+                return hexDecode(*value);
+            }
             return std::nullopt;
         }
         if (ref.starts_with("$.url.")) {
             const auto call = splitCall(ref.substr(6));
-            if (!call) return std::nullopt;
-            const auto value = resolveCallArg(call->arg, ctx, rctx);
-            if (!value) return std::nullopt;
-            if (call->name == "encode") return urlEncode(*value);
-            if (call->name == "decode") return urlDecode(*value);
+            if (!call) {
+                return std::nullopt;
+            }
+            const auto value = resolveCallArg(call->arg, ctx, rctx, depth);
+            if (!value) {
+                return std::nullopt;
+            }
+            if (call->name == "encode") {
+                return urlEncode(*value);
+            }
+            if (call->name == "decode") {
+                return urlDecode(*value);
+            }
             return std::nullopt;
         }
         return std::nullopt;
@@ -193,16 +256,16 @@ ResolvedRef resolveBuiltin(std::string_view ref,
     std::chrono::seconds offset{0};
     bool hasOffset = false;
     {
-        int depth = 0;
+        int parenDepth = 0;
         std::size_t opPos = std::string_view::npos;
         char opCh = '\0';
         for (std::size_t i = 0; i < ref.size(); ++i) {
             const char c = ref[i];
-            if (c == '(')
-                ++depth;
-            else if (c == ')')
-                --depth;
-            else if (depth == 0 && (c == '+' || c == '-') && i > 1) {
+            if (c == '(') {
+                ++parenDepth;
+            } else if (c == ')') {
+                --parenDepth;
+            } else if (parenDepth == 0 && (c == '+' || c == '-') && i > 1) {
                 opPos = i;
                 opCh = c;
             }
@@ -219,15 +282,21 @@ ResolvedRef resolveBuiltin(std::string_view ref,
     }
 
     if (ref == "$.uuid") {
-        if (hasOffset) return std::nullopt;
+        if (hasOffset) {
+            return std::nullopt;
+        }
         return generateUuid();
     }
     if (ref == "$.now") {
-        if (!hasOffset) return nowIso();
+        if (!hasOffset) {
+            return nowIso();
+        }
         return formatIso(std::chrono::system_clock::now() + offset);
     }
     if (ref.starts_with("$.env.")) {
-        if (hasOffset) return std::nullopt;
+        if (hasOffset) {
+            return std::nullopt;
+        }
         const std::string envName{ref.substr(6)};
         if (auto* val = std::getenv(envName.c_str())) {
             return std::string{val};
@@ -235,7 +304,9 @@ ResolvedRef resolveBuiltin(std::string_view ref,
         return std::nullopt;
     }
     if (ref.starts_with("$.faker.")) {
-        if (hasOffset) return std::nullopt;
+        if (hasOffset) {
+            return std::nullopt;
+        }
         const auto fakerType = ref.substr(8);
         if (fakerType == "email") {
             return "test+" + generateUuid().substr(0, 8) + "@example.com";
@@ -252,28 +323,55 @@ ResolvedRef resolveBuiltin(std::string_view ref,
 
 /// Resolve dotted refs (env.X, secret.X, actor.var, resource.var) and
 /// indexed refs (resource[N].var).
-ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const ResolveContext& rctx) {
+ResolvedRef resolveDotted(std::string_view ref,
+                          const RunContext& ctx,
+                          const ResolveContext& rctx,
+                          int depth) {
     const auto dotPos = ref.find('.');
-    if (dotPos == std::string_view::npos) return std::nullopt;
+    if (dotPos == std::string_view::npos) {
+        return std::nullopt;
+    }
 
     const auto scope = std::string{ref.substr(0, dotPos)};
     const auto field = std::string{ref.substr(dotPos + 1)};
 
     if (scope == "env") {
         auto it = rctx.envVars.find(field);
-        if (it != rctx.envVars.end()) return it->second;
-        return std::nullopt;
+        if (it == rctx.envVars.end()) {
+            return std::nullopt;
+        }
+        // An env value may itself be a reference — e.g. a `!secret NAME`
+        // entry parsed to `{{secret.NAME}}`. Re-expand one level deeper
+        // (bounded by kMaxResolveDepth) so callers see the resolved
+        // secret, not the literal placeholder. If the nested value can't
+        // fully resolve (e.g. the secret wasn't loaded), report this env
+        // ref as unresolved rather than emitting a half-expanded string —
+        // the outer loop then preserves the `{{env.X}}` placeholder and
+        // records it, matching how every other unresolved ref behaves.
+        if (it->second.find("{{") != std::string::npos) {
+            std::vector<std::string> nested;
+            auto expanded = substituteRefs(it->second, ctx, rctx, nested, depth + 1);
+            if (!nested.empty()) {
+                return std::nullopt;
+            }
+            return expanded;
+        }
+        return it->second;
     }
 
     if (scope == "secret") {
         auto it = rctx.secrets.find(field);
-        if (it != rctx.secrets.end()) return it->second;
+        if (it != rctx.secrets.end()) {
+            return it->second;
+        }
         return std::nullopt;
     }
 
-    if (auto* session = ctx.session(ActorId{scope}); session != nullptr) {
+    if (const auto* session = ctx.session(ActorId{scope}); session != nullptr) {
         auto it = session->variables.find(field);
-        if (it != session->variables.end()) return it->second;
+        if (it != session->variables.end()) {
+            return it->second;
+        }
     }
 
     // Indexed resource reference: resource[N].var (1-indexed).
@@ -286,14 +384,20 @@ ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const Res
         const auto* first = indexStr.data();
         const auto* last = first + indexStr.size();
         auto fc = std::from_chars(first, last, index);
-        if (fc.ec != std::errc{} || index == 0) return std::nullopt;
+        if (fc.ec != std::errc{} || index == 0) {
+            return std::nullopt;
+        }
 
         index -= 1;  // 1-indexed → 0-indexed
         const auto& instances = ctx.instances(ResourceId{resName});
-        if (index >= instances.size()) return std::nullopt;
+        if (index >= instances.size()) {
+            return std::nullopt;
+        }
 
         auto it = instances[index].variables.find(field);
-        if (it != instances[index].variables.end()) return it->second;
+        if (it != instances[index].variables.end()) {
+            return it->second;
+        }
         return std::nullopt;
     }
 
@@ -303,39 +407,45 @@ ResolvedRef resolveDotted(std::string_view ref, const RunContext& ctx, const Res
     const auto& instances = ctx.instances(ResourceId{scope});
     for (auto it = instances.rbegin(); it != instances.rend(); ++it) {
         auto fieldIt = it->variables.find(field);
-        if (fieldIt != it->variables.end()) return fieldIt->second;
+        if (fieldIt != it->variables.end()) {
+            return fieldIt->second;
+        }
     }
 
     return std::nullopt;
 }
 
-}  // namespace
-
-VariableResolver::VariableResolver() = default;
-VariableResolver::~VariableResolver() = default;
-
-VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
-                                                   const RunContext& ctx,
-                                                   const ResolveContext& resolveCtx) const {
+std::string substituteRefs(std::string_view input,
+                           const RunContext& ctx,
+                           const ResolveContext& rctx,
+                           std::vector<std::string>& unresolved,
+                           int depth) {
     static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
-    const std::string input(templateStr);
-    std::string output;
-    std::vector<std::string> unresolved;
+    // Depth guard: a self-referential env value (e.g. one whose value
+    // references itself) would otherwise loop. At the cap, return the
+    // text unchanged rather than recursing further.
+    if (depth >= kMaxResolveDepth) {
+        return std::string{input};
+    }
 
-    std::sregex_iterator begin(input.begin(), input.end(), refPattern);
-    std::sregex_iterator end;
+    const std::string in{input};
+    std::string output;
+    output.reserve(in.size());
+
+    std::sregex_iterator const begin(in.begin(), in.end(), refPattern);
+    std::sregex_iterator const end;
     std::size_t lastPos = 0;
 
     for (auto it = begin; it != end; ++it) {
         const auto matchPos = static_cast<std::size_t>(it->position());
-        output += input.substr(lastPos, matchPos - lastPos);
+        output += in.substr(lastPos, matchPos - lastPos);
 
         const auto rawRef = (*it)[1].str();
         const auto trimmed = std::string{trim(rawRef)};
 
-        ResolvedRef resolved = resolveBuiltin(trimmed, ctx, resolveCtx);
+        ResolvedRef resolved = resolveBuiltin(trimmed, ctx, rctx, depth);
         if (!resolved) {
-            resolved = resolveDotted(trimmed, ctx, resolveCtx);
+            resolved = resolveDotted(trimmed, ctx, rctx, depth);
         }
 
         if (resolved) {
@@ -348,7 +458,19 @@ VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
         lastPos = matchPos + static_cast<std::size_t>(it->length());
     }
 
-    output += input.substr(lastPos);
+    output += in.substr(lastPos);
+    return output;
+}
+
+}  // namespace
+
+VariableResolver::VariableResolver() = default;
+
+VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
+                                                   const RunContext& ctx,
+                                                   const ResolveContext& resolveCtx) const {
+    std::vector<std::string> unresolved;
+    std::string output = substituteRefs(templateStr, ctx, resolveCtx, unresolved, 0);
     return Result{std::move(output), std::move(unresolved)};
 }
 

@@ -343,3 +343,48 @@ TEST(MethodToString, output_is_uppercase) {
         }
     }
 }
+
+// ─── truncateUtf8 ────────────────────────────────────────────────────────────
+
+TEST(TruncateUtf8, returns_input_unchanged_when_within_cap) {
+    EXPECT_EQ(codecs::truncateUtf8("hello", 5), "hello");
+    EXPECT_EQ(codecs::truncateUtf8("hi", 100), "hi");
+}
+
+TEST(TruncateUtf8, truncates_ascii_at_exact_byte_cap) {
+    EXPECT_EQ(codecs::truncateUtf8("hello world", 5), "hello");
+}
+
+TEST(TruncateUtf8, never_exceeds_max_bytes) {
+    const std::string s(1000, 'x');
+    EXPECT_EQ(codecs::truncateUtf8(s, 10).size(), 10u);
+}
+
+TEST(TruncateUtf8, backs_off_rather_than_splitting_a_multibyte_char) {
+    // "a€" = 0x61 (a) + 0xE2 0x82 0xAC (€, 3 bytes). Cutting at 2 bytes
+    // would land inside the € sequence; the result must back off to "a"
+    // so the string stays valid UTF-8.
+    const std::string s = "a\xE2\x82\xAC";
+    const auto out = codecs::truncateUtf8(s, 2);
+    EXPECT_EQ(out, "a");
+}
+
+TEST(TruncateUtf8, keeps_a_whole_multibyte_char_when_it_fits) {
+    // Cap of 4 fits "a" + the full 3-byte € → unchanged.
+    const std::string s = "a\xE2\x82\xAC";
+    EXPECT_EQ(codecs::truncateUtf8(s, 4), s);
+}
+
+TEST(TruncateUtf8, backs_off_from_a_four_byte_emoji_boundary) {
+    // "😀" = 0xF0 0x9F 0x98 0x80 (4 bytes). Any cap of 1-3 must yield empty
+    // rather than a partial sequence.
+    const std::string emoji = "\xF0\x9F\x98\x80";
+    EXPECT_TRUE(codecs::truncateUtf8(emoji, 3).empty());
+    EXPECT_TRUE(codecs::truncateUtf8(emoji, 2).empty());
+    EXPECT_TRUE(codecs::truncateUtf8(emoji, 1).empty());
+    EXPECT_EQ(codecs::truncateUtf8(emoji, 4), emoji);
+}
+
+TEST(TruncateUtf8, zero_cap_returns_empty) {
+    EXPECT_TRUE(codecs::truncateUtf8("anything", 0).empty());
+}

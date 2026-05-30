@@ -57,7 +57,8 @@ ok() {
 
 # 1. clang-format check — runs the same dry-run --Werror that CI runs, over
 #    every C++ source under engine/, cli/, desktop/, ipc/. This mirrors the
-#    static-checks job in azure-pipelines.yml / appveyor.yml. If CI would
+#    static-checks job in .github/workflows/build.yml / azure-pipelines.yml.
+#    If CI would
 #    reject the push for formatting drift, this catches it locally.
 step "1/5  clang-format check"
 
@@ -132,7 +133,7 @@ step "4/5  ctest"
 if [[ "${SKIP_TESTS:-0}" == "1" ]]; then
   yellow "  SKIP_TESTS=1 — skipped"
 else
-  ctest --preset "$preset" --output-on-failure 2>&1 | tail -30
+  ctest --test-dir "$build_dir" -j "$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)" --output-on-failure 2>&1 | tail -30
   test_status=${PIPESTATUS[0]}
   [[ $test_status -eq 0 ]] || fail "tests failed (exit $test_status)"
   ok "all tests passed"

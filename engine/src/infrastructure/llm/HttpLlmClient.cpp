@@ -26,7 +26,9 @@ constexpr std::string_view kBodyExcerptCap = "... (truncated)";
 constexpr std::size_t kBodyExcerptBytes = 400;
 
 std::string excerpt(const std::string& body) {
-    if (body.size() <= kBodyExcerptBytes) return body;
+    if (body.size() <= kBodyExcerptBytes) {
+        return body;
+    }
     return body.substr(0, kBodyExcerptBytes) + std::string{kBodyExcerptCap};
 }
 
@@ -56,7 +58,9 @@ std::expected<HttpRequest, ChainApiError> buildOpenAiRequest(const LlmRequest& r
         body["messages"].push_back(
             {{"role", std::string{roleAsString(m.role)}}, {"content", m.content}});
     }
-    if (req.config.maxTokens) body["max_tokens"] = *req.config.maxTokens;
+    if (req.config.maxTokens) {
+        body["max_tokens"] = *req.config.maxTokens;
+    }
     if (req.config.jsonOnly) {
         body["response_format"] = {{"type", "json_object"}};
     }
@@ -87,13 +91,17 @@ std::expected<HttpRequest, ChainApiError> buildAnthropicRequest(const LlmRequest
     json messages = json::array();
     for (const auto& m : req.messages) {
         if (m.role == LlmMessage::Role::System) {
-            if (!systemPrompt.empty()) systemPrompt += "\n\n";
+            if (!systemPrompt.empty()) {
+                systemPrompt += "\n\n";
+            }
             systemPrompt += m.content;
             continue;
         }
         messages.push_back({{"role", std::string{roleAsString(m.role)}}, {"content", m.content}});
     }
-    if (!systemPrompt.empty()) body["system"] = std::move(systemPrompt);
+    if (!systemPrompt.empty()) {
+        body["system"] = std::move(systemPrompt);
+    }
     body["messages"] = std::move(messages);
 
     HttpRequest http;
@@ -117,7 +125,9 @@ std::expected<HttpRequest, ChainApiError> buildOllamaRequest(const LlmRequest& r
         body["messages"].push_back(
             {{"role", std::string{roleAsString(m.role)}}, {"content", m.content}});
     }
-    if (req.config.jsonOnly) body["format"] = "json";
+    if (req.config.jsonOnly) {
+        body["format"] = "json";
+    }
     body["stream"] = false;
 
     HttpRequest http;
@@ -148,9 +158,12 @@ std::expected<LlmResponse, ChainApiError> parseOpenAi(const json& doc) {
     }
     if (doc.contains("usage")) {
         const auto& u = doc["usage"];
-        if (u.contains("prompt_tokens")) out.promptTokens = u["prompt_tokens"].get<int>();
-        if (u.contains("completion_tokens"))
+        if (u.contains("prompt_tokens")) {
+            out.promptTokens = u["prompt_tokens"].get<int>();
+        }
+        if (u.contains("completion_tokens")) {
             out.completionTokens = u["completion_tokens"].get<int>();
+        }
     }
     return out;
 }
@@ -162,7 +175,9 @@ std::expected<LlmResponse, ChainApiError> parseAnthropic(const json& doc) {
     LlmResponse out;
     for (const auto& block : doc["content"]) {
         if (block.value("type", std::string{}) == "text" && block.contains("text")) {
-            if (!out.content.empty()) out.content += "\n";
+            if (!out.content.empty()) {
+                out.content += "\n";
+            }
             out.content += block["text"].get<std::string>();
         }
     }
@@ -174,8 +189,12 @@ std::expected<LlmResponse, ChainApiError> parseAnthropic(const json& doc) {
     }
     if (doc.contains("usage")) {
         const auto& u = doc["usage"];
-        if (u.contains("input_tokens")) out.promptTokens = u["input_tokens"].get<int>();
-        if (u.contains("output_tokens")) out.completionTokens = u["output_tokens"].get<int>();
+        if (u.contains("input_tokens")) {
+            out.promptTokens = u["input_tokens"].get<int>();
+        }
+        if (u.contains("output_tokens")) {
+            out.completionTokens = u["output_tokens"].get<int>();
+        }
     }
     return out;
 }
@@ -226,7 +245,9 @@ std::expected<LlmResponse, ChainApiError> HttpLlmClient::complete(const LlmReque
             built = buildOllamaRequest(request);
             break;
     }
-    if (!built) return std::unexpected(built.error());
+    if (!built) {
+        return std::unexpected(built.error());
+    }
 
     const auto sendStart = std::chrono::steady_clock::now();
     auto response = transport_->send(*built);
@@ -247,18 +268,30 @@ std::expected<LlmResponse, ChainApiError> HttpLlmClient::complete(const LlmReque
     }
 
     std::expected<LlmResponse, ChainApiError> parsed;
-    switch (request.config.provider) {
-        case LlmProvider::OpenAI:
-            parsed = parseOpenAi(doc);
-            break;
-        case LlmProvider::Anthropic:
-            parsed = parseAnthropic(doc);
-            break;
-        case LlmProvider::Ollama:
-            parsed = parseOllama(doc);
-            break;
+    // The provider parsers below call nlohmann::json get<T>(), which throws
+    // json::type_error / json::out_of_range when an untrusted provider
+    // response has the right keys but wrong value types. Contain those here
+    // so they surface as a normal ErrorCode::LlmResponseInvalid rather than
+    // escaping complete()'s std::expected contract.
+    try {
+        switch (request.config.provider) {
+            case LlmProvider::OpenAI:
+                parsed = parseOpenAi(doc);
+                break;
+            case LlmProvider::Anthropic:
+                parsed = parseAnthropic(doc);
+                break;
+            case LlmProvider::Ollama:
+                parsed = parseOllama(doc);
+                break;
+        }
+    } catch (const json::exception& e) {
+        return std::unexpected(
+            responseInvalid(std::string{"provider response has unexpected types: "} + e.what()));
     }
-    if (!parsed) return std::unexpected(parsed.error());
+    if (!parsed) {
+        return std::unexpected(parsed.error());
+    }
 
     parsed->elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - sendStart);

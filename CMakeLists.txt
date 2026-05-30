@@ -12,6 +12,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# On Windows, prevent <windows.h> (pulled in transitively by curl, the Qt
+# platform layer, and others) from defining the function-like `min`/`max`
+# macros that collide with std::min/std::max and numeric_limits::max().
+# WIN32_LEAN_AND_MEAN trims rarely-needed Win32 sub-headers, cutting both
+# compile time and the surface for further macro clashes.
+if(WIN32)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
@@ -35,14 +44,44 @@ include(ChainApiBoundaryGuards)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(CURL REQUIRED)
-find_package(SQLite3 REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-# Qt6Keychain — package is exposed as `Qt6Keychain::Qt6Keychain` via vcpkg
+
+# SQLite3 target normalization.
+#
+# CMake's built-in FindSQLite3 module creates `SQLite3::SQLite3` when it
+# locates the library on disk. vcpkg's sqlite3 port instead ships a config
+# package (`unofficial-sqlite3`) that exposes `unofficial::sqlite3::sqlite3`.
+# Depending on platform / how vcpkg's toolchain steers find_package, the
+# module-mode target may not be created (observed on the Windows CI runner:
+# find_package succeeds but SQLite3::SQLite3 is absent at generate time).
+# Normalize to a single name the engine links against: SQLite3::SQLite3.
+find_package(SQLite3 QUIET)
+if(NOT TARGET SQLite3::SQLite3)
+    find_package(unofficial-sqlite3 CONFIG REQUIRED)
+    if(TARGET unofficial::sqlite3::sqlite3)
+        # Promote to GLOBAL so the alias is usable from any subdirectory.
+        set_target_properties(unofficial::sqlite3::sqlite3
+            PROPERTIES IMPORTED_GLOBAL TRUE)
+        add_library(SQLite3::SQLite3 ALIAS unofficial::sqlite3::sqlite3)
+    else()
+        message(FATAL_ERROR
+            "SQLite3 found but neither SQLite3::SQLite3 nor "
+            "unofficial::sqlite3::sqlite3 target exists.")
+    endif()
+endif()
+# Qt6Keychain — OS-keychain backend for the engine's SecretStore, exposed
+# as `Qt6Keychain::Qt6Keychain`. Tried QUIET first so a system/Homebrew
+# install (or a machine where vcpkg's port is acceptable) is used as-is.
+# When NOT found here, third_party/CMakeLists.txt builds it from source via
+# FetchContent against the already-present Qt6 — deliberately avoiding the
+# vcpkg `qtkeychain` port, which drags qtbase from source and blows past
+# CI's job time budget (see vcpkg.json $qt-comment). Either way the engine
+# ends up with the real KeychainSecretStore (CHAINAPI_HAS_QTKEYCHAIN=1).
 find_package(Qt6Keychain CONFIG QUIET)
 
 # UI-only deps
 if(CHAINAPI_BUILD_DESKTOP)
-    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Gui Quick QuickWidgets)
+    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Gui Quick QuickWidgets Concurrent)
     # QScintilla is added later when the desktop module starts using it.
 endif()
 

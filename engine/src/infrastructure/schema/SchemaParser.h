@@ -17,6 +17,11 @@ using SchemaParseResult = std::expected<Project, ChainApiError>;
 
 class SchemaParser {
 public:
+    SchemaParser() = default;
+    SchemaParser(const SchemaParser&) = delete;
+    SchemaParser& operator=(const SchemaParser&) = delete;
+    SchemaParser(SchemaParser&&) = delete;
+    SchemaParser& operator=(SchemaParser&&) = delete;
     virtual ~SchemaParser() = default;
 
     virtual SchemaParseResult parse(const std::filesystem::path& rootYaml) = 0;

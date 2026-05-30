@@ -1105,7 +1105,8 @@ TEST(AuthStrategy, aws_sigv4_optional_session_token_is_recorded_when_present) {
 
     ce::AuthDependencies deps{&http, &resolver};
     auto authn = ce::selectAuthenticator(actor, deps);
-    auto result = authn->authenticate(actor, ce::RunContext{}, ce::ResolveContext{});
+    ce::RunContext ctx;
+    auto result = authn->authenticate(actor, ctx, ce::ResolveContext{});
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->variables.at("session_token"), "FwoGZXIvYXdzEJP");
@@ -1119,7 +1120,8 @@ TEST(AuthStrategy, aws_sigv4_rejects_missing_access_key) {
 
     ce::AuthDependencies deps{&http, &resolver};
     auto authn = ce::selectAuthenticator(actor, deps);
-    auto result = authn->authenticate(actor, ce::RunContext{}, ce::ResolveContext{});
+    ce::RunContext ctx;
+    auto result = authn->authenticate(actor, ctx, ce::ResolveContext{});
 
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
@@ -1138,7 +1140,8 @@ TEST(AuthStrategy, aws_sigv4_resolves_secret_credentials) {
     ce::ResolveContext rctx;
     rctx.secrets["AWS_ACCESS_KEY"] = "AKIA-from-secret";
     rctx.secrets["AWS_SECRET_KEY"] = "secret-from-store";
-    auto result = authn->authenticate(actor, ce::RunContext{}, rctx);
+    ce::RunContext ctx;
+    auto result = authn->authenticate(actor, ctx, rctx);
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->variables.at("access_key"), "AKIA-from-secret");
@@ -1311,4 +1314,278 @@ TEST(SigV4Signer, regenerates_distinct_signatures_across_distinct_timestamps) {
     ASSERT_TRUE(ce::signSigV4Request(reqA, session, a));
     ASSERT_TRUE(ce::signSigV4Request(reqB, session, b));
     EXPECT_NE(reqA.headers.at("Authorization"), reqB.headers.at("Authorization"));
+}
+
+// ─── runRefresh — actor.refresh block ─────────────────────────────────────
+//
+// The refresh block is a single HTTP step that exchanges an existing
+// credential (typically a refresh_token in the session) for a fresh
+// short-lived token. The engine calls runRefresh on TTL expiry before
+// falling back to a full re-auth.
+
+namespace {
+
+ce::Actor makeActorWithRefresh() {
+    auto actor = makeSimpleActor();
+
+    ce::SessionRefresh refresh;
+    refresh.method = ce::HttpMethod::Post;
+    refresh.pathTemplate = "/api/v1/auth/refresh";
+    refresh.bodyTemplate = R"({"refresh_token":"{{user.refresh_token}}"})";
+    refresh.extractions.push_back(
+        {"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
+    actor.refresh = std::move(refresh);
+    return actor;
+}
+
+}  // namespace
+
+TEST(AuthStrategyRefresh, hits_refresh_endpoint_and_returns_extracted_vars) {
+    FakeHttpClient http;
+    http.enqueue(200, R"({"data":{"accessToken":"new-token-xyz"}})");
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+
+    // Seed an existing session so {{user.refresh_token}} resolves.
+    ce::RunContext ctx;
+    ce::ActorSession existing;
+    existing.state = ce::ActorSession::State::Live;
+    existing.variables["token"] = "old-token";
+    existing.variables["refresh_token"] = "rt-9";
+    ctx.putSession(actor.id, std::move(existing));
+
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->at("token"), "new-token-xyz");
+
+    // The refresh request body must have substituted the existing
+    // session's refresh_token. If this fails, the resolver isn't seeing
+    // the cached session and the refresh contract is broken.
+    ASSERT_EQ(http.recorded().size(), 1u);
+    EXPECT_NE(http.recorded()[0].body.find("rt-9"), std::string::npos);
+    EXPECT_EQ(http.recorded()[0].url, "http://t.test/api/v1/auth/refresh");
+}
+
+TEST(AuthStrategyRefresh, returns_empty_map_when_extractions_empty) {
+    // Some refresh endpoints just rotate cookies and return 200 with no
+    // body. The engine should accept that and bump expiresAt without
+    // overwriting any session vars.
+    FakeHttpClient http;
+    http.enqueue(204, "");
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+    actor.refresh->extractions.clear();
+
+    ce::RunContext ctx;
+    ce::ActorSession existing;
+    existing.state = ce::ActorSession::State::Live;
+    existing.variables["refresh_token"] = "rt-9";
+    ctx.putSession(actor.id, std::move(existing));
+
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_TRUE(result->empty());
+}
+
+TEST(AuthStrategyRefresh, returns_session_refresh_failed_when_no_block_declared) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    auto actor = makeSimpleActor();
+    EXPECT_FALSE(actor.refresh.has_value());
+
+    ce::RunContext ctx;
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("no `session.refresh:` block"), std::string::npos);
+}
+
+TEST(AuthStrategyRefresh, treats_4xx_as_failure_for_caller_to_fall_back) {
+    // The `refresh:` block's contract is "exchange the old credential
+    // for a new one"; if the server says no, the caller has to do a
+    // full re-auth. Surfacing a clean SessionRefreshFailed is what
+    // ensureSession's fallback path keys on.
+    FakeHttpClient http;
+    http.enqueue(401, R"({"error":"refresh_token_expired"})");
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+
+    ce::RunContext ctx;
+    ce::ActorSession existing;
+    existing.state = ce::ActorSession::State::Live;
+    existing.variables["refresh_token"] = "rt-9";
+    ctx.putSession(actor.id, std::move(existing));
+
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("HTTP 401"), std::string::npos);
+}
+
+TEST(AuthStrategyRefresh, network_error_surfaces_session_refresh_failed) {
+    FakeHttpClient http;  // empty queue → NetworkTimeout
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+
+    ce::RunContext ctx;
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+}
+
+TEST(AuthStrategyRefresh, extraction_miss_surfaces_session_refresh_failed) {
+    FakeHttpClient http;
+    http.enqueue(200, R"({"data":{}})");  // no accessToken
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+
+    ce::RunContext ctx;
+    ce::ActorSession existing;
+    existing.state = ce::ActorSession::State::Live;
+    existing.variables["refresh_token"] = "rt-9";
+    ctx.putSession(actor.id, std::move(existing));
+
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+}
+
+// ─── runRefresh — expect_status ────────────────────────────────────────────
+//
+// expect_status mirrors the operation-level schema: scalar accepts a
+// single status, list form accepts any of the listed statuses, list
+// wins when both are set. Unset means "any 2xx".
+
+TEST(AuthStrategyRefresh, accepts_response_when_status_matches_explicit_scalar) {
+    FakeHttpClient http;
+    http.enqueue(204, "");  // 2xx but specific
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+    actor.refresh->extractions.clear();
+    actor.refresh->expectStatus = 204;
+
+    ce::RunContext ctx;
+    ce::ActorSession existing;
+    existing.state = ce::ActorSession::State::Live;
+    existing.variables["refresh_token"] = "rt-9";
+    ctx.putSession(actor.id, std::move(existing));
+
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+}
+
+TEST(AuthStrategyRefresh, rejects_2xx_response_when_explicit_status_does_not_match) {
+    // 200 would otherwise be acceptable under the default "any 2xx"
+    // rule. expect_status: 204 should make 200 a refresh failure so
+    // the caller falls back to a full re-auth.
+    FakeHttpClient http;
+    http.enqueue(200, R"({"data":{"accessToken":"x"}})");
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+    actor.refresh->expectStatus = 204;
+
+    ce::RunContext ctx;
+    ce::ActorSession existing;
+    existing.state = ce::ActorSession::State::Live;
+    existing.variables["refresh_token"] = "rt-9";
+    ctx.putSession(actor.id, std::move(existing));
+
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("HTTP 200"), std::string::npos);
+}
+
+TEST(AuthStrategyRefresh, list_form_accepts_any_listed_status) {
+    FakeHttpClient http;
+    http.enqueue(202, R"({"data":{"accessToken":"new"}})");
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+    actor.refresh->expectStatusList = {200, 202, 204};
+
+    ce::RunContext ctx;
+    ce::ActorSession existing;
+    existing.state = ce::ActorSession::State::Live;
+    existing.variables["refresh_token"] = "rt-9";
+    ctx.putSession(actor.id, std::move(existing));
+
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->at("token"), "new");
+}
+
+TEST(AuthStrategyRefresh, list_form_takes_precedence_over_scalar) {
+    // Mirrors the operation-level convention: when both `expect_status`
+    // and the list form are set, the list wins. Here scalar=200 would
+    // accept the response, but the list excludes 200 — so the refresh
+    // must fail.
+    FakeHttpClient http;
+    http.enqueue(200, R"({"data":{"accessToken":"x"}})");
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+    actor.refresh->expectStatus = 200;
+    actor.refresh->expectStatusList = {204};
+
+    ce::RunContext ctx;
+    ce::ActorSession existing;
+    existing.state = ce::ActorSession::State::Live;
+    existing.variables["refresh_token"] = "rt-9";
+    ctx.putSession(actor.id, std::move(existing));
+
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+}
+
+TEST(AuthStrategyRefresh, rejects_status_outside_listed_values) {
+    // 200 is the conventional "ok" status, but the user only listed 204
+    // and 205 — so even a 200 must be a failure.
+    FakeHttpClient http;
+    http.enqueue(200, R"({"data":{"accessToken":"x"}})");
+
+    ce::VariableResolver resolver;
+    auto actor = makeActorWithRefresh();
+    actor.refresh->expectStatusList = {204, 205};
+
+    ce::RunContext ctx;
+    ce::ActorSession existing;
+    existing.state = ce::ActorSession::State::Live;
+    existing.variables["refresh_token"] = "rt-9";
+    ctx.putSession(actor.id, std::move(existing));
+
+    auto rctx = makeRctx();
+    auto result = ce::runRefresh(actor, ctx, rctx, ce::AuthDependencies{&http, &resolver});
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
 }

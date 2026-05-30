@@ -25,10 +25,19 @@ add_executable(chainapi-engine-unit-tests
     unit/TopologyTest.cpp
     unit/DependencyResolverTest.cpp
     unit/CodecsTest.cpp
+    unit/CookiesTest.cpp
+    unit/MultipartBuilderTest.cpp
+    unit/QuickJsHookRunnerTest.cpp
     unit/SchemaParserMultiFileTest.cpp
+    unit/HeaderMaskingTest.cpp
+    unit/SqliteHistoryStoreTest.cpp
+    unit/SchemaValidationTest.cpp
+    unit/SecretEnvTagTest.cpp
 )
 target_include_directories(chainapi-engine-unit-tests
-    PRIVATE ${CMAKE_SOURCE_DIR}/engine/src
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/engine/src
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(chainapi-engine-unit-tests
     PRIVATE
@@ -41,6 +50,10 @@ chainapi_apply_sanitizers(chainapi-engine-unit-tests)
 
 gtest_discover_tests(chainapi-engine-unit-tests
     PROPERTIES LABELS "engine_unit"
+    # Sanitizer-instrumented binaries linking QtCore/OpenSSL/curl can take
+    # several seconds just to start up and reach --gtest_list_tests on a
+    # loaded CI runner. The default 5s discovery timeout is too tight there.
+    DISCOVERY_TIMEOUT 60
 )
 
 # ─── Integration tests ───────────────────────────────────────────────────────
@@ -49,14 +62,28 @@ add_executable(chainapi-engine-integration-tests
     integration/MockSutHarness.h
     integration/MockSutHarness.cpp
     integration/HappyPathTest.cpp
+    integration/HooksTest.cpp
     integration/PollingTest.cpp
     integration/RunOptionsTest.cpp
+    integration/MultipartTest.cpp
+    integration/SessionRefreshTest.cpp
+    integration/ExtractionSourcesTest.cpp
+    integration/CookieJarTest.cpp
+    integration/TransportConfigTest.cpp
+    integration/SecretLoadingTest.cpp
 )
 target_link_libraries(chainapi-engine-integration-tests
     PRIVATE
         chainapi::engine
+        CURL::libcurl
+        nlohmann_json::nlohmann_json
         GTest::gtest
         GTest::gtest_main
+)
+target_include_directories(chainapi-engine-integration-tests
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/engine/src
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_compile_definitions(chainapi-engine-integration-tests
     PRIVATE
@@ -69,6 +96,7 @@ chainapi_apply_sanitizers(chainapi-engine-integration-tests)
 
 gtest_discover_tests(chainapi-engine-integration-tests
     PROPERTIES LABELS "engine_integration"
+    DISCOVERY_TIMEOUT 60
 )
 
 # All test binaries must respect the same engine-side boundary.

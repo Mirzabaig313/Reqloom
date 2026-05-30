@@ -4,6 +4,7 @@
 
 #include <chainapi/engine/Operation.h>
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -19,7 +20,7 @@ namespace chainapi::engine {
 ///   - `oauth2_password`:              RFC 6749 §4.3 resource owner password grant
 ///   - `oauth1`:                       RFC 5849 HMAC-SHA1, signed per-request
 ///   - `aws_sigv4`:                    AWS Signature Version 4, signed per-request
-enum class AuthStrategy {
+enum class AuthStrategy : std::uint8_t {
     Simple,
     Chain,
     Basic,
@@ -41,13 +42,25 @@ struct AuthStep {
     std::vector<Extraction> extractions;
 };
 
-/// Optional refresh block.
+/// Optional refresh block. Used when the actor's session expires; the
+/// engine sends this single request and merges its extractions into the
+/// existing session, sidestepping a full re-login.
 struct SessionRefresh {
     HttpMethod method{HttpMethod::Post};
     std::string pathTemplate;
     std::map<std::string, std::string> headers;
     std::optional<std::string> bodyTemplate;
     std::vector<Extraction> extractions;
+
+    /// Singular `expect_status:` value. Used only when
+    /// `expectStatusList` is empty.
+    std::optional<int> expectStatus;
+
+    /// Multi-value `expect_status: [200, 204]`. When non-empty takes
+    /// precedence over `expectStatus`. When both are unset, runRefresh
+    /// accepts any 2xx as success — backwards-compatible with schemas
+    /// that predate this field.
+    std::vector<int> expectStatusList;
 };
 
 /// Headers (and other request artifacts) injected into every operation

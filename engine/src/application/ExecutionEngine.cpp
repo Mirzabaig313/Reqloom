@@ -11,7 +11,10 @@
 #include "../infrastructure/secrets/SecretStore.h"
 #include "../infrastructure/storage/HistoryStore.h"
 #include "AuthStrategy.h"
+#include "Cookies.h"
+#include "HeaderMasking.h"
 #include "JsonExtraction.h"
+#include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
 #include "RequestSigners.h"
 
@@ -36,6 +39,66 @@ namespace {
 
 using namespace codecs;
 
+/// Build a HookContext snapshot from current run state. Per AGENTS.md
+/// hooks get read-only access to actor variables; we copy them so the
+/// hook can't reach back into RunContext via reference.
+[[nodiscard]] HookContext buildHookContext(const HttpRequest& req,
+                                           const RunContext& ctx,
+                                           const ResolveContext& rctx,
+                                           const Project& project) {
+    HookContext out;
+    out.request.method = req.method;
+    out.request.url = req.url;
+    out.request.headers = req.headers;
+    out.request.body = req.body;
+
+    for (const auto& [actorId, _] : project.actors) {
+        if (const auto* sess = ctx.session(actorId); sess) {
+            out.variables[actorId.value] = sess->variables;
+        }
+    }
+    out.env = rctx.envVars;
+    out.secrets = rctx.secrets;
+    return out;
+}
+
+/// Convert HttpResponse's vector<pair> headers (curl preserves order
+/// and casing) into the map<string,string> the hook surface expects.
+[[nodiscard]] std::map<std::string, std::string> headersToMap(
+    const std::vector<std::pair<std::string, std::string>>& headers) {
+    std::map<std::string, std::string> out;
+    for (const auto& [k, v] : headers) {
+        out[k] = v;
+    }
+    return out;
+}
+
+/// Convert a hook-mutated header map back into vector<pair> form so the
+/// downstream pipeline (extraction, response viewer) sees the same shape
+/// it would have seen without the hook.
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> headersToVector(
+    const std::map<std::string, std::string>& headers) {
+    std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(headers.size());
+    for (const auto& [k, v] : headers) {
+        out.emplace_back(k, v);
+    }
+    return out;
+}
+
+/// Bytes the request body puts on the wire — inline body, or the sum of
+/// multipart part sizes.
+[[nodiscard]] std::size_t requestBodySize(const HttpRequest& req) noexcept {
+    if (!req.multipart.empty()) {
+        std::size_t total = 0;
+        for (const auto& part : req.multipart) {
+            total += part.value.size();  // text fields + pre-loaded file bytes
+        }
+        return total;
+    }
+    return req.body ? req.body->size() : 0U;
+}
+
 }  // namespace
 
 struct ExecutionEngine::Impl {
@@ -48,6 +111,11 @@ struct ExecutionEngine::Impl {
     // 0 = nothing cancelled; any other value = the run with that id is being cancelled.
     std::atomic<std::uint64_t> cancelledRunId{0};
 
+    // Set per-run from RunOptions. Runs are serialized on one engine
+    // instance (concurrent run() is unsupported in the MVP), so a plain
+    // member is safe — no run overlaps another's read of this flag.
+    bool captureResponseBodies{false};
+
     explicit Impl(Dependencies d) : deps(std::move(d)) {}
 
     [[nodiscard]] bool isCancelled(RunId runId) const noexcept {
@@ -55,7 +123,53 @@ struct ExecutionEngine::Impl {
         return cancelled != 0 && cancelled == runId.value;
     }
 
+    /// Build the opt-in body payload for a `ResponseReceived` event.
+    /// Returns nullopt unless the run opted in, capping the captured
+    /// bytes at `kMaxCapturedBodyBytes` (UTF-8-aware so the in-memory
+    /// string a viewer renders never ends mid-character) to bound
+    /// event/UI memory.
+    [[nodiscard]] std::optional<std::string> capturedBody(const std::string& body) const {
+        if (!captureResponseBodies) {
+            return std::nullopt;
+        }
+        if (body.size() > kMaxCapturedBodyBytes) {
+            return codecs::truncateUtf8(body, kMaxCapturedBodyBytes);
+        }
+        return body;
+    }
+
+    /// Walk a response's Set-Cookie headers and update the actor's jar.
+    /// Order-preserving: when the same name appears twice in the same
+    /// response, the second one wins (RFC 6265 §5.3 step 11). The jar
+    /// is shared across operations performed AS this actor for the
+    /// remainder of the run.
+    static void absorbResponseCookies(
+        const std::vector<std::pair<std::string, std::string>>& headers,
+        const ActorId& actor,
+        RunContext& ctx) {
+        const auto fresh = cookies::collectFromResponse(headers);
+        for (const auto& [name, value] : fresh) {
+            ctx.setCookie(actor, name, value);
+        }
+    }
+
     void emit(const RunEvent& e) {
+        // Persist before fanning out — the event survives a subscriber
+        // that crashes the process. Best-effort: a persistence failure
+        // must never break the run. append() returns errors via
+        // std::expected, but a serialization edge (e.g. nlohmann dump on
+        // unexpected input) could still throw; swallow it here so a
+        // history hiccup can never abort the chain or escape across the
+        // engine boundary on the worker thread.
+        if (deps.history) {
+            try {
+                // NOLINTNEXTLINE(bugprone-unused-return-value)
+                (void)deps.history->append(e);
+                // NOLINTNEXTLINE(bugprone-empty-catch)
+            } catch (...) {
+            }
+        }
+
         // Snapshot before invoking — avoids re-entrant deadlock if a callback calls subscribe().
         std::vector<EventCallback> snapshot;
         {
@@ -65,30 +179,70 @@ struct ExecutionEngine::Impl {
         for (auto& cb : snapshot) {
             try {
                 cb(e);
-            } catch (...) {  // never let a subscriber break the engine
+                // Subscriber isolation is intentional: a misbehaving callback
+                // must not propagate into the engine's run loop, which would
+                // break the chain for every other subscriber. Once the
+                // engine logger lands (Engine Requirement §10), this becomes
+                // log + continue.
+                // NOLINTNEXTLINE(bugprone-empty-catch)
+            } catch (...) {
             }
         }
     }
 
     // Authenticate an actor if session is not live. Returns true on success.
+
     bool ensureSession(const Actor& actor,
                        RunContext& ctx,
                        const ResolveContext& rctx,
-                       RunId /*runId*/) {
-        auto existing = ctx.session(actor.id);
-        if (existing && existing->state == ActorSession::State::Live) {
+                       RunId runId,
+                       std::size_t stepIndex) {
+        // Forwards auth-flow events into Impl::emit so they reach
+        // subscribers and history under the parent step's runId/stepIndex.
+        auto sink = [this](const RunEvent& ev) {
+            this->emit(ev);
+        };
+
+        const auto* existing = ctx.session(actor.id);
+        if ((existing != nullptr) && existing->state == ActorSession::State::Live) {
             const auto now = std::chrono::steady_clock::now();
             if (now < existing->expiresAt) {
                 return true;
             }
+
+            if (actor.refresh) {
+                AuthDependencies const refreshDeps{
+                    deps.http.get(), &varResolver, sink, runId, stepIndex, captureResponseBodies};
+                auto refreshed = runRefresh(actor, ctx, rctx, refreshDeps);
+                if (refreshed) {
+                    ActorSession updated = *existing;
+                    for (auto& [k, v] : *refreshed) {
+                        updated.variables[k] = std::move(v);
+                    }
+                    updated.state = ActorSession::State::Live;
+                    updated.expiresAt = std::chrono::steady_clock::now() + actor.sessionTtl;
+                    ctx.putSession(actor.id, std::move(updated));
+                    emit(SessionRefreshed{runId,
+                                          actor.id,
+                                          SessionRefreshed::Trigger::Expiry,
+                                          std::chrono::system_clock::now()});
+                    return true;
+                }
+                // Refresh failed — fall through to full re-auth.
+            }
         }
 
-        auto authenticator =
-            selectAuthenticator(actor, AuthDependencies{deps.http.get(), &varResolver});
-        if (!authenticator) return false;
+        AuthDependencies authDeps{
+            deps.http.get(), &varResolver, sink, runId, stepIndex, captureResponseBodies};
+        auto authenticator = selectAuthenticator(actor, std::move(authDeps));
+        if (!authenticator) {
+            return false;
+        }
 
         auto outcome = authenticator->authenticate(actor, ctx, rctx);
-        if (!outcome) return false;
+        if (!outcome) {
+            return false;
+        }
 
         ActorSession session = std::move(*outcome);
         session.state = ActorSession::State::Live;
@@ -106,9 +260,10 @@ struct ExecutionEngine::Impl {
                                                            RunContext& ctx,
                                                            const ResolveContext& rctx,
                                                            RunId runId,
+                                                           std::size_t stepIndex,
                                                            const HttpResponse& /*initialResponse*/,
                                                            std::vector<StepResult>& attemptRows) {
-        PredicateEvaluator evaluator;
+        PredicateEvaluator const evaluator;
 
         auto successPredicate = evaluator.parse(poll.successWhen);
         if (!successPredicate) {
@@ -136,13 +291,17 @@ struct ExecutionEngine::Impl {
         const Actor* pollActor = nullptr;
         if (poll.actor) {
             auto it = project.actors.find(*poll.actor);
-            if (it != project.actors.end()) pollActor = &it->second;
+            if (it != project.actors.end()) {
+                pollActor = &it->second;
+            }
         } else if (!op.actor.value.empty()) {
             auto it = project.actors.find(op.actor);
-            if (it != project.actors.end()) pollActor = &it->second;
+            if (it != project.actors.end()) {
+                pollActor = &it->second;
+            }
         }
 
-        if (pollActor && !ensureSession(*pollActor, ctx, rctx, runId)) {
+        if ((pollActor != nullptr) && !ensureSession(*pollActor, ctx, rctx, runId, stepIndex)) {
             return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
                                                  ErrorClass::Auth,
                                                  "poll_until: actor session refresh failed"});
@@ -160,6 +319,7 @@ struct ExecutionEngine::Impl {
 
             HttpRequest req;
             req.method = poll.method;
+            req.transport = rctx.transport;
             auto resolvedPath = varResolver.resolve(poll.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
                 return std::unexpected(ChainApiError{
@@ -168,30 +328,43 @@ struct ExecutionEngine::Impl {
                     "poll_until: unresolved variable in path: " + resolvedPath.unresolved.front()});
             }
             req.url = baseUrl + resolvedPath.output;
-            if (pollActor) {
+            if (pollActor != nullptr) {
                 for (const auto& [k, v] : pollActor->inject.headers) {
                     auto resolved = varResolver.resolve(v, ctx, rctx);
                     req.headers[k] = resolved.output;
                 }
                 // Session-level inject. Session wins on key collision.
-                if (auto* session = ctx.session(pollActor->id); session) {
+                if (const auto* session = ctx.session(pollActor->id); session) {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
                     }
                     if (!session->injectQueryParams.empty()) {
                         std::string qs;
                         for (const auto& [k, v] : session->injectQueryParams) {
-                            if (!qs.empty()) qs += "&";
+                            if (!qs.empty()) {
+                                qs += "&";
+                            }
                             qs += urlEncode(k) + "=" + urlEncode(v);
                         }
                         req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
                     }
                 }
+
+                // Cookie jar emission for poll requests. Same priority
+                // as the parent op: a poll inheriting the parent's
+                // actor sees the jar that has accumulated through the
+                // initial response and any prior poll attempt.
+                if (!req.headers.contains("Cookie")) {
+                    const auto jar = ctx.cookies(pollActor->id);
+                    if (!jar.empty()) {
+                        req.headers["Cookie"] = cookies::formatRequestHeader(jar);
+                    }
+                }
             }
 
             // Per-request signing done after inject merge so the signer sees the final shape.
-            if (pollActor) {
-                if (auto* session = ctx.session(pollActor->id); session) {
+            if (pollActor != nullptr) {
+                if (const auto* session = ctx.session(pollActor->id); session) {
                     if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
                         if (!signOAuth1Request(req, *session)) {
                             return std::unexpected(
@@ -213,21 +386,49 @@ struct ExecutionEngine::Impl {
                 }
             }
 
+            emit(RequestPrepared{runId,
+                                 stepIndex,
+                                 req.method,
+                                 req.url,
+                                 headersToVector(maskHeaders(req.headers)),
+                                 requestBodySize(req),
+                                 std::chrono::system_clock::now()});
+
             auto resp = deps.http->send(req);
             if (!resp) {
                 return std::unexpected(resp.error());
             }
             lastResponse = std::move(*resp);
             haveLastResponse = true;
+            emit(ResponseReceived{runId,
+                                  stepIndex,
+                                  lastResponse.status,
+                                  maskHeaders(lastResponse.headers),
+                                  lastResponse.body.size(),
+                                  lastResponse.elapsed,
+                                  std::chrono::system_clock::now(),
+                                  capturedBody(lastResponse.body)});
+
+            // Update the cookie jar from this poll's Set-Cookie headers.
+            // Pollers that issue stateful status checks (rare but real)
+            // can rotate session cookies — without absorbing them here
+            // a follow-up op would send a stale cookie.
+            if (pollActor != nullptr) {
+                absorbResponseCookies(lastResponse.headers, pollActor->id, ctx);
+            }
 
             // Each poll attempt is a timeline row alongside the parent step.
+            // Parse the body once per attempt and evaluate both predicates
+            // against it — evaluate() would otherwise re-parse the same
+            // body for each predicate.
+            const auto parsedBody = evaluator.parseBody(lastResponse.body);
             const auto failMatched =
                 failPredicate &&
-                evaluator.evaluate(*failPredicate, lastResponse.body, lastResponse.status) ==
+                evaluator.evaluate(*failPredicate, parsedBody, lastResponse.status) ==
                     PredicateValue::True;
             const auto successMatched =
                 !failMatched &&
-                evaluator.evaluate(*successPredicate, lastResponse.body, lastResponse.status) ==
+                evaluator.evaluate(*successPredicate, parsedBody, lastResponse.status) ==
                     PredicateValue::True;
 
             StepResult attemptRow;
@@ -273,7 +474,9 @@ struct ExecutionEngine::Impl {
 
             // Floor delay to avoid busy-looping on `interval: 0ms`.
             constexpr auto kMinPollDelay = std::chrono::milliseconds{50};
-            if (delay < kMinPollDelay) delay = kMinPollDelay;
+            if (delay < kMinPollDelay) {
+                delay = kMinPollDelay;
+            }
 
             const auto remaining = deadline - std::chrono::steady_clock::now();
             if (remaining <= std::chrono::milliseconds{0}) {
@@ -316,7 +519,7 @@ struct ExecutionEngine::Impl {
         if (!op.actor.value.empty()) {
             auto actorIt = project.actors.find(op.actor);
             if (actorIt != project.actors.end()) {
-                if (!ensureSession(actorIt->second, ctx, rctx, runId)) {
+                if (!ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
                     result.status = StepResult::Status::Failed;
                     result.error = ErrorCode::SessionRefreshFailed;
                     return result;
@@ -333,8 +536,9 @@ struct ExecutionEngine::Impl {
 
         HttpRequest req;
         req.method = op.method;
+        req.transport = rctx.transport;
         auto baseUrlIt = rctx.envVars.find("baseUrl");
-        std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
+        std::string const baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
         req.url = baseUrl + resolvedPath.output;
 
         for (const auto& [k, v] : op.headers) {
@@ -350,10 +554,21 @@ struct ExecutionEngine::Impl {
                     req.headers[k] = resolved.output;
                 }
                 // Session-level inject wins on key collision.
-                if (auto* session = ctx.session(op.actor); session) {
+                if (const auto* session = ctx.session(op.actor); session) {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
                     }
+                }
+            }
+
+            // Cookie jar emission. The actor's jar accumulates from
+            // every Set-Cookie the server has sent on prior operations
+            // performed AS this actor in the current run. We emit a
+            // single `Cookie:` header rolling them up.
+            if (!req.headers.contains("Cookie")) {
+                const auto jar = ctx.cookies(op.actor);
+                if (!jar.empty()) {
+                    req.headers["Cookie"] = cookies::formatRequestHeader(jar);
                 }
             }
         }
@@ -365,7 +580,7 @@ struct ExecutionEngine::Impl {
             queryParams[k] = resolved.output;
         }
         if (!op.actor.value.empty()) {
-            if (auto* session = ctx.session(op.actor); session) {
+            if (const auto* session = ctx.session(op.actor); session) {
                 for (const auto& [k, v] : session->injectQueryParams) {
                     queryParams[k] = v;
                 }
@@ -374,7 +589,9 @@ struct ExecutionEngine::Impl {
         if (!queryParams.empty()) {
             std::string qs;
             for (const auto& [k, v] : queryParams) {
-                if (!qs.empty()) qs += "&";
+                if (!qs.empty()) {
+                    qs += "&";
+                }
                 qs += urlEncode(k) + "=" + urlEncode(v);
             }
             req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
@@ -387,18 +604,53 @@ struct ExecutionEngine::Impl {
                 req.headers["Content-Type"] = "application/json";
             }
         } else if (op.bodyForm) {
-            std::string formBody;
+            std::map<std::string, std::string> resolvedFields;
             for (const auto& [k, v] : *op.bodyForm) {
-                auto resolved = varResolver.resolve(v, ctx, rctx);
-                if (!formBody.empty()) formBody += "&";
-                formBody += urlEncode(k) + "=" + urlEncode(resolved.output);
+                resolvedFields[k] = varResolver.resolve(v, ctx, rctx).output;
             }
-            req.body = formBody;
-            req.headers["Content-Type"] = "application/x-www-form-urlencoded";
+            const bool routeMultipart = wantsMultipart(op.headers, resolvedFields);
+            auto formBody = buildFormBody(resolvedFields, routeMultipart);
+            if (!formBody) {
+                result.status = StepResult::Status::Failed;
+                result.error = formBody.error().code;
+                result.detail = formBody.error().detail;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+            if (auto* mp = std::get_if<MultipartBody>(&*formBody)) {
+                req.multipart = std::move(mp->parts);
+                // libcurl writes Content-Type with the boundary; drop any
+                // user-supplied value so curl doesn't send two headers.
+                req.headers.erase("Content-Type");
+            } else if (auto* enc = std::get_if<UrlEncodedBody>(&*formBody)) {
+                req.body = std::move(enc->body);
+                req.headers["Content-Type"] = "application/x-www-form-urlencoded";
+            }
         }
 
         if (op.timeout) {
             req.timeout = *op.timeout;
+        }
+
+        // pre_request hook: runs after the request is fully built but
+        // before any signing or send. Hooks may mutate url/headers/body.
+        // Method is locked once the operation type-selects it; signing
+        // strategies that depend on method see the post-hook value.
+        if (op.preRequestScript && deps.hooks) {
+            auto hctx = buildHookContext(req, ctx, rctx, project);
+            auto outcome = deps.hooks->runPreRequest(*op.preRequestScript, std::move(hctx));
+            if (!outcome) {
+                result.status = StepResult::Status::Failed;
+                result.error = outcome.error().code;
+                result.detail = outcome.error().detail;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+            req.url = std::move(outcome->mutatedRequest.url);
+            req.headers = std::move(outcome->mutatedRequest.headers);
+            req.body = std::move(outcome->mutatedRequest.body);
         }
 
         const int maxAttempts = op.retry.maxAttempts;
@@ -418,7 +670,7 @@ struct ExecutionEngine::Impl {
             // Per-request signing (OAuth 1.0a / AWS SigV4). Inside the
             // retry loop so each attempt gets a fresh nonce/timestamp.
             if (!op.actor.value.empty()) {
-                if (auto* session = ctx.session(op.actor); session) {
+                if (const auto* session = ctx.session(op.actor); session) {
                     if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
                         if (!signOAuth1Request(req, *session)) {
                             result.status = StepResult::Status::Failed;
@@ -445,9 +697,34 @@ struct ExecutionEngine::Impl {
                 }
             }
 
+            emit(RequestPrepared{runId,
+                                 stepIndex,
+                                 req.method,
+                                 req.url,
+                                 headersToVector(maskHeaders(req.headers)),
+                                 requestBodySize(req),
+                                 std::chrono::system_clock::now()});
+
             auto resp = deps.http->send(req);
             if (resp) {
                 httpResp = std::move(*resp);
+                emit(ResponseReceived{runId,
+                                      stepIndex,
+                                      httpResp->status,
+                                      maskHeaders(httpResp->headers),
+                                      httpResp->body.size(),
+                                      httpResp->elapsed,
+                                      std::chrono::system_clock::now(),
+                                      capturedBody(httpResp->body)});
+                // Absorb Set-Cookie headers immediately so any
+                // post_response hook running between here and the next
+                // outbound call sees the up-to-date jar (today the jar
+                // isn't exposed to the JS sandbox, but the contract is
+                // clearer if absorption happens at receive time, not
+                // before send time).
+                if (!op.actor.value.empty()) {
+                    absorbResponseCookies(httpResp->headers, op.actor, ctx);
+                }
                 break;
             }
             lastError = resp.error();
@@ -461,17 +738,109 @@ struct ExecutionEngine::Impl {
             // UB on large maxAttempts values.
             const auto shift = std::min(attempt, 20);
             auto delay = op.retry.baseBackoff * (std::uint32_t{1} << shift);
-            if (delay > op.retry.maxBackoff) delay = op.retry.maxBackoff;
+            if (delay > op.retry.maxBackoff) {
+                delay = op.retry.maxBackoff;
+            }
             std::this_thread::sleep_for(delay);
         }
 
         result.attempts = attemptCount;
 
+        // 401-recovery: if the response says "your session is no longer
+        // valid", try re-authenticating once and retry the operation.
+        // Only fires when:
+        //   - the op has an actor (otherwise there's nothing to refresh)
+        //   - the response is a real HTTP 401 (not a redirected 200)
+        //   - the user's `expect_status:` doesn't already include 401
+        //     (some flows test 401 explicitly — don't fight them)
+        // Emits SessionRefreshed{Trigger::Unauthorized} so subscribers
+        // can surface this in the timeline UI.
+        const auto userExpects401 = [&]() {
+            if (!op.expectStatusList.empty()) {
+                return std::find(op.expectStatusList.begin(), op.expectStatusList.end(), 401) !=
+                       op.expectStatusList.end();
+            }
+            return op.expectStatus.has_value() && *op.expectStatus == 401;
+        }();
+
+        if (httpResp && httpResp->status == 401 && !op.actor.value.empty() && !userExpects401) {
+            auto actorIt = project.actors.find(op.actor);
+            if (actorIt != project.actors.end()) {
+                ctx.invalidateSession(op.actor);
+                if (ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
+                    emit(SessionRefreshed{runId,
+                                          op.actor,
+                                          SessionRefreshed::Trigger::Unauthorized,
+                                          std::chrono::system_clock::now()});
+
+                    // Rebuild the actor-injected headers with the new
+                    // session. Op-declared headers are re-resolved too —
+                    // `Authorization: Bearer {{user.token}}` referenced
+                    // the OLD token in the first attempt's req.
+                    for (const auto& [k, v] : op.headers) {
+                        req.headers[k] = varResolver.resolve(v, ctx, rctx).output;
+                    }
+                    for (const auto& [k, v] : actorIt->second.inject.headers) {
+                        req.headers[k] = varResolver.resolve(v, ctx, rctx).output;
+                    }
+                    if (const auto* session = ctx.session(op.actor); session) {
+                        for (const auto& [k, v] : session->injectHeaders) {
+                            req.headers[k] = v;
+                        }
+                    }
+
+                    // Refresh the Cookie header for the retry. Mirror
+                    if (!req.headers.contains("Cookie")) {
+                        if (const auto jar = ctx.cookies(op.actor); !jar.empty()) {
+                            req.headers["Cookie"] = cookies::formatRequestHeader(jar);
+                        }
+                    }
+
+                    emit(RequestPrepared{runId,
+                                         stepIndex,
+                                         req.method,
+                                         req.url,
+                                         headersToVector(maskHeaders(req.headers)),
+                                         requestBodySize(req),
+                                         std::chrono::system_clock::now()});
+
+                    auto retryResp = deps.http->send(req);
+                    ++attemptCount;
+                    result.attempts = attemptCount;
+                    if (retryResp) {
+                        httpResp = std::move(*retryResp);
+                        emit(ResponseReceived{runId,
+                                              stepIndex,
+                                              httpResp->status,
+                                              maskHeaders(httpResp->headers),
+                                              httpResp->body.size(),
+                                              httpResp->elapsed,
+                                              std::chrono::system_clock::now(),
+                                              capturedBody(httpResp->body)});
+                        absorbResponseCookies(httpResp->headers, op.actor, ctx);
+                    } else {
+                        // Network error on the retry — surface the new
+                        // error rather than the original 401 so users
+                        // see what changed.
+                        result.status = StepResult::Status::Failed;
+                        result.error = retryResp.error().code;
+                        result.detail = retryResp.error().detail;
+                        auto elapsed = std::chrono::steady_clock::now() - startTime;
+                        result.elapsed =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                        return result;
+                    }
+                }
+            }
+        }
+
         // When expectStatusList is non-empty it takes precedence over the
         // singular expectStatus field; the latter is the legacy single-value
         // form consulted only when the list is empty.
         const auto statusMatches = [&]() -> bool {
-            if (!httpResp) return true;
+            if (!httpResp) {
+                return true;
+            }
             if (!op.expectStatusList.empty()) {
                 return std::find(op.expectStatusList.begin(),
                                  op.expectStatusList.end(),
@@ -487,9 +856,9 @@ struct ExecutionEngine::Impl {
             result.status = StepResult::Status::Failed;
             result.error = (httpResp->status >= 500) ? ErrorCode::Http5xx : ErrorCode::Http4xx;
             constexpr std::size_t kBodyExcerpt = 200;
-            std::string bodyExcerpt = httpResp->body.size() > kBodyExcerpt
-                                          ? httpResp->body.substr(0, kBodyExcerpt) + "..."
-                                          : httpResp->body;
+            std::string const bodyExcerpt = httpResp->body.size() > kBodyExcerpt
+                                                ? httpResp->body.substr(0, kBodyExcerpt) + "..."
+                                                : httpResp->body;
             result.detail = "HTTP " + std::to_string(httpResp->status) + " — " + bodyExcerpt;
             auto elapsed = std::chrono::steady_clock::now() - startTime;
             result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
@@ -498,8 +867,15 @@ struct ExecutionEngine::Impl {
 
         // Polling phase — engine polls until success_when/fail_when matches or budget fires.
         if (op.pollUntil && httpResp) {
-            const auto pollResult = runPollLoop(
-                op, *op.pollUntil, project, ctx, rctx, runId, *httpResp, pollAttemptRows);
+            auto pollResult = runPollLoop(op,
+                                          *op.pollUntil,
+                                          project,
+                                          ctx,
+                                          rctx,
+                                          runId,
+                                          stepIndex,
+                                          *httpResp,
+                                          pollAttemptRows);
             if (!pollResult.has_value()) {
                 result.status = StepResult::Status::Failed;
                 result.error = pollResult.error().code;
@@ -511,8 +887,37 @@ struct ExecutionEngine::Impl {
             httpResp = std::move(*pollResult);
         }
 
+        // post_response hook: runs after the final response (post-poll if
+        // applicable) but before extraction. Hooks may mutate
+        // status/headers/body — extractions then see the mutated body.
+        // Useful for decrypting / unwrapping vendor envelopes.
+        if (httpResp && op.postResponseScript && deps.hooks) {
+            auto hctx = buildHookContext(req, ctx, rctx, project);
+            HookResponseView respView;
+            respView.status = httpResp->status;
+            respView.headers = headersToMap(httpResp->headers);
+            respView.body = httpResp->body;
+            hctx.response = std::move(respView);
+
+            auto outcome = deps.hooks->runPostResponse(*op.postResponseScript, std::move(hctx));
+            if (!outcome) {
+                result.status = StepResult::Status::Failed;
+                result.error = outcome.error().code;
+                result.detail = outcome.error().detail;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+            if (outcome->mutatedResponse) {
+                httpResp->status = outcome->mutatedResponse->status;
+                httpResp->headers = headersToVector(outcome->mutatedResponse->headers);
+                httpResp->body = std::move(outcome->mutatedResponse->body);
+            }
+        }
+
         if (httpResp && !op.extractions.empty()) {
-            auto detailed = extractFromJsonDetailed(op.id, httpResp->body, op.extractions);
+            auto detailed = extractFromResponseDetailed(
+                op.id, httpResp->body, httpResp->status, httpResp->headers, op.extractions);
             if (!detailed) {
                 result.status = StepResult::Status::Failed;
                 result.error = detailed.error().code;
@@ -523,11 +928,11 @@ struct ExecutionEngine::Impl {
 
             // Trace every extraction outcome — including misses — so the
             // timeline shows nulls and missing fields. The op still fails
-            // when any required extraction misses; that contract pre-dates
-            // this slice and downstream ops depend on it.
             std::optional<std::string> firstMiss;
             for (auto& t : detailed->traces) {
-                if (!firstMiss && t.outcome == ExtractionTrace::Outcome::Missing) {
+                const bool isMissLike = t.outcome == ExtractionTrace::Outcome::Missing ||
+                                        t.outcome == ExtractionTrace::Outcome::InvalidPattern;
+                if (!firstMiss && isMissLike) {
                     firstMiss = t.variableName;
                 }
 
@@ -540,14 +945,22 @@ struct ExecutionEngine::Impl {
                 ev.at = std::chrono::system_clock::now();
                 switch (t.outcome) {
                     case ExtractionTrace::Outcome::Resolved:
+                        // RunContext keeps the real value for downstream
+                        // templating; the event copy (timeline + disk) is
+                        // masked when the variable name looks secret.
                         ev.outcome = ExtractionCompleted::Outcome::Resolved;
-                        ev.value = t.value;
+                        ev.value = isSensitiveName(t.variableName)
+                                       ? std::string{kRedactedHeaderValue}
+                                       : t.value;
                         break;
                     case ExtractionTrace::Outcome::Null:
                         ev.outcome = ExtractionCompleted::Outcome::Null;
                         break;
                     case ExtractionTrace::Outcome::Missing:
                         ev.outcome = ExtractionCompleted::Outcome::Missing;
+                        break;
+                    case ExtractionTrace::Outcome::InvalidPattern:
+                        ev.outcome = ExtractionCompleted::Outcome::InvalidPattern;
                         break;
                     case ExtractionTrace::Outcome::Unsupported:
                         ev.outcome = ExtractionCompleted::Outcome::Unsupported;
@@ -569,6 +982,20 @@ struct ExecutionEngine::Impl {
             if (!detailed->values.empty()) {
                 ResourceInstance instance;
                 instance.variables = std::move(detailed->values);
+
+                // Names only — the per-extraction ExtractionCompleted
+                // events above carry the values (masked when sensitive).
+                std::vector<std::string> names;
+                names.reserve(instance.variables.size());
+                for (const auto& [k, _] : instance.variables) {
+                    names.push_back(k);
+                }
+                emit(ExtractionApplied{runId,
+                                       stepIndex,
+                                       op.resource,
+                                       std::move(names),
+                                       std::chrono::system_clock::now()});
+
                 ctx.appendInstance(op.resource, std::move(instance));
             }
         }
@@ -594,6 +1021,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
                                                              RunContext& ctx,
                                                              const RunOptions& options) {
     impl_->cancelledRunId.store(0, std::memory_order_release);
+    impl_->captureResponseBodies = options.captureResponseBodies;
 
     if (options.resetExtractions) {
         ctx.clearExtractions();
@@ -617,12 +1045,45 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
     if (project.environments.contains(envName)) {
         rctx.envVars = project.environments.at(envName);
     }
+    // Resolve per-env transport overrides once at run start. Operations,
+    // auth steps, refresh blocks and poll requests all see the same
+    // TLS / proxy / connect-timeout settings via rctx.transport.
+    if (auto it = project.transport.find(envName); it != project.transport.end()) {
+        rctx.transport = it->second;
+    }
+
+    // Pre-load referenced secrets from the OS keychain into the resolve
+    // context. We read only the names the project actually references —
+    // never a bulk dump — so an unrelated keychain entry can't leak into
+    // a run. A missing key is left unset (surfaces later as VarUnresolved
+    // when the template can't resolve); a backend failure aborts the run
+    // with SecretAccessFailed so the user isn't silently sent unsigned.
+    //
+    // Skipped on dry runs: a preview must not touch the OS keychain, which
+    // can pop an interactive unlock/authorization prompt. Unresolved
+    // `{{secret.X}}` markers in the previewed chain are expected.
+    if (impl_->deps.secrets && !options.dryRun) {
+        for (const auto& name : DependencyResolver::collectSecretReferences(project)) {
+            auto value = impl_->deps.secrets->read(name);
+            if (!value) {
+                return std::unexpected(ChainApiError{
+                    ErrorCode::SecretAccessFailed,
+                    ErrorClass::Auth,
+                    "secret store: failed to read '" + name + "': " + value.error().detail});
+            }
+            if (value->has_value()) {
+                rctx.secrets[name] = std::move(**value);
+            }
+        }
+    }
 
     impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});
 
     RunResult result;
     result.runId = runId;
     result.outcome = RunOutcome::Succeeded;
+    // One row per chained op at minimum; poll attempts append a few more.
+    result.steps.reserve(chain.size());
 
     for (std::size_t i = 0; i < chain.size(); ++i) {
         const auto& opId = chain[i];
@@ -666,7 +1127,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
                     StepResult skipResult;
                     skipResult.op = opId;
                     skipResult.status = StepResult::Status::Skipped;
-                    result.steps.push_back(skipResult);
+                    result.steps.push_back(std::move(skipResult));
                     impl_->emit(StepSkipped{runId,
                                             i,
                                             opId,
@@ -681,7 +1142,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
             StepResult dryResult;
             dryResult.op = opId;
             dryResult.status = StepResult::Status::Succeeded;
-            result.steps.push_back(dryResult);
+            result.steps.push_back(std::move(dryResult));
             continue;
         }
 
@@ -711,18 +1172,20 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
                 StepResult blocked;
                 blocked.op = chain[j];
                 blocked.status = StepResult::Status::Blocked;
-                result.steps.push_back(blocked);
+                result.steps.push_back(std::move(blocked));
             }
             break;
         }
 
         if (stepResult.status == StepResult::Status::Cancelled) {
+            impl_->emit(StepCancelled{runId, i, opId, std::chrono::system_clock::now()});
             result.outcome = RunOutcome::Cancelled;
             for (std::size_t j = i + 1; j < chain.size(); ++j) {
                 StepResult cancelled;
                 cancelled.op = chain[j];
                 cancelled.status = StepResult::Status::Cancelled;
-                result.steps.push_back(cancelled);
+                result.steps.push_back(std::move(cancelled));
+                impl_->emit(StepCancelled{runId, j, chain[j], std::chrono::system_clock::now()});
             }
             break;
         }

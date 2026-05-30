@@ -20,6 +20,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TempPath.h>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -38,9 +40,7 @@ namespace {
 class PollingScratchProject {
 public:
     explicit PollingScratchProject(const std::string& yamlBody) {
-        const auto unique = "chainapi-polling-itest-" + std::to_string(::getpid()) + "-" +
-                            std::to_string(counter_++);
-        path_ = fs::temp_directory_path() / unique;
+        path_ = ct::uniqueTempPath("chainapi-polling-itest");
         fs::create_directories(path_);
         std::ofstream{path_ / "chainapi.yaml"} << yamlBody;
     }
@@ -54,7 +54,6 @@ public:
 
 private:
     fs::path path_;
-    inline static int counter_{0};
 };
 
 }  // namespace

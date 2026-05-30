@@ -114,18 +114,17 @@ std::expected<void, ChainApiError> writeAtomic(const fs::path& target, const std
 
 void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m) {
     e << YAML::BeginMap;
-    std::vector<std::pair<std::string, std::string>> sorted{m.begin(), m.end()};
-    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
-        return a.first < b.first;
-    });
-    for (const auto& [k, v] : sorted) {
+    // std::map already iterates in ascending key order, so no copy/sort.
+    for (const auto& [k, v] : m) {
         e << YAML::Key << k << YAML::Value << v;
     }
     e << YAML::EndMap;
 }
 
 void emitExtractions(YAML::Emitter& e, const std::vector<Extraction>& extractions) {
-    if (extractions.empty()) return;
+    if (extractions.empty()) {
+        return;
+    }
     e << YAML::Key << "extract" << YAML::Value << YAML::BeginMap;
     for (const auto& ext : extractions) {
         e << YAML::Key << ext.variableName << YAML::Value << ext.sourcePath;
@@ -140,8 +139,12 @@ void emitProvenance(YAML::Emitter& e, const Provenance& p) {
         e << YAML::Key << "verified_against" << YAML::Value
           << std::string{verifiedAgainstToString(p.verifiedAgainst)};
     }
-    if (p.model) e << YAML::Key << "model" << YAML::Value << *p.model;
-    if (p.importedAt) e << YAML::Key << "imported_at" << YAML::Value << *p.importedAt;
+    if (p.model) {
+        e << YAML::Key << "model" << YAML::Value << *p.model;
+    }
+    if (p.importedAt) {
+        e << YAML::Key << "imported_at" << YAML::Value << *p.importedAt;
+    }
     if (!p.evidence.empty()) {
         e << YAML::Key << "evidence" << YAML::Value;
         emitStringMap(e, p.evidence);
@@ -173,14 +176,18 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
     }
     if (!op.expectStatusList.empty()) {
         e << YAML::Key << "expect_status" << YAML::Value << YAML::Flow << YAML::BeginSeq;
-        for (int s : op.expectStatusList) e << s;
+        for (int const s : op.expectStatusList) {
+            e << s;
+        }
         e << YAML::EndSeq;
     } else if (op.expectStatus) {
         e << YAML::Key << "expect_status" << YAML::Value << *op.expectStatus;
     }
     if (!op.explicitDependencies.empty()) {
         e << YAML::Key << "depends_on" << YAML::Value << YAML::Flow << YAML::BeginSeq;
-        for (const auto& dep : op.explicitDependencies) e << dep.value;
+        for (const auto& dep : op.explicitDependencies) {
+            e << dep.value;
+        }
         e << YAML::EndSeq;
     }
     if (op.preRequestScript) {
@@ -233,7 +240,9 @@ std::string emitResource(const Resource& res) {
       << YAML::BeginMap;
     std::vector<std::string> opNames;
     opNames.reserve(res.operations.size());
-    for (const auto& [k, _] : res.operations) opNames.push_back(k);
+    for (const auto& [k, _] : res.operations) {
+        opNames.push_back(k);
+    }
     std::sort(opNames.begin(), opNames.end());
     for (const auto& name : opNames) {
         e << YAML::Key << name << YAML::Value;
@@ -351,6 +360,17 @@ std::string emitActor(const Actor& actor) {
         if (actor.refresh->bodyTemplate) {
             e << YAML::Key << "body" << YAML::Value << *actor.refresh->bodyTemplate;
         }
+        // List form takes precedence over scalar — same convention as
+        // operation-level expect_status.
+        if (!actor.refresh->expectStatusList.empty()) {
+            e << YAML::Key << "expect_status" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+            for (int const s : actor.refresh->expectStatusList) {
+                e << s;
+            }
+            e << YAML::EndSeq;
+        } else if (actor.refresh->expectStatus) {
+            e << YAML::Key << "expect_status" << YAML::Value << *actor.refresh->expectStatus;
+        }
         emitExtractions(e, actor.refresh->extractions);
         e << YAML::EndMap;
     }
@@ -368,12 +388,36 @@ std::string emitActor(const Actor& actor) {
 }
 
 std::string emitEnvironment(const std::string& name,
-                            const std::map<std::string, std::string>& vars) {
+                            const std::map<std::string, std::string>& vars,
+                            const std::optional<TransportConfig>& transport) {
     YAML::Emitter e;
     e << YAML::BeginMap << YAML::Key << "name" << YAML::Value << name;
     if (!vars.empty()) {
         e << YAML::Key << "variables" << YAML::Value;
         emitStringMap(e, vars);
+    }
+    if (transport) {
+        e << YAML::Key << "transport" << YAML::Value << YAML::BeginMap;
+        // Emit only fields that diverge from defaults — keeps round-tripped
+        // YAMLs minimal and lets readers see what's actually overridden.
+        const TransportConfig defaults;
+        if (transport->tlsVerify != defaults.tlsVerify) {
+            e << YAML::Key << "tls_verify" << YAML::Value << transport->tlsVerify;
+        }
+        if (transport->tlsVerifyHost != defaults.tlsVerifyHost) {
+            e << YAML::Key << "tls_verify_host" << YAML::Value << transport->tlsVerifyHost;
+        }
+        if (transport->caBundlePath) {
+            e << YAML::Key << "ca_bundle" << YAML::Value << *transport->caBundlePath;
+        }
+        if (transport->proxy) {
+            e << YAML::Key << "proxy" << YAML::Value << *transport->proxy;
+        }
+        if (transport->connectTimeout != defaults.connectTimeout) {
+            e << YAML::Key << "connect_timeout" << YAML::Value
+              << (std::to_string(transport->connectTimeout.count()) + "ms");
+        }
+        e << YAML::EndMap;
     }
     e << YAML::EndMap;
     return e.c_str();
@@ -438,7 +482,11 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
 
     for (const auto& [name, vars] : project.environments) {
         const auto path = targetDir / "environments" / (name + ".yaml");
-        if (auto r = writeAtomic(path, emitEnvironment(name, vars)); !r) {
+        std::optional<TransportConfig> transport;
+        if (auto it = project.transport.find(name); it != project.transport.end()) {
+            transport = it->second;
+        }
+        if (auto r = writeAtomic(path, emitEnvironment(name, vars, transport)); !r) {
             return std::unexpected(r.error());
         }
     }

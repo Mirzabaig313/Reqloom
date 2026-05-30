@@ -1,12 +1,14 @@
 // Error taxonomy. Codes are stable; UI/CLI render them; QA asserts on them.
 #pragma once
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
 namespace chainapi::engine {
 
-enum class ErrorCode {
+enum class ErrorCode : std::uint8_t {
     // Schema layer
     SchemaInvalid,
     YamlParse,
@@ -22,6 +24,10 @@ enum class ErrorCode {
     NetworkTimeout,
     NetworkDns,
     NetworkTls,
+    /// Local file referenced by an `@/path` value in `body_form` could
+    /// not be read (missing, not a regular file, or exceeded the size
+    /// cap). Surfaced from the executor before any HTTP call is made.
+    UploadFileUnreadable,
 
     // HTTP
     Http5xx,
@@ -30,6 +36,13 @@ enum class ErrorCode {
 
     // Auth
     SessionRefreshFailed,
+
+    // Secrets
+    /// A `{{secret.X}}` reference could not be loaded from the secret
+    /// store backend (keychain error, not a missing key). A missing key
+    /// is not an error here — it simply leaves the reference unresolved,
+    /// which surfaces later as `VarUnresolved` at request-build time.
+    SecretAccessFailed,
 
     // Hooks
     HookFailure,
@@ -52,7 +65,7 @@ enum class ErrorCode {
     Cancelled,
 };
 
-enum class ErrorClass {
+enum class ErrorClass : std::uint8_t {
     Schema,
     Resolution,
     Network,
@@ -67,13 +80,19 @@ enum class ErrorClass {
 
 /// Stable, human-readable code string (e.g. "E_CYCLE"). Safe in logs and
 /// asserted on by integration tests.
-std::string_view toCodeString(ErrorCode code) noexcept;
+[[nodiscard]] std::string_view toCodeString(ErrorCode code) noexcept;
+
+/// Inverse of `toCodeString`. Returns the matching code, or nullopt for
+/// an unrecognised string (e.g. a code persisted by a newer build).
+/// Callers decide the fallback — the history store maps nullopt to
+/// `SchemaInvalid` so an unknown persisted code still surfaces.
+[[nodiscard]] std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept;
 
 /// Whether a step that fails with this code should be retried per the
 /// per-operation RetryPolicy.
-bool isRetryable(ErrorCode code) noexcept;
+[[nodiscard]] bool isRetryable(ErrorCode code) noexcept;
 
-ErrorClass classify(ErrorCode code) noexcept;
+[[nodiscard]] ErrorClass classify(ErrorCode code) noexcept;
 
 /// Application-layer error type. Infrastructure and application layers
 /// return `std::expected<T, ChainApiError>` rather than throwing.

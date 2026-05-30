@@ -3,6 +3,7 @@
 
 #include "ImportFromOpenApi.h"
 
+#include "../domain/DependencyResolver.h"
 #include "../infrastructure/hooks/HookRunner.h"
 #include "../infrastructure/hooks/QuickJsHookRunner.h"
 #include "../infrastructure/http/CurlHttpClient.h"
@@ -59,6 +60,10 @@ std::unique_ptr<SecretStore> makeKeychainSecretStore() {
     return std::make_unique<KeychainSecretStore>();
 }
 
+bool keychainBackendAvailable() noexcept {
+    return KeychainSecretStore::backendAvailable();
+}
+
 std::unique_ptr<HookRunner> makeQuickJsHookRunner() {
     return std::make_unique<QuickJsHookRunner>();
 }
@@ -82,6 +87,10 @@ std::expected<Project, ChainApiError> parseProject(const std::filesystem::path& 
     return parser.parse(chainapiYaml);
 }
 
+std::vector<std::string> collectSecretReferences(const Project& project) {
+    return DependencyResolver::collectSecretReferences(project);
+}
+
 std::expected<std::filesystem::path, ChainApiError> writeProject(
     const std::filesystem::path& targetDir, const Project& project, bool overwrite) {
     YamlSchemaWriter writer;
@@ -96,9 +105,11 @@ std::expected<std::filesystem::path, ChainApiError> emitHookTypings(
 
 std::expected<OpenApiImportOutcome, ChainApiError> importFromOpenApi(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
-    ImportFromOpenApi importer;
+    ImportFromOpenApi const importer;
     auto inner = importer.run(spec, projectRoot);
-    if (!inner) return std::unexpected(inner.error());
+    if (!inner) {
+        return std::unexpected(inner.error());
+    }
     return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
 }
 

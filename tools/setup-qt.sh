@@ -50,8 +50,16 @@ if [[ -d "$qt_prefix" ]]; then
     echo "Qt ${QT_VERSION} already installed at: $qt_prefix"
 else
     echo "Installing Qt ${QT_VERSION} (${qt_platform}/${qt_arch}) into ${QT_DIR}..."
+    # Match the archives list used in CI (appveyor.yml / azure-pipelines.yml).
+    # Default also pulls qttools + qttranslations which add ~150 MB and
+    # aren't used by ChainAPI.
+    extra_archives=()
+    if [[ "$qt_platform" == "linux" ]]; then
+        extra_archives+=("qtwayland" "icu")
+    fi
     aqt install-qt "$qt_platform" desktop "$QT_VERSION" "$qt_arch" \
-        --outputdir "$QT_DIR"
+        --outputdir "$QT_DIR" \
+        --archives qtbase qtdeclarative qtsvg "${extra_archives[@]}"
 fi
 
 cat <<EOF

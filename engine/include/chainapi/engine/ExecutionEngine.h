@@ -8,6 +8,7 @@
 #include <chainapi/engine/Operation.h>
 #include <chainapi/engine/Resource.h>
 #include <chainapi/engine/RunContext.h>
+#include <chainapi/engine/Transport.h>
 
 #include <expected>
 #include <functional>
@@ -45,6 +46,12 @@ struct Project {
     std::map<ActorId, Actor> actors;
     std::map<ResourceId, Resource> resources;
     std::map<std::string, std::map<std::string, std::string>> environments;
+    /// Per-environment transport overrides. Keyed by environment name
+    /// (matches the keys of `environments`). Missing entries fall back
+    /// to a default-constructed `TransportConfig` (TLS verified, no
+    /// proxy, 5s connect timeout) — which is byte-for-byte equivalent
+    /// to the engine's behavior before this map existed.
+    std::map<std::string, TransportConfig> transport;
 };
 
 /// Per-run options.
@@ -53,7 +60,20 @@ struct RunOptions {
     bool resetExtractions{false};  ///< Clears the extraction cache before running.
     bool resetSessions{false};     ///< Invalidates all sessions before running.
     std::string environment;       ///< Empty → use project default.
+
+    /// Opt-in: include the raw response body on `ResponseReceived` events.
+    /// Off by default — bodies stay off the event surface to honor the
+    /// redaction-first contract. When on, every response is captured,
+    /// including auth/login/refresh responses (which carry tokens) so a
+    /// developer can fully inspect and debug each call. Bodies are capped
+    /// at `kMaxCapturedBodyBytes` and persisted to the history store, so
+    /// past responses can be replayed in full (Postman-style history).
+    bool captureResponseBodies{false};
 };
+
+/// Upper bound on a captured response body (5 MiB). Larger bodies are
+/// truncated to this many bytes on the `ResponseReceived` event.
+inline constexpr std::size_t kMaxCapturedBodyBytes = 5U * 1024U * 1024U;
 
 class ExecutionEngine {
 public:
@@ -96,10 +116,10 @@ public:
     /// whose target step fails at runtime returns a `RunResult` with
     /// `outcome == Failed`, not an error — inspect `steps` to find which
     /// step failed.
-    std::expected<RunResult, ChainApiError> run(const Project& project,
-                                                const OperationId& target,
-                                                RunContext& ctx,
-                                                const RunOptions& options = {});
+    [[nodiscard]] std::expected<RunResult, ChainApiError> run(const Project& project,
+                                                              const OperationId& target,
+                                                              RunContext& ctx,
+                                                              const RunOptions& options = {});
 
     /// Cancel an in-flight run.
     void cancel(RunId run);

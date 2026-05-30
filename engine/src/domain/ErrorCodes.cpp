@@ -1,6 +1,9 @@
 // Stable mapping of ErrorCode → string code, retryability, and class.
 #include <chainapi/engine/ErrorCodes.h>
 
+#include <array>
+#include <optional>
+
 namespace chainapi::engine {
 
 std::string_view toCodeString(ErrorCode code) noexcept {
@@ -25,6 +28,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_NETWORK_DNS";
         case ErrorCode::NetworkTls:
             return "E_NETWORK_TLS";
+        case ErrorCode::UploadFileUnreadable:
+            return "E_UPLOAD_FILE_UNREADABLE";
         case ErrorCode::Http5xx:
             return "E_HTTP_5XX";
         case ErrorCode::Http4xx:
@@ -33,6 +38,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_STATUS_MISMATCH";
         case ErrorCode::SessionRefreshFailed:
             return "E_SESSION_REFRESH_FAILED";
+        case ErrorCode::SecretAccessFailed:
+            return "E_SECRET_ACCESS_FAILED";
         case ErrorCode::HookFailure:
             return "E_HOOK_FAILURE";
         case ErrorCode::HookTimeout:
@@ -55,6 +62,49 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_CANCELLED";
     }
     return "E_UNKNOWN";
+}
+
+std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
+    // Reverse of toCodeString, matched against the full enumerator list.
+    // The drift guard below fails the build if a code is added without
+    // growing this array.
+    constexpr std::array<ErrorCode, 26> kAll = {
+        ErrorCode::SchemaInvalid,
+        ErrorCode::YamlParse,
+        ErrorCode::Cycle,
+        ErrorCode::RefUndefined,
+        ErrorCode::SchemaVersion,
+        ErrorCode::VarUnresolved,
+        ErrorCode::IndexedRefOutOfRange,
+        ErrorCode::NetworkTimeout,
+        ErrorCode::NetworkDns,
+        ErrorCode::NetworkTls,
+        ErrorCode::UploadFileUnreadable,
+        ErrorCode::Http5xx,
+        ErrorCode::Http4xx,
+        ErrorCode::StatusMismatch,
+        ErrorCode::SessionRefreshFailed,
+        ErrorCode::SecretAccessFailed,
+        ErrorCode::HookFailure,
+        ErrorCode::HookTimeout,
+        ErrorCode::ExtractionFailed,
+        ErrorCode::ResponseParse,
+        ErrorCode::PollTimeout,
+        ErrorCode::PollMaxAttemptsExceeded,
+        ErrorCode::PollFailPredicate,
+        ErrorCode::LlmRequestFailed,
+        ErrorCode::LlmResponseInvalid,
+        ErrorCode::Cancelled,
+    };
+    // Cancelled is the last enumerator, so its value + 1 is the count.
+    static_assert(static_cast<std::size_t>(ErrorCode::Cancelled) + 1 == kAll.size(),
+                  "fromCodeString::kAll is out of sync with the ErrorCode enum");
+    for (const auto c : kAll) {
+        if (toCodeString(c) == code) {
+            return c;
+        }
+    }
+    return std::nullopt;
 }
 
 bool isRetryable(ErrorCode code) noexcept {
@@ -87,12 +137,18 @@ ErrorClass classify(ErrorCode code) noexcept {
         case ErrorCode::NetworkTls:
             return ErrorClass::Network;
 
+        case ErrorCode::UploadFileUnreadable:
+            return ErrorClass::Resolution;
+
         case ErrorCode::Http5xx:
         case ErrorCode::Http4xx:
         case ErrorCode::StatusMismatch:
             return ErrorClass::Http;
 
         case ErrorCode::SessionRefreshFailed:
+            return ErrorClass::Auth;
+
+        case ErrorCode::SecretAccessFailed:
             return ErrorClass::Auth;
 
         case ErrorCode::HookFailure:

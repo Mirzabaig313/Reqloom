@@ -171,7 +171,7 @@ StaticHookTypingsEmitter::~StaticHookTypingsEmitter() = default;
 TypingsEmitResult StaticHookTypingsEmitter::emit(const fs::path& targetDir,
                                                  const Project& /*project*/,
                                                  bool overwrite) {
-    const auto target = targetDir / "chainapi.d.ts";
+    auto target = targetDir / "chainapi.d.ts";
 
     std::error_code ec;
     if (fs::exists(target, ec) && !overwrite) {

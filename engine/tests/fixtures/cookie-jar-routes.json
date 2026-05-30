@@ -1,0 +1,102 @@
+{
+    "routes": [
+        {
+            "method": "POST",
+            "path": "/api/v1/auth/login",
+            "status": 200,
+            "headers": {
+                "Set-Cookie": "auth_marker=alice-only; Path=/"
+            },
+            "body": {
+                "data": {
+                    "accessToken": "tok-alice"
+                }
+            }
+        },
+        {
+            "method": "POST",
+            "path": "/api/v1/auth/login-bob",
+            "status": 200,
+            "body": {
+                "data": {
+                    "accessToken": "tok-bob"
+                }
+            }
+        },
+        {
+            "$comment": "Two Set-Cookie headers; same name 'session' appears twice — last (session=new) must win in the jar.",
+            "method": "POST",
+            "path": "/api/v1/widgets",
+            "status": 201,
+            "headers": [
+                [
+                    "Set-Cookie",
+                    "session=old; Path=/; Max-Age=0"
+                ],
+                [
+                    "Set-Cookie",
+                    "session=new; Path=/"
+                ],
+                [
+                    "Set-Cookie",
+                    "csrf=token-1; Path=/"
+                ]
+            ],
+            "body": {
+                "data": {
+                    "id": "wid-1"
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/widgets/wid-1",
+            "status": 200,
+            "body": {
+                "data": {
+                    "id": "wid-1"
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/widgets/bob-only",
+            "status": 200,
+            "body": {
+                "data": {
+                    "id": "bob-was-here"
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/manual",
+            "status": 200,
+            "body": {
+                "data": {
+                    "ok": true
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/manual-401",
+            "sequence": [
+                {
+                    "status": 401,
+                    "body": {
+                        "error": "expired"
+                    }
+                },
+                {
+                    "status": 200,
+                    "body": {
+                        "data": {
+                            "ok": "after-recovery"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

@@ -12,6 +12,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TempPath.h>
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -26,9 +28,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        const auto unique =
-            "chainapi-writer-" + std::to_string(::getpid()) + "-" + std::to_string(counter_++);
-        path_ = fs::temp_directory_path() / unique;
+        path_ = chainapi::tests::uniqueTempPath("chainapi-writer");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -39,7 +39,6 @@ public:
 
 private:
     fs::path path_;
-    inline static int counter_{0};
 };
 
 ce::Actor makeUserActor() {
@@ -555,4 +554,195 @@ TEST(SchemaWriter, aws_sigv4_round_trips_minimal_actor) {
     const auto& reload = reloaded->actors.at(ce::ActorId{"s3"});
     EXPECT_EQ(reload.strategy, ce::AuthStrategy::AwsSigV4);
     EXPECT_FALSE(reload.authConfig.contains("session_token"));
+}
+
+// ─── session.refresh.expect_status round-trip ──────────────────────────────
+
+namespace {
+
+ce::Project makeProjectWithRefresh() {
+    ce::Project p;
+    p.name = "RefreshExpectStatusRoundTrip";
+    p.defaultEnvironment = "local";
+    p.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    ce::Actor user;
+    user.id = ce::ActorId{"user"};
+    user.strategy = ce::AuthStrategy::Simple;
+
+    ce::AuthStep login;
+    login.id = "login";
+    login.method = ce::HttpMethod::Post;
+    login.pathTemplate = "/api/v1/auth/login";
+    login.bodyTemplate = R"({email: "u@t.test"})";
+    login.expectStatus = 200;
+    login.extractions.push_back({"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
+    login.extractions.push_back(
+        {"refresh_token", "$.data.refreshToken", ce::Extraction::Source::JsonPath});
+    user.authSteps.push_back(std::move(login));
+
+    ce::SessionRefresh refresh;
+    refresh.method = ce::HttpMethod::Post;
+    refresh.pathTemplate = "/api/v1/auth/refresh";
+    refresh.bodyTemplate = R"({refresh_token: "{{user.refresh_token}}"})";
+    refresh.extractions.push_back(
+        {"token", "$.data.accessToken", ce::Extraction::Source::JsonPath});
+    user.refresh = std::move(refresh);
+
+    user.inject.headers["Authorization"] = "Bearer {{user.token}}";
+    p.actors[user.id] = std::move(user);
+    return p;
+}
+
+}  // namespace
+
+TEST(SchemaWriter, session_refresh_expect_status_scalar_round_trips) {
+    ScratchDir scratch;
+    auto original = makeProjectWithRefresh();
+    original.actors.at(ce::ActorId{"user"}).refresh->expectStatus = 204;
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& refresh = *reloaded->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_EQ(refresh.expectStatus, 204);
+    EXPECT_TRUE(refresh.expectStatusList.empty());
+}
+
+TEST(SchemaWriter, session_refresh_expect_status_list_round_trips) {
+    ScratchDir scratch;
+    auto original = makeProjectWithRefresh();
+    original.actors.at(ce::ActorId{"user"}).refresh->expectStatusList = {200, 202, 204};
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& refresh = *reloaded->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_FALSE(refresh.expectStatus.has_value());
+    EXPECT_EQ(refresh.expectStatusList, (std::vector<int>{200, 202, 204}));
+}
+
+TEST(SchemaWriter, session_refresh_without_expect_status_round_trips_cleanly) {
+    // Backwards-compat guarantee: pre-existing schemas with no
+    // `expect_status:` on the refresh block continue to round-trip
+    // without acquiring a stray field.
+    ScratchDir scratch;
+    auto original = makeProjectWithRefresh();
+    EXPECT_FALSE(original.actors.at(ce::ActorId{"user"}).refresh->expectStatus.has_value());
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& refresh = *reloaded->actors.at(ce::ActorId{"user"}).refresh;
+    EXPECT_FALSE(refresh.expectStatus.has_value());
+    EXPECT_TRUE(refresh.expectStatusList.empty());
+}
+
+// ─── Per-environment transport round-trip ──────────────────────────────────
+//
+// project.transport[envName] survives writeProject → parseProject. Only
+// fields that diverge from defaults are emitted, so a default-only
+// project doesn't acquire a stray `transport:` block on round-trip.
+
+TEST(SchemaWriter, transport_block_round_trips_with_all_fields) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "TransportRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://api.test"}};
+
+    ce::TransportConfig t;
+    t.tlsVerify = false;
+    t.tlsVerifyHost = false;
+    t.caBundlePath = "/etc/ssl/corporate-root.pem";
+    t.proxy = "http://proxy.test:3128";
+    t.connectTimeout = std::chrono::milliseconds{12'000};
+    original.transport["local"] = std::move(t);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    ASSERT_TRUE(reloaded->transport.contains("local"));
+    const auto& back = reloaded->transport.at("local");
+    EXPECT_FALSE(back.tlsVerify);
+    EXPECT_FALSE(back.tlsVerifyHost);
+    ASSERT_TRUE(back.caBundlePath.has_value());
+    EXPECT_EQ(*back.caBundlePath, "/etc/ssl/corporate-root.pem");
+    ASSERT_TRUE(back.proxy.has_value());
+    EXPECT_EQ(*back.proxy, "http://proxy.test:3128");
+    EXPECT_EQ(back.connectTimeout, std::chrono::milliseconds{12'000});
+}
+
+TEST(SchemaWriter, default_transport_does_not_acquire_a_stray_block) {
+    // A project with no transport overrides round-trips without
+    // gaining a `transport:` block in the env file. Important because
+    // schemas that pre-date this slice should look identical after
+    // re-writing.
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "DefaultTransport";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    // Read the env file directly — it should not mention `transport:`.
+    const auto envYaml = scratch.path() / "environments" / "local.yaml";
+    std::string content;
+    {
+        std::ifstream in(envYaml, std::ios::binary);
+        ASSERT_TRUE(in.good());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_EQ(content.find("transport"), std::string::npos)
+        << "default-only project should not emit a transport block; got:\n"
+        << content;
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value());
+    EXPECT_FALSE(reloaded->transport.contains("local"));
+}
+
+TEST(SchemaWriter, transport_emits_only_non_default_fields) {
+    // Only proxy diverges from defaults; the round-tripped block
+    // should carry just `proxy:` and nothing else (so users see a
+    // minimal diff in version control).
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "PartialTransport";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://api.test"}};
+    ce::TransportConfig t;
+    t.proxy = "http://proxy.test:8080";
+    original.transport["local"] = std::move(t);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    const auto envYaml = scratch.path() / "environments" / "local.yaml";
+    std::string content;
+    {
+        std::ifstream in(envYaml, std::ios::binary);
+        ASSERT_TRUE(in.good());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_NE(content.find("proxy"), std::string::npos);
+    EXPECT_EQ(content.find("tls_verify"), std::string::npos)
+        << "default tls_verify should not be emitted; got:\n"
+        << content;
+    EXPECT_EQ(content.find("connect_timeout"), std::string::npos)
+        << "default connect_timeout should not be emitted; got:\n"
+        << content;
 }
