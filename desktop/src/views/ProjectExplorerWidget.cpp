@@ -2,6 +2,7 @@
 #include "ProjectExplorerWidget.h"
 
 #include "../application/ProjectModel.h"
+#include "../widgets/PanelHeader.h"
 #include "Formatting.h"
 
 #include <QtGui/QBrush>
@@ -65,12 +66,17 @@ bool applyFilterTo(QTreeWidgetItem* item, const QString& needle) {
 
 ProjectExplorerWidget::ProjectExplorerWidget(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
+    const int gap = theming::Theme::space(theming::Space::Sm);
+    layout->setContentsMargins(gap, gap, gap, gap);
+    layout->setSpacing(gap);
+
+    header_ = new widgets::PanelHeader(QStringLiteral("Explorer"), this);
+    layout->addWidget(header_);
 
     filter_ = new QLineEdit(this);
     filter_->setPlaceholderText(QStringLiteral("Filter operations…"));
     filter_->setClearButtonEnabled(true);
+    filter_->setAccessibleName(QStringLiteral("Filter operations"));
     layout->addWidget(filter_);
 
     tree_ = new QTreeWidget(this);
@@ -140,6 +146,7 @@ void ProjectExplorerWidget::populate(const ProjectModel& project) {
 
 void ProjectExplorerWidget::applyTheme(const theming::Theme& theme) {
     theme_ = theme;
+    header_->setTheme(theme);
     recolorMethods();
 }
 

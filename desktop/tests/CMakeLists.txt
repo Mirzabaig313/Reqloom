@@ -9,10 +9,13 @@ add_executable(chainapi-desktop-ui-tests
     ui/EnvironmentSettingsTest.cpp
     unit/ColorTest.cpp
     unit/StatusBadgeTest.cpp
+    unit/LayoutSettingsTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/EnvironmentSettings.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/EnvironmentSettings.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/LayoutSettings.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/LayoutSettings.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Color.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Color.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Theme.cpp

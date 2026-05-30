@@ -28,9 +28,7 @@ namespace {
 
 class TempDb {
 public:
-    TempDb() {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-history", ".sqlite");
-    }
+    TempDb() { path_ = chainapi::tests::uniqueTempPath("chainapi-history", ".sqlite"); }
     ~TempDb() {
         std::error_code ec;
         fs::remove(path_, ec);
@@ -73,8 +71,7 @@ TEST(SqliteHistoryStore, open_creates_parent_directory_if_missing) {
     // The desktop puts the history db at ~/Library/Application Support/...
     // which often doesn't exist on a fresh install. Open must create
     // the parent rather than failing with "no such file or directory".
-    const auto root =
-        chainapi::tests::uniqueTempPath("chainapi-history-mkdir");
+    const auto root = chainapi::tests::uniqueTempPath("chainapi-history-mkdir");
     const auto nested = root / "deep" / "history.sqlite";
     std::error_code ec;
     fs::remove_all(root, ec);
