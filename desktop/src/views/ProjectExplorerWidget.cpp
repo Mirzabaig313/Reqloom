@@ -12,8 +12,6 @@
 #include <QtWidgets/QTreeWidgetItem>
 #include <QtWidgets/QVBoxLayout>
 
-#include <functional>
-
 namespace chainapi::desktop {
 
 namespace {
@@ -60,6 +58,19 @@ bool applyFilterTo(QTreeWidgetItem* item, const QString& needle) {
     const bool visible = selfMatches || anyChildVisible;
     item->setHidden(!visible);
     return visible;
+}
+
+/// Re-tint one row's method chip (and recurse). Free helper, mirroring
+/// applyFilterTo, so the recursion doesn't allocate a std::function.
+void recolorMethodsIn(QTreeWidgetItem* item, const theming::Theme& theme) {
+    const QString method = item->data(1, kMethodRole).toString();
+    if (!method.isEmpty()) {
+        item->setFont(1, theme.font(theming::TextStyle::Mono));
+        item->setForeground(1, QBrush(theme.status(methodToken(method))));
+    }
+    for (int i = 0; i < item->childCount(); ++i) {
+        recolorMethodsIn(item->child(i), theme);
+    }
 }
 
 }  // namespace
@@ -151,20 +162,9 @@ void ProjectExplorerWidget::applyTheme(const theming::Theme& theme) {
 }
 
 void ProjectExplorerWidget::recolorMethods() {
-    // Re-tint every operation row's method chip from the current theme. Walk
-    // all rows; only operation rows carry a stored method.
-    const std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
-        const QString method = item->data(1, kMethodRole).toString();
-        if (!method.isEmpty()) {
-            item->setFont(1, theme_.font(theming::TextStyle::Mono));
-            item->setForeground(1, QBrush(theme_.status(methodToken(method))));
-        }
-        for (int i = 0; i < item->childCount(); ++i) {
-            walk(item->child(i));
-        }
-    };
+    // Re-tint every operation row's method chip from the current theme.
     for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
-        walk(tree_->topLevelItem(i));
+        recolorMethodsIn(tree_->topLevelItem(i), theme_);
     }
 }
 

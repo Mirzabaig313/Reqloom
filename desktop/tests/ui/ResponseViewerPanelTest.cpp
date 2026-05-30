@@ -13,6 +13,8 @@
 
 #include <QtCore/QString>
 #include <QtCore/QtGlobal>
+#include <QtGui/QClipboard>
+#include <QtGui/QGuiApplication>
 
 namespace chainapi::desktop::tests {
 
@@ -81,6 +83,36 @@ TEST(ResponseViewerPanel, renders_json_object_body_as_tree_with_values) {
 
     // Raw tab shows the body verbatim.
     EXPECT_EQ(bodyRaw(panel)->toPlainText(), body);
+}
+
+TEST(ResponseViewerPanel, clicking_a_value_copies_its_jsonpath_and_emits) {
+    ResponseViewerPanel panel;
+    const QString body =
+        QStringLiteral(R"({"data":{"order":{"id":"ord_abc123"}},"items":[{"sku":"a"}]})");
+    panel.onResponseReceived(
+        1, 200, QStringLiteral("X: y"), static_cast<int>(body.toUtf8().size()), 12, body);
+
+    QString emitted;
+    QObject::connect(
+        &panel, &ResponseViewerPanel::jsonPathCopied, &panel, [&emitted](const QString& p) {
+            emitted = p;
+        });
+
+    auto* tree = bodyTree(panel);
+    auto* idRow = findRow(tree, QStringLiteral("id"));
+    ASSERT_NE(idRow, nullptr);
+
+    // Simulate the click handler's effect: emit via the same path the slot uses.
+    emit tree->itemClicked(idRow, 0);
+
+    EXPECT_EQ(emitted, QStringLiteral("$.data.order.id"));
+    EXPECT_EQ(QGuiApplication::clipboard()->text(), QStringLiteral("$.data.order.id"));
+
+    // Array element path uses bracket indexing.
+    auto* skuRow = findRow(tree, QStringLiteral("sku"));
+    ASSERT_NE(skuRow, nullptr);
+    emit tree->itemClicked(skuRow, 0);
+    EXPECT_EQ(emitted, QStringLiteral("$.items[0].sku"));
 }
 
 TEST(ResponseViewerPanel, non_json_body_shows_raw_but_flags_tree_as_unstructured) {

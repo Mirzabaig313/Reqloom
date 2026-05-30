@@ -90,22 +90,19 @@ void StatusBadge::updatePulse() {
     }
 
     if (pulse_ == nullptr) {
-        // 1.2s opacity loop, the one ambient animation in the app (§9).
+        // ~1.2s opacity loop, the one ambient animation in the app (§9). Three
+        // keyframes (bright→dim→bright) over a single loop give a smooth
+        // ping-pong without manually flipping direction at loop boundaries.
         pulse_ = new QVariantAnimation(this);
-        pulse_->setStartValue(0.55);
+        pulse_->setStartValue(1.0);
+        pulse_->setKeyValueAt(0.5, 0.55);
         pulse_->setEndValue(1.0);
-        pulse_->setDuration(600);
+        pulse_->setDuration(1200);
         pulse_->setLoopCount(-1);
         pulse_->setEasingCurve(QEasingCurve::InOutSine);
         connect(pulse_, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
             pulseOpacity_ = v.toDouble();
             update();
-        });
-        // Ping-pong by flipping direction at each loop boundary.
-        connect(pulse_, &QVariantAnimation::currentLoopChanged, this, [this](int) {
-            const auto dir = pulse_->direction();
-            pulse_->setDirection(dir == QAbstractAnimation::Forward ? QAbstractAnimation::Backward
-                                                                    : QAbstractAnimation::Forward);
         });
     }
     pulse_->start();
@@ -140,12 +137,10 @@ void StatusBadge::paintEvent(QPaintEvent* /*event*/) {
         return;
     }
 
-    // Pill: tinted rounded rect + glyph and label in the status colour.
-    QColor fill = color;
-    fill.setAlpha(38);  // the sanctioned see-through is the running pulse only;
-                        // a faint status wash here keeps the pill legible on
-                        // any surface without a second token. Border carries
-                        // the solid colour so contrast holds.
+    // Pill: opaque tinted rounded rect + glyph and label in the status colour.
+    // Uses a precomputed opaque tint (DESIGN.md §2.9), not an alpha wash, so
+    // contrast stays predictable and the running pulse doesn't dim the text.
+    const QColor fill = theme_.statusTint(status_);
     const QRectF rect = QRectF(this->rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     QPainterPath path;
     path.addRoundedRect(rect, kPillRadius, kPillRadius);

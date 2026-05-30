@@ -10,6 +10,8 @@ add_executable(chainapi-desktop-ui-tests
     unit/ColorTest.cpp
     unit/StatusBadgeTest.cpp
     unit/LayoutSettingsTest.cpp
+    unit/FuzzyMatchTest.cpp
+    unit/LineDiffTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/EnvironmentSettings.cpp
@@ -22,6 +24,10 @@ add_executable(chainapi-desktop-ui-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Theme.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/StatusBadge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/StatusBadge.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/FuzzyMatch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/FuzzyMatch.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LineDiff.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LineDiff.h
 )
 target_include_directories(chainapi-desktop-ui-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace chainapi::desktop::theming {
 
@@ -26,7 +27,7 @@ namespace {
 
 QColor oklch(double lightness, double chroma, double hueDegrees) {
     // OKLCH → OKLab (polar to cartesian on the a/b plane).
-    const double hueRadians = hueDegrees * (M_PI / 180.0);
+    const double hueRadians = hueDegrees * (std::numbers::pi / 180.0);
     const double aLab = chroma * std::cos(hueRadians);
     const double bLab = chroma * std::sin(hueRadians);
 

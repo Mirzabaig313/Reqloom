@@ -7,7 +7,10 @@
 #include "../application/RunController.h"
 #include "../application/SecretManager.h"
 #include "../theming/ThemeManager.h"
+#include "../widgets/CommandPalette.h"
 #include "../widgets/EmptyState.h"
+#include "../widgets/Toast.h"
+#include "Formatting.h"
 #include "ProjectExplorerWidget.h"
 #include "RequestEditorPanel.h"
 #include "ResponseViewerPanel.h"
@@ -21,6 +24,7 @@
 #include <QtGui/QActionGroup>
 #include <QtGui/QCloseEvent>
 #include <QtGui/QKeySequence>
+#include <QtGui/QShortcut>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QFileDialog>
@@ -46,9 +50,11 @@ MainWindow::MainWindow(engine::ExecutionEngine& engine,
 
     runController_ = new RunController(engine, project, this);
     secretManager_ = new SecretManager(this);
+    palette_ = new widgets::CommandPalette(this);
 
     buildLayout();
     buildMenusAndToolbar();
+    buildShortcuts();
     connectSignals();
 
     // Restore persisted window prefs before the first show so there's no
@@ -167,6 +173,7 @@ void MainWindow::buildAppearanceMenu() {
     using Mode = theming::ThemeManager::Mode;
 
     auto* viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
+    viewMenu_ = viewMenu;
     auto* appearanceMenu = viewMenu->addMenu(QStringLiteral("&Appearance"));
 
     // Exclusive radio group so the active mode shows a check mark.
@@ -189,19 +196,9 @@ void MainWindow::buildAppearanceMenu() {
 }
 
 void MainWindow::buildDensityMenu() {
-    // Reuse the View menu created by buildAppearanceMenu rather than adding a
-    // second one.
-    QMenu* targetMenu = nullptr;
-    const auto menus = menuBar()->findChildren<QMenu*>();
-    for (auto* menu : menus) {
-        if (menu->title() == QStringLiteral("&View")) {
-            targetMenu = menu;
-            break;
-        }
-    }
-    if (targetMenu == nullptr) {
-        targetMenu = menuBar()->addMenu(QStringLiteral("&View"));
-    }
+    // The View menu was created by buildAppearanceMenu (called first).
+    QMenu* targetMenu =
+        viewMenu_ != nullptr ? viewMenu_ : menuBar()->addMenu(QStringLiteral("&View"));
 
     auto* densityMenu = targetMenu->addMenu(QStringLiteral("&Density"));
     auto* group = new QActionGroup(this);
@@ -222,6 +219,51 @@ void MainWindow::buildDensityMenu() {
 
     addDensity(QStringLiteral("&Comfortable"), Density::Comfortable);
     addDensity(QStringLiteral("Co&mpact"), Density::Compact);
+}
+
+void MainWindow::buildShortcuts() {
+    // Keyboard contract per PRD §9.3. Each lambda has `this` as receiver so it
+    // auto-disconnects on destruction.
+    const auto addSeq = [this](const QKeySequence& seq, auto handler) {
+        auto* sc = new QShortcut(seq, this);
+        connect(sc, &QShortcut::activated, this, handler);
+    };
+
+    // Cmd/Ctrl+P — command palette.
+    addSeq(QKeySequence(Qt::CTRL | Qt::Key_P), [this]() { openCommandPalette(); });
+
+    // Cmd/Ctrl+Enter — run; Cmd/Ctrl+Shift+Enter — run cleanly. Bind both
+    // Return (main row) and Enter (numpad) so either key works.
+    addSeq(QKeySequence(Qt::CTRL | Qt::Key_Return),
+           [this]() { runCurrentOperation(/*clean=*/false, /*dryRun=*/false); });
+    addSeq(QKeySequence(Qt::CTRL | Qt::Key_Enter),
+           [this]() { runCurrentOperation(/*clean=*/false, /*dryRun=*/false); });
+    addSeq(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Return),
+           [this]() { runCurrentOperation(/*clean=*/true, /*dryRun=*/false); });
+    addSeq(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Enter),
+           [this]() { runCurrentOperation(/*clean=*/true, /*dryRun=*/false); });
+
+    // Cmd/Ctrl+E — focus the environment switcher.
+    addSeq(QKeySequence(Qt::CTRL | Qt::Key_E), [this]() {
+        if (envCombo_->isEnabled()) {
+            envCombo_->setFocus(Qt::ShortcutFocusReason);
+            envCombo_->showPopup();
+        }
+    });
+
+    // Cmd/Ctrl+Shift+R — reset caches.
+    addSeq(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R), [this]() {
+        runController_->resetCaches();
+        statusBar()->showMessage(QStringLiteral("Caches reset."), 3000);
+    });
+
+    // Esc — cancel a running chain (PRD §9.3). The palette consumes Esc first
+    // while open, so this only fires when the palette is closed.
+    addSeq(QKeySequence(Qt::Key_Escape), [this]() {
+        if (runController_->isRunning()) {
+            runController_->cancelRun();
+        }
+    });
 }
 
 void MainWindow::connectSignals() {
@@ -278,11 +320,19 @@ void MainWindow::connectSignals() {
             responseViewer_,
             &ResponseViewerPanel::onResponseReceived);
 
+    connect(
+        responseViewer_, &ResponseViewerPanel::jsonPathCopied, this, [this](const QString& path) {
+            widgets::Toast::show(
+                this, themeManager_.theme(), QStringLiteral("Copied  %1").arg(path));
+        });
+
     connect(runController_, &RunController::runningChanged, this, &MainWindow::onRunningChanged);
     connect(runController_, &RunController::runFinished, this, &MainWindow::onRunFinished);
 
     connect(
         &themeManager_, &theming::ThemeManager::themeChanged, this, &MainWindow::onThemeChanged);
+
+    connect(palette_, &widgets::CommandPalette::itemChosen, this, &MainWindow::onPaletteItemChosen);
 }
 
 void MainWindow::onOpenProject() {
@@ -315,6 +365,76 @@ void MainWindow::onThemeChanged(const theming::Theme& theme) {
     responseViewer_->applyTheme(theme);
     timeline_->applyTheme(theme);
     emptyState_->setTheme(theme);
+    palette_->setTheme(theme);
+}
+
+void MainWindow::openCommandPalette() {
+    if (!project_.hasProject()) {
+        statusBar()->showMessage(QStringLiteral("Open a project to search operations."), 3000);
+        return;
+    }
+
+    // Operations: one entry per "<resource>.<op>", labelled with its method.
+    std::vector<widgets::PaletteItem> ops;
+    const auto& proj = project_.project();
+    for (const auto& [resId, resource] : proj.resources) {
+        for (const auto& [opName, op] : resource.operations) {
+            widgets::PaletteItem item;
+            item.kind = widgets::PaletteItem::Kind::Operation;
+            item.id = QString::fromStdString(op.id.value);
+            item.label = item.id;
+            item.detail = format::method(op.method);
+            ops.push_back(std::move(item));
+        }
+    }
+
+    // Global commands (FR-14.4), reached with the `>` prefix.
+    std::vector<widgets::PaletteItem> commands;
+    const auto addCommand = [&commands](const QString& id, const QString& label) {
+        commands.push_back(
+            widgets::PaletteItem{widgets::PaletteItem::Kind::GlobalCommand, id, label, QString{}});
+    };
+    addCommand(QStringLiteral("reset-caches"), QStringLiteral("Reset Caches"));
+    addCommand(QStringLiteral("manage-secrets"), QStringLiteral("Manage Secrets…"));
+    addCommand(QStringLiteral("open-project"), QStringLiteral("Open Project…"));
+    addCommand(QStringLiteral("theme-light"), QStringLiteral("Appearance: Light"));
+    addCommand(QStringLiteral("theme-dark"), QStringLiteral("Appearance: Dark"));
+    addCommand(QStringLiteral("theme-system"), QStringLiteral("Appearance: System"));
+
+    palette_->setItems(std::move(ops), std::move(commands));
+    palette_->popUp(this);
+}
+
+void MainWindow::onPaletteItemChosen(const widgets::PaletteItem& item) {
+    using Kind = widgets::PaletteItem::Kind;
+    if (item.kind == Kind::Operation) {
+        requestEditor_->showOperation(project_, item.id);
+        onRunRequested(item.id, /*clean=*/false, /*dryRun=*/false);
+        return;
+    }
+
+    // Global command dispatch.
+    if (item.id == QStringLiteral("reset-caches")) {
+        runController_->resetCaches();
+        statusBar()->showMessage(QStringLiteral("Caches reset."), 3000);
+    } else if (item.id == QStringLiteral("manage-secrets")) {
+        onManageSecrets();
+    } else if (item.id == QStringLiteral("open-project")) {
+        onOpenProject();
+    } else if (item.id == QStringLiteral("theme-light")) {
+        themeManager_.setMode(theming::ThemeManager::Mode::Light);
+    } else if (item.id == QStringLiteral("theme-dark")) {
+        themeManager_.setMode(theming::ThemeManager::Mode::Dark);
+    } else if (item.id == QStringLiteral("theme-system")) {
+        themeManager_.setMode(theming::ThemeManager::Mode::System);
+    }
+}
+
+void MainWindow::runCurrentOperation(bool clean, bool dryRun) {
+    const QString op = requestEditor_->currentOperationId();
+    if (!op.isEmpty()) {
+        onRunRequested(op, clean, dryRun);
+    }
 }
 
 void MainWindow::restoreSplitterSizes() {
@@ -340,10 +460,24 @@ void MainWindow::applyDensity(Density density) {
     if (explorer_ != nullptr) {
         explorer_->setProperty("density", value);
     }
-    // Re-polish so the QSS density selectors take effect immediately.
-    if (auto* s = style()) {
-        s->unpolish(this);
-        s->polish(this);
+    // QStyle::polish does not cascade, so re-polish the window AND the explorer
+    // subtree the density selectors actually target (its tree rows).
+    const auto repolish = [](QWidget* w) {
+        if (w == nullptr) {
+            return;
+        }
+        if (auto* s = w->style()) {
+            s->unpolish(w);
+            s->polish(w);
+        }
+        w->update();
+    };
+    repolish(this);
+    if (explorer_ != nullptr) {
+        repolish(explorer_);
+        for (auto* child : explorer_->findChildren<QWidget*>()) {
+            repolish(child);
+        }
     }
 }
 
@@ -351,6 +485,7 @@ void MainWindow::onProjectLoaded() {
     explorer_->populate(project_);
     requestEditor_->clearOperation();
     responseViewer_->reset();
+    responseViewer_->clearHistory();
     timeline_->reset();
 
     // Swap from the first-run empty state to the workbench.
