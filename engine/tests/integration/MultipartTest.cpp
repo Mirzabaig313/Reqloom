@@ -14,6 +14,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TempPath.h>
+
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
@@ -42,8 +44,7 @@ namespace {
 class TempUploadFile {
 public:
     explicit TempUploadFile(std::string contents) : contents_(std::move(contents)) {
-        path_ = fs::temp_directory_path() / ("chainapi-mp-" + std::to_string(::getpid()) + "-" +
-                                             std::to_string(counter_++) + ".bin");
+        path_ = ct::uniqueTempPath("chainapi-mp", ".bin");
         std::ofstream out(path_, std::ios::binary);
         out << contents_;
     }
@@ -60,7 +61,6 @@ public:
 private:
     fs::path path_;
     std::string contents_;
-    static inline int counter_{0};
 };
 
 /// Fetch /__mock/last-request?path=<p> and parse it. Tiny ad-hoc curl

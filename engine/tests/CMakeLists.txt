@@ -35,7 +35,9 @@ add_executable(chainapi-engine-unit-tests
     unit/SecretEnvTagTest.cpp
 )
 target_include_directories(chainapi-engine-unit-tests
-    PRIVATE ${CMAKE_SOURCE_DIR}/engine/src
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/engine/src
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(chainapi-engine-unit-tests
     PRIVATE
@@ -79,7 +81,9 @@ target_link_libraries(chainapi-engine-integration-tests
         GTest::gtest_main
 )
 target_include_directories(chainapi-engine-integration-tests
-    PRIVATE ${CMAKE_SOURCE_DIR}/engine/src
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/engine/src
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_compile_definitions(chainapi-engine-integration-tests
     PRIVATE

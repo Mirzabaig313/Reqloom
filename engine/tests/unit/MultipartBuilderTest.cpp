@@ -11,6 +11,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TempPath.h>
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -25,9 +27,7 @@ namespace {
 class TempFile {
 public:
     explicit TempFile(std::string contents = "hello") {
-        path_ = fs::temp_directory_path() /
-                fs::path("chainapi-multipart-" + std::to_string(::getpid()) + "-" +
-                         std::to_string(counter_++) + ".bin");
+        path_ = chainapi::tests::uniqueTempPath("chainapi-multipart", ".bin");
         std::ofstream out(path_, std::ios::binary);
         out << contents;
     }
@@ -42,7 +42,6 @@ public:
 
 private:
     fs::path path_;
-    static inline int counter_{0};
 };
 
 }  // namespace

@@ -15,6 +15,8 @@
 
 #include <gtest/gtest.h>
 
+#include <support/TempPath.h>
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -28,9 +30,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        const auto unique = "chainapi-schema-valid-" + std::to_string(::getpid()) + "-" +
-                            std::to_string(counter_++);
-        path_ = fs::temp_directory_path() / unique;
+        path_ = chainapi::tests::uniqueTempPath("chainapi-schema-valid");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -49,7 +49,6 @@ public:
 
 private:
     fs::path path_;
-    inline static int counter_{0};
 };
 
 }  // namespace
