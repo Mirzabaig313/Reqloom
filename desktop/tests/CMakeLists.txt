@@ -7,10 +7,18 @@ include(GoogleTest)
 add_executable(chainapi-desktop-ui-tests
     ui/ResponseViewerPanelTest.cpp
     ui/EnvironmentSettingsTest.cpp
+    unit/ColorTest.cpp
+    unit/StatusBadgeTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/EnvironmentSettings.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/EnvironmentSettings.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Color.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Color.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Theme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Theme.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/StatusBadge.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/StatusBadge.h
 )
 target_include_directories(chainapi-desktop-ui-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src

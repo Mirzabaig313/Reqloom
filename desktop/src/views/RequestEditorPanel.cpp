@@ -16,16 +16,17 @@ namespace chainapi::desktop {
 
 RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
+    const int gap = theming::Theme::space(theming::Space::Md);
+    layout->setContentsMargins(gap, gap, gap, gap);
+    layout->setSpacing(theming::Theme::space(theming::Space::Sm));
 
     title_ = new QLabel(QStringLiteral("No operation selected"), this);
-    auto titleFont = title_->font();
-    titleFont.setPointSize(titleFont.pointSize() + 3);
-    titleFont.setBold(true);
-    title_->setFont(titleFont);
+    title_->setFont(theme_.font(theming::TextStyle::Title));
     title_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(title_);
 
     actorLabel_ = new QLabel(this);
+    actorLabel_->setFont(theme_.font(theming::TextStyle::Caption));
     actorLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(actorLabel_);
 
@@ -33,6 +34,7 @@ RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
     auto* chainLayout = new QVBoxLayout(chainBox);
     chainList_ = new QListWidget(chainBox);
     chainList_->setMaximumHeight(120);
+    chainList_->setFont(theme_.font(theming::TextStyle::Mono));
     chainLayout->addWidget(chainList_);
     layout->addWidget(chainBox);
 
@@ -41,6 +43,7 @@ RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
     headersView_ = new QPlainTextEdit(headersBox);
     headersView_->setReadOnly(true);
     headersView_->setMaximumHeight(120);
+    headersView_->setFont(theme_.font(theming::TextStyle::Mono));
     headersLayout->addWidget(headersView_);
     layout->addWidget(headersBox);
 
@@ -48,11 +51,13 @@ RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
     auto* bodyLayout = new QVBoxLayout(bodyBox);
     bodyView_ = new QPlainTextEdit(bodyBox);
     bodyView_->setReadOnly(true);
+    bodyView_->setFont(theme_.font(theming::TextStyle::Mono));
     bodyLayout->addWidget(bodyView_);
     layout->addWidget(bodyBox, 1);
 
     auto* buttonRow = new QHBoxLayout;
     sendButton_ = new QPushButton(QStringLiteral("Send"), this);
+    sendButton_->setObjectName(QStringLiteral("primaryAction"));
     sendButton_->setDefault(true);
     sendCleanButton_ = new QPushButton(QStringLiteral("Send Cleanly"), this);
     dryRunButton_ = new QPushButton(QStringLiteral("Dry Run"), this);
@@ -82,6 +87,16 @@ RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
 }
 
 RequestEditorPanel::~RequestEditorPanel() = default;
+
+void RequestEditorPanel::applyTheme(const theming::Theme& theme) {
+    theme_ = theme;
+    title_->setFont(theme_.font(theming::TextStyle::Title));
+    actorLabel_->setFont(theme_.font(theming::TextStyle::Caption));
+    const QFont mono = theme_.font(theming::TextStyle::Mono);
+    chainList_->setFont(mono);
+    headersView_->setFont(mono);
+    bodyView_->setFont(mono);
+}
 
 QString RequestEditorPanel::currentOperationId() const {
     return currentOp_;
@@ -157,7 +172,7 @@ void RequestEditorPanel::renderChainPreview(const ProjectModel& project,
         auto* item = new QListWidgetItem(
             QStringLiteral("No declared dependencies — run Dry Run for the full resolved chain"),
             chainList_);
-        item->setForeground(Qt::gray);
+        item->setForeground(theme_.palette().textSecondary);
         return;
     }
     // Static view of the operation's own declared dependencies. Implicit

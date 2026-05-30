@@ -4,6 +4,8 @@
 // extractions become obvious without reading YAML.
 #pragma once
 
+#include "../theming/Theme.h"
+
 #include <QtWidgets/QWidget>
 
 class QLabel;
@@ -40,6 +42,9 @@ public slots:
     void onStepFailed(int index, QString op, QString code, QString detail);
     void onRunEnded(QString outcome);
 
+    /// Adopt a new theme: re-colour existing rows from the status palette.
+    void applyTheme(const theming::Theme& theme);
+
     /// Clear all rows (e.g. when a new run starts or a project loads).
     void reset();
 
@@ -47,8 +52,13 @@ private:
     /// Find (or lazily create) the top-level row for a step index.
     QTreeWidgetItem* stepRow(int index, const QString& op);
 
+    /// Set a row's Status column to a glyph + label in the token colour, so
+    /// state is never conveyed by colour alone (DESIGN.md §6.1).
+    void setStatusCell(QTreeWidgetItem* row, theming::StatusToken token, const QString& label);
+
     QLabel* header_{nullptr};
     QTreeWidget* tree_{nullptr};
+    theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
 }  // namespace chainapi::desktop

@@ -46,12 +46,13 @@ namespace {
 
 ResponseViewerPanel::ResponseViewerPanel(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
+    const int gap = theming::Theme::space(theming::Space::Sm);
+    layout->setContentsMargins(gap, gap, gap, gap);
+    layout->setSpacing(gap);
 
     statusLabel_ = new QLabel(this);
     statusLabel_->setObjectName(QStringLiteral("statusLabel"));
-    auto statusFont = statusLabel_->font();
-    statusFont.setBold(true);
-    statusLabel_->setFont(statusFont);
+    statusLabel_->setFont(theme_.font(theming::TextStyle::Subtitle));
     statusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(statusLabel_);
 
@@ -64,17 +65,20 @@ ResponseViewerPanel::ResponseViewerPanel(QWidget* parent) : QWidget(parent) {
     bodyTree_->setHeaderLabels({QStringLiteral("Field"), QStringLiteral("Value")});
     bodyTree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     bodyTree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    bodyTree_->setFont(theme_.font(theming::TextStyle::Mono));
     tabs_->addTab(bodyTree_, QStringLiteral("Body (Tree)"));
 
     bodyRaw_ = new QPlainTextEdit(this);
     bodyRaw_->setObjectName(QStringLiteral("bodyRaw"));
     bodyRaw_->setReadOnly(true);
     bodyRaw_->setLineWrapMode(QPlainTextEdit::NoWrap);
+    bodyRaw_->setFont(theme_.font(theming::TextStyle::Mono));
     tabs_->addTab(bodyRaw_, QStringLiteral("Body (Raw)"));
 
     headersView_ = new QPlainTextEdit(this);
     headersView_->setObjectName(QStringLiteral("headersView"));
     headersView_->setReadOnly(true);
+    headersView_->setFont(theme_.font(theming::TextStyle::Mono));
     tabs_->addTab(headersView_, QStringLiteral("Headers"));
 
     layout->addWidget(tabs_, 1);
@@ -83,6 +87,26 @@ ResponseViewerPanel::ResponseViewerPanel(QWidget* parent) : QWidget(parent) {
 }
 
 ResponseViewerPanel::~ResponseViewerPanel() = default;
+
+void ResponseViewerPanel::applyTheme(const theming::Theme& theme) {
+    theme_ = theme;
+    statusLabel_->setFont(theme_.font(theming::TextStyle::Subtitle));
+    const QFont mono = theme_.font(theming::TextStyle::Mono);
+    bodyTree_->setFont(mono);
+    bodyRaw_->setFont(mono);
+    headersView_->setFont(mono);
+}
+
+QColor ResponseViewerPanel::statusColor(int httpStatus) const {
+    // 2xx success, 3xx/4xx warning, 5xx error — DESIGN.md §2.5 status palette.
+    if (httpStatus >= 500) {
+        return theme_.status(theming::StatusToken::Error);
+    }
+    if (httpStatus >= 300) {
+        return theme_.status(theming::StatusToken::Warning);
+    }
+    return theme_.status(theming::StatusToken::Success);
+}
 
 void ResponseViewerPanel::reset() {
     statusLabel_->setText(QStringLiteral("No response yet"));
@@ -95,23 +119,17 @@ void ResponseViewerPanel::showBodyPlaceholder(const QString& message) {
     bodyTree_->clear();
     auto* item = new QTreeWidgetItem(bodyTree_);
     item->setText(0, message);
-    item->setForeground(0, QBrush(QColor(Qt::gray)));
+    item->setForeground(0, QBrush(theme_.palette().textSecondary));
     item->setFirstColumnSpanned(true);
     bodyRaw_->setPlainText(message);
 }
 
 void ResponseViewerPanel::onResponseReceived(
     int /*index*/, int status, QString headers, int bodySize, qint64 elapsedMs, QString body) {
-    // Colour the status by class: 2xx green, 3xx/4xx amber, 5xx red.
-    QColor color{0x2E, 0x7D, 0x32};
-    if (status >= 500) {
-        color = QColor{0xC6, 0x28, 0x28};
-    } else if (status >= 300) {
-        color = QColor{0xF9, 0xA8, 0x25};
-    }
     statusLabel_->setText(
         QStringLiteral("HTTP %1  ·  %2 bytes  ·  %3 ms").arg(status).arg(bodySize).arg(elapsedMs));
-    statusLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(color.name()));
+    statusLabel_->setStyleSheet(
+        QStringLiteral("color: %1;").arg(statusColor(status).name(QColor::HexRgb)));
     headersView_->setPlainText(headers);
 
     if (body.isEmpty()) {
@@ -145,7 +163,7 @@ void ResponseViewerPanel::renderBody(const QString& body) {
         auto* item = new QTreeWidgetItem(bodyTree_);
         item->setText(0, QStringLiteral("(not JSON — see Raw tab)"));
         item->setText(1, parseError.errorString());
-        item->setForeground(0, QBrush(QColor(Qt::gray)));
+        item->setForeground(0, QBrush(theme_.palette().textSecondary));
         return;
     }
 

@@ -4,6 +4,8 @@
 // never displayed — only presence — so secrets can't leak through the UI.
 #pragma once
 
+#include "../theming/Theme.h"
+
 #include <QtWidgets/QDialog>
 
 class QLabel;
@@ -19,7 +21,10 @@ class SecretsDialog : public QDialog {
     Q_OBJECT
 
 public:
-    SecretsDialog(SecretManager& secrets, const ProjectModel& project, QWidget* parent = nullptr);
+    SecretsDialog(SecretManager& secrets,
+                  const ProjectModel& project,
+                  const theming::Theme& theme,
+                  QWidget* parent = nullptr);
     ~SecretsDialog() override;
 
     SecretsDialog(const SecretsDialog&) = delete;
@@ -35,6 +40,7 @@ private:
 
     SecretManager& secrets_;
     const ProjectModel& project_;
+    const theming::Theme& theme_;
 
     QLabel* backendBanner_{nullptr};
     QTableWidget* table_{nullptr};

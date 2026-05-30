@@ -1,5 +1,6 @@
 #include "App.h"
 
+#include "../theming/ThemeManager.h"
 #include "../views/MainWindow.h"
 #include "Bootstrapper.h"
 #include "ProjectModel.h"
@@ -35,8 +36,13 @@ namespace {
 
 App::App()
     : bootstrapper_(std::make_unique<Bootstrapper>()),
+      themeManager_(std::make_unique<theming::ThemeManager>()),
       project_(std::make_unique<ProjectModel>()),
-      mainWindow_(std::make_unique<MainWindow>(bootstrapper_->engine(), *project_)) {}
+      mainWindow_(std::make_unique<MainWindow>(bootstrapper_->engine(), *project_, *themeManager_)) {
+    // Resolve + apply the saved appearance before the window paints, so the
+    // first frame is already themed (no flash of default Qt gray).
+    themeManager_->start();
+}
 
 App::~App() = default;
 

@@ -7,6 +7,8 @@
 // the body tabs explain why they're empty rather than showing a blank pane.
 #pragma once
 
+#include "../theming/Theme.h"
+
 #include <QtWidgets/QWidget>
 
 class QJsonValue;
@@ -33,18 +35,22 @@ public:
 public slots:
     void onResponseReceived(
         int index, int status, QString headers, int bodySize, qint64 elapsedMs, QString body);
+    void applyTheme(const theming::Theme& theme);
     void reset();
 
 private:
     void renderBody(const QString& body);
     void populateTree(QTreeWidgetItem* parent, const QJsonValue& value);
     void showBodyPlaceholder(const QString& message);
+    /// Status colour for an HTTP status code, from the theme status palette.
+    [[nodiscard]] QColor statusColor(int httpStatus) const;
 
     QLabel* statusLabel_{nullptr};
     QTabWidget* tabs_{nullptr};
     QTreeWidget* bodyTree_{nullptr};
     QPlainTextEdit* bodyRaw_{nullptr};
     QPlainTextEdit* headersView_{nullptr};
+    theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
 }  // namespace chainapi::desktop
