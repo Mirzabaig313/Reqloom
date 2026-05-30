@@ -269,6 +269,9 @@ void MainWindow::buildShortcuts() {
 void MainWindow::connectSignals() {
     connect(&project_, &ProjectModel::loaded, this, &MainWindow::onProjectLoaded);
     connect(&project_, &ProjectModel::loadFailed, this, &MainWindow::onProjectLoadFailed);
+    // A saved edit may change an operation's method/path, so refresh the
+    // explorer's rows (method chips) to match the persisted project.
+    connect(&project_, &ProjectModel::saved, this, [this]() { explorer_->populate(project_); });
 
     connect(
         explorer_, &ProjectExplorerWidget::operationSelected, this, [this](const QString& opId) {
@@ -281,6 +284,7 @@ void MainWindow::connectSignals() {
         });
 
     connect(requestEditor_, &RequestEditorPanel::runRequested, this, &MainWindow::onRunRequested);
+    connect(requestEditor_, &RequestEditorPanel::saveRequested, this, &MainWindow::onSaveRequested);
 
     connect(captureBodiesCheck_, &QCheckBox::toggled, this, [this](bool checked) {
         runController_->setCaptureResponseBodies(checked);
@@ -530,11 +534,44 @@ void MainWindow::onRunRequested(const QString& operationId, bool clean, bool dry
 
     // Carry the editor's one-shot override (if Override Mode is on) for the
     // operation actually being run. The override is ignored for other ops.
-    RequestOverride override;
+    RequestOverride requestOverride;
     if (requestEditor_->overrideActive() && requestEditor_->currentOperationId() == operationId) {
-        override = requestEditor_->buildOverride();
+        requestOverride = requestEditor_->buildOverride();
     }
-    runController_->runWithOverride(operationId, env, clean, dryRun, override);
+    runController_->runWithOverride(operationId, env, clean, dryRun, requestOverride);
+}
+
+void MainWindow::onSaveRequested(const QString& operationId) {
+    if (runController_->isRunning() || !project_.hasProject()) {
+        return;
+    }
+    // Save is only meaningful while editing; ignore a stray request otherwise
+    // so we never overwrite an operation with the (unseeded) editor state.
+    if (!requestEditor_->overrideActive() || requestEditor_->currentOperationId() != operationId) {
+        return;
+    }
+    const engine::OperationId id{operationId.toStdString()};
+    const auto* current = project_.findOperation(id);
+    if (current == nullptr) {
+        return;
+    }
+
+    // Apply the editor's fields onto a copy of the operation, then persist the
+    // project to disk. Reuses the same patch logic the one-shot run path uses.
+    engine::Operation edited = *current;
+    applyOverrideToOperation(edited, requestEditor_->buildOverride());
+
+    QString error;
+    if (project_.saveOperation(id, edited, error)) {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Saved %1 to project").arg(operationId));
+        // Re-show the operation so the read-only preview reflects the new
+        // saved state, and leave edit mode.
+        requestEditor_->showOperation(project_, operationId);
+    } else {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Save failed: %1").arg(error), 4000);
+    }
 }
 
 void MainWindow::onRunningChanged(bool running) {

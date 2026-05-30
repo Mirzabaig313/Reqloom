@@ -58,9 +58,18 @@ public:
     [[nodiscard]] const engine::Operation* findOperation(
         const engine::OperationId& id) const noexcept;
 
+    /// Replace operation `id` with `updated`, persist the whole project back to
+    /// its directory as YAML, and rebind to the saved state. Returns true on
+    /// success; on failure `error` carries a human-readable message and nothing
+    /// is changed on disk. Emits `saved` on success.
+    [[nodiscard]] bool saveOperation(const engine::OperationId& id,
+                                     const engine::Operation& updated,
+                                     QString& error);
+
 signals:
     void loaded();
     void loadFailed(QString code, QString detail);
+    void saved();
 
 private:
     std::shared_ptr<const engine::Project> project_;

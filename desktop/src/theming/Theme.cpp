@@ -432,6 +432,14 @@ QListWidget#paletteList::item:selected {
     color: %2;
 }
 
+/* Section headings inside panels: a light subtitle, not a framed group box
+   (DESIGN.md §5 bans nested cards). */
+QLabel[role="sectionHeading"] {
+    color: %13;
+    font-weight: 600;
+    padding-top: %7px;
+}
+
 QToolTip {
     background-color: %10;
     color: %2;

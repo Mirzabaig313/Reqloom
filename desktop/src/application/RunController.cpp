@@ -165,16 +165,20 @@ namespace {
     if (opIt == resIt->second.operations.end()) {
         return copy;
     }
-    ce::Operation& op = opIt->second;
+    applyOverrideToOperation(opIt->second, ov);
+    return copy;
+}
 
-    if (!ov.method.isEmpty()) {
-        op.method = methodFromLabel(ov.method);
-    }
-    if (!ov.path.isEmpty()) {
-        op.pathTemplate = ov.path.toStdString();
-    }
-    // Headers / query params: the editor shows the full set, so a patch
-    // replaces them wholesale (what you see is what gets sent).
+}  // namespace
+
+void applyOverrideToOperation(ce::Operation& op, const RequestOverride& ov) {
+    // Full-assignment, not partial-update: the editor always seeds every
+    // control from the current operation, so the override snapshot is a
+    // complete representation of the request. Assigning every field keeps the
+    // one-shot-run path and the Save-to-Project path identical, and lets the
+    // user actually clear a value (uncheck Force, pick no actor, etc.).
+    op.method = methodFromLabel(ov.method);
+    op.pathTemplate = ov.path.toStdString();
     op.headers = ov.headers;
     op.queryParams = ov.queryParams;
 
@@ -192,26 +196,24 @@ namespace {
         }
     }
 
-    if (!ov.actor.isEmpty()) {
-        op.actor = ce::ActorId{ov.actor.toStdString()};
-    }
+    // Actor: an empty selection clears it (the "(none)" combo entry).
+    op.actor = ce::ActorId{ov.actor.toStdString()};
 
     const auto codes = parseStatusList(ov.expectStatus);
-    if (!codes.empty()) {
-        op.expectStatusList = codes;
+    op.expectStatusList = codes;
+    if (codes.empty()) {
+        op.expectStatus.reset();
+    } else {
         op.expectStatus = codes.front();
     }
 
     if (ov.timeoutMs > 0) {
         op.timeout = std::chrono::milliseconds{ov.timeoutMs};
+    } else {
+        op.timeout.reset();
     }
-    if (ov.forceReRun) {
-        op.force = true;
-    }
-    return copy;
+    op.force = ov.forceReRun;
 }
-
-}  // namespace
 
 void RunController::runWithOverride(const QString& target,
                                     const QString& environment,
