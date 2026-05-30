@@ -17,6 +17,11 @@ class ExecutionEngine;
 
 namespace chainapi::desktop {
 
+namespace theming {
+class ThemeManager;
+class Theme;
+}  // namespace theming
+
 class ProjectModel;
 class RunController;
 class SecretManager;
@@ -30,7 +35,10 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    MainWindow(engine::ExecutionEngine& engine, ProjectModel& project, QWidget* parent = nullptr);
+    MainWindow(engine::ExecutionEngine& engine,
+               ProjectModel& project,
+               theming::ThemeManager& themeManager,
+               QWidget* parent = nullptr);
     MainWindow(const MainWindow&) = delete;
     MainWindow& operator=(const MainWindow&) = delete;
     MainWindow(MainWindow&&) = delete;
@@ -44,10 +52,12 @@ public:
 private:
     void buildLayout();
     void buildMenusAndToolbar();
+    void buildAppearanceMenu();
     void connectSignals();
 
     void onOpenProject();
     void onManageSecrets();
+    void onThemeChanged(const theming::Theme& theme);
     void onProjectLoaded();
     void onProjectLoadFailed(const QString& code, const QString& detail);
     void onRunRequested(const QString& operationId, bool clean, bool dryRun);
@@ -62,6 +72,7 @@ private:
     ProjectModel& project_;
     RunController* runController_{nullptr};
     SecretManager* secretManager_{nullptr};
+    theming::ThemeManager& themeManager_;
 
     ProjectExplorerWidget* explorer_{nullptr};
     RequestEditorPanel* requestEditor_{nullptr};

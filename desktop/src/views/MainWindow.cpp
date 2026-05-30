@@ -5,6 +5,7 @@
 #include "../application/ProjectModel.h"
 #include "../application/RunController.h"
 #include "../application/SecretManager.h"
+#include "../theming/ThemeManager.h"
 #include "ProjectExplorerWidget.h"
 #include "RequestEditorPanel.h"
 #include "ResponseViewerPanel.h"
@@ -15,6 +16,7 @@
 
 #include <QtCore/QSettings>
 #include <QtGui/QAction>
+#include <QtGui/QActionGroup>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
@@ -29,8 +31,11 @@
 
 namespace chainapi::desktop {
 
-MainWindow::MainWindow(engine::ExecutionEngine& engine, ProjectModel& project, QWidget* parent)
-    : QMainWindow(parent), project_(project) {
+MainWindow::MainWindow(engine::ExecutionEngine& engine,
+                       ProjectModel& project,
+                       theming::ThemeManager& themeManager,
+                       QWidget* parent)
+    : QMainWindow(parent), project_(project), themeManager_(themeManager) {
     setWindowTitle(QStringLiteral("ChainAPI"));
     resize(1280, 800);
 
@@ -40,6 +45,10 @@ MainWindow::MainWindow(engine::ExecutionEngine& engine, ProjectModel& project, Q
     buildLayout();
     buildMenusAndToolbar();
     connectSignals();
+
+    // Push the already-resolved theme into the custom-painted panels so their
+    // status colours and fonts match the QSS chrome from the first frame.
+    onThemeChanged(themeManager_.theme());
 
     statusBar()->showMessage(QStringLiteral("Open a project to begin."));
 }
@@ -89,6 +98,8 @@ void MainWindow::buildMenusAndToolbar() {
     fileMenu->addSeparator();
     fileMenu->addAction(quitAction);
 
+    buildAppearanceMenu();
+
     auto* toolbar = addToolBar(QStringLiteral("Main"));
     toolbar->setMovable(false);
     toolbar->addAction(openAction);
@@ -115,6 +126,29 @@ void MainWindow::buildMenusAndToolbar() {
 
     statusLabel_ = new QLabel(this);
     statusBar()->addPermanentWidget(statusLabel_);
+}
+
+void MainWindow::buildAppearanceMenu() {
+    using Mode = theming::ThemeManager::Mode;
+
+    auto* viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
+    auto* appearanceMenu = viewMenu->addMenu(QStringLiteral("&Appearance"));
+
+    // Exclusive radio group so the active mode shows a check mark.
+    auto* group = new QActionGroup(this);
+    group->setExclusive(true);
+
+    const auto addMode = [&](const QString& label, Mode mode) {
+        auto* action = appearanceMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(themeManager_.mode() == mode);
+        group->addAction(action);
+        connect(action, &QAction::triggered, this, [this, mode]() { themeManager_.setMode(mode); });
+    };
+
+    addMode(QStringLiteral("&Light"), Mode::Light);
+    addMode(QStringLiteral("&Dark"), Mode::Dark);
+    addMode(QStringLiteral("&System"), Mode::System);
 }
 
 void MainWindow::connectSignals() {
@@ -173,6 +207,11 @@ void MainWindow::connectSignals() {
 
     connect(runController_, &RunController::runningChanged, this, &MainWindow::onRunningChanged);
     connect(runController_, &RunController::runFinished, this, &MainWindow::onRunFinished);
+
+    connect(&themeManager_,
+            &theming::ThemeManager::themeChanged,
+            this,
+            &MainWindow::onThemeChanged);
 }
 
 void MainWindow::onOpenProject() {
@@ -195,8 +234,15 @@ void MainWindow::onManageSecrets() {
     if (!project_.hasProject()) {
         return;
     }
-    SecretsDialog dialog(*secretManager_, project_, this);
+    SecretsDialog dialog(*secretManager_, project_, themeManager_.theme(), this);
     dialog.exec();
+}
+
+void MainWindow::onThemeChanged(const theming::Theme& theme) {
+    explorer_->applyTheme(theme);
+    requestEditor_->applyTheme(theme);
+    responseViewer_->applyTheme(theme);
+    timeline_->applyTheme(theme);
 }
 
 void MainWindow::onProjectLoaded() {

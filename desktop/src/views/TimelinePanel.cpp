@@ -1,8 +1,9 @@
 // TimelinePanel — see header. Live run timeline + visible data flow.
 #include "TimelinePanel.h"
 
+#include "../widgets/StatusBadge.h"
+
 #include <QtGui/QBrush>
-#include <QtGui/QColor>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QTreeWidget>
@@ -17,16 +18,16 @@ namespace {
 // step annotate the existing row instead of appending a duplicate.
 constexpr int kStepIndexRole = Qt::UserRole + 1;
 
-const QColor kResolvedColor{0x2E, 0x7D, 0x32};  // green
-const QColor kProblemColor{0xC6, 0x28, 0x28};   // red
-
 }  // namespace
 
 TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
+    const int gap = theming::Theme::space(theming::Space::Sm);
+    layout->setContentsMargins(gap, gap, gap, gap);
+    layout->setSpacing(gap);
 
     header_ = new QLabel(QStringLiteral("Timeline"), this);
+    header_->setFont(theme_.font(theming::TextStyle::Subtitle));
     header_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(header_);
 
@@ -42,9 +43,22 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
 
 TimelinePanel::~TimelinePanel() = default;
 
+void TimelinePanel::applyTheme(const theming::Theme& theme) {
+    theme_ = theme;
+    header_->setFont(theme_.font(theming::TextStyle::Subtitle));
+}
+
 void TimelinePanel::reset() {
     tree_->clear();
     header_->setText(QStringLiteral("Timeline"));
+}
+
+void TimelinePanel::setStatusCell(QTreeWidgetItem* row,
+                                  theming::StatusToken token,
+                                  const QString& label) {
+    const QString glyph = widgets::StatusBadge::glyph(token);
+    row->setText(1, QStringLiteral("%1 %2").arg(glyph, label));
+    row->setForeground(1, QBrush(theme_.status(token)));
 }
 
 QTreeWidgetItem* TimelinePanel::stepRow(int index, const QString& op) {
@@ -72,7 +86,7 @@ void TimelinePanel::onRunStarted(QString target, int chainSize, QString environm
 
 void TimelinePanel::onStepStarted(int index, QString op, int attempt) {
     auto* row = stepRow(index, op);
-    row->setText(1, QStringLiteral("running"));
+    setStatusCell(row, theming::StatusToken::Running, QStringLiteral("running"));
     if (attempt > 1) {
         row->setText(2, QStringLiteral("attempt %1").arg(attempt));
     }
@@ -80,7 +94,7 @@ void TimelinePanel::onStepStarted(int index, QString op, int attempt) {
 
 void TimelinePanel::onStepSkipped(int index, QString op, QString reason) {
     auto* row = stepRow(index, op);
-    row->setText(1, QStringLiteral("skipped"));
+    setStatusCell(row, theming::StatusToken::Skipped, QStringLiteral("skipped"));
     row->setText(2, reason);
 }
 
@@ -99,6 +113,12 @@ void TimelinePanel::onRequestPrepared(
 void TimelinePanel::onResponseReceived(
     int index, int status, QString headers, int bodySize, qint64 elapsedMs) {
     auto* row = stepRow(index, QString{});
+    // Settle the parent row to a terminal status by HTTP class (§2.5).
+    const auto token = status >= 500   ? theming::StatusToken::Error
+                       : status >= 300 ? theming::StatusToken::Warning
+                                       : theming::StatusToken::Success;
+    setStatusCell(row, token, QStringLiteral("HTTP %1").arg(status));
+
     auto* resp = new QTreeWidgetItem(row);
     resp->setText(0, QStringLiteral("← response"));
     resp->setText(
@@ -122,23 +142,24 @@ void TimelinePanel::onExtractionCompleted(int index,
     if (resolved) {
         ext->setText(1, QStringLiteral("="));
         ext->setText(2, value);
-        ext->setForeground(2, QBrush(kResolvedColor));
+        ext->setForeground(2, QBrush(theme_.status(theming::StatusToken::Success)));
     } else {
-        // null / missing / invalid — the data-flow red flag (§10.3.5).
+        // null / missing / invalid is a non-error condition that still demands
+        // attention — DESIGN.md §2.5 reserves status.warning (amber) for it.
+        const QBrush warn{theme_.status(theming::StatusToken::Warning)};
         ext->setText(1, outcome);
         ext->setText(2, QStringLiteral("%1  (%2)").arg(outcome, sourcePath));
-        ext->setForeground(1, QBrush(kProblemColor));
-        ext->setForeground(2, QBrush(kProblemColor));
+        ext->setForeground(1, warn);
+        ext->setForeground(2, warn);
     }
     row->setExpanded(true);
 }
 
 void TimelinePanel::onStepFailed(int index, QString op, QString code, QString detail) {
     auto* row = stepRow(index, op);
-    row->setText(1, QStringLiteral("FAILED"));
+    setStatusCell(row, theming::StatusToken::Error, QStringLiteral("failed"));
     row->setText(2, QStringLiteral("[%1] %2").arg(code, detail));
-    row->setForeground(1, QBrush(kProblemColor));
-    row->setForeground(2, QBrush(kProblemColor));
+    row->setForeground(2, QBrush(theme_.status(theming::StatusToken::Error)));
 }
 
 void TimelinePanel::onRunEnded(QString outcome) {

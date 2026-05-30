@@ -4,6 +4,8 @@
 // originate the run requests the shell forwards to the RunController.
 #pragma once
 
+#include "../theming/Theme.h"
+
 #include <chainapi/engine/Operation.h>
 
 #include <QtWidgets/QWidget>
@@ -38,6 +40,9 @@ public:
     /// Enable/disable the run buttons (e.g. while a run is in flight).
     void setRunEnabled(bool enabled);
 
+    /// Adopt a new theme (fonts + token-derived colours).
+    void applyTheme(const theming::Theme& theme);
+
     [[nodiscard]] QString currentOperationId() const;
 
 signals:
@@ -56,6 +61,7 @@ private:
     QPushButton* dryRunButton_{nullptr};
 
     QString currentOp_;
+    theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
 }  // namespace chainapi::desktop

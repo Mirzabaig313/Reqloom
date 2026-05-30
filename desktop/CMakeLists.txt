@@ -14,6 +14,14 @@ qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
     src/application/EnvironmentSettings.h
     src/application/SecretManager.cpp
     src/application/SecretManager.h
+    src/theming/Color.cpp
+    src/theming/Color.h
+    src/theming/Theme.cpp
+    src/theming/Theme.h
+    src/theming/ThemeManager.cpp
+    src/theming/ThemeManager.h
+    src/widgets/StatusBadge.cpp
+    src/widgets/StatusBadge.h
     src/views/Formatting.cpp
     src/views/Formatting.h
     src/views/MainWindow.cpp

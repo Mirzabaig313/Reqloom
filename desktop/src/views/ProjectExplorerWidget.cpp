@@ -4,11 +4,14 @@
 #include "../application/ProjectModel.h"
 #include "Formatting.h"
 
+#include <QtGui/QBrush>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QTreeWidgetItem>
 #include <QtWidgets/QVBoxLayout>
+
+#include <functional>
 
 namespace chainapi::desktop {
 
@@ -18,6 +21,26 @@ namespace {
 constexpr int kOperationIdRole = Qt::UserRole + 1;
 // Marks a row as an operation (vs. a category/actor/resource header).
 constexpr int kIsOperationRole = Qt::UserRole + 2;
+// The HTTP method string, kept so a theme change can re-tint the chip.
+constexpr int kMethodRole = Qt::UserRole + 3;
+
+/// Status token a method chip is tinted with (DESIGN.md §6.2): GET reads as
+/// the safe/read accent (success), POST as creation, DELETE as destructive,
+/// PUT/PATCH as mutation (warning). Muted, not loud — applied as text colour.
+[[nodiscard]] theming::StatusToken methodToken(const QString& method) {
+    if (method == QStringLiteral("GET") || method == QStringLiteral("HEAD") ||
+        method == QStringLiteral("OPTIONS")) {
+        return theming::StatusToken::Success;
+    }
+    if (method == QStringLiteral("POST")) {
+        return theming::StatusToken::Running;
+    }
+    if (method == QStringLiteral("DELETE")) {
+        return theming::StatusToken::Error;
+    }
+    // PUT / PATCH — mutation.
+    return theming::StatusToken::Warning;
+}
 
 /// Recursively show rows that match `needle` (or have a matching descendant)
 /// and hide the rest. Returns whether `item` ended up visible. A free helper
@@ -100,13 +123,42 @@ void ProjectExplorerWidget::populate(const ProjectModel& project) {
         for (const auto& [opName, op] : resource.operations) {
             auto* opItem = new QTreeWidgetItem(resItem);
             opItem->setText(0, QString::fromStdString(opName));
-            opItem->setText(1, format::method(op.method));
+            const QString method = format::method(op.method);
+            opItem->setText(1, method);
             opItem->setData(0, kIsOperationRole, true);
             opItem->setData(0, kOperationIdRole, QString::fromStdString(op.id.value));
+            opItem->setData(1, kMethodRole, method);
+            // Method chip: mono, uppercase, tinted by method class (§6.2).
+            opItem->setFont(1, theme_.font(theming::TextStyle::Mono));
+            opItem->setTextAlignment(1, Qt::AlignCenter);
+            opItem->setForeground(1, QBrush(theme_.status(methodToken(method))));
         }
     }
 
     tree_->expandAll();
+}
+
+void ProjectExplorerWidget::applyTheme(const theming::Theme& theme) {
+    theme_ = theme;
+    recolorMethods();
+}
+
+void ProjectExplorerWidget::recolorMethods() {
+    // Re-tint every operation row's method chip from the current theme. Walk
+    // all rows; only operation rows carry a stored method.
+    const std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* item) {
+        const QString method = item->data(1, kMethodRole).toString();
+        if (!method.isEmpty()) {
+            item->setFont(1, theme_.font(theming::TextStyle::Mono));
+            item->setForeground(1, QBrush(theme_.status(methodToken(method))));
+        }
+        for (int i = 0; i < item->childCount(); ++i) {
+            walk(item->child(i));
+        }
+    };
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        walk(tree_->topLevelItem(i));
+    }
 }
 
 void ProjectExplorerWidget::onSelectionChanged() {

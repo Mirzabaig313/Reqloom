@@ -26,14 +26,13 @@ namespace {
 constexpr int kNameColumn = 0;
 constexpr int kStatusColumn = 1;
 
-const QColor kSetColor{0x2E, 0x7D, 0x32};      // green
-const QColor kMissingColor{0xF9, 0xA8, 0x25};  // amber
-const QColor kErrorColor{0xC6, 0x28, 0x28};    // red
-
 }  // namespace
 
-SecretsDialog::SecretsDialog(SecretManager& secrets, const ProjectModel& project, QWidget* parent)
-    : QDialog(parent), secrets_(secrets), project_(project) {
+SecretsDialog::SecretsDialog(SecretManager& secrets,
+                             const ProjectModel& project,
+                             const theming::Theme& theme,
+                             QWidget* parent)
+    : QDialog(parent), secrets_(secrets), project_(project), theme_(theme) {
     setWindowTitle(QStringLiteral("Manage Secrets"));
     resize(560, 420);
 
@@ -49,7 +48,8 @@ SecretsDialog::SecretsDialog(SecretManager& secrets, const ProjectModel& project
     backendBanner_ = new QLabel(this);
     backendBanner_->setWordWrap(true);
     backendBanner_->setStyleSheet(
-        QStringLiteral("color: %1; font-weight: bold;").arg(kErrorColor.name()));
+        QStringLiteral("color: %1; font-weight: bold;")
+            .arg(theme_.status(theming::StatusToken::Error).name(QColor::HexRgb)));
     backendBanner_->setVisible(false);
     layout->addWidget(backendBanner_);
 
@@ -122,15 +122,15 @@ void SecretsDialog::refresh() {
         switch (entry.state) {
             case SecretState::Set:
                 statusText = QStringLiteral("● set");
-                statusColor = kSetColor;
+                statusColor = theme_.status(theming::StatusToken::Success);
                 break;
             case SecretState::NotSet:
                 statusText = QStringLiteral("○ not set");
-                statusColor = kMissingColor;
+                statusColor = theme_.status(theming::StatusToken::Warning);
                 break;
             case SecretState::ReadError:
                 statusText = QStringLiteral("⚠ %1").arg(entry.detail);
-                statusColor = kErrorColor;
+                statusColor = theme_.status(theming::StatusToken::Error);
                 break;
         }
         auto* statusItem = new QTableWidgetItem(statusText);
@@ -142,7 +142,7 @@ void SecretsDialog::refresh() {
     if (entries.isEmpty()) {
         table_->setRowCount(1);
         auto* empty = new QTableWidgetItem(QStringLiteral("This project references no secrets."));
-        empty->setForeground(QBrush(QColor(Qt::gray)));
+        empty->setForeground(QBrush(theme_.palette().textSecondary));
         // Non-selectable / disabled so it can't be acted on as if it were a
         // real secret (selectedSecretName would otherwise return this text).
         empty->setFlags(Qt::NoItemFlags);

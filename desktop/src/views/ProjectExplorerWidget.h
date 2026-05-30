@@ -3,6 +3,8 @@
 // or Enter) emits operationActivated so the shell can run it.
 #pragma once
 
+#include "../theming/Theme.h"
+
 #include <chainapi/engine/Operation.h>
 
 #include <QtWidgets/QWidget>
@@ -30,6 +32,9 @@ public:
     /// Rebuild the tree from the loaded project.
     void populate(const ProjectModel& project);
 
+    /// Adopt a new theme: re-tint method chips and refresh fonts.
+    void applyTheme(const theming::Theme& theme);
+
     /// Clear the tree (no project loaded).
     void clear();
 
@@ -41,9 +46,11 @@ private:
     void onSelectionChanged();
     void onItemActivated(QTreeWidgetItem* item, int column);
     void applyFilter(const QString& text);
+    void recolorMethods();
 
     QLineEdit* filter_{nullptr};
     QTreeWidget* tree_{nullptr};
+    theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
 }  // namespace chainapi::desktop
