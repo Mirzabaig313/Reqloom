@@ -54,8 +54,8 @@ std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
     } catch (const json::parse_error& e) {
         return std::unexpected(
             ReqloomError{ErrorCode::ResponseParse,
-                          ErrorClass::Extraction,
-                          std::string("response is not valid JSON: ") + e.what()});
+                         ErrorClass::Extraction,
+                         std::string("response is not valid JSON: ") + e.what()});
     }
 
     // Walk a single segment that may be "name", "name[N]", or "[N]".
@@ -129,9 +129,9 @@ std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
         if (!found) {
             return std::unexpected(
                 ReqloomError{ErrorCode::ExtractionFailed,
-                              ErrorClass::Extraction,
-                              "extract path '" + ext.sourcePath +
-                                  "' not found in response (variable: " + ext.variableName + ")"});
+                             ErrorClass::Extraction,
+                             "extract path '" + ext.sourcePath +
+                                 "' not found in response (variable: " + ext.variableName + ")"});
         }
 
         std::string value = current->is_string() ? current->get<std::string>() : current->dump();
@@ -346,8 +346,8 @@ std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
         } catch (const json::parse_error& e) {
             return std::unexpected(
                 ReqloomError{ErrorCode::ResponseParse,
-                              ErrorClass::Extraction,
-                              std::string("response is not valid JSON: ") + e.what()});
+                             ErrorClass::Extraction,
+                             std::string("response is not valid JSON: ") + e.what()});
         }
     }
 

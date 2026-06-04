@@ -33,7 +33,7 @@ public:
 
     /// Create or overwrite a secret.
     [[nodiscard]] virtual std::expected<void, ReqloomError> write(const std::string& name,
-                                                                   const std::string& value) = 0;
+                                                                  const std::string& value) = 0;
 
     /// Remove a secret. Succeeds (no-op) if the key is already absent.
     [[nodiscard]] virtual std::expected<void, ReqloomError> remove(const std::string& name) = 0;

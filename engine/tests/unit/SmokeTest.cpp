@@ -89,8 +89,8 @@ TEST(EngineSmoke, ReqloomErrorIsCarriedThroughExpected) {
     // to confirm the error-channel idiom compiles end-to-end.
     auto failingOperation = []() -> std::expected<int, ce::ReqloomError> {
         return std::unexpected(ce::ReqloomError{ce::ErrorCode::VarUnresolved,
-                                                 ce::ErrorClass::Resolution,
-                                                 "missing: order.order_id; last set by: never"});
+                                                ce::ErrorClass::Resolution,
+                                                "missing: order.order_id; last set by: never"});
     };
 
     auto result = failingOperation();

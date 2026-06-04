@@ -568,8 +568,8 @@ constexpr auto kHookTimeout = std::chrono::seconds(1);
 constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
 
 [[nodiscard]] std::expected<HookOutcome, ReqloomError> runScript(const std::string& script,
-                                                                  HookContext context,
-                                                                  bool includeResponse) {
+                                                                 HookContext context,
+                                                                 bool includeResponse) {
     JsRuntimePtr const rt{JS_NewRuntime()};
     if (!rt) {
         return std::unexpected(
@@ -682,8 +682,8 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
 
 }  // namespace
 
-std::expected<HookOutcome, ReqloomError> QuickJsHookRunner::runPreRequest(
-    const std::string& script, HookContext context) {
+std::expected<HookOutcome, ReqloomError> QuickJsHookRunner::runPreRequest(const std::string& script,
+                                                                          HookContext context) {
     return runScript(script, std::move(context), /*includeResponse=*/false);
 }
 

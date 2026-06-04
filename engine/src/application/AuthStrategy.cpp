@@ -73,14 +73,14 @@ public:
     explicit ChainAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         // nullptr here means a programming error in the engine, not a
         // user-triggerable condition.
         if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
             return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                                 ErrorClass::Auth,
-                                                 "auth: authenticator wired without dependencies"});
+                                                ErrorClass::Auth,
+                                                "auth: authenticator wired without dependencies"});
         }
 
         ActorSession session;
@@ -131,8 +131,8 @@ public:
             if (!response) {
                 return std::unexpected(
                     ReqloomError{ErrorCode::SessionRefreshFailed,
-                                  ErrorClass::Auth,
-                                  "auth: network error during step '" + step.id + "'"});
+                                 ErrorClass::Auth,
+                                 "auth: network error during step '" + step.id + "'"});
             }
 
             if (deps_.emit) {
@@ -158,21 +158,21 @@ public:
 
             if (step.expectStatus && response->status != *step.expectStatus) {
                 return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                                     ErrorClass::Auth,
-                                                     "auth: step '" + step.id + "' returned HTTP " +
-                                                         std::to_string(response->status) +
-                                                         " (expected " +
-                                                         std::to_string(*step.expectStatus) + ")"});
+                                                    ErrorClass::Auth,
+                                                    "auth: step '" + step.id + "' returned HTTP " +
+                                                        std::to_string(response->status) +
+                                                        " (expected " +
+                                                        std::to_string(*step.expectStatus) + ")"});
             }
 
             if (!response->body.empty() && !step.extractions.empty()) {
                 auto values = extractFromJson(response->body, step.extractions);
                 if (!values) {
                     return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                                         ErrorClass::Auth,
-                                                         "auth: extraction failed in step '" +
-                                                             step.id +
-                                                             "': " + values.error().detail});
+                                                        ErrorClass::Auth,
+                                                        "auth: extraction failed in step '" +
+                                                            step.id +
+                                                            "': " + values.error().detail});
                 }
                 for (auto& [k, v] : *values) {
                     session.variables[k] = std::move(v);
@@ -194,13 +194,13 @@ public:
     explicit BasicAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if (deps_.varResolver == nullptr) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: basic authenticator wired without resolver"});
+                             ErrorClass::Auth,
+                             "auth: basic authenticator wired without resolver"});
         }
 
         const auto userIt = actor.authConfig.find("username");
@@ -208,24 +208,24 @@ public:
         if (userIt == actor.authConfig.end() || passIt == actor.authConfig.end()) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: basic strategy requires `username` and `password` "
-                              "under actor.auth"});
+                             ErrorClass::Auth,
+                             "auth: basic strategy requires `username` and `password` "
+                             "under actor.auth"});
         }
 
         auto userResolved = deps_.varResolver->resolve(userIt->second, ctx, rctx);
         if (!userResolved.unresolved.empty()) {
             return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                                 ErrorClass::Auth,
-                                                 "auth: basic.username has unresolved variable: " +
-                                                     userResolved.unresolved.front()});
+                                                ErrorClass::Auth,
+                                                "auth: basic.username has unresolved variable: " +
+                                                    userResolved.unresolved.front()});
         }
         auto passResolved = deps_.varResolver->resolve(passIt->second, ctx, rctx);
         if (!passResolved.unresolved.empty()) {
             return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                                 ErrorClass::Auth,
-                                                 "auth: basic.password has unresolved variable: " +
-                                                     passResolved.unresolved.front()});
+                                                ErrorClass::Auth,
+                                                "auth: basic.password has unresolved variable: " +
+                                                    passResolved.unresolved.front()});
         }
 
         ActorSession session;
@@ -254,21 +254,21 @@ public:
     explicit ApiKeyAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if (deps_.varResolver == nullptr) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: api_key authenticator wired without resolver"});
+                             ErrorClass::Auth,
+                             "auth: api_key authenticator wired without resolver"});
         }
 
         const auto keyIt = actor.authConfig.find("key");
         if (keyIt == actor.authConfig.end()) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: api_key strategy requires `key` under actor.auth"});
+                             ErrorClass::Auth,
+                             "auth: api_key strategy requires `key` under actor.auth"});
         }
         const auto resolvedKey = deps_.varResolver->resolve(keyIt->second, ctx, rctx);
         if (!resolvedKey.unresolved.empty()) {
@@ -295,16 +295,16 @@ public:
             } else if (location == "cookie") {
                 return std::unexpected(
                     ReqloomError{ErrorCode::SessionRefreshFailed,
-                                  ErrorClass::Auth,
-                                  "auth: api_key location 'cookie' is not yet supported "
-                                  "(use a manual inject: header with Cookie: ...)"});
+                                 ErrorClass::Auth,
+                                 "auth: api_key location 'cookie' is not yet supported "
+                                 "(use a manual inject: header with Cookie: ...)"});
             } else {
                 return std::unexpected(
                     ReqloomError{ErrorCode::SessionRefreshFailed,
-                                  ErrorClass::Auth,
-                                  "auth: api_key.location must be 'header', 'query', "
-                                  "or 'cookie'; got: " +
-                                      location});
+                                 ErrorClass::Auth,
+                                 "auth: api_key.location must be 'header', 'query', "
+                                 "or 'cookie'; got: " +
+                                     location});
             }
         }
 
@@ -347,9 +347,9 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
                                         : response->body;
         return std::unexpected(
             ReqloomError{ErrorCode::SessionRefreshFailed,
-                          ErrorClass::Auth,
-                          "auth: " + std::string{strategyLabel} + " token endpoint returned HTTP " +
-                              std::to_string(response->status) + " — " + excerpt});
+                         ErrorClass::Auth,
+                         "auth: " + std::string{strategyLabel} + " token endpoint returned HTTP " +
+                             std::to_string(response->status) + " — " + excerpt});
     }
 
     // Parse the token response once and read every field from the single
@@ -396,36 +396,36 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
 /// Resolve `authConfig[fieldName]` through the variable resolver.
 /// Empty strings are treated as missing.
 std::expected<std::string, ReqloomError> resolveAuthConfigField(const Actor& actor,
-                                                                 const RunContext& ctx,
-                                                                 const ResolveContext& rctx,
-                                                                 VariableResolver& resolver,
-                                                                 std::string_view strategyLabel,
-                                                                 std::string_view fieldName) {
+                                                                const RunContext& ctx,
+                                                                const ResolveContext& rctx,
+                                                                VariableResolver& resolver,
+                                                                std::string_view strategyLabel,
+                                                                std::string_view fieldName) {
     const auto it = actor.authConfig.find(std::string{fieldName});
     if (it == actor.authConfig.end() || it->second.empty()) {
         return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                             ErrorClass::Auth,
-                                             "auth: " + std::string{strategyLabel} + " requires `" +
-                                                 std::string{fieldName} + "` under actor.auth"});
+                                            ErrorClass::Auth,
+                                            "auth: " + std::string{strategyLabel} + " requires `" +
+                                                std::string{fieldName} + "` under actor.auth"});
     }
     auto resolved = resolver.resolve(it->second, ctx, rctx);
     if (!resolved.unresolved.empty()) {
         return std::unexpected(
             ReqloomError{ErrorCode::SessionRefreshFailed,
-                          ErrorClass::Auth,
-                          "auth: " + std::string{strategyLabel} + "." + std::string{fieldName} +
-                              " has unresolved variable: " + resolved.unresolved.front()});
+                         ErrorClass::Auth,
+                         "auth: " + std::string{strategyLabel} + "." + std::string{fieldName} +
+                             " has unresolved variable: " + resolved.unresolved.front()});
     }
     return resolved.output;
 }
 
 /// Resolve an optional config field. Returns empty string when absent.
 std::expected<std::string, ReqloomError> resolveAuthConfigOptional(const Actor& actor,
-                                                                    const RunContext& ctx,
-                                                                    const ResolveContext& rctx,
-                                                                    VariableResolver& resolver,
-                                                                    std::string_view strategyLabel,
-                                                                    std::string_view fieldName) {
+                                                                   const RunContext& ctx,
+                                                                   const ResolveContext& rctx,
+                                                                   VariableResolver& resolver,
+                                                                   std::string_view strategyLabel,
+                                                                   std::string_view fieldName) {
     const auto it = actor.authConfig.find(std::string{fieldName});
     if (it == actor.authConfig.end() || it->second.empty()) {
         return std::string{};
@@ -434,9 +434,9 @@ std::expected<std::string, ReqloomError> resolveAuthConfigOptional(const Actor& 
     if (!resolved.unresolved.empty()) {
         return std::unexpected(
             ReqloomError{ErrorCode::SessionRefreshFailed,
-                          ErrorClass::Auth,
-                          "auth: " + std::string{strategyLabel} + "." + std::string{fieldName} +
-                              " has unresolved variable: " + resolved.unresolved.front()});
+                         ErrorClass::Auth,
+                         "auth: " + std::string{strategyLabel} + "." + std::string{fieldName} +
+                             " has unresolved variable: " + resolved.unresolved.front()});
     }
     return resolved.output;
 }
@@ -450,14 +450,14 @@ public:
     explicit OAuth2ClientCredentialsAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: oauth2_client_credentials authenticator wired "
-                              "without dependencies"});
+                             ErrorClass::Auth,
+                             "auth: oauth2_client_credentials authenticator wired "
+                             "without dependencies"});
         }
         constexpr std::string_view kLabel = "oauth2_client_credentials";
 
@@ -508,14 +508,13 @@ public:
     explicit OAuth2PasswordAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
-            return std::unexpected(
-                ReqloomError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: oauth2_password authenticator wired without "
-                              "dependencies"});
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "auth: oauth2_password authenticator wired without "
+                                                "dependencies"});
         }
         constexpr std::string_view kLabel = "oauth2_password";
 
@@ -578,13 +577,13 @@ public:
     explicit OAuth1Authenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if (deps_.varResolver == nullptr) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: oauth1 authenticator wired without resolver"});
+                             ErrorClass::Auth,
+                             "auth: oauth1 authenticator wired without resolver"});
         }
         constexpr std::string_view kLabel = "oauth1";
 
@@ -619,9 +618,9 @@ public:
         if (token->empty() != tokenSecret->empty()) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: oauth1 requires `token` and `token_secret` to be "
-                              "set together (or both omitted for two-legged signing)"});
+                             ErrorClass::Auth,
+                             "auth: oauth1 requires `token` and `token_secret` to be "
+                             "set together (or both omitted for two-legged signing)"});
         }
 
         ActorSession session;
@@ -659,13 +658,13 @@ public:
     explicit AwsSigV4Authenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
     std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if (deps_.varResolver == nullptr) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: aws_sigv4 authenticator wired without resolver"});
+                             ErrorClass::Auth,
+                             "auth: aws_sigv4 authenticator wired without resolver"});
         }
         constexpr std::string_view kLabel = "aws_sigv4";
 
@@ -790,8 +789,8 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     auto response = deps.http->send(req);
     if (!response) {
         return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                             ErrorClass::Auth,
-                                             "refresh: network error: " + response.error().detail});
+                                            ErrorClass::Auth,
+                                            "refresh: network error: " + response.error().detail});
     }
 
     if (deps.emit) {
@@ -846,8 +845,8 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     if (!values) {
         return std::unexpected(
             ReqloomError{ErrorCode::SessionRefreshFailed,
-                          ErrorClass::Auth,
-                          "refresh: extraction failed: " + values.error().detail});
+                         ErrorClass::Auth,
+                         "refresh: extraction failed: " + values.error().detail});
     }
     return std::move(*values);
 }

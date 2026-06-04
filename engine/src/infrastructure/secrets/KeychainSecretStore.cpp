@@ -85,15 +85,15 @@ std::expected<std::optional<std::string>, ReqloomError> KeychainSecretStore::rea
 }
 
 std::expected<void, ReqloomError> KeychainSecretStore::write(const std::string& name,
-                                                              const std::string& value) {
+                                                             const std::string& value) {
     QKeychain::WritePasswordJob job{QString::fromUtf8(kKeychainService)};
     job.setAutoDelete(false);
     job.setKey(toQt(name));
     job.setTextData(toQt(value));
     if (!runJobBlocking(job)) {
         return std::unexpected(ReqloomError{ErrorCode::SecretAccessFailed,
-                                             ErrorClass::Auth,
-                                             "keychain write requires a running QCoreApplication"});
+                                            ErrorClass::Auth,
+                                            "keychain write requires a running QCoreApplication"});
     }
 
     if (job.error() != QKeychain::NoError) {
@@ -108,10 +108,9 @@ std::expected<void, ReqloomError> KeychainSecretStore::remove(const std::string&
     job.setAutoDelete(false);
     job.setKey(toQt(name));
     if (!runJobBlocking(job)) {
-        return std::unexpected(
-            ReqloomError{ErrorCode::SecretAccessFailed,
-                          ErrorClass::Auth,
-                          "keychain delete requires a running QCoreApplication"});
+        return std::unexpected(ReqloomError{ErrorCode::SecretAccessFailed,
+                                            ErrorClass::Auth,
+                                            "keychain delete requires a running QCoreApplication"});
     }
 
     // A missing entry is not an error for remove() — the post-condition
@@ -142,7 +141,7 @@ std::expected<std::optional<std::string>, ReqloomError> KeychainSecretStore::rea
 }
 
 std::expected<void, ReqloomError> KeychainSecretStore::write(const std::string& /*name*/,
-                                                              const std::string& /*value*/) {
+                                                             const std::string& /*value*/) {
     return {};
 }
 

@@ -14,10 +14,10 @@ public:
     ~QuickJsHookRunner() override;
 
     std::expected<HookOutcome, ReqloomError> runPreRequest(const std::string& script,
-                                                            HookContext context) override;
+                                                           HookContext context) override;
 
     std::expected<HookOutcome, ReqloomError> runPostResponse(const std::string& script,
-                                                              HookContext context) override;
+                                                             HookContext context) override;
 };
 
 }  // namespace reqloom::engine

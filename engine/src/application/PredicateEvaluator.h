@@ -113,8 +113,8 @@ public:
 
     /// Convenience: parse and evaluate in one shot.
     [[nodiscard]] std::expected<PredicateValue, ReqloomError> eval(std::string_view expression,
-                                                                    std::string_view jsonBody,
-                                                                    int statusCode = 0) const;
+                                                                   std::string_view jsonBody,
+                                                                   int statusCode = 0) const;
 };
 
 }  // namespace reqloom::engine

@@ -321,7 +321,7 @@ TransportConfig parseTransport(const YAML::Node& node) {
 // canonicalised via weakly_canonical against baseDir and rejected if outside
 // root. File size capped at 1 MiB.
 [[nodiscard]] std::expected<std::string, ReqloomError> resolveHookScript(const std::string& value,
-                                                                          const fs::path& baseDir) {
+                                                                         const fs::path& baseDir) {
     if (value.empty()) {
         return value;
     }
@@ -367,8 +367,8 @@ TransportConfig parseTransport(const YAML::Node& node) {
     if (raw.is_absolute() || hasRootedPrefix(value)) {
         return std::unexpected(
             ReqloomError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script path must be relative to the project root: " + value});
+                         ErrorClass::Schema,
+                         "hook script path must be relative to the project root: " + value});
     }
 
     std::error_code ec;
@@ -388,8 +388,8 @@ TransportConfig parseTransport(const YAML::Node& node) {
     if (ec) {
         return std::unexpected(
             ReqloomError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "could not canonicalise project root: " + ec.message()});
+                         ErrorClass::Schema,
+                         "could not canonicalise project root: " + ec.message()});
     }
     {
         const auto canonStr = canonical.lexically_normal().string();
@@ -401,51 +401,51 @@ TransportConfig parseTransport(const YAML::Node& node) {
         if (!contained) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "hook script path escapes the project root: " + value});
+                             ErrorClass::Schema,
+                             "hook script path escapes the project root: " + value});
         }
     }
 
     if (!fs::exists(canonical, ec) || ec) {
         return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
-                                             ErrorClass::Schema,
-                                             "hook script not found: " + canonical.string()});
+                                            ErrorClass::Schema,
+                                            "hook script not found: " + canonical.string()});
     }
     if (!fs::is_regular_file(canonical, ec) || ec) {
         return std::unexpected(
             ReqloomError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script is not a regular file: " + canonical.string()});
+                         ErrorClass::Schema,
+                         "hook script is not a regular file: " + canonical.string()});
     }
 
     constexpr std::uintmax_t kMaxHookBytes = std::uintmax_t{1} * 1024 * 1024;  // 1 MiB
     const auto size = fs::file_size(canonical, ec);
     if (ec) {
-        return std::unexpected(ReqloomError{
-            ErrorCode::SchemaInvalid,
-            ErrorClass::Schema,
-            "could not stat hook script " + canonical.string() + ": " + ec.message()});
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "could not stat hook script " + canonical.string() + ": " + ec.message()});
     }
     if (size > kMaxHookBytes) {
         return std::unexpected(
             ReqloomError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script exceeds 1 MiB cap: " + canonical.string()});
+                         ErrorClass::Schema,
+                         "hook script exceeds 1 MiB cap: " + canonical.string()});
     }
 
     std::ifstream in(canonical, std::ios::binary);
     if (!in) {
         return std::unexpected(
             ReqloomError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script could not be opened: " + canonical.string()});
+                         ErrorClass::Schema,
+                         "hook script could not be opened: " + canonical.string()});
     }
     std::string contents(static_cast<std::size_t>(size), '\0');
     in.read(contents.data(), static_cast<std::streamsize>(size));
     if (in.gcount() != static_cast<std::streamsize>(size)) {
         return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
-                                             ErrorClass::Schema,
-                                             "hook script read truncated: " + canonical.string()});
+                                            ErrorClass::Schema,
+                                            "hook script read truncated: " + canonical.string()});
     }
     return contents;
 }
@@ -606,8 +606,8 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
 // ─── Resource/Operation parsing ──────────────────────────────────────────────
 
 std::expected<Resource, ReqloomError> parseResource(const std::string& resourceId,
-                                                     const YAML::Node& node,
-                                                     const fs::path& baseDir) {
+                                                    const YAML::Node& node,
+                                                    const fs::path& baseDir) {
     Resource resource;
     resource.id = ResourceId{resourceId};
     resource.description = node["description"].as<std::string>("");
@@ -755,13 +755,13 @@ constexpr std::uintmax_t kMaxYamlBytes = std::uintmax_t{8} * 1024 * 1024;
     if (ec) {
         return std::unexpected(
             ReqloomError{ErrorCode::YamlParse,
-                          ErrorClass::Schema,
-                          "could not stat schema file " + file.string() + ": " + ec.message()});
+                         ErrorClass::Schema,
+                         "could not stat schema file " + file.string() + ": " + ec.message()});
     }
     if (size > kMaxYamlBytes) {
         return std::unexpected(ReqloomError{ErrorCode::YamlParse,
-                                             ErrorClass::Schema,
-                                             "schema file exceeds 8 MiB cap: " + file.string()});
+                                            ErrorClass::Schema,
+                                            "schema file exceeds 8 MiB cap: " + file.string()});
     }
     try {
         return YAML::LoadFile(file.string());
@@ -828,9 +828,9 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         if (version < 1 || version > 3) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SchemaVersion,
-                              ErrorClass::Schema,
-                              "Unsupported schema version " + std::to_string(version) +
-                                  " (supported: 1–3). Run `reqloom migrate` to upgrade."});
+                             ErrorClass::Schema,
+                             "Unsupported schema version " + std::to_string(version) +
+                                 " (supported: 1–3). Run `reqloom migrate` to upgrade."});
         }
 
         Project project;
