@@ -10,7 +10,7 @@
 #include <map>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 // ─── isSensitiveHeader: name classification ─────────────────────────────────
 

@@ -12,7 +12,7 @@ class QLabel;
 class QTreeWidget;
 class QTreeWidgetItem;
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 class TimelinePanel : public QWidget {
     Q_OBJECT
@@ -61,4 +61,4 @@ private:
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

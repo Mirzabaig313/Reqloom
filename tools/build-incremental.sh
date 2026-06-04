@@ -5,7 +5,7 @@
 # Defensive incremental build: skips cleanly if the project has never been
 # configured, so a fresh checkout doesn't spew errors on every save.
 #
-# Picks the matching preset for the current OS. Override with $CHAINAPI_PRESET.
+# Picks the matching preset for the current OS. Override with $REQLOOM_PRESET.
 
 set -uo pipefail
 
@@ -20,7 +20,7 @@ case "$(uname -s)" in
   *)       default_preset="macos-debug" ;;
 esac
 
-preset="${CHAINAPI_PRESET:-$default_preset}"
+preset="${REQLOOM_PRESET:-$default_preset}"
 build_dir="build/$preset"
 
 if [[ ! -d "$build_dir" ]]; then

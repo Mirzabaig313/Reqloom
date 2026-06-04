@@ -8,13 +8,13 @@
 validation/
 ├── README.md                       # This file
 ├── github/                         # Validation against GitHub REST API
-│   ├── chainapi.yaml
+│   ├── reqloom.yaml
 │   └── findings.md
 ├── stripe/                         # Validation against Stripe API
-│   ├── chainapi.yaml
+│   ├── reqloom.yaml
 │   └── findings.md
 ├── discourse/                      # Validation against Discourse API
-│   ├── chainapi.yaml
+│   ├── reqloom.yaml
 │   └── findings.md
 ├── llm-feasibility/                # User-executed: LLM importer feasibility test
 │   ├── README.md

@@ -18,7 +18,7 @@
 #include <QtWidgets/QTableWidgetItem>
 #include <QtWidgets/QVBoxLayout>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
@@ -215,4 +215,4 @@ void SecretsDialog::onClearSelected() {
     refresh();
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

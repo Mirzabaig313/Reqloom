@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/Operation.h>
 #include <chrono>
 #include <cstdint>
 #include <map>
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// How an actor authenticates.
 ///   - `simple`/`chain`:              HTTP-based login flow (one or more steps)
@@ -88,4 +88,4 @@ struct Actor {
     ActorInjection inject;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

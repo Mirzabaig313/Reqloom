@@ -7,7 +7,7 @@ operations:
     actor: user
     depends_on: [repo.create_user_repo]
     body:
-      title: "ChainAPI validation issue"
+      title: "Reqloom validation issue"
       body: "Filed by validation suite"
       labels: ["validation"]
     expect_status: 201
@@ -21,7 +21,7 @@ operations:
     actor: user
     depends_on: [issue.create]
     body:
-      body: "Comment from ChainAPI"
+      body: "Comment from Reqloom"
     expect_status: 201
     extract:
       comment_id: $.id

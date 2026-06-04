@@ -2,9 +2,9 @@
 // the wiring keeps view models free of dependency-injection logic.
 #include "Bootstrapper.h"
 
-#include <chainapi/engine/Factories.h>
+#include <reqloom/engine/Factories.h>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 Bootstrapper::Bootstrapper()
     : engine_(std::make_unique<engine::ExecutionEngine>(engine::makeDefaultDependencies())) {}
@@ -15,4 +15,4 @@ engine::ExecutionEngine& Bootstrapper::engine() noexcept {
     return *engine_;
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

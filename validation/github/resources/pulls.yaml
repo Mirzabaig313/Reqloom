@@ -7,10 +7,10 @@ operations:
     actor: user
     depends_on: [content.create_file]
     body:
-      title: "ChainAPI validation PR"
+      title: "Reqloom validation PR"
       head: "{{branch.branch_ref}}"
       base: "{{repo.default_branch}}"
-      body: "Validating ChainAPI schema against GitHub REST API"
+      body: "Validating Reqloom schema against GitHub REST API"
     expect_status: 201
     extract:
       pull_number: $.number

@@ -8,7 +8,7 @@
 // engine — which is the marshalling discipline AGENTS.md requires.
 #pragma once
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <QtCore/QFutureWatcher>
 #include <QtCore/QObject>
@@ -20,7 +20,7 @@
 #include <atomic>
 #include <cstdint>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 class ProjectModel;
 
@@ -153,4 +153,4 @@ private:
     std::shared_ptr<std::atomic_bool> alive_{std::make_shared<std::atomic_bool>(true)};
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

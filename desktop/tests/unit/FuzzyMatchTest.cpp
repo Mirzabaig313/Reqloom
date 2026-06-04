@@ -4,7 +4,7 @@
 
 #include <gtest/gtest.h>
 
-namespace chainapi::desktop::widgets::fuzzy::tests {
+namespace reqloom::desktop::widgets::fuzzy::tests {
 
 TEST(FuzzyMatch, empty_query_matches_anything) {
     EXPECT_TRUE(matches(QString{}, QStringLiteral("order.create")));
@@ -43,4 +43,4 @@ TEST(FuzzyMatch, word_boundary_after_dot_outranks_mid_word) {
     EXPECT_GT(boundary, midword);
 }
 
-}  // namespace chainapi::desktop::widgets::fuzzy::tests
+}  // namespace reqloom::desktop::widgets::fuzzy::tests

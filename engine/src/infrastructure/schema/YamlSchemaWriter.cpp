@@ -1,4 +1,4 @@
-// YamlSchemaWriter — writes Project to chainapi.yaml.
+// YamlSchemaWriter — writes Project to reqloom.yaml.
 #include "YamlSchemaWriter.h"
 
 #include "../../domain/Codecs.h"
@@ -16,7 +16,7 @@
 
 namespace fs = std::filesystem;
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -70,11 +70,11 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
 
 // ─── Atomic write helper ─────────────────────────────────────────────────────
 
-std::expected<void, ChainApiError> writeAtomic(const fs::path& target, const std::string& content) {
+std::expected<void, ReqloomError> writeAtomic(const fs::path& target, const std::string& content) {
     std::error_code ec;
     fs::create_directories(target.parent_path(), ec);
     if (ec) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid,
             ErrorClass::Schema,
             "writer: cannot create dir " + target.parent_path().string() + ": " + ec.message()});
@@ -85,14 +85,14 @@ std::expected<void, ChainApiError> writeAtomic(const fs::path& target, const std
     {
         std::ofstream out{temp, std::ios::binary | std::ios::trunc};
         if (!out) {
-            return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+            return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
                                                  ErrorClass::Schema,
                                                  "writer: cannot open temp file " + temp.string()});
         }
         out << content;
         if (!out) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SchemaInvalid,
+                ReqloomError{ErrorCode::SchemaInvalid,
                               ErrorClass::Schema,
                               "writer: failed writing temp file " + temp.string()});
         }
@@ -102,7 +102,7 @@ std::expected<void, ChainApiError> writeAtomic(const fs::path& target, const std
     if (ec) {
         std::error_code _;
         fs::remove(temp, _);
-        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
                                              ErrorClass::Schema,
                                              "writer: cannot rename " + temp.string() + " → " +
                                                  target.string() + ": " + ec.message()});
@@ -444,12 +444,12 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
                                           bool overwrite) {
     std::error_code ec;
     if (fs::exists(targetDir) && !overwrite) {
-        // Only fail if chainapi.yaml is already there — the directory
+        // Only fail if reqloom.yaml is already there — the directory
         // existing alone is fine (lets the writer slot into an existing project).
-        if (fs::exists(targetDir / "chainapi.yaml")) {
-            return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
+        if (fs::exists(targetDir / "reqloom.yaml")) {
+            return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
                                                  ErrorClass::Schema,
-                                                 "writer: chainapi.yaml exists in " +
+                                                 "writer: reqloom.yaml exists in " +
                                                      targetDir.string() +
                                                      " (pass overwrite=true to replace)"});
         }
@@ -457,12 +457,12 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
     fs::create_directories(targetDir, ec);
     if (ec) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
+            ReqloomError{ErrorCode::SchemaInvalid,
                           ErrorClass::Schema,
                           "writer: cannot create " + targetDir.string() + ": " + ec.message()});
     }
 
-    if (auto r = writeAtomic(targetDir / "chainapi.yaml", emitRoot(project)); !r) {
+    if (auto r = writeAtomic(targetDir / "reqloom.yaml", emitRoot(project)); !r) {
         return std::unexpected(r.error());
     }
 
@@ -491,7 +491,7 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
         }
     }
 
-    return targetDir / "chainapi.yaml";
+    return targetDir / "reqloom.yaml";
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

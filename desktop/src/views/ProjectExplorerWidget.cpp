@@ -13,7 +13,7 @@
 #include <QtWidgets/QTreeWidgetItem>
 #include <QtWidgets/QVBoxLayout>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
@@ -188,4 +188,4 @@ void ProjectExplorerWidget::applyFilter(const QString& text) {
     }
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

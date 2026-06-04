@@ -5,7 +5,7 @@
 
 #include "../theming/Theme.h"
 
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/Operation.h>
 
 #include <QtWidgets/QWidget>
 
@@ -13,7 +13,7 @@ class QLineEdit;
 class QTreeWidget;
 class QTreeWidgetItem;
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace widgets {
 class PanelHeader;
@@ -58,4 +58,4 @@ private:
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

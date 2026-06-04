@@ -1,5 +1,5 @@
 // Factories — concrete-implementation factory entry points.
-#include <chainapi/engine/Factories.h>
+#include <reqloom/engine/Factories.h>
 
 #include "ImportFromOpenApi.h"
 
@@ -20,7 +20,7 @@
 #include "../infrastructure/storage/SqliteHistoryStore.h"
 #include "../infrastructure/typings/StaticHookTypingsEmitter.h"
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 // Dependencies special members (out-of-line for incomplete-type users)
 
@@ -82,28 +82,28 @@ ExecutionEngine::Dependencies makeDefaultDependencies() {
     };
 }
 
-std::expected<Project, ChainApiError> parseProject(const std::filesystem::path& chainapiYaml) {
+std::expected<Project, ReqloomError> parseProject(const std::filesystem::path& reqloomYaml) {
     YamlSchemaParser parser;
-    return parser.parse(chainapiYaml);
+    return parser.parse(reqloomYaml);
 }
 
 std::vector<std::string> collectSecretReferences(const Project& project) {
     return DependencyResolver::collectSecretReferences(project);
 }
 
-std::expected<std::filesystem::path, ChainApiError> writeProject(
+std::expected<std::filesystem::path, ReqloomError> writeProject(
     const std::filesystem::path& targetDir, const Project& project, bool overwrite) {
     YamlSchemaWriter writer;
     return writer.write(targetDir, project, overwrite);
 }
 
-std::expected<std::filesystem::path, ChainApiError> emitHookTypings(
+std::expected<std::filesystem::path, ReqloomError> emitHookTypings(
     const std::filesystem::path& targetDir, const Project& project, bool overwrite) {
     StaticHookTypingsEmitter emitter;
     return emitter.emit(targetDir, project, overwrite);
 }
 
-std::expected<OpenApiImportOutcome, ChainApiError> importFromOpenApi(
+std::expected<OpenApiImportOutcome, ReqloomError> importFromOpenApi(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
     ImportFromOpenApi const importer;
     auto inner = importer.run(spec, projectRoot);
@@ -113,4 +113,4 @@ std::expected<OpenApiImportOutcome, ChainApiError> importFromOpenApi(
     return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

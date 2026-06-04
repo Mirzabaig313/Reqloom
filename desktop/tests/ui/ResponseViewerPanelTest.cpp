@@ -16,7 +16,7 @@
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 
-namespace chainapi::desktop::tests {
+namespace reqloom::desktop::tests {
 
 namespace {
 
@@ -163,7 +163,7 @@ TEST(ResponseViewerPanel, reset_clears_a_previously_rendered_body) {
     EXPECT_EQ(findRow(bodyTree(panel), QStringLiteral("id")), nullptr);
 }
 
-}  // namespace chainapi::desktop::tests
+}  // namespace reqloom::desktop::tests
 
 int main(int argc, char** argv) {
     // Force the offscreen QPA platform before constructing QApplication.
@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
     }
     QApplication app(argc, argv);
-    chainapi::desktop::tests::g_app = &app;
+    reqloom::desktop::tests::g_app = &app;
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

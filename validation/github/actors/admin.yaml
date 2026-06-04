@@ -2,7 +2,7 @@
 #
 # Demonstrates that two actors can share an auth strategy but differ in
 # credentials. This pattern is what powers multi-role testing and is the
-# core ChainAPI value prop.
+# core Reqloom value prop.
 name: admin
 description: GitHub org admin (PAT with admin:org scope)
 

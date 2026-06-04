@@ -8,7 +8,7 @@
 
 #include "../theming/Theme.h"
 
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/Operation.h>
 
 #include <QtWidgets/QWidget>
 
@@ -23,7 +23,7 @@ class QSpinBox;
 class QStackedWidget;
 class QTabWidget;
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 class ProjectModel;
 struct RequestOverride;
@@ -137,4 +137,4 @@ private:
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

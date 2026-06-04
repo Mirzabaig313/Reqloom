@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: "Install ChainAPI on macOS, Linux, or Windows. Or build from source."
+description: "Install Reqloom on macOS, Linux, or Windows. Or build from source."
 ---
 
 import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
@@ -27,14 +27,14 @@ prerequisites are in place.
         echo 'export VCPKG_ROOT="$HOME/vcpkg"' >> ~/.zshrc
         exec zsh
 
-        # 3. ChainAPI
-        git clone https://github.com/chainapi/chainapi
-        cd chainapi
+        # 3. Reqloom
+        git clone https://github.com/reqloom/reqloom
+        cd reqloom
         cmake --preset macos-debug
         cmake --build --preset macos-debug
 
         # 4. Run
-        ./build/macos-debug/cli/chainapi --help
+        ./build/macos-debug/cli/reqloom --help
         ```
     </TabItem>
     <TabItem label="Linux (Ubuntu 24.04)">
@@ -49,14 +49,14 @@ prerequisites are in place.
         ~/vcpkg/bootstrap-vcpkg.sh
         export VCPKG_ROOT="$HOME/vcpkg"
 
-        # 3. ChainAPI
-        git clone https://github.com/chainapi/chainapi
-        cd chainapi
+        # 3. Reqloom
+        git clone https://github.com/reqloom/reqloom
+        cd reqloom
         cmake --preset linux-debug
         cmake --build --preset linux-debug
 
         # 4. Run
-        ./build/linux-debug/cli/chainapi --help
+        ./build/linux-debug/cli/reqloom --help
         ```
     </TabItem>
     <TabItem label="Windows">
@@ -70,14 +70,14 @@ prerequisites are in place.
         $HOME\vcpkg\bootstrap-vcpkg.bat
         $env:VCPKG_ROOT = "$HOME\vcpkg"
 
-        # 3. ChainAPI
-        git clone https://github.com/chainapi/chainapi
-        cd chainapi
+        # 3. Reqloom
+        git clone https://github.com/reqloom/reqloom
+        cd reqloom
         cmake --preset windows-debug
         cmake --build --preset windows-debug
 
         # 4. Run
-        .\build\windows-debug\cli\chainapi.exe --help
+        .\build\windows-debug\cli\reqloom.exe --help
         ```
     </TabItem>
 </Tabs>
@@ -85,14 +85,14 @@ prerequisites are in place.
 ## Verify the install
 
 ```bash
-chainapi --help
-# ChainAPI CLI
-#   chainapi run <operation>      Execute a chain ending at <operation>
-#   chainapi lint                 Validate the schema in current project
-#   chainapi import <file>        Import an external API spec
-#   chainapi --help               Show this message
+reqloom --help
+# Reqloom CLI
+#   reqloom run <operation>      Execute a chain ending at <operation>
+#   reqloom lint                 Validate the schema in current project
+#   reqloom import <file>        Import an external API spec
+#   reqloom --help               Show this message
 
-chainapi lint --project samples/marketplace
+reqloom lint --project samples/marketplace
 # LINT OK — 3 actors, 5 resources, 27 operations. No errors.
 ```
 
@@ -102,11 +102,11 @@ If both commands work, you're set up. Take the [5-minute tour](/start/tour/) nex
 
 The build produces three binaries:
 
-- **`chainapi`** (CLI) — the daily-driver command-line tool. Used in
+- **`reqloom`** (CLI) — the daily-driver command-line tool. Used in
   shell scripts, CI/CD, and the bulk of this documentation's examples.
-- **`ChainAPI.app`** (macOS) / `ChainAPI` (Linux/Windows) — the desktop
+- **`Reqloom.app`** (macOS) / `Reqloom` (Linux/Windows) — the desktop
   app. Phase 2 milestone; UI is still minimal.
-- **`chainapi-mock-sut`** — the test-fixture HTTP server used by the
+- **`reqloom-mock-sut`** — the test-fixture HTTP server used by the
   engine's integration tests. Not part of the daily workflow.
 
 ## Troubleshooting
@@ -138,14 +138,14 @@ the macOS presets).
 
 ### Build succeeds but the binary fails to start
 
-Most likely a Qt deployment issue. Try `otool -L build/macos-debug/cli/chainapi`
-(macOS) or `ldd build/linux-debug/cli/chainapi` (Linux) to see which
+Most likely a Qt deployment issue. Try `otool -L build/macos-debug/cli/reqloom`
+(macOS) or `ldd build/linux-debug/cli/reqloom` (Linux) to see which
 shared libraries are missing.
 
 ## Updating
 
 ```bash
-cd chainapi
+cd reqloom
 git pull
 cmake --build --preset macos-debug
 ```

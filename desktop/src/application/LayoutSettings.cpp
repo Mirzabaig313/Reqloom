@@ -4,7 +4,7 @@
 #include <QtCore/QSettings>
 #include <QtCore/QVariant>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
@@ -63,4 +63,4 @@ Density LayoutSettings::loadDensity(QSettings& settings) {
     return value == QStringLiteral("compact") ? Density::Compact : Density::Comfortable;
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

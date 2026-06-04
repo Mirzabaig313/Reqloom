@@ -15,7 +15,7 @@
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -25,14 +25,14 @@
 #include <utility>
 #include <vector>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 
 /// Records each outbound request and replays a canned 200 response.
 class CapturingHttpClient final : public ce::HttpClient {
 public:
-    std::expected<ce::HttpResponse, ce::ChainApiError> send(const ce::HttpRequest& req) override {
+    std::expected<ce::HttpResponse, ce::ReqloomError> send(const ce::HttpRequest& req) override {
         requests_.push_back(req);
         ce::HttpResponse resp;
         resp.status = 200;
@@ -55,10 +55,10 @@ public:
     void put(std::string name, std::string value) { values_[std::move(name)] = std::move(value); }
     void failOn(std::string name) { failKey_ = std::move(name); }
 
-    std::expected<std::optional<std::string>, ce::ChainApiError> read(
+    std::expected<std::optional<std::string>, ce::ReqloomError> read(
         const std::string& name) override {
         if (name == failKey_) {
-            return std::unexpected(ce::ChainApiError{
+            return std::unexpected(ce::ReqloomError{
                 ce::ErrorCode::SecretAccessFailed, ce::ErrorClass::Auth, "fake backend failure"});
         }
         if (auto it = values_.find(name); it != values_.end()) {
@@ -67,13 +67,13 @@ public:
         return std::optional<std::string>{};
     }
 
-    std::expected<void, ce::ChainApiError> write(const std::string& name,
+    std::expected<void, ce::ReqloomError> write(const std::string& name,
                                                  const std::string& value) override {
         values_[name] = value;
         return {};
     }
 
-    std::expected<void, ce::ChainApiError> remove(const std::string& name) override {
+    std::expected<void, ce::ReqloomError> remove(const std::string& name) override {
         values_.erase(name);
         return {};
     }

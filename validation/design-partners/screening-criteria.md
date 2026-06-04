@@ -8,7 +8,7 @@
 |---|---|---|
 | 1 | **Backend or full-stack engineer** with 2+ years professional experience | The MVP is built around their workflow. Frontend-only devs are not the audience. |
 | 2 | **Currently uses an HTTP client** (Postman, Bruno, Insomnia, ThunderClient, curl + scripts) regularly — daily or near-daily | If they don't have the pain, they can't validate the cure. |
-| 3 | **Works on a multi-actor / multi-role API** (admin + user, vendor + customer, multi-tenant SaaS, B2B platform) | This is the core wedge. Single-actor APIs don't surface the pain ChainAPI solves. |
+| 3 | **Works on a multi-actor / multi-role API** (admin + user, vendor + customer, multi-tenant SaaS, B2B platform) | This is the core wedge. Single-actor APIs don't surface the pain Reqloom solves. |
 | 4 | **Has 50+ requests in their current Postman/Bruno/Insomnia workspace** | Validates that their workflow is mature enough that organization is a real problem. |
 
 A candidate is **qualified** if they meet ≥ 3 of these. Mark borderline candidates and prefer the clearer fits when scheduling.

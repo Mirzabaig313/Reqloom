@@ -9,7 +9,7 @@
 #include <map>
 #include <string>
 
-namespace chainapi::desktop::widgets::tests {
+namespace reqloom::desktop::widgets::tests {
 
 TEST(KeyValueEditor, round_trips_pairs_to_map) {
     KeyValueEditor editor;
@@ -74,4 +74,4 @@ TEST(KeyValueEditor, keeps_one_trailing_blank_row_for_auto_grow) {
     EXPECT_EQ(editor.toStdMap().size(), 2u);
 }
 
-}  // namespace chainapi::desktop::widgets::tests
+}  // namespace reqloom::desktop::widgets::tests

@@ -1,11 +1,11 @@
 // Resource — a domain entity exposed via API.
 #pragma once
 
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/Operation.h>
 #include <map>
 #include <string>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 struct Resource {
     ResourceId id;
@@ -16,4 +16,4 @@ struct Resource {
     std::map<std::string, Operation> operations;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

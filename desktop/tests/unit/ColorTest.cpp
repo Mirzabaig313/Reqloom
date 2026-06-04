@@ -8,7 +8,7 @@
 
 #include <algorithm>
 
-namespace chainapi::desktop::theming::tests {
+namespace reqloom::desktop::theming::tests {
 
 namespace {
 
@@ -68,4 +68,4 @@ TEST(Color, out_of_gamut_is_clamped_not_garbage) {
     EXPECT_LE(c.blue(), 255);
 }
 
-}  // namespace chainapi::desktop::theming::tests
+}  // namespace reqloom::desktop::theming::tests

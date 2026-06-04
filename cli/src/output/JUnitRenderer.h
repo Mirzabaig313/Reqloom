@@ -1,4 +1,4 @@
-// JUnit XML renderer for `chainapi run --format junit`.
+// JUnit XML renderer for `reqloom run --format junit`.
 //
 // Output mirrors the surface JUnit consumers (Jenkins, GitLab, Buildkite)
 // expect: one `<testsuites>` wrapping one `<testsuite>` per chain, with
@@ -10,12 +10,12 @@
 
 #pragma once
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <ostream>
 #include <string_view>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 class JUnitRenderer {
 public:
@@ -29,4 +29,4 @@ private:
     std::ostream& out_;
 };
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

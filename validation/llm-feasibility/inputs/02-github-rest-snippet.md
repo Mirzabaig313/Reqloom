@@ -1,6 +1,6 @@
 # GitHub REST API — Repositories (Markdown snippet)
 
-> Adapted from publicly documented GitHub REST API endpoints. Used for ChainAPI LLM feasibility testing only.
+> Adapted from publicly documented GitHub REST API endpoints. Used for Reqloom LLM feasibility testing only.
 
 ## Authentication
 

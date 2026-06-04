@@ -1,6 +1,6 @@
 # Stage 1 — Discover
 
-You are reading API documentation. Your only job is to produce a structured digest. Do NOT generate ChainAPI YAML in this stage. Do NOT invent detail.
+You are reading API documentation. Your only job is to produce a structured digest. Do NOT generate Reqloom YAML in this stage. Do NOT invent detail.
 
 ## Output format
 

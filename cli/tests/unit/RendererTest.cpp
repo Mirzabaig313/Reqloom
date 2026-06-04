@@ -8,15 +8,15 @@
 #include "output/JsonRenderer.h"
 #include "output/TextRenderer.h"
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <sstream>
 
-namespace ce = chainapi::engine;
-namespace cli = chainapi::cli;
+namespace ce = reqloom::engine;
+namespace cli = reqloom::cli;
 
 namespace {
 
@@ -232,7 +232,7 @@ TEST(JUnitRenderer, emits_one_testcase_per_op_with_correct_attributes) {
     EXPECT_NE(xml.find("failures=\"0\""), std::string::npos);
     EXPECT_NE(xml.find("name=\"actor.login\""), std::string::npos);
     EXPECT_NE(xml.find("name=\"order.create\""), std::string::npos);
-    EXPECT_NE(xml.find("chainapi.target"), std::string::npos);
+    EXPECT_NE(xml.find("reqloom.target"), std::string::npos);
 }
 
 TEST(JUnitRenderer, marks_failed_step_as_failure_and_blocked_step_as_error) {

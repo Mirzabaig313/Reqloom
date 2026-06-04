@@ -6,7 +6,7 @@
 #include <QtGui/QStyleHints>
 #include <QtWidgets/QApplication>
 
-namespace chainapi::desktop::theming {
+namespace reqloom::desktop::theming {
 
 namespace {
 
@@ -90,4 +90,4 @@ void ThemeManager::apply() {
     emit themeChanged(theme_);
 }
 
-}  // namespace chainapi::desktop::theming
+}  // namespace reqloom::desktop::theming

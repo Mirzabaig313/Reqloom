@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -198,7 +198,7 @@ bool VerificationReport::noFailures() const noexcept {
 
 Verifier::Verifier() = default;
 
-std::expected<VerificationReport, ChainApiError> Verifier::verify(
+std::expected<VerificationReport, ReqloomError> Verifier::verify(
     const Operation& op, const SampleResponse& sample) const {
     VerificationReport report;
     report.extractions.reserve(op.extractions.size());
@@ -282,4 +282,4 @@ VerificationReport Verifier::verifyWithoutSample(const Operation& op) const {
     return report;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

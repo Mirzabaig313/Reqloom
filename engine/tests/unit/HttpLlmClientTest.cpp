@@ -13,7 +13,7 @@
 #include <queue>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 
@@ -27,7 +27,7 @@ public:
         responses_.push(std::move(r));
     }
 
-    void enqueueError(ce::ChainApiError err) {
+    void enqueueError(ce::ReqloomError err) {
         Response r;
         r.error = std::move(err);
         responses_.push(std::move(r));
@@ -35,10 +35,10 @@ public:
 
     [[nodiscard]] const std::vector<ce::HttpRequest>& recorded() const { return recorded_; }
 
-    std::expected<ce::HttpResponse, ce::ChainApiError> send(const ce::HttpRequest& req) override {
+    std::expected<ce::HttpResponse, ce::ReqloomError> send(const ce::HttpRequest& req) override {
         recorded_.push_back(req);
         if (responses_.empty()) {
-            return std::unexpected(ce::ChainApiError{
+            return std::unexpected(ce::ReqloomError{
                 ce::ErrorCode::NetworkTimeout, ce::ErrorClass::Network, "no canned response"});
         }
         auto r = std::move(responses_.front());
@@ -50,7 +50,7 @@ public:
 private:
     struct Response {
         ce::HttpResponse response;
-        std::optional<ce::ChainApiError> error;
+        std::optional<ce::ReqloomError> error;
     };
     std::queue<Response> responses_;
     std::vector<ce::HttpRequest> recorded_;
@@ -141,7 +141,7 @@ TEST(HttpLlmClient, provider_4xx_surfaces_LlmRequestFailed_with_excerpt) {
 
 TEST(HttpLlmClient, transport_failure_propagates_as_LlmRequestFailed) {
     FakeHttpTransport transport;
-    transport.enqueueError(ce::ChainApiError{
+    transport.enqueueError(ce::ReqloomError{
         ce::ErrorCode::NetworkTimeout, ce::ErrorClass::Network, "connection timed out"});
 
     ce::HttpLlmClient client{transport};

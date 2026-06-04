@@ -15,7 +15,7 @@ class QLineEdit;
 class QListWidget;
 class QKeyEvent;
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 /// One entry the palette can surface: a project operation or a global command.
 struct PaletteItem {
@@ -69,4 +69,4 @@ private:
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

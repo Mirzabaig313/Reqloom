@@ -2,8 +2,8 @@
 // timeline UI and the CLI renderers.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Operation.h>
 #include <chrono>
 #include <compare>
 #include <cstdint>
@@ -13,7 +13,7 @@
 #include <variant>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 struct RunId {
     std::uint64_t value{0};
@@ -157,4 +157,4 @@ using RunEvent = std::variant<RunStarted,
                               SessionRefreshed,
                               RunEnded>;
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

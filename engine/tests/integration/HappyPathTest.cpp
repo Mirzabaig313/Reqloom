@@ -6,8 +6,8 @@
 //   - Extracted variables flow correctly between steps
 #include "MockSutHarness.h"
 
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -15,21 +15,21 @@
 #include <string>
 
 namespace fs = std::filesystem;
-namespace ce = chainapi::engine;
-namespace ct = chainapi::tests;
+namespace ce = reqloom::engine;
+namespace ct = reqloom::tests;
 
 namespace {
 
 [[nodiscard]] fs::path samplesDir() {
-    return fs::path(CHAINAPI_SAMPLES_DIR);
+    return fs::path(REQLOOM_SAMPLES_DIR);
 }
 
 [[nodiscard]] fs::path fixturesDir() {
-    return fs::path(CHAINAPI_FIXTURES_DIR);
+    return fs::path(REQLOOM_FIXTURES_DIR);
 }
 
 [[nodiscard]] ce::Project loadMarketplace(const std::string& mockBaseUrl) {
-    auto project = ce::parseProject(samplesDir() / "marketplace" / "chainapi.yaml");
+    auto project = ce::parseProject(samplesDir() / "marketplace" / "reqloom.yaml");
     EXPECT_TRUE(project.has_value()) << (project ? "" : project.error().detail);
 
     auto& env = project->environments["local"];
@@ -143,7 +143,7 @@ TEST_F(MarketplaceHappyPath, ExtractionTraceCapturesEveryDeclaredExtraction) {
     ASSERT_FALSE(trace.empty()) << "expected at least one extraction trace";
 
     // Confirm at least one Resolved entry per pivotal extraction. Names
-    // come from the marketplace fixture's chainapi.yaml.
+    // come from the marketplace fixture's reqloom.yaml.
     bool sawProductId = false;
     bool sawOrderId = false;
     for (const auto& t : trace) {

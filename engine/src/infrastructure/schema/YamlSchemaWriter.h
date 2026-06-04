@@ -4,7 +4,7 @@
 
 #include "SchemaWriter.h"
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 class YamlSchemaWriter final : public SchemaWriter {
 public:
@@ -20,4 +20,4 @@ public:
                             bool overwrite = false) override;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

@@ -16,9 +16,9 @@
 //   - Source::XPath      — still Unsupported; XML parsing is post-MVP.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Operation.h>
-#include <chainapi/engine/RunContext.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Operation.h>
+#include <reqloom/engine/RunContext.h>
 
 #include <expected>
 #include <map>
@@ -26,9 +26,9 @@
 #include <utility>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
-[[nodiscard]] std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson(
+[[nodiscard]] std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
     const std::string& body, const std::vector<Extraction>& extractions);
 
 /// Per-extraction outcome including the resolved value (when present).
@@ -51,17 +51,17 @@ struct DetailedExtraction {
 /// Body-only entry point. Callers that only have JSON (auth steps,
 /// refresh blocks) keep using this — Header / StatusCode / Cookie /
 /// Regex all return Unsupported when called this way.
-[[nodiscard]] std::expected<DetailedExtraction, ChainApiError> extractFromJsonDetailed(
+[[nodiscard]] std::expected<DetailedExtraction, ReqloomError> extractFromJsonDetailed(
     const OperationId& opId, const std::string& body, const std::vector<Extraction>& extractions);
 
 /// Full-response entry point used by the executor. Resolves Header /
 /// StatusCode / Cookie / Regex sources from the captured response in
 /// addition to JSONPath against `body`.
-[[nodiscard]] std::expected<DetailedExtraction, ChainApiError> extractFromResponseDetailed(
+[[nodiscard]] std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
     const OperationId& opId,
     const std::string& body,
     int statusCode,
     const std::vector<std::pair<std::string, std::string>>& headers,
     const std::vector<Extraction>& extractions);
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

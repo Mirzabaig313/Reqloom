@@ -12,7 +12,7 @@
 #include <optional>
 #include <string>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 struct TransportConfig {
     /// Verify the peer's TLS certificate (`CURLOPT_SSL_VERIFYPEER`).
@@ -39,4 +39,4 @@ struct TransportConfig {
     std::chrono::milliseconds connectTimeout{5'000};
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

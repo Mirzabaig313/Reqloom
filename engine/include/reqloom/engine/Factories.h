@@ -5,8 +5,8 @@
 // the engine library.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/ExecutionEngine.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/ExecutionEngine.h>
 
 #include <expected>
 #include <filesystem>
@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 [[nodiscard]] std::unique_ptr<HttpClient> makeCurlHttpClient();
 [[nodiscard]] std::unique_ptr<SchemaParser> makeYamlSchemaParser();
@@ -40,8 +40,8 @@ class LlmClient;
 /// directly.
 [[nodiscard]] ExecutionEngine::Dependencies makeDefaultDependencies();
 
-[[nodiscard]] std::expected<Project, ChainApiError> parseProject(
-    const std::filesystem::path& chainapiYaml);
+[[nodiscard]] std::expected<Project, ReqloomError> parseProject(
+    const std::filesystem::path& reqloomYaml);
 
 /// Collect the distinct `{{secret.NAME}}` references declared anywhere in a
 /// project (operation templates, actor auth config, injected headers, etc.),
@@ -51,20 +51,20 @@ class LlmClient;
 /// keychain.
 [[nodiscard]] std::vector<std::string> collectSecretReferences(const Project& project);
 
-/// Write a Project back to a directory as `chainapi.yaml` plus per-entity
+/// Write a Project back to a directory as `reqloom.yaml` plus per-entity
 /// sub-files (actors/, resources/, environments/). Round-trips with
 /// `parseProject` modulo YAML map ordering. Refuses to overwrite an
-/// existing `chainapi.yaml` unless `overwrite` is true.
+/// existing `reqloom.yaml` unless `overwrite` is true.
 ///
-/// Returns the path to the written `chainapi.yaml` on success.
-[[nodiscard]] std::expected<std::filesystem::path, ChainApiError> writeProject(
+/// Returns the path to the written `reqloom.yaml` on success.
+[[nodiscard]] std::expected<std::filesystem::path, ReqloomError> writeProject(
     const std::filesystem::path& targetDir, const Project& project, bool overwrite = false);
 
-/// Write `<targetDir>/chainapi.d.ts` describing the hook sandbox `ctx`
+/// Write `<targetDir>/reqloom.d.ts` describing the hook sandbox `ctx`
 /// surface. Hook authors place this file alongside their `.js` scripts
 /// so the editor's TypeScript LSP gives autocomplete on `ctx.request`,
 /// `ctx.env`, `ctx.hmac`, etc.
-[[nodiscard]] std::expected<std::filesystem::path, ChainApiError> emitHookTypings(
+[[nodiscard]] std::expected<std::filesystem::path, ReqloomError> emitHookTypings(
     const std::filesystem::path& targetDir, const Project& project, bool overwrite = false);
 
 /// Outcome of an OpenAPI 3.x import. `project` is ready to feed to
@@ -85,7 +85,7 @@ struct OpenApiImportOutcome {
 /// `projectRoot` defines the containment scope: the spec must resolve to
 /// a file under this directory, defending against `--spec /etc/passwd`
 /// style invocations and `..` traversal.
-[[nodiscard]] std::expected<OpenApiImportOutcome, ChainApiError> importFromOpenApi(
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromOpenApi(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot);
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

@@ -1,4 +1,4 @@
-# ChainAPI — Project Layout & CMake Structure
+# Reqloom — Project Layout & CMake Structure
 
 > **Purpose:** define the source-tree layout, CMake target structure, and dependency boundaries that enforce the architectural guardrails in PRD §8.6 (Two-Phase Architecture). This document is the literal contract between the engine and the UI: if these rules hold, extracting the engine to a separate process or language in Phase B becomes a build-system change rather than a rewrite.
 
@@ -6,15 +6,15 @@
 |---|---|
 | **Status** | Draft v1 |
 | **Last Updated** | 2026-05-23 |
-| **Source PRD** | `ChainAPI - PRD.md` v0.3 (§8) |
-| **Source Engine Spec** | `ChainAPI - Engine Requirement.md` v1.1 |
+| **Source PRD** | `Reqloom - PRD.md` v0.3 (§8) |
+| **Source Engine Spec** | `Reqloom - Engine Requirement.md` v1.1 |
 
 ---
 
 ## 1. Top-Level Source Tree
 
 ```
-chainapi/
+reqloom/
 ├── CMakeLists.txt                    # Root: superbuild, options, top-level targets
 ├── CMakePresets.json                 # Configure/build/test presets per platform
 ├── conanfile.txt                     # Or vcpkg.json — pinned third-party deps
@@ -26,10 +26,10 @@ chainapi/
 ├── docs/                             # PRD, engine spec, ADRs, this file
 │
 ├── cmake/                            # Reusable CMake modules
-│   ├── ChainApiCompilerWarnings.cmake
-│   ├── ChainApiSanitizers.cmake     # ASan/UBSan/TSan toggles
-│   ├── ChainApiCodeCoverage.cmake
-│   ├── ChainApiBoundaryGuards.cmake # The dependency-firewall enforcement (§4)
+│   ├── ReqloomCompilerWarnings.cmake
+│   ├── ReqloomSanitizers.cmake     # ASan/UBSan/TSan toggles
+│   ├── ReqloomCodeCoverage.cmake
+│   ├── ReqloomBoundaryGuards.cmake # The dependency-firewall enforcement (§4)
 │   └── packaging/
 │       ├── macOS.cmake               # bundle, codesign, notarize
 │       ├── Windows.cmake             # MSI/EXE, Authenticode
@@ -41,7 +41,7 @@ chainapi/
 ├── engine/                           # ── ENGINE LAYER (no Qt UI deps) ──────────────────
 │   ├── CMakeLists.txt
 │   ├── include/
-│   │   └── chainapi/
+│   │   └── reqloom/
 │   │       └── engine/
 │   │           ├── ExecutionEngine.h
 │   │           ├── DependencyResolver.h
@@ -101,7 +101,7 @@ chainapi/
 │           └── mock-sut/             # Tiny local server for integration tests
 │
 ├── ipc/                              # ── PHASE B SCAFFOLD (empty in MVP, reserved) ──
-│   ├── CMakeLists.txt                # Disabled by default; CHAINAPI_BUILD_IPC=ON to opt in
+│   ├── CMakeLists.txt                # Disabled by default; REQLOOM_BUILD_IPC=ON to opt in
 │   └── README.md                     # "When and how to extract engine to a separate process"
 │
 ├── cli/                              # ── CLI BINARY (FR-13) — depends on engine only ──
@@ -159,7 +159,7 @@ chainapi/
 │
 ├── samples/                          # Bundled sample projects (PRD §12 first-run)
 │   ├── marketplace/
-│   │   ├── chainapi.yaml
+│   │   ├── reqloom.yaml
 │   │   ├── actors/
 │   │   ├── resources/
 │   │   └── environments/
@@ -188,19 +188,19 @@ The crucial idea: **every directory above a certain line is forbidden from depen
 
 ```
                  ┌─────────────────────────────────────────────┐
-                 │             chainapi-desktop                │   ← Qt::Widgets, Qt::Gui, Qt::Quick, QScintilla
-                 │              (executable)                   │     ─ may use chainapi-engine
+                 │             reqloom-desktop                │   ← Qt::Widgets, Qt::Gui, Qt::Quick, QScintilla
+                 │              (executable)                   │     ─ may use reqloom-engine
                  └──────────────────────┬──────────────────────┘
                                         │
                                         ▼
                  ┌─────────────────────────────────────────────┐
-                 │              chainapi-cli                   │   ← Qt::Core ONLY (for QString convenience)
-                 │              (executable)                   │     ─ may use chainapi-engine
+                 │              reqloom-cli                   │   ← Qt::Core ONLY (for QString convenience)
+                 │              (executable)                   │     ─ may use reqloom-engine
                  └──────────────────────┬──────────────────────┘     ─ MUST NOT use Qt::Widgets/Gui/Quick
                                         │
                                         ▼
                  ┌─────────────────────────────────────────────┐
-                 │           chainapi-engine                   │   ← Qt::Core (or std-only — preferred)
+                 │           reqloom-engine                   │   ← Qt::Core (or std-only — preferred)
                  │       (STATIC or SHARED library)            │     ─ MUST NOT use Qt::Widgets/Gui/Quick
                  │                                             │     ─ MUST NOT use QScintilla, QtKeychain UI parts
                  │  Subdirectories (internal CMake OBJECT      │     ─ may use libcurl, yaml-cpp, sqlite3,
@@ -216,7 +216,7 @@ The crucial idea: **every directory above a certain line is forbidden from depen
 
 ```cmake
 cmake_minimum_required(VERSION 3.24)
-project(chainapi
+project(reqloom
     VERSION 0.1.0
     LANGUAGES CXX
 )
@@ -226,15 +226,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Build options — let downstream users opt in or out of subsystems
-option(CHAINAPI_BUILD_DESKTOP "Build the Qt desktop app"     ON)
-option(CHAINAPI_BUILD_CLI     "Build the CLI binary"         ON)
-option(CHAINAPI_BUILD_TESTS   "Build the test suite"         ON)
-option(CHAINAPI_BUILD_IPC     "Build engine IPC server (Phase B)" OFF)
-option(CHAINAPI_ENABLE_ASAN   "Enable AddressSanitizer in Debug" OFF)
+option(REQLOOM_BUILD_DESKTOP "Build the Qt desktop app"     ON)
+option(REQLOOM_BUILD_CLI     "Build the CLI binary"         ON)
+option(REQLOOM_BUILD_TESTS   "Build the test suite"         ON)
+option(REQLOOM_BUILD_IPC     "Build engine IPC server (Phase B)" OFF)
+option(REQLOOM_ENABLE_ASAN   "Enable AddressSanitizer in Debug" OFF)
 
-include(cmake/ChainApiCompilerWarnings.cmake)
-include(cmake/ChainApiSanitizers.cmake)
-include(cmake/ChainApiBoundaryGuards.cmake)   # The firewall enforcement
+include(cmake/ReqloomCompilerWarnings.cmake)
+include(cmake/ReqloomSanitizers.cmake)
+include(cmake/ReqloomBoundaryGuards.cmake)   # The firewall enforcement
 
 # Dependencies — managed via Conan or vcpkg
 find_package(Qt6 6.6 REQUIRED COMPONENTS Core)   # For all targets
@@ -246,27 +246,27 @@ find_package(qtkeychain REQUIRED)
 # QuickJS is vendored under third_party/
 
 # Optional UI-only deps
-if(CHAINAPI_BUILD_DESKTOP)
+if(REQLOOM_BUILD_DESKTOP)
     find_package(Qt6 REQUIRED COMPONENTS Widgets Gui Quick QuickWidgets)
     find_package(QScintilla REQUIRED)
 endif()
 
 # Subdirs in dependency order
 add_subdirectory(engine)
-if(CHAINAPI_BUILD_CLI)
+if(REQLOOM_BUILD_CLI)
     add_subdirectory(cli)
 endif()
-if(CHAINAPI_BUILD_DESKTOP)
+if(REQLOOM_BUILD_DESKTOP)
     add_subdirectory(desktop)
 endif()
-if(CHAINAPI_BUILD_IPC)
+if(REQLOOM_BUILD_IPC)
     add_subdirectory(ipc)
 endif()
 
 # Boundary check runs at configure time
-chainapi_enforce_boundary_rules()
+reqloom_enforce_boundary_rules()
 
-if(CHAINAPI_BUILD_TESTS)
+if(REQLOOM_BUILD_TESTS)
     enable_testing()
 endif()
 ```
@@ -279,22 +279,22 @@ This is where the engine boundary is **mechanically enforced**.
 # Internal OBJECT libraries — give us layer-level dependency control
 # without polluting the public CMake target namespace.
 
-add_library(chainapi-engine-domain OBJECT
+add_library(reqloom-engine-domain OBJECT
     src/domain/DependencyResolver.cpp
     src/domain/Topology.cpp
     src/domain/VariableResolver.cpp
     src/domain/RunContext.cpp
 )
-target_include_directories(chainapi-engine-domain
+target_include_directories(reqloom-engine-domain
     PUBLIC  include
     PRIVATE src
 )
 # Domain layer: ALLOWED to link only stdlib + QtCore value types.
-target_link_libraries(chainapi-engine-domain
+target_link_libraries(reqloom-engine-domain
     PUBLIC  Qt6::Core         # for QString — replace with std::u8string later if Phase B drops Qt
 )
 
-add_library(chainapi-engine-infrastructure OBJECT
+add_library(reqloom-engine-infrastructure OBJECT
     src/infrastructure/http/CurlHttpClient.cpp
     src/infrastructure/storage/SqliteHistoryStore.cpp
     src/infrastructure/secrets/KeychainSecretStore.cpp
@@ -302,12 +302,12 @@ add_library(chainapi-engine-infrastructure OBJECT
     src/infrastructure/hooks/QuickJsHookRunner.cpp
     src/infrastructure/extraction/JsonPathEvaluator.cpp
 )
-target_include_directories(chainapi-engine-infrastructure
+target_include_directories(reqloom-engine-infrastructure
     PUBLIC  include
     PRIVATE src
 )
-target_link_libraries(chainapi-engine-infrastructure
-    PUBLIC  chainapi-engine-domain
+target_link_libraries(reqloom-engine-infrastructure
+    PUBLIC  reqloom-engine-domain
     PRIVATE
         Qt6::Core
         CURL::libcurl
@@ -315,38 +315,38 @@ target_link_libraries(chainapi-engine-infrastructure
         SQLite::SQLite3
         nlohmann_json::nlohmann_json
         qtkeychain
-        chainapi-quickjs           # vendored target from third_party/
+        reqloom-quickjs           # vendored target from third_party/
 )
 
-add_library(chainapi-engine-application OBJECT
+add_library(reqloom-engine-application OBJECT
     src/application/RunOperationUseCase.cpp
     src/application/ImportFromOpenApi.cpp
 )
-target_include_directories(chainapi-engine-application
+target_include_directories(reqloom-engine-application
     PUBLIC  include
     PRIVATE src
 )
-target_link_libraries(chainapi-engine-application
-    PUBLIC  chainapi-engine-domain
-    PRIVATE chainapi-engine-infrastructure
+target_link_libraries(reqloom-engine-application
+    PUBLIC  reqloom-engine-domain
+    PRIVATE reqloom-engine-infrastructure
 )
 
 # The single public engine library — consumed by cli/, desktop/, and (future) ipc/
-add_library(chainapi-engine STATIC)        # SHARED also fine; STATIC simplifies linking
-target_link_libraries(chainapi-engine
+add_library(reqloom-engine STATIC)        # SHARED also fine; STATIC simplifies linking
+target_link_libraries(reqloom-engine
     PUBLIC
-        chainapi-engine-domain
-        chainapi-engine-application
+        reqloom-engine-domain
+        reqloom-engine-application
     PRIVATE
-        chainapi-engine-infrastructure
+        reqloom-engine-infrastructure
 )
-target_include_directories(chainapi-engine
+target_include_directories(reqloom-engine
     PUBLIC  include
 )
-add_library(chainapi::engine ALIAS chainapi-engine)
+add_library(reqloom::engine ALIAS reqloom-engine)
 
 # === BOUNDARY GUARDS — fail the build if forbidden deps creep in ===
-chainapi_forbid_dependencies(chainapi-engine
+reqloom_forbid_dependencies(reqloom-engine
     Qt6::Widgets
     Qt6::Gui
     Qt6::Quick
@@ -355,7 +355,7 @@ chainapi_forbid_dependencies(chainapi-engine
 )
 
 # Tests
-if(CHAINAPI_BUILD_TESTS)
+if(REQLOOM_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 ```
@@ -363,7 +363,7 @@ endif()
 ### 2.4 `cli/CMakeLists.txt` (outline)
 
 ```cmake
-add_executable(chainapi-cli
+add_executable(reqloom-cli
     src/main.cpp
     src/commands/RunCommand.cpp
     src/commands/LintCommand.cpp
@@ -372,21 +372,21 @@ add_executable(chainapi-cli
     src/output/JsonRenderer.cpp
     src/output/JUnitRenderer.cpp
 )
-target_link_libraries(chainapi-cli
+target_link_libraries(reqloom-cli
     PRIVATE
-        chainapi::engine
+        reqloom::engine
         Qt6::Core
 )
-set_target_properties(chainapi-cli PROPERTIES OUTPUT_NAME "chainapi")
+set_target_properties(reqloom-cli PROPERTIES OUTPUT_NAME "reqloom")
 
-chainapi_forbid_dependencies(chainapi-cli
+reqloom_forbid_dependencies(reqloom-cli
     Qt6::Widgets
     Qt6::Gui
     Qt6::Quick
     Qt6::QuickWidgets
 )
 
-if(CHAINAPI_BUILD_TESTS)
+if(REQLOOM_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 ```
@@ -394,7 +394,7 @@ endif()
 ### 2.5 `desktop/CMakeLists.txt` (outline)
 
 ```cmake
-qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
+qt_add_executable(reqloom-desktop WIN32 MACOSX_BUNDLE
     src/main.cpp
     src/application/App.cpp
     src/application/Bootstrapper.cpp
@@ -410,15 +410,15 @@ qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
     src/views/DependencyGraphView.cpp
     # … the rest
 )
-qt_add_qml_module(chainapi-desktop
-    URI ChainAPI.Graph
+qt_add_qml_module(reqloom-desktop
+    URI Reqloom.Graph
     VERSION 1.0
     QML_FILES qml/DependencyGraph.qml
 )
 
-target_link_libraries(chainapi-desktop
+target_link_libraries(reqloom-desktop
     PRIVATE
-        chainapi::engine
+        reqloom::engine
         Qt6::Core
         Qt6::Widgets
         Qt6::Gui
@@ -434,36 +434,36 @@ target_link_libraries(chainapi-desktop
 
 ## 3. Where the Boundary Literally Is
 
-The boundary is the **public header surface of `chainapi-engine`** (`engine/include/chainapi/engine/*.h`).
+The boundary is the **public header surface of `reqloom-engine`** (`engine/include/reqloom/engine/*.h`).
 
-Anything outside the engine directory consumes the engine **only through these headers**. Internal headers (`engine/src/...`) are not on the public include path of the `chainapi-engine` target.
+Anything outside the engine directory consumes the engine **only through these headers**. Internal headers (`engine/src/...`) are not on the public include path of the `reqloom-engine` target.
 
 ### 3.1 What lives in the public engine surface
 
 ```cpp
-// engine/include/chainapi/engine/PublicApi.h  (single header for embedders)
+// engine/include/reqloom/engine/PublicApi.h  (single header for embedders)
 
 #pragma once
 
-#include <chainapi/engine/Operation.h>
-#include <chainapi/engine/Actor.h>
-#include <chainapi/engine/Resource.h>
-#include <chainapi/engine/RunContext.h>
-#include <chainapi/engine/ExecutionEngine.h>
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Events.h>
+#include <reqloom/engine/Operation.h>
+#include <reqloom/engine/Actor.h>
+#include <reqloom/engine/Resource.h>
+#include <reqloom/engine/RunContext.h>
+#include <reqloom/engine/ExecutionEngine.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Events.h>
 ```
 
 ```cpp
-// engine/include/chainapi/engine/ExecutionEngine.h
+// engine/include/reqloom/engine/ExecutionEngine.h
 #pragma once
 
-#include <chainapi/engine/RunContext.h>
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/RunContext.h>
+#include <reqloom/engine/Operation.h>
 #include <functional>
 #include <memory>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 class ExecutionEngine {
 public:
@@ -493,7 +493,7 @@ private:
     std::unique_ptr<Impl> impl_;                  // pImpl — ABI-friendly
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine
 ```
 
 ### 3.2 What stays in the engine but is NOT public
@@ -502,12 +502,12 @@ private:
 - yaml-cpp, libcurl, sqlite3 includes — never appear in public headers
 - Internal data structures (Kahn's algorithm scratchpad, JSONPath compilation cache, etc.)
 
-This means a new embedder of `chainapi-engine` (the future Rust binding, the IPC daemon, the CLI test harness) needs only:
+This means a new embedder of `reqloom-engine` (the future Rust binding, the IPC daemon, the CLI test harness) needs only:
 
 ```cmake
-target_link_libraries(my-thing PRIVATE chainapi::engine)
+target_link_libraries(my-thing PRIVATE reqloom::engine)
 target_include_directories(my-thing PRIVATE
-    $<TARGET_PROPERTY:chainapi::engine,INTERFACE_INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:reqloom::engine,INTERFACE_INCLUDE_DIRECTORIES>
 )
 ```
 
@@ -515,16 +515,16 @@ target_include_directories(my-thing PRIVATE
 
 ---
 
-## 4. Boundary Enforcement (`cmake/ChainApiBoundaryGuards.cmake`)
+## 4. Boundary Enforcement (`cmake/ReqloomBoundaryGuards.cmake`)
 
 The architectural guardrails in PRD §8.6 must be **mechanically verifiable**, not just review-time guidelines. This module provides two functions:
 
-### 4.1 `chainapi_forbid_dependencies(target lib1 lib2 …)`
+### 4.1 `reqloom_forbid_dependencies(target lib1 lib2 …)`
 
 Checks at configure time that the target's transitive `INTERFACE_LINK_LIBRARIES` and `LINK_LIBRARIES` do not include any of the forbidden libraries.
 
 ```cmake
-function(chainapi_forbid_dependencies target)
+function(reqloom_forbid_dependencies target)
     set(forbidden ${ARGN})
     get_target_property(direct_deps ${target} LINK_LIBRARIES)
     get_target_property(iface_deps  ${target} INTERFACE_LINK_LIBRARIES)
@@ -534,7 +534,7 @@ function(chainapi_forbid_dependencies target)
         foreach(forbid IN LISTS forbidden)
             if("${dep}" STREQUAL "${forbid}")
                 message(FATAL_ERROR
-                    "[ChainAPI boundary] target '${target}' must not depend "
+                    "[Reqloom boundary] target '${target}' must not depend "
                     "on '${forbid}'. See PRD §8.6 architectural guardrails."
                 )
             endif()
@@ -545,12 +545,12 @@ endfunction()
 
 This catches direct links. Transitive leakage is caught by the runtime check below.
 
-### 4.2 `chainapi_enforce_boundary_rules()`
+### 4.2 `reqloom_enforce_boundary_rules()`
 
 Runs after all subdirectories are added. Walks the actual link interface of each engine target and asserts forbidden symbols are absent.
 
 ```cmake
-function(chainapi_enforce_boundary_rules)
+function(reqloom_enforce_boundary_rules)
     # Engine must not pull in Qt UI even transitively
     set(forbidden_for_engine
         Qt6::Widgets Qt6::Gui Qt6::Quick Qt6::QuickWidgets
@@ -558,19 +558,19 @@ function(chainapi_enforce_boundary_rules)
     )
 
     foreach(target IN ITEMS
-        chainapi-engine
-        chainapi-engine-domain
-        chainapi-engine-application
-        chainapi-engine-infrastructure
+        reqloom-engine
+        reqloom-engine-domain
+        reqloom-engine-application
+        reqloom-engine-infrastructure
     )
         if(TARGET ${target})
-            chainapi_forbid_dependencies(${target} ${forbidden_for_engine})
+            reqloom_forbid_dependencies(${target} ${forbidden_for_engine})
         endif()
     endforeach()
 
     # CLI must not pull in Qt UI either
-    if(TARGET chainapi-cli)
-        chainapi_forbid_dependencies(chainapi-cli ${forbidden_for_engine})
+    if(TARGET reqloom-cli)
+        reqloom_forbid_dependencies(reqloom-cli ${forbidden_for_engine})
     endif()
 endfunction()
 ```
@@ -597,14 +597,14 @@ A more rigorous version uses `clang-tidy`'s `misc-include-cleaner` plus a bespok
 
 ### 4.4 Architectural unit test
 
-For belt-and-braces, ship a test that loads `chainapi::engine` symbols and asserts none reference Qt-UI:
+For belt-and-braces, ship a test that loads `reqloom::engine` symbols and asserts none reference Qt-UI:
 
 ```cpp
 // engine/tests/architecture/NoQtUiSymbolsTest.cpp
 TEST(ArchitectureGuardrail, EngineHasNoQtUiSymbols) {
-    // After linking against chainapi-engine in CMake, attempting to
+    // After linking against reqloom-engine in CMake, attempting to
     // reference QWidget should be a link error. Validate via nm/objdump:
-    // nm libchainapi-engine.a | grep -i 'QWidget\|QApplication' should be empty.
+    // nm libreqloom-engine.a | grep -i 'QWidget\|QApplication' should be empty.
     // Implemented as a CTest add_test(... COMMAND <script>) rather than
     // a runtime check — the script greps the static archive.
 }
@@ -630,10 +630,10 @@ ctest --preset macos-debug --label-regex engine
 ctest --preset macos-debug
 
 # Run desktop app
-./build/macos-debug/desktop/chainapi-desktop.app/Contents/MacOS/chainapi-desktop
+./build/macos-debug/desktop/reqloom-desktop.app/Contents/MacOS/reqloom-desktop
 
 # Run CLI
-./build/macos-debug/cli/chainapi run refund.approve --project samples/marketplace
+./build/macos-debug/cli/reqloom run refund.approve --project samples/marketplace
 ```
 
 ### 5.2 CMakePresets.json (outline)
@@ -648,13 +648,13 @@ ctest --preset macos-debug
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "CHAINAPI_BUILD_TESTS": "ON"
+        "REQLOOM_BUILD_TESTS": "ON"
       }
     },
-    { "name": "macos-debug",   "inherits": "base", "generator": "Ninja", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug",   "CHAINAPI_ENABLE_ASAN": "ON" } },
+    { "name": "macos-debug",   "inherits": "base", "generator": "Ninja", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug",   "REQLOOM_ENABLE_ASAN": "ON" } },
     { "name": "macos-release", "inherits": "base", "generator": "Ninja", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } },
     { "name": "windows-debug", "inherits": "base", "generator": "Ninja", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
-    { "name": "linux-debug",   "inherits": "base", "generator": "Ninja", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug",   "CHAINAPI_ENABLE_ASAN": "ON" } }
+    { "name": "linux-debug",   "inherits": "base", "generator": "Ninja", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug",   "REQLOOM_ENABLE_ASAN": "ON" } }
   ]
 }
 ```
@@ -678,10 +678,10 @@ The boundary-check job runs once per matrix cell. If any check fails the PR is b
 
 When the trigger to extract the engine fires (PRD ADR-002), the work is:
 
-1. **Switch `chainapi-engine` from `STATIC` to `SHARED`** — already trivial (one CMake line).
-2. **Add a thin IPC façade** under `ipc/` that links `chainapi::engine` and exposes JSON-RPC over stdio (or a Unix socket / named pipe). This is roughly 500–1500 lines of code; the engine itself is unchanged.
+1. **Switch `reqloom-engine` from `STATIC` to `SHARED`** — already trivial (one CMake line).
+2. **Add a thin IPC façade** under `ipc/` that links `reqloom::engine` and exposes JSON-RPC over stdio (or a Unix socket / named pipe). This is roughly 500–1500 lines of code; the engine itself is unchanged.
 3. **Replace the desktop's direct `ExecutionEngine` calls** with an `IpcEngineClient` that talks to the spawned child process. The view-model layer's interface to the engine doesn't change because we already used dependency injection in §2.5's `Bootstrapper.cpp`.
-4. **Optionally**, port `engine/src/` to Rust over time — the public C++ headers stay, but the `.cpp` files are replaced with Rust code exposing `extern "C"` equivalents. Because `chainapi::engine` uses pImpl + value types, the public ABI is stable.
+4. **Optionally**, port `engine/src/` to Rust over time — the public C++ headers stay, but the `.cpp` files are replaced with Rust code exposing `extern "C"` equivalents. Because `reqloom::engine` uses pImpl + value types, the public ABI is stable.
 
 None of these steps require touching `desktop/` or `cli/` business logic.
 
@@ -692,7 +692,7 @@ None of these steps require touching `desktop/` or `cli/` business logic.
 - **Q1**: Use **Conan** or **vcpkg** for dependency management? Conan is more flexible (Conan-Center has yaml-cpp, libcurl, QScintilla packages). vcpkg is simpler. Recommendation: **vcpkg** for solo MVP, switch to Conan if dependency complexity grows.
 - **Q2**: Use `Qt6::Core` `QString`/`QByteArray` in engine public API, or stick to `std::string` / `std::span<std::byte>`? Using `QString` means engine still depends on `QtCore` (small, ~10 MB). Using `std` removes Qt entirely from the engine (clean, but every embedder pays UTF-8 conversion cost). **Recommendation**: start with `std::string` everywhere except where `QString` is genuinely the right type (file paths via `QFileInfo`); the engine becomes Qt-free except for file I/O wrappers.
 - **Q3**: Do we vendor QuickJS under `third_party/` or take it from a Conan/vcpkg package? **Recommendation**: vendor it — QuickJS is small, single-file, doesn't move fast, and avoids dependency pinning issues.
-- **Q4**: Should `chainapi-engine` be header-only-friendly (template-heavy) or compiled (pImpl-heavy)? **Recommendation**: pImpl-heavy. Header-only means rebuilding the world on engine changes; pImpl gives stable ABI and fast incremental builds.
+- **Q4**: Should `reqloom-engine` be header-only-friendly (template-heavy) or compiled (pImpl-heavy)? **Recommendation**: pImpl-heavy. Header-only means rebuilding the world on engine changes; pImpl gives stable ABI and fast incremental builds.
 
 ---
 

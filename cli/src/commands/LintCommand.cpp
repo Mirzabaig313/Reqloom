@@ -1,15 +1,15 @@
 #include "LintCommand.h"
 
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <filesystem>
 #include <print>
 
 namespace fs = std::filesystem;
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 int lintCommand(const QStringList& args) {
     fs::path projectPath = fs::current_path();
@@ -19,9 +19,9 @@ int lintCommand(const QStringList& args) {
         }
     }
 
-    auto yamlPath = projectPath / "chainapi.yaml";
+    auto yamlPath = projectPath / "reqloom.yaml";
     if (!fs::exists(yamlPath)) {
-        std::println(stderr, "Error: chainapi.yaml not found in {}", projectPath.string());
+        std::println(stderr, "Error: reqloom.yaml not found in {}", projectPath.string());
         return 1;
     }
 
@@ -72,4 +72,4 @@ int lintCommand(const QStringList& args) {
     return 1;
 }
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli
