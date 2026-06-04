@@ -181,8 +181,8 @@ std::expected<std::vector<OperationId>, ReqloomError> DependencyResolver::resolv
         if (dotPos == std::string::npos) {
             return std::unexpected(
                 ReqloomError{ErrorCode::RefUndefined,
-                              ErrorClass::Schema,
-                              "Invalid operation id (missing dot): " + current.value});
+                             ErrorClass::Schema,
+                             "Invalid operation id (missing dot): " + current.value});
         }
         auto resName = current.value.substr(0, dotPos);
         auto opName = current.value.substr(dotPos + 1);
@@ -190,16 +190,16 @@ std::expected<std::vector<OperationId>, ReqloomError> DependencyResolver::resolv
         auto resIt = project.resources.find(ResourceId{resName});
         if (resIt == project.resources.end()) {
             return std::unexpected(ReqloomError{ErrorCode::RefUndefined,
-                                                 ErrorClass::Schema,
-                                                 "Resource not found: " + resName +
-                                                     " (referenced by operation " + current.value +
-                                                     ")"});
+                                                ErrorClass::Schema,
+                                                "Resource not found: " + resName +
+                                                    " (referenced by operation " + current.value +
+                                                    ")"});
         }
         auto opIt = resIt->second.operations.find(opName);
         if (opIt == resIt->second.operations.end()) {
             return std::unexpected(ReqloomError{ErrorCode::RefUndefined,
-                                                 ErrorClass::Schema,
-                                                 "Operation not found: " + current.value});
+                                                ErrorClass::Schema,
+                                                "Operation not found: " + current.value});
         }
 
         const auto& op = opIt->second;
@@ -341,11 +341,11 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
                 if (!exists) {
                     return std::unexpected(
                         ReqloomError{ErrorCode::RefUndefined,
-                                      ErrorClass::Schema,
-                                      std::format("Operation '{}' declares depends_on '{}', "
-                                                  "which is not a defined operation",
-                                                  opId.value,
-                                                  dep.value)});
+                                     ErrorClass::Schema,
+                                     std::format("Operation '{}' declares depends_on '{}', "
+                                                 "which is not a defined operation",
+                                                 opId.value,
+                                                 dep.value)});
                 }
                 allDeps.insert(dep);
             }

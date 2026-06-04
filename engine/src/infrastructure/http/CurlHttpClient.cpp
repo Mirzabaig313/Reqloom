@@ -242,22 +242,22 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
         mime.reset(curl_mime_init(curl.get()));
         if (!mime) {
             return std::unexpected(ReqloomError{ErrorCode::NetworkTimeout,
-                                                 ErrorClass::Network,
-                                                 "curl_mime_init failed (multipart request)"});
+                                                ErrorClass::Network,
+                                                "curl_mime_init failed (multipart request)"});
         }
         for (const auto& part : request.multipart) {
             curl_mimepart* mp = curl_mime_addpart(mime.get());
             if (mp == nullptr) {
                 return std::unexpected(
                     ReqloomError{ErrorCode::NetworkTimeout,
-                                  ErrorClass::Network,
-                                  "curl_mime_addpart failed for part: " + part.name});
+                                 ErrorClass::Network,
+                                 "curl_mime_addpart failed for part: " + part.name});
             }
             if (curl_mime_name(mp, part.name.c_str()) != CURLE_OK) {
                 return std::unexpected(
                     ReqloomError{ErrorCode::NetworkTimeout,
-                                  ErrorClass::Network,
-                                  "curl_mime_name failed for part: " + part.name});
+                                 ErrorClass::Network,
+                                 "curl_mime_name failed for part: " + part.name});
             }
             // Both text and file parts ship via curl_mime_data — the
             // file bytes were pre-loaded by MultipartBuilder so libcurl
@@ -266,8 +266,8 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
             if (curl_mime_data(mp, part.value.data(), part.value.size()) != CURLE_OK) {
                 return std::unexpected(
                     ReqloomError{ErrorCode::NetworkTimeout,
-                                  ErrorClass::Network,
-                                  "curl_mime_data failed for part: " + part.name});
+                                 ErrorClass::Network,
+                                 "curl_mime_data failed for part: " + part.name});
             }
             if (part.isFile() && part.filename) {
                 curl_mime_filename(mp, part.filename->c_str());
@@ -294,10 +294,9 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     auto elapsed = std::chrono::steady_clock::now() - startTime;
 
     if (res != CURLE_OK) {
-        return std::unexpected(
-            ReqloomError{classifyCurlError(res),
-                          ErrorClass::Network,
-                          std::string("curl error: ") + curl_easy_strerror(res)});
+        return std::unexpected(ReqloomError{classifyCurlError(res),
+                                            ErrorClass::Network,
+                                            std::string("curl error: ") + curl_easy_strerror(res)});
     }
 
     long httpStatus = 0;

@@ -37,7 +37,7 @@ ReqloomError invalid(std::string detail) {
 // Containment check: resolved path must live under projectRoot with a
 // path-separator boundary so `/home/user/proj` doesn't admit `/home/user/proj-evil`.
 std::expected<fs::path, ReqloomError> canonicalSpecPath(const fs::path& spec,
-                                                         const fs::path& projectRoot) {
+                                                        const fs::path& projectRoot) {
     std::error_code ec;
     auto canonical = fs::weakly_canonical(spec, ec);
     if (ec) {
@@ -512,8 +512,8 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
     } catch (const YAML::Exception& e) {
         return std::unexpected(
             ReqloomError{ErrorCode::YamlParse,
-                          ErrorClass::Schema,
-                          std::string{"openapi import: YAML parse failed: "} + e.what()});
+                         ErrorClass::Schema,
+                         std::string{"openapi import: YAML parse failed: "} + e.what()});
     }
 
     if (!root || !root.IsMap()) {

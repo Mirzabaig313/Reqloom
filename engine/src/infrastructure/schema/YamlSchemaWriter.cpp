@@ -86,15 +86,15 @@ std::expected<void, ReqloomError> writeAtomic(const fs::path& target, const std:
         std::ofstream out{temp, std::ios::binary | std::ios::trunc};
         if (!out) {
             return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
-                                                 ErrorClass::Schema,
-                                                 "writer: cannot open temp file " + temp.string()});
+                                                ErrorClass::Schema,
+                                                "writer: cannot open temp file " + temp.string()});
         }
         out << content;
         if (!out) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "writer: failed writing temp file " + temp.string()});
+                             ErrorClass::Schema,
+                             "writer: failed writing temp file " + temp.string()});
         }
     }
 
@@ -103,9 +103,9 @@ std::expected<void, ReqloomError> writeAtomic(const fs::path& target, const std:
         std::error_code _;
         fs::remove(temp, _);
         return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
-                                             ErrorClass::Schema,
-                                             "writer: cannot rename " + temp.string() + " → " +
-                                                 target.string() + ": " + ec.message()});
+                                            ErrorClass::Schema,
+                                            "writer: cannot rename " + temp.string() + " → " +
+                                                target.string() + ": " + ec.message()});
     }
     return {};
 }
@@ -448,18 +448,18 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
         // existing alone is fine (lets the writer slot into an existing project).
         if (fs::exists(targetDir / "reqloom.yaml")) {
             return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
-                                                 ErrorClass::Schema,
-                                                 "writer: reqloom.yaml exists in " +
-                                                     targetDir.string() +
-                                                     " (pass overwrite=true to replace)"});
+                                                ErrorClass::Schema,
+                                                "writer: reqloom.yaml exists in " +
+                                                    targetDir.string() +
+                                                    " (pass overwrite=true to replace)"});
         }
     }
     fs::create_directories(targetDir, ec);
     if (ec) {
         return std::unexpected(
             ReqloomError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "writer: cannot create " + targetDir.string() + ": " + ec.message()});
+                         ErrorClass::Schema,
+                         "writer: cannot create " + targetDir.string() + ": " + ec.message()});
     }
 
     if (auto r = writeAtomic(targetDir / "reqloom.yaml", emitRoot(project)); !r) {

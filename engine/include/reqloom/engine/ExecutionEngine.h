@@ -117,9 +117,9 @@ public:
     /// `outcome == Failed`, not an error — inspect `steps` to find which
     /// step failed.
     [[nodiscard]] std::expected<RunResult, ReqloomError> run(const Project& project,
-                                                              const OperationId& target,
-                                                              RunContext& ctx,
-                                                              const RunOptions& options = {});
+                                                             const OperationId& target,
+                                                             RunContext& ctx,
+                                                             const RunOptions& options = {});
 
     /// Cancel an in-flight run.
     void cancel(RunId run);

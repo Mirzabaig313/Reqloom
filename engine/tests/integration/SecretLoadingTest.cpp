@@ -68,7 +68,7 @@ public:
     }
 
     std::expected<void, ce::ReqloomError> write(const std::string& name,
-                                                 const std::string& value) override {
+                                                const std::string& value) override {
         values_[name] = value;
         return {};
     }
