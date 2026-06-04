@@ -19,8 +19,17 @@ class ScopedSettings {
 public:
     ScopedSettings() {
         file_.setAutoRemove(true);
-        // Realise the temp path so QSettings can open it by name.
-        opened_ = file_.open();
+        // Open to realise (create) the file and get a unique path, then
+        // close immediately. Keeping the QTemporaryFile handle open while
+        // QSettings writes causes a problem on Windows: QSettings::sync()
+        // for IniFormat renames a scratch file over the target, which fails
+        // silently when the target has an open handle. Closing here releases
+        // the handle so QSettings can write and rename freely; the file
+        // remains on disk until ~ScopedSettings because autoRemove is set.
+        if (file_.open()) {
+            file_.close();
+            opened_ = true;
+        }
     }
 
     [[nodiscard]] bool ok() const { return opened_; }

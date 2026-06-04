@@ -3,7 +3,7 @@ title: Architecture
 description: "The two-phase architecture: in-process engine for MVP, extractable to a separate process or Rust later."
 ---
 
-Reqloom's architecture is documented in [`doc/Reqloom - Project Layout.md`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20Project%20Layout.md) and PRD §8.
+Reqloom's architecture is documented in [`doc/Reqloom - Project Layout.md`](https://github.com/Mirzabaig313/Reqloom/blob/main/doc/Reqloom%20-%20Project%20Layout.md) and PRD §8.
 
 Key principles:
 

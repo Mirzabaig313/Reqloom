@@ -63,6 +63,9 @@ coverage/
 # ─── Local development notes (private, per-author) ────────────────────────────
 doc/local/
 doc/adr/
+tools/reqloom-smoke.sh
+tools/reqloom-full-flow.sh
+tools/reqloom-onboarding-flow.sh
 
 # ─── Validation — raw results and per-API working notes ───────────────────────
 validation/llm-feasibility/runs/

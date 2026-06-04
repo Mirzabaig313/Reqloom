@@ -1,20 +1,30 @@
-# ChainAPI Desktop: Design System
+# Reqloom Desktop: Design System
 
-The visual and interaction spec for the ChainAPI Qt 6.8 Widgets desktop app. This is the **Qt** design language: QSS stylesheets, `QPalette`, and `Theme` tokens, not web CSS. Source of truth for `desktop/src/theming/`, `desktop/src/views/`, and `desktop/src/widgets/`.
+The visual and interaction spec for the Reqloom Qt 6.8 Widgets desktop app. This is the **Qt** design language: a token-driven `Theme` that emits a Qt Style Sheet at runtime, not web CSS. Source of truth for `desktop/src/theming/`, `desktop/src/views/`, and `desktop/src/widgets/`.
 
 Register: **product** (a developer tool; design serves the task, not the other way around). Grounded in PRD §6.5 to §6.14 (UI requirements) and §7.5 (accessibility). Every token maps to a `Theme` field; every component maps to a class under `views/` or `widgets/`.
+
+### How to read this document
+
+This spec describes both the shipped UI and its intended direction. To keep it honest as the code evolves, each component and mechanism is tagged:
+
+- **Shipped** — implemented in `desktop/src/` today. The described behavior matches the code.
+- **Planned** — specified here, not yet built. Do not assume the class exists.
+- **Partial** — exists but does not yet honor every rule below; the gap is called out inline.
+
+When you change the code, update the matching tag in the same PR. A design doc that disagrees with the code is worse than no doc.
 
 ---
 
 ## 1. Design Principles
 
-ChainAPI is a workbench for backend engineers and QAs, not a consumer app. The design follows from that:
+Reqloom is a workbench for backend engineers and QAs, not a consumer app. The design follows from that:
 
 1. **Information density over whitespace.** Engineers want many operations, headers, and response fields visible at once. Spacing is tight and deliberate.
 2. **The chain is the hero.** The dependency chain and run timeline are the product's reason to exist. They get the strongest visual treatment; everything else recedes.
 3. **State is legible at a glance.** Session validity, cache state, run status, and null extractions are all encoded in a consistent color plus glyph vocabulary, so a user scanning the panel knows the system state without reading text.
 4. **Keyboard first.** Per NFR-5.1, no mouse-only flows. Every interactive element has a focus state and a shortcut. The command palette (Cmd+P) is the primary navigation.
-5. **Native, not branded.** Respect each OS (macOS menu bar, Windows 11 Fluent accents, Linux GTK hints). ChainAPI does not impose custom chrome that fights the platform.
+5. **Native, not branded.** Respect each OS (macOS menu bar, Windows 11 Fluent accents, Linux GTK hints). Reqloom does not impose custom chrome that fights the platform.
 6. **Calm under load.** A running chain has a lot of motion potential. Restrain it: subtle progress, no scattered spinners. Motion communicates state change, nothing decorative.
 
 ### The product bar
@@ -25,7 +35,7 @@ The test is not "would someone say AI made this." Familiarity is a feature here.
 
 ## 2. Color
 
-Defined in `Theme.{h,cpp}`, applied via `light.qss` / `dark.qss`. All values are **OKLCH**. Chroma drops as lightness approaches 0 or 100, so highlights and shadows never look garish.
+Defined in `Theme.{h,cpp}` as OKLCH literals, resolved to sRGB `QColor`s in `Palette`, and emitted into a single application stylesheet by `Theme::styleSheet()`. There are no `.qss` files on disk; the stylesheet is built in C++ from the resolved palette and applied with `qApp->setStyleSheet()` (see §3, §13). All source values are **OKLCH**. Chroma drops as lightness approaches 0 or 100, so highlights and shadows never look garish.
 
 ### 2.1 Color strategy
 
@@ -35,10 +45,11 @@ This is the 60-30-10 rule read as visual weight, not pixel count: ~60% tinted-ne
 
 ### 2.2 Token layers
 
-Two layers, so dark mode only redefines the second:
+The shipped model is a single semantic layer. `Palette` holds the resolved semantic tokens below (`accentBase`, `surfaceRaised`, ...); `resolveLight()` / `resolveDark()` in `Theme.cpp` write the OKLCH literals straight into those fields. There is no separate primitive ramp object: the raw OKLCH values live inline at the two resolve sites, and a single accent-hue constant (`kAccentHue = 285`) ties the neutrals together.
 
-- **Primitive tokens**: raw OKLCH ramps (`indigo.500`, `neutral.200`, `green.600`). Theme-independent.
-- **Semantic tokens**: the names below (`accent.base`, `surface.raised`). Each maps to a primitive, and the mapping is what light/dark swaps. Widgets and QSS reference semantic names only, never primitives.
+That is deliberate for a palette this small. The rule that matters downstream is unchanged: **widgets and the stylesheet reference semantic names only** (`accent.base`, never a raw `oklch(...)` or hex). Light and dark differ solely in what the two resolve functions write.
+
+If the palette grows to the point where the same OKLCH value is duplicated across many tokens, promote a primitive ramp then; until that pressure exists, the inline literals are simpler and the indirection would be ceremony.
 
 ### 2.3 The accent, and why it is not blue
 
@@ -85,6 +96,10 @@ These map directly to engine state enums (`StepResult::Status`, `ActorSession::S
 
 `status.warning` is reserved for the null-extraction highlight required by FR-9.11, a non-error condition that still demands attention. Do not reuse it for failures. `status.running` (cyan, hue 230) is deliberately separate from the accent (indigo-violet, hue 285) so "the app wants your attention" and "this step is executing" never blur together.
 
+**Implementation note (shipped).** `StatusToken` is an eight-value enum (`Idle, Running, Success, Warning, Error, Cancelled, Blocked, Skipped`). `Theme::status(token)` returns the resolved hue; `Skipped` currently resolves to the same `statusIdle` color as `Idle`, since both read as "did not run" — only the glyph distinguishes them (§6.1). There is no separate `statusSkipped` field in `Palette`. If skipped ever needs its own hue, add the field rather than overloading idle.
+
+**Status tints (shipped).** `Theme::statusTint(token)` returns an opaque background tint for a status, computed as a fixed ~16% mix of the status color toward `surface.raised` (not an alpha composite, per §2.9). This is what fills the background behind status pills and chips so they stay legible on any surface. It is computed, not stored, so it stays correct when the theme switches.
+
 ### 2.6 Light theme values
 
 ```
@@ -122,7 +137,7 @@ Verify every text and background pair with a contrast tool before committing a Q
 Dark mode is a separate set of decisions, not a color swap:
 
 - **Depth comes from surface lightness, not shadow.** The three-step `surface.sunken < base < raised < overlay` ramp climbs in lightness; dark mode drops the drop-shadows light mode uses.
-- **Body text weight drops to 350** in dark (from 400). Light text on dark reads heavier than dark on light, so the lighter weight keeps the visual color even.
+- **Body text weight drops to 350** in dark (from 400). Light text on dark reads heavier than dark on light, so the lighter weight keeps the visual color even. *(Planned: `Theme::font` does not yet vary weight by appearance; see §4.3.)*
 - **Accents desaturate slightly** relative to a naive invert, already reflected in the §2.7 values.
 - **Placeholder text still needs 4.5:1.** The washed-out gray placeholder is the most common contrast failure; `text.secondary`, not `text.disabled`, is the floor for placeholders.
 
@@ -130,15 +145,15 @@ Dark mode is a separate set of decisions, not a color swap:
 
 Heavy transparency means an incomplete palette and produces unpredictable contrast. Define explicit tint tokens instead of `rgba` overlays:
 
-| Token | Built from | Use |
-|---|---|---|
-| `tint.cache` | accent at the row-tint lightness | cached explorer rows (FR-5.4) |
-| `tint.substituted` | accent at field-background lightness | resolved variable values (FR-6.2) |
-| `tint.diffAdd` | success at low-saturation surface lightness | diff additions (FR-7.5) |
-| `tint.diffRemove` | error at low-saturation surface lightness | diff removals (FR-7.5) |
-| `tint.currentLine` | accent at gutter lightness | code editor current line |
+| Token | `Palette` field | Status | Built from | Use |
+|---|---|---|---|---|
+| `tint.cache` | `tintCache` | Shipped | accent at the row-tint lightness | cached explorer rows (FR-5.4) |
+| `tint.substituted` | `tintSubstituted` | Shipped | accent at field-background lightness | resolved variable values (FR-6.2) |
+| `tint.diffAdd` | `tintDiffAdd` | Shipped | success hue at low-saturation surface lightness | diff additions (FR-7.5) |
+| `tint.diffRemove` | `tintDiffRemove` | Shipped | error hue at low-saturation surface lightness | diff removals (FR-7.5) |
+| `tint.currentLine` | — | Planned | accent at gutter lightness | code-editor current line, lands with the CodeEditor (§6.8) |
 
-Each is a precomputed opaque OKLCH value in `Theme`, not an alpha composite. The only sanctioned alpha is the focus ring and the `status.running` pulse, where see-through is the point.
+Each shipped tint is a precomputed opaque OKLCH value resolved into `Palette`, not an alpha composite. `tint.currentLine` is intentionally absent from `Palette` today because the QScintilla `CodeEditor` it serves is not built yet (§6.8); add the field in the same change that introduces the editor. The only sanctioned alpha is the focus ring and the `status.running` pulse, where see-through is the point.
 
 ---
 
@@ -150,7 +165,9 @@ Dark versus light is never a reflex. The scene that forces the answer:
 
 That scene does not force dark or light on its own. What it forces is this: the tool sits beside an IDE the developer already themed. The honest default is therefore **System**, following the OS appearance the developer already chose. Both themes are first-class peers, not one plus an afterthought, which also satisfies the dual-theme contrast requirement (NFR-5.3).
 
-Primary craft target is dark, since the plurality of backend developers run dark IDEs, but every screen is designed and contrast-checked in both. The toggle offers Light, Dark, System, stored in `QSettings`, applied live without restart.
+Primary craft target is dark, since the plurality of backend developers run dark IDEs, but every screen is designed and contrast-checked in both. The toggle offers Light, Dark, System, stored in `QSettings` under `appearance/mode`, applied live without restart.
+
+**How "live" works (shipped).** `ThemeManager` resolves the effective appearance, then calls `qApp->setStyleSheet(theme.styleSheet())`; Qt re-applies the sheet across the whole widget tree, so no manual `unpolish`/`polish` walk is needed for stylesheet-driven properties. In System mode it connects to `QStyleHints::colorSchemeChanged` (Qt 6.5+) and re-applies when the OS appearance flips. Custom-painted atoms that cache palette-derived assets (e.g. `StatusBadge`) refresh on the `ThemeManager::themeChanged(const Theme&)` signal instead, since they paint outside QSS.
 
 ---
 
@@ -162,12 +179,26 @@ Per NFR-5.4, all sizes respect OS font scaling. Never hardcode pixel sizes that 
 
 System fonts are correct for a product UI. They give native feel on every platform and they are what the user's eye already expects.
 
-| Use | Font | Fallback chain |
+| Use | Font | Source |
 |---|---|---|
-| UI (labels, menus, body) | System default | `.AppleSystemUIFont` (macOS), `Segoe UI` (Win), system sans (Linux) |
-| Code, JSON, headers, URLs | Monospace | `SF Mono` (macOS), `Cascadia Code` (Win), `JetBrains Mono` bundled (Linux) |
+| UI (labels, menus, body) | System default — always native | `QApplication::font()` |
+| Code, JSON, headers, URLs | Bundled monospace (recommended), system fixed font today | `QFontDatabase::systemFont(QFontDatabase::FixedFont)`; see bundling note below |
 
-Never ship a bundled UI font; it fights the native look. Monospace may be bundled (JetBrains Mono) because system monospace varies too much for the code editor and response viewer to stay consistent.
+**Shipped behavior.** `Theme::font(TextStyle)` derives every UI style from `QApplication::font()` so OS font scaling is respected (NFR-5.4), and the `Mono` style currently uses the platform fixed font (`QFontDatabase::systemFont(QFontDatabase::FixedFont)` — SF Mono on macOS, Consolas/Cascadia on Windows, the system monospace on Linux) with `QFont::Monospace` as the style hint. **No font is bundled today.**
+
+**Recommended change: bundle one monospace for the code/data surfaces.** The UI font stays native (a bundled UI font fights the platform and is never worth it). The *monospace* is the opposite case, and the recommendation is to bundle a single high-quality open-source family (JetBrains Mono or Fira Code) for **all** platforms, not just Linux:
+
+- The mono font is used only on surfaces that are inherently non-native to begin with: the JSON tree, the raw response view, the headers table, URLs, and the timeline's extracted values. A consistent code font there reads as deliberate, the way an IDE's editor font does, not as foreign chrome.
+- Per-platform glyph metrics differ (SF Mono vs Cascadia vs DejaVu Sans Mono). Even with `tnum` keeping digits aligned, punctuation-dense JSON (`{`, `"`, `:`, `[`) advances differently across platforms, so tree indentation, wrapping, and the byte budgets in §4.2 shift between a developer's Mac and their Linux CI box. Bundling removes that variable: the same document lays out identically everywhere, which matters for a tool whose screenshots and bug reports cross machines.
+- Cost is a one-time binary increase (JetBrains Mono ships a handful of weights at well under a megabyte each; bundle Regular and Bold only).
+
+Mechanism if adopted:
+
+- Add the `.ttf` files as Qt resources and register them in `Bootstrapper` with `QFontDatabase::addApplicationFont` before the first window shows.
+- Point the `Mono` style at the bundled family by name, with the platform fixed font kept as the fallback in the `QFont` family list, so a failed resource load degrades to today's behavior rather than to a proportional font.
+- License: JetBrains Mono and Fira Code are both SIL OFL 1.1. Bundling is permitted; include the license file in the app bundle and note it in `LICENSE` / third-party attributions per the OSS-scope rule in `AGENTS.md`.
+
+Until this lands, the system monospace is the shipped fallback and the §4.2 metrics are validated against it. Track the bundling as the change that makes those metrics platform-independent.
 
 ### 4.2 Type scale
 
@@ -186,10 +217,10 @@ Line height is 1.4 for body and mono, tighter (1.15 to 1.2) for `title` and `sub
 
 ### 4.3 Type details
 
-- **`tabular-nums` for all aligned numbers:** status codes, durations, byte counts, extraction values in the timeline. Without it, columns of numbers jitter as digit widths vary. Set via the font's OpenType features on the `mono` and data styles.
+- **`tabular-nums` for all aligned numbers:** status codes, durations, byte counts, extraction values in the timeline. Without it, columns of numbers jitter as digit widths vary. Shipped via `QFont::setFeature("tnum", 1)` on the `Mono` style in `Theme::font`; apply the same to any new data style that renders aligned figures.
 - **Letter-spacing only where it earns it:** method chips and any uppercase label get slightly open tracking (roughly +0.02em); everything else stays at the font default. Never track lowercase body text.
-- **Weights are role-locked.** Four weights total: 400 body (350 in dark, see §2.8), 500 labels, 600 headings, and the bundled mono at 400. The same role uses the same weight everywhere; a 600 heading in one panel and a 500 heading in another is a bug.
-- **Semantic style names, not sizes.** Widgets reference `Theme` text styles (`title`, `body`, `caption`), never a raw point size.
+- **Weights are role-locked.** Today four roles map to Qt weights in `Theme::font`: body → `Normal` (400), label → `Medium` (500), title/subtitle → `DemiBold` (600), mono → the system fixed font's default. The same role uses the same weight everywhere; a 600 heading in one panel and a 500 heading in another is a bug. Dropping body to ~350 in dark mode (see §2.8) is a refinement not yet wired into `Theme::font` — when added, it belongs there, keyed on `appearance()`, not sprinkled across widgets.
+- **Semantic style names, not sizes.** Widgets call `Theme::font(TextStyle::Title)` etc., never a raw point size.
 
 ---
 
@@ -241,61 +272,94 @@ Two modes via the View menu, stored in `QSettings`:
 
 Each maps to a class under `views/` (composite panels) or `widgets/` (reusable atoms). Every interactive component ships with all of: default, hover, focus, active, disabled, loading, error. Shipping half of these is shipping a bug.
 
-### 6.1 StatusBadge (`widgets/StatusBadge`)
+### 6.1 StatusBadge (`widgets/StatusBadge`) — Shipped
 
 The most-used atom. A small pill or dot encoding a `status.*` value.
 
 - **Never color alone.** Pair each status with a glyph: check for success, filled dot for running, cross for error, slashed circle for cancelled, pause for blocked, triangle for warning or null. Color-blind users must distinguish states (the strongest accessibility rule in this app).
 - Two variants: `Dot` (8px, for tree rows) and `Pill` (text plus glyph, for timeline and headers).
 - `status.running` carries a subtle 1.2s opacity pulse, the one ambient animation in the app. It stops the instant state changes.
+- The glyph vocabulary is exposed as a static `StatusBadge::glyph(token)` so trees and tables that can't host a child widget render the *same* glyphs through a delegate, keeping the vocabulary consistent across widget and non-widget surfaces.
 
-### 6.2 Project Explorer (`views/ProjectExplorerWidget`), FR-5
+### 6.2 Project Explorer (`views/ProjectExplorerWidget`), FR-5 — Shipped
 
 - `QTreeView` with a custom delegate. Two top-level groups: Actors (each with a session `StatusBadge`) and Resources (each expands to operations with method chips).
-- Method chips: colored mono text on `surface.sunken`, uppercase. `GET` accent, `POST` success hue, `DELETE` error hue, `PUT` and `PATCH` warning hue. Muted, not loud.
+- Method chips: colored mono text on `surface.sunken`, uppercase. Coloured by the dedicated **method vocabulary** (§6.2a), not the status palette. Muted, not loud.
 - **Cache state (FR-5.4):** a cached row carries a faint full-width `tint.cache` row fill plus a small cache glyph in the trailing column. (No side accent border; a colored left stripe is a banned pattern and reads as decoration rather than meaning.)
 - Search field (FR-5.2) pinned to the top, filters as you type. Cmd+F focuses it.
 - Right-click menu (FR-5.3): Run, Run with Override, Edit Schema, View Dependencies.
 
-### 6.3 Request Editor (`views/RequestEditorPanel`), FR-6
+### 6.2a HTTP method colour vocabulary (`MethodColor`) — Shipped
+
+HTTP verbs get a **dedicated colour vocabulary**, deliberately separate from the status palette (§2.5) so a method chip's colour never reads as a run state (a green `GET` must not be mistaken for a succeeded step). Developers recognise request types at a glance — the convention most API tools share:
+
+| Method | Hue | Mnemonic |
+|---|---|---|
+| `GET` | 255 (blue) | safe read |
+| `POST` | 150 (green) | create |
+| `PUT` | 55 (orange) | replace |
+| `PATCH` | 95 (yellow) | partial update |
+| `DELETE` | 27 (red) | destructive |
+| `HEAD` / `OPTIONS` / other | — | neutral (`text.secondary`) |
+
+Resolved in `Palette` as `methodGet/methodPost/methodPut/methodPatch/methodDelete`; accessed via `Theme::method(MethodColor)` and the opaque `Theme::methodTint(MethodColor)` (same surface-mix technique as `statusTint`, §2.9 — no alpha). `format::methodColor(verb)` maps a verb string to the token. Used by the explorer chips, the request address-bar method pill (`#methodPill[methodClass="..."]`), and the execution-chain nodes (§6.3), so the vocabulary is identical across every surface. Dark-mode values are brightened to clear AA on `surface.raised`. The hues are chosen distinct from the accent (285) and from every status hue.
+
+### 6.3 Request Editor (`views/RequestEditorPanel`), FR-6 — Shipped
 
 - **Read-only by default** (FR-6.1). The panel reads as a preview, not a form: `surface.sunken` fields, no edit affordance until Override Mode.
-- Override Mode toggle in the panel header. When on, fields become editable with a `border.strong` outline and a persistent "Override active, one-shot" banner tinted `status.warning`.
+- Override Mode toggle in the panel header. When on, fields become editable with a `border.strong` outline and a persistent "Override active, one-shot" banner tinted `status.warning`. Headers, query params, and form-data rows use the shared `widgets/KeyValueEditor` (single-click-editable rows; a `FileCapable` mode adds a per-row file picker that writes the curl-style `@/path` reference the engine's multipart builder expects).
 - Resolved-request view (FR-6.2): shows the request after variable substitution. Substituted values get a subtle `tint.substituted` background so the user sees what came from where.
-- Chain preview (FR-6.3): a collapsed-by-default list of the steps that will execute, each with a `status.idle` badge.
+- Chain preview (FR-6.3): the **execution chain** rendered visually by `widgets/ChainView` — a vertical sequence of nodes, each a method-coloured pill (§6.2a) plus operation id, with `↓` connectors between steps and the invoked operation marked as the `target`. This is the product's hero surface (§1.2): the chain is shown, not spelled out as a label. When an operation has no declared dependencies, the view shows a single muted hint to run a Dry Run for the full resolved chain.
 - Two buttons: **Send** (`accent.base`, primary) and **Send Cleanly** (secondary, `border.strong` outline). Cmd+Enter sends; Cmd+Shift+Enter sends cleanly.
 
-### 6.4 Response Viewer (`views/ResponseViewerPanel`), FR-7
+### 6.4 Response Viewer (`views/ResponseViewerPanel`), FR-7 — Shipped
 
-- Tabbed: Tree, Raw, Headers, Diff.
-- Tree (FR-7.1): a collapsible `JsonTree` widget, monospace. Click a value to copy it as JSONPath (FR-7.4), with a transient toast confirming the copied path.
-- Raw (FR-7.2): `CodeEditor` (QScintilla) in read-only mode with JSON highlighting from the theme palette.
-- Diff (FR-7.5): two-up or inline, additions filled `tint.diffAdd`, removals filled `tint.diffRemove`, both light enough that text stays readable.
-- Status line at top: method chip, status code in the matching `status.*`, duration in `caption`.
+- Tabbed: Tree, Raw, Headers, Diff (a `QTabWidget`).
+- Tree (FR-7.1): a `QTreeWidget` populated from the parsed JSON, monospace. Clicking a value copies its JSONPath (FR-7.4) and emits `jsonPathCopied`, which the shell turns into a confirmation `Toast`.
+- Raw (FR-7.2): a read-only `QPlainTextEdit` with pretty-printed JSON. (The richer QScintilla `CodeEditor` with syntax highlighting in §6.8 is **planned**; the raw tab uses a plain text view today.)
+- Headers: masked header view — `Authorization`, `Cookie`, and other sensitive headers are redacted before display, mirroring the engine's redaction-first contract.
+- Diff (FR-7.5): inline line diff via `widgets/diff::lineDiff` (LCS over lines), additions filled `tint.diffAdd`, removals filled `tint.diffRemove`, both light enough that text stays readable. History is cleared on project switch (`clearHistory`) so diffs never compare across projects.
+- Status line at top: status code in the matching `status.*`, duration in `caption`. The last status is cached so a runtime theme switch can re-resolve the label color.
+- **Capture-off state.** Bodies only arrive when the run opted into body capture (`RunController::setCaptureResponseBodies(true)`). When capture is off, the body tabs show a placeholder explaining why they're empty rather than a blank pane (§10 Empty).
 
-### 6.5 Timeline (`views/TimelinePanel`), FR-7.6
+### 6.5 Timeline (`views/TimelinePanel`), FR-7.6 — Shipped
 
 - A horizontal sequence of step nodes, each a `StatusBadge.Pill` plus operation name: the executed chain, left to right.
 - Click a node to load that step's request and response in the viewer above.
 - **Extraction values (FR-9.11):** below each node, show extracted values. `null` results highlight in `status.warning` with a connector drawn to the downstream consumers that depended on them. This is the timeline's most important job; make it prominent.
 - During a run, the active node pulses `status.running`; completed nodes settle to their terminal status. This is the one surface allowed a heavier accent moment.
 
-### 6.6 Dependency Graph (`views/DependencyGraphView`, Phase 2), FR-8
+### 6.6 Dependency Graph (`views/DependencyGraphView`, Phase 2), FR-8 — Planned
 
-- A `QQuickWidget` hosting a QML graph (the one place QML appears; see `qml/DependencyGraph.qml`).
+This view is **not yet built**; no `views/DependencyGraphView` or `qml/` directory exists in `desktop/` today. The spec below is the intended design for the Phase 2 work.
+
+- A `QQuickWidget` hosting a QML graph (the one place QML appears; see the planned `qml/DependencyGraph.qml`).
 - Nodes use the same `status.*` palette. The execution path highlights from `status.running` to the terminal color (FR-8.3).
 - Circular dependencies (FR-8.4) draw with `status.error` edges and a warning banner.
 
-### 6.7 Command Palette (`widgets/CommandPalette`), FR-14
+### 6.7 Command Palette (`widgets/CommandPalette`), FR-14 — Shipped
 
 - Cmd/Ctrl+P. `surface.overlay`, centered, 600px max width, soft shadow.
-- Fuzzy find over operations; recent at the top (FR-14.3). A `>` prefix switches to global commands (FR-14.4).
+- Fuzzy find over operations via `widgets/FuzzyMatch`; recent at the top (FR-14.3). A `>` prefix switches to global commands (FR-14.4).
 - Keyboard only: arrows navigate, Enter runs, Esc closes. The selected row uses `accent.muted`.
 
-### 6.8 CodeEditor (`views/CodeEditor`)
+### 6.8 CodeEditor (`views/CodeEditor`) — Planned
+
+**Not yet built.** The current Raw response tab (§6.4) is a read-only `QPlainTextEdit`; YAML/JS schema editing has no dedicated editor yet. When built:
 
 - A QScintilla wrapper for YAML, JSON, and JS hook editing. The syntax theme derives from `Theme`; no QScintilla default colors.
-- Gutter on `surface.sunken`. Current line filled `tint.currentLine`. Matches the `mono` type style.
+- Gutter on `surface.sunken`. Current line filled `tint.currentLine` (add that token to `Palette` in the same change, see §2.9). Matches the `mono` type style.
+
+### 6.9 Supporting atoms — Shipped
+
+Smaller pieces the panels above compose from, each token-driven and theme-reactive:
+
+- **`widgets/PanelHeader`** — the consistent header strip (a `subtitle`-style title plus an optional trailing actions area) that gives the explorer, request, response, and timeline panels the same rhythm (§5).
+- **`widgets/Toast`** — the transient, self-deleting, click-through confirmation overlay near the bottom-center of its parent. Backs "copied JSONPath" (FR-7.4) and the undo pattern (§11.4).
+- **`widgets/EmptyState`** — the centered title + explanation + optional primary-action panel used for first-run and no-data surfaces (§10 Empty, PRD §12).
+- **`widgets/KeyValueEditor`** — the Postman-style key/value row list used by Override Mode (§6.3).
+- **`views/SecretsDialog`** — lists the secrets a project references via `{{secret.NAME}}` and whether each is present in the OS keychain. **Shows presence only, never stored values**, so secrets can't leak through the UI (PRD §13.3, FR-11.3/11.4).
+- **`widgets/FuzzyMatch`**, **`widgets/diff::lineDiff`**, **`views/Formatting`** — pure, unit-tested helpers (fuzzy scoring, line diff, value formatting) with no Qt-widget dependency.
 
 ---
 
@@ -344,7 +408,7 @@ Blur the screen (or screenshot and blur). The running step, the failed step, and
 
 ## 8. Iconography
 
-- One consistent icon set (SF Symbols on macOS where available; a bundled set such as Lucide for cross-platform consistency elsewhere).
+- One consistent icon set, **bundled for all platforms** (Lucide or Phosphor), rendered through `QIcon` / `QSvgRenderer` so it is pixel-identical at any DPI on every OS (see §14.1 item 5; this is why there is no per-OS icon split).
 - 16px default, 20px for the toolbar, scaled with OS font scaling.
 - Icons are `text.secondary` by default, `text.primary` on hover or active, `accent.base` when representing the active primary action.
 - Status glyphs (§6.1) are the exception; they carry their `status.*` color and never appear without it.
@@ -358,7 +422,7 @@ Minimal and functional, in keeping with principle 6. Product motion conveys stat
 
 | Element | Motion | Duration |
 |---|---|---|
-| `status.running` badge | opacity pulse 0.6 to 1.0 | 1.2s loop |
+| `status.running` badge | opacity pulse 1.0 to 0.55 and back | 1.2s loop |
 | Panel show or hide | width and opacity ease | 150ms |
 | Command palette | fade plus 4px rise | 120ms |
 | Toast (copied JSONPath) | fade in and out | 100ms in, 1.5s hold, 200ms out |
@@ -366,6 +430,20 @@ Minimal and functional, in keeping with principle 6. Product motion conveys stat
 | Tree expand or collapse | native Qt default | n/a |
 
 Ease out with an exponential curve (ease-out-quart or quint). No bounce, no elastic, no spring. No spinners on individual rows; a running chain shows progress through the timeline, not scattered loaders. No orchestrated load sequence; the app loads into a task. If the OS requests reduced motion, disable the pulse and all transitions.
+
+### 9.1 Pulse coordination (one tick, not one timer per badge)
+
+**Shipped today:** each `StatusBadge` in the `Running` state owns its own `QVariantAnimation` (1.2s loop, `InOutSine`, `valueChanged` → `update()`). That is correct and cheap while only one or two steps run at a time, which is the MVP's single-threaded execution model.
+
+**The scaling hazard:** the timeline can hold many rows, and a future graph view (§6.6) many nodes. If every running node drives an independent animation, their `update()` calls fire on uncorrelated frames, so the compositor repaints on nearly every tick of every badge instead of once per frame. The cost is repaint count, not the animation math.
+
+**The rule for more than ~3 concurrent pulses:** drive all pulsing elements from a **single shared ticker**, not N animations. One `QTimer` (or one `QVariantAnimation`) at roughly 60fps owns the phase; each badge reads the shared opacity in `paintEvent` and is told to repaint together. Because every badge reads the same phase, the pulse also stays visually in sync rather than drifting. Sketch:
+
+- A small `PulseClock` singleton-per-window owns one looping driver and exposes the current opacity plus a `tick()` signal.
+- A badge entering `Running` subscribes (connects `tick` to its `update`); leaving `Running` unsubscribes. When the subscriber count hits zero, the clock stops, so an idle app burns no timer.
+- Batch the repaint: prefer invalidating the smallest region (the badge rects), and let Qt coalesce them into one frame.
+
+Keep the current per-widget animation until a surface actually shows several simultaneous pulses; introduce `PulseClock` as part of the work that creates that surface (the live timeline strip or the graph), not speculatively. Honor reduced-motion in one place: the clock simply never starts, and badges paint at full opacity.
 
 ---
 
@@ -433,19 +511,38 @@ Every PR touching `desktop/` verifies:
 - [ ] Layout survives OS font scaling to 200% without clipping (NFR-5.4).
 - [ ] Focus indicators visible and never suppressed.
 - [ ] Hover and focus designed separately; keyboard users get a focus state on every control.
-- [ ] Screen reader announces run start and finish via accessible state updates.
+- [ ] Screen reader announces run start and finish without requiring focus movement (see §12.1).
+
+### 12.1 Announcing state changes to a screen reader
+
+A status change the user can see (a badge flipping to `Running`, then `Succeeded` or `Failed`) is invisible to a screen reader unless the app actively tells the accessibility layer. Repainting a widget does not notify the OS; neither does calling `setAccessibleName` after construction on its own. The run can start, stream, and finish while focus sits in the explorer, so we cannot rely on a focus change to carry the news.
+
+Push the change explicitly via `QAccessible`:
+
+- **State transitions** (a step or the whole run changing status): construct a `QAccessibleStateChangeEvent` for the widget and post it with `QAccessible::updateAccessibility(&event)`. This is the right event for "this thing's state changed in place."
+- **A new row appearing** (a step row added to the timeline as it begins): a `QAccessibleEvent` with `QAccessible::ObjectShow` on the new row so the reader knows a child arrived.
+- **Run start / finish as a discrete announcement** (not tied to any one widget): post a `QAccessibleAnnouncementEvent` (Qt 6.8) carrying a short message such as "Run started, 7 steps" and "Run finished: 6 succeeded, 1 failed." This is the cleanest path for a transient, focus-independent announcement and is available on the project's pinned Qt 6.8 baseline.
+
+Rules:
+
+- Keep announcements terse and factual; they are read aloud serially and compete with the user's flow. One sentence, the outcome first.
+- Fire from the same slot that updates the visual state (the `RunController` event handlers the timeline already listens to in §6.5), so visual and audible state never diverge.
+- Do not announce every streamed event. Announce run start, run finish, and per-step *failures*; routine per-step success is visible on the timeline and would be noise if spoken.
+- Respect reduced-motion only for animation, never for announcements: a user who suppressed the pulse still needs to hear that the run finished.
+
+*(Status: planned. `StatusBadge::setStatus` updates `setAccessibleName`, but no `QAccessible::updateAccessibility` / announcement calls exist yet; add them in the `RunController`-to-timeline wiring.)*
 
 ---
 
 ## 13. Implementation Notes
 
-- **Tokens, not raw values.** All color, spacing, and type live in `Theme`. QSS references token-derived values via `Theme`-generated stylesheet strings or dynamic properties. A raw hex or OKLCH literal in a `.qss` or `.cpp` is a review failure.
-- **Two token layers.** Primitive OKLCH ramps, then semantic names that map to them (§2.2). Dark mode redefines only the semantic mapping. Widgets touch semantic names exclusively.
-- **Tint tokens, not alpha.** The `tint.*` tokens (§2.9) are precomputed opaque values. Do not reintroduce `rgba`/alpha composites for row highlights, diffs, or substituted values.
-- **OKLCH at the source, sRGB at the edge.** `Theme` stores perceptual values and converts to sRGB hex once at load, since Qt's QSS parser does not read OKLCH.
-- **`ThemeExtension` pattern.** Custom tokens not covered by `QPalette` (status colors, spacing scale) live on the `Theme` object, injected at app start in `Bootstrapper`.
-- **Theme toggle.** Light, Dark, System, stored in `QSettings`, applied without restart by reloading the active `.qss` and repolishing widgets (`style()->unpolish` then `polish`).
-- **No inline styles.** Per-widget `setStyleSheet` is banned except for genuinely one-off cases; prefer object-name selectors in the central QSS.
+- **Tokens, not raw values.** All color, spacing, and type live in `Theme`. The stylesheet is generated by `Theme::styleSheet()` from the resolved `Palette`; custom-painted widgets read `theme.palette()` / `theme.status()` directly. A raw hex or OKLCH literal anywhere outside `Theme.cpp`'s two resolve functions is a review failure.
+- **One semantic token layer (§2.2).** `Palette` holds resolved semantic colors; the OKLCH literals live inline in `resolveLight()` / `resolveDark()`. There is no separate primitive-ramp object yet; promote one only when duplication demands it. Widgets touch semantic names exclusively.
+- **Tint tokens, not alpha.** The `tint.*` tokens (§2.9) are precomputed opaque values; `statusTint()` likewise computes an opaque mix, not an alpha composite. Do not reintroduce `rgba`/alpha composites for row highlights, diffs, substituted values, or status fills.
+- **OKLCH at the source, sRGB at the edge.** `Color::oklch` converts perceptual values to sRGB `QColor` once at resolve time, clamping out-of-gamut results per channel, since Qt's QSS parser does not read OKLCH.
+- **Status colors live on `Theme`, not `QPalette`.** Tokens `QPalette` can't express (the status vocabulary, spacing scale, type scale) are methods on `Theme` (`status`, `statusTint`, `space`, `font`). `Theme` is value-resolved per appearance, not a global singleton; the active one is owned by `ThemeManager` and handed to widgets via `setTheme(...)` and the `themeChanged` signal. *(There is no separate `ThemeExtension` type; that earlier name is retired.)*
+- **Theme toggle.** Light, Dark, System, stored in `QSettings` (`appearance/mode`), applied live without restart via `qApp->setStyleSheet(theme.styleSheet())`. Custom-painted atoms refresh on `themeChanged` rather than a manual `unpolish`/`polish` walk (§3).
+- **No inline styles.** Per-widget `setStyleSheet` is banned except for genuinely one-off cases; prefer object-name and dynamic-property selectors in the central sheet built by `Theme::styleSheet()` (e.g. `QPushButton#primaryAction`, `QWidget[density="compact"]`).
 - **Theme and density are runtime, not compile-time.** Both switch live.
 - **Semantic stacking order**, not arbitrary `raise()` calls: `panel < splitter handle < dropdown/menu < command palette < toast < tooltip` (per §11.3). Top-level popups handle this naturally; do not hand-tune stacking with magic values.
 - **Elevation is subtle.** In light mode, a shadow you can clearly see is too strong; use the smallest elevation that separates the surface. In dark mode, separate by surface lightness (§2.8), not shadow.
@@ -453,7 +550,37 @@ Every PR touching `desktop/` verifies:
 
 ---
 
-## 14. Anti-Reflex Notes (Keep This Tool From Looking Defaulted)
+## 14. Qt Leverage (What to Reach For, and What to Avoid)
+
+The UI is built on Qt's **item-widget** convenience classes (`QTreeWidget`, `QTableWidget`, `QListWidget`), not the model/view stack. That choice decides which Qt capabilities pay off and which fight the current code. This section records the decisions so contributors don't relitigate them or reach for the wrong tool when chasing "premium feel."
+
+The throughline: the real UI/UX leverage is **theme-reactive custom painting via `QStyledItemDelegate`**, which turns the `Theme` tokens (§2, §4, §5) into the §6 component vocabulary on the trees that already exist. The rest is either already specced (graph, a11y, icons) or a trap §2.9 / §9 already reject.
+
+### 14.1 Take these (high leverage, low conflict)
+
+1. **`QStyledItemDelegate` on the existing trees — the biggest unused lever.** A custom delegate works on `QTreeWidget` exactly as on `QTreeView`, so no model/view migration is needed to gain it. `paint()` is the correct home for the §6 vocabulary that per-item `setForeground`/`setIcon` cannot express: the §6.1 status glyph + color, the §6.2 method chips and full-width `tint.cache` row fill (not a banned side stripe), and the §6.5 extraction values in success-green / null-warning. One delegate per tree (explorer, timeline, response) makes the whole §6 surface theme-reactive in the place Qt intends. This is the change that moves the UI from "styled widgets" to "designed tool." Start with a `StatusDelegate` on the timeline (the §1 hero surface).
+
+2. **`QSortFilterProxyModel` — only paired with a model/view migration, and only when scale demands it.** The explorer's filter (FR-5.2) is hand-rolled `setHidden` looping today: fine for hundreds of operations, and it cannot rank by relevance. Promote the explorer to `QAbstractItemModel` + `QTreeView` + a proxy (reusing `widgets/FuzzyMatch` for scoring) only when the 500+ operation case in §5.3 is actually hit. Below that, the migration is premature; the current `QTreeWidget` stays.
+
+3. **`QKeySequence::StandardKey` for shortcuts.** §1 principle 5 is "native, not branded" and §11 is keyboard-first. Define actions in `buildShortcuts()` with standard keys (`Find`, `Cancel`, etc.) so Cmd vs Ctrl resolves per-OS automatically. Free cross-platform correctness.
+
+4. **`QAccessible` events for state changes (already specced in §12.1, still unbuilt).** Nothing currently fires `QAccessibleAnnouncementEvent` for run start/finish or `QAccessibleStateChangeEvent` for step transitions. This is the highest-value outstanding accessibility work and the only way the focus-independent announcements §12 commits to actually reach a screen reader.
+
+5. **Bundled SVG icons via `QIcon` / `QSvgRenderer`.** Same logic as the bundled monospace in §4.1: bundle one set (Lucide or Phosphor) for all platforms and render losslessly at any DPI, so the toolbar is pixel-identical on 1080p and 4K across the three OSes. This supersedes the SF-Symbols-on-macOS hedge in §8 — bundle everywhere, drop the per-OS split.
+
+### 14.2 Right tool, but Phase 2 only
+
+6. **`QQuickWidget` for the dependency graph (§6.6).** The Quick scene graph is the only genuinely GPU-accelerated path in Qt, so node dragging, bezier edges, and zoom belong there rather than in a hand-built `QGraphicsScene`. Hold the architectural boundary: the QML scene consumes engine state through `Events.h` / `PublicApi.h` only, and Quick stays desktop-only so the engine boundary guard keeps passing (AGENTS.md). This is the one surface where QML earns its weight.
+
+### 14.3 Do not reach for these
+
+- **`QGraphicsBlurEffect` / glassmorphism on the palette or menus.** Banned by §2.9 (alpha is a smell) and the §15 anti-reflex notes. Independently, on the QWidget path it is CPU-rasterized into an offscreen pixmap and janks on a repainted surface. The palette stays an opaque `surface.overlay` with a 1px border and a restrained shadow.
+- **`QGraphicsOpacityEffect` for the running pulse.** Forces offscreen rendering and is not hardware-accelerated. The §9.1 shared-tick approach (every badge reads one shared phase and repaints together) is both the correct design and cheaper.
+- **`QPropertyAnimation` as a "premium" swap for the current pulse.** For a single `StatusBadge` it costs the same as the `QVariantAnimation` already in the code; neither is GPU-accelerated in the widget world. What scales is repaint coordination (§9.1), not the animation class. No change warranted.
+
+---
+
+## 15. Anti-Reflex Notes (Keep This Tool From Looking Defaulted)
 
 A short list so future contributors do not drift back to category defaults:
 
@@ -466,9 +593,26 @@ A short list so future contributors do not drift back to category defaults:
 
 ---
 
-## 15. Reference
+## 16. Reference
 
 - PRD §6.5 to §6.14 (UI requirements), §7.5 (accessibility), §12 (first-run).
 - Project Layout §1 (`desktop/` tree), §2.5 (desktop CMake target).
 - `AGENTS.md`: use `/qt-reviewer` for any change here; `/qt-patterns` skill for Qt 6.8 idioms.
-- Engine state enums this design maps to: `engine/include/chainapi/engine/RunContext.h` (`StepResult::Status`, `ActorSession::State`), `ErrorCodes.h` (`ErrorClass`).
+- Engine state enums this design maps to: `engine/include/reqloom/engine/RunContext.h` (`StepResult::Status`, `ActorSession::State`), `ErrorCodes.h` (`ErrorClass`).
+
+### Source map (where each section lives)
+
+| Spec section | Implementation |
+|---|---|
+| §2 Color, tints, §4 Type, §5.1 Spacing | `theming/Theme.{h,cpp}`, `theming/Color.{h,cpp}` |
+| §3 Theme toggle, System mode | `theming/ThemeManager.{h,cpp}` |
+| §6.1 StatusBadge | `widgets/StatusBadge.{h,cpp}` |
+| §6.2 Project Explorer | `views/ProjectExplorerWidget.{h,cpp}` |
+| §6.3 Request Editor | `views/RequestEditorPanel.{h,cpp}`, `widgets/KeyValueEditor.{h,cpp}` |
+| §6.4 Response Viewer | `views/ResponseViewerPanel.{h,cpp}`, `widgets/LineDiff.{h,cpp}`, `views/Formatting.{h,cpp}` |
+| §6.5 Timeline | `views/TimelinePanel.{h,cpp}` |
+| §6.6 Dependency Graph | *planned — not in tree* |
+| §6.7 Command Palette | `widgets/CommandPalette.{h,cpp}`, `widgets/FuzzyMatch.{h,cpp}` |
+| §6.8 CodeEditor | *planned — not in tree* |
+| §6.9 Atoms | `widgets/PanelHeader`, `widgets/Toast`, `widgets/EmptyState`, `views/SecretsDialog` |
+| Shell, settings, run wiring | `views/MainWindow`, `application/*` (`Bootstrapper`, `ProjectModel`, `RunController`, `LayoutSettings`, `EnvironmentSettings`, `SecretManager`) |

@@ -298,7 +298,7 @@ Full annotated walkthrough is part of Phase 2 documentation."
 # ─── Reference ───────────────────────────────────────────────────────────────
 stub "reference/schema-spec" "Schema specification" \
     "The canonical YAML schema spec — every field, every type, every default." \
-    "The full schema specification is in [\`doc/Reqloom - PRD.md\`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20PRD.md) §5 in the source tree.
+    "The full schema specification is in [\`doc/Reqloom - PRD.md\`](https://github.com/Mirzabaig313/Reqloom/blob/main/doc/Reqloom%20-%20PRD.md) §5 in the source tree.
 
 Key reference tables:
 
@@ -352,7 +352,7 @@ Full taxonomy is in [Engine requirement](/reference/engine-requirement/) §5."
 
 stub "reference/engine-requirement" "Engine requirement (full spec)" \
     "The complete engine specification: state machines, error taxonomy, edge cases, and acceptance criteria." \
-    "The full engine specification is at [\`doc/Reqloom - Engine Requirement.md\`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20Engine%20Requirement.md) in the source tree.
+    "The full engine specification is at [\`doc/Reqloom - Engine Requirement.md\`](https://github.com/Mirzabaig313/Reqloom/blob/main/doc/Reqloom%20-%20Engine%20Requirement.md) in the source tree.
 
 Sections:
 
@@ -368,7 +368,7 @@ This page will eventually inline the spec for offline reading. For now the sourc
 # ─── Development ─────────────────────────────────────────────────────────────
 stub "dev/architecture" "Architecture" \
     "The two-phase architecture: in-process engine for MVP, extractable to a separate process or Rust later." \
-    "Reqloom's architecture is documented in [\`doc/Reqloom - Project Layout.md\`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20Project%20Layout.md) and PRD §8.
+    "Reqloom's architecture is documented in [\`doc/Reqloom - Project Layout.md\`](https://github.com/Mirzabaig313/Reqloom/blob/main/doc/Reqloom%20-%20Project%20Layout.md) and PRD §8.
 
 Key principles:
 
@@ -402,7 +402,7 @@ stub "dev/contributing" "Contributing" \
 - Engine changes must keep the architectural firewall intact (no Qt UI deps)
 - Tests required for all new features and bug fixes (80%+ coverage in domain layer)
 
-The full contribution guide is in [\`AGENTS.md\`](https://github.com/reqloom/reqloom/blob/main/AGENTS.md) in the source tree.
+The full contribution guide is in [\`AGENTS.md\`](https://github.com/Mirzabaig313/Reqloom/blob/main/AGENTS.md) in the source tree.
 
 Polished contributor docs are part of Phase 2 documentation."
 
@@ -419,7 +419,7 @@ stub "dev/roadmap" "Roadmap" \
 | 4 — Polish & v1 launch | Planned | Auto-update, sample projects, public release |
 | 5+ — Mock server, team sync, hosted | Post-MVP | Per PRD §13.6 |
 
-The canonical roadmap is in [\`doc/Reqloom - PRD.md\`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20PRD.md) §13."
+The canonical roadmap is in [\`doc/Reqloom - PRD.md\`](https://github.com/Mirzabaig313/Reqloom/blob/main/doc/Reqloom%20-%20PRD.md) §13."
 
 echo ""
 echo "Stub generation complete."
