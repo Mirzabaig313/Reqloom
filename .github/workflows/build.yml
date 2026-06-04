@@ -132,10 +132,6 @@ jobs:
         shell: bash
         run: echo "CMAKE_PREFIX_PATH=${QT_ROOT_DIR}" >> "$GITHUB_ENV"
 
-      - name: Export CMAKE_PREFIX_PATH for Qt
-        shell: bash
-        run: echo "CMAKE_PREFIX_PATH=${QT_ROOT_DIR}" >> "$GITHUB_ENV"
-
       # ----- MSVC environment (Windows) -----------------------------------
       - name: Set up MSVC environment
         if: runner.os == 'Windows'
