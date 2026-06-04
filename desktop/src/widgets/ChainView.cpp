@@ -118,8 +118,8 @@ void ChainView::rebuild() {
         if (node.isTarget) {
             auto* badge = new QLabel(QStringLiteral("target"), rowWidget);
             badge->setFont(theme_.font(theming::TextStyle::Caption));
-            badge->setStyleSheet(QStringLiteral("color: %1;")
-                                     .arg(theme_.palette().accentBase.name(QColor::HexRgb)));
+            badge->setStyleSheet(
+                QStringLiteral("color: %1;").arg(theme_.palette().accentBase.name(QColor::HexRgb)));
             row->addWidget(badge);
         }
 
@@ -130,8 +130,8 @@ void ChainView::rebuild() {
             auto* connector = new QLabel(QStringLiteral("↓"), this);
             connector->setAlignment(Qt::AlignLeft);
             connector->setContentsMargins(theming::Theme::space(theming::Space::Md), 0, 0, 0);
-            connector->setStyleSheet(
-                QStringLiteral("color: %1;").arg(theme_.palette().borderStrong.name(QColor::HexRgb)));
+            connector->setStyleSheet(QStringLiteral("color: %1;")
+                                         .arg(theme_.palette().borderStrong.name(QColor::HexRgb)));
             body_->addWidget(connector);
         }
     }
