@@ -31,6 +31,8 @@ add_executable(chainapi-desktop-ui-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LineDiff.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/KeyValueEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/KeyValueEditor.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/EmptyState.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/EmptyState.h
 )
 target_include_directories(chainapi-desktop-ui-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src

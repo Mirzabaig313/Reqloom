@@ -38,6 +38,8 @@ qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
     src/widgets/LineDiff.h
     src/widgets/KeyValueEditor.cpp
     src/widgets/KeyValueEditor.h
+    src/widgets/ChainView.cpp
+    src/widgets/ChainView.h
     src/views/Formatting.cpp
     src/views/Formatting.h
     src/views/MainWindow.cpp
