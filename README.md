@@ -22,7 +22,7 @@ login, prerequisites, target call — and executes them in the correct order.
 
 > Postman is an HTTP client. Reqloom is an API workflow engine.
 
-📖 **Full documentation: [mirzabaig313.github.io/ChainAPi](https://mirzabaig313.github.io/ChainAPi/)**
+📖 **Full documentation: [mirzabaig313.github.io/Reqloom](https://mirzabaig313.github.io/Reqloom/)**
 
 ## How it works
 
@@ -97,7 +97,7 @@ then the target — with every extracted ID flowing automatically between steps.
 
 ### Planned
 
-Committed directions from the [product roadmap](https://mirzabaig313.github.io/ChainAPi/). The
+Committed directions from the [product roadmap](https://mirzabaig313.github.io/Reqloom/). The
 guiding rule is that the **same `reqloom.yaml`** that powers testing also powers
 these features — no parallel definitions.
 
@@ -308,7 +308,7 @@ CI fails the whole pipeline on a single misformatted line, using
 ## Documentation
 
 Full documentation — schema reference, auth strategies, polling, hooks, and the
-CLI guide — lives at **[mirzabaig313.github.io/ChainAPi](https://mirzabaig313.github.io/ChainAPi/)**.
+CLI guide — lives at **[mirzabaig313.github.io/Reqloom](https://mirzabaig313.github.io/Reqloom/)**.
 
 The site is built from `docs-site/` (Astro Starlight). To run it locally:
 
