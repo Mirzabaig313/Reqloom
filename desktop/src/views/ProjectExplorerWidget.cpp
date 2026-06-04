@@ -5,6 +5,7 @@
 #include "../widgets/PanelHeader.h"
 #include "Formatting.h"
 
+#include <QtCore/Qt>
 #include <QtGui/QBrush>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLineEdit>
@@ -22,24 +23,6 @@ constexpr int kOperationIdRole = Qt::UserRole + 1;
 constexpr int kIsOperationRole = Qt::UserRole + 2;
 // The HTTP method string, kept so a theme change can re-tint the chip.
 constexpr int kMethodRole = Qt::UserRole + 3;
-
-/// Status token a method chip is tinted with (DESIGN.md §6.2): GET reads as
-/// the safe/read accent (success), POST as creation, DELETE as destructive,
-/// PUT/PATCH as mutation (warning). Muted, not loud — applied as text colour.
-[[nodiscard]] theming::StatusToken methodToken(const QString& method) {
-    if (method == QStringLiteral("GET") || method == QStringLiteral("HEAD") ||
-        method == QStringLiteral("OPTIONS")) {
-        return theming::StatusToken::Success;
-    }
-    if (method == QStringLiteral("POST")) {
-        return theming::StatusToken::Running;
-    }
-    if (method == QStringLiteral("DELETE")) {
-        return theming::StatusToken::Error;
-    }
-    // PUT / PATCH — mutation.
-    return theming::StatusToken::Warning;
-}
 
 /// Recursively show rows that match `needle` (or have a matching descendant)
 /// and hide the rest. Returns whether `item` ended up visible. A free helper
@@ -66,7 +49,7 @@ void recolorMethodsIn(QTreeWidgetItem* item, const theming::Theme& theme) {
     const QString method = item->data(1, kMethodRole).toString();
     if (!method.isEmpty()) {
         item->setFont(1, theme.font(theming::TextStyle::Mono));
-        item->setForeground(1, QBrush(theme.status(methodToken(method))));
+        item->setForeground(1, QBrush(theme.method(format::methodColor(method))));
     }
     for (int i = 0; i < item->childCount(); ++i) {
         recolorMethodsIn(item->child(i), theme);
@@ -76,6 +59,12 @@ void recolorMethodsIn(QTreeWidgetItem* item, const theming::Theme& theme) {
 }  // namespace
 
 ProjectExplorerWidget::ProjectExplorerWidget(QWidget* parent) : QWidget(parent) {
+    // Deepest surface + a sensible floor so actor/operation names never
+    // truncate to "ad…" when the splitter is at its default position.
+    setObjectName(QStringLiteral("explorerPanel"));
+    setAttribute(Qt::WA_StyledBackground, true);
+    setMinimumWidth(220);
+
     auto* layout = new QVBoxLayout(this);
     const int gap = theming::Theme::space(theming::Space::Sm);
     layout->setContentsMargins(gap, gap, gap, gap);
@@ -93,8 +82,13 @@ ProjectExplorerWidget::ProjectExplorerWidget(QWidget* parent) : QWidget(parent) 
     tree_ = new QTreeWidget(this);
     tree_->setColumnCount(2);
     tree_->setHeaderLabels({QStringLiteral("Name"), QStringLiteral("Method")});
+    // Name column takes the slack; Method is a fixed, right-sized chip column
+    // so a long verb (OPTIONS) can't squeeze the names.
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    tree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    tree_->header()->setSectionResizeMode(1, QHeaderView::Fixed);
+    tree_->header()->resizeSection(1, 72);
+    tree_->header()->setStretchLastSection(false);
+    tree_->setIndentation(14);
     tree_->setUniformRowHeights(true);
     layout->addWidget(tree_, 1);
 
@@ -148,7 +142,7 @@ void ProjectExplorerWidget::populate(const ProjectModel& project) {
             // Method chip: mono, uppercase, tinted by method class (§6.2).
             opItem->setFont(1, theme_.font(theming::TextStyle::Mono));
             opItem->setTextAlignment(1, Qt::AlignCenter);
-            opItem->setForeground(1, QBrush(theme_.status(methodToken(method))));
+            opItem->setForeground(1, QBrush(theme_.method(format::methodColor(method))));
         }
     }
 

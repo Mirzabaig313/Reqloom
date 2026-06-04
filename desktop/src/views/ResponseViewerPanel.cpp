@@ -1,6 +1,7 @@
 // ResponseViewerPanel — see header. Status + headers + JSON tree / raw body.
 #include "ResponseViewerPanel.h"
 
+#include "../widgets/EmptyState.h"
 #include "../widgets/LineDiff.h"
 
 #include <QtCore/QJsonArray>
@@ -16,6 +17,7 @@
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QTextEdit>
 #include <QtWidgets/QTreeWidget>
@@ -125,7 +127,18 @@ ResponseViewerPanel::ResponseViewerPanel(QWidget* parent) : QWidget(parent) {
     diffView_->setFont(theme_.font(theming::TextStyle::Mono));
     tabs_->addTab(diffView_, QStringLiteral("Diff"));
 
-    layout->addWidget(tabs_, 1);
+    // Centered teaching empty-state (Apidog-style) shown until a response
+    // arrives, instead of "No response yet." buried in the tree corner.
+    emptyState_ = new widgets::EmptyState(this);
+    emptyState_->setTitle(QStringLiteral("No response yet"));
+    emptyState_->setMessage(
+        QStringLiteral("Press Send (Cmd+Enter) to run this operation and inspect the response "
+                       "body, headers, and diff here."));
+
+    viewStack_ = new QStackedWidget(this);
+    viewStack_->addWidget(emptyState_);  // index 0 — empty
+    viewStack_->addWidget(tabs_);        // index 1 — response
+    layout->addWidget(viewStack_, 1);
 
     reset();
 }
@@ -134,6 +147,7 @@ ResponseViewerPanel::~ResponseViewerPanel() = default;
 
 void ResponseViewerPanel::applyTheme(const theming::Theme& theme) {
     theme_ = theme;
+    emptyState_->setTheme(theme);
     statusLabel_->setFont(theme_.font(theming::TextStyle::Subtitle));
     const QFont mono = theme_.font(theming::TextStyle::Mono);
     bodyTree_->setFont(mono);
@@ -184,8 +198,13 @@ void ResponseViewerPanel::reset() {
     lastStatus_ = -1;
     statusLabel_->setText(QStringLiteral("No response yet"));
     statusLabel_->setStyleSheet(QString{});
+    statusLabel_->setVisible(false);
     headersView_->clear();
     showBodyPlaceholder(QStringLiteral("No response yet."));
+    // Show the centered teaching empty-state until a response arrives.
+    if (viewStack_ != nullptr) {
+        viewStack_->setCurrentWidget(emptyState_);
+    }
     // Note: previousBody_/currentBody_ are intentionally preserved here. reset()
     // runs before each run to clear the visible panels; the Diff tab needs the
     // prior body to survive that so a re-run can compare against it. History is
@@ -211,6 +230,11 @@ void ResponseViewerPanel::showBodyPlaceholder(const QString& message) {
 void ResponseViewerPanel::onResponseReceived(
     int /*index*/, int status, QString headers, int bodySize, qint64 elapsedMs, QString body) {
     lastStatus_ = status;
+    // A response arrived — swap from the empty-state to the tabbed view.
+    statusLabel_->setVisible(true);
+    if (viewStack_ != nullptr) {
+        viewStack_->setCurrentWidget(tabs_);
+    }
     statusLabel_->setText(
         QStringLiteral("HTTP %1  ·  %2 bytes  ·  %3 ms").arg(status).arg(bodySize).arg(elapsedMs));
     statusLabel_->setStyleSheet(
