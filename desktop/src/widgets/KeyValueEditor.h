@@ -20,7 +20,7 @@
 class QToolButton;
 class QVBoxLayout;
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 class KeyValueEditor : public QWidget {
     Q_OBJECT
@@ -68,4 +68,4 @@ private:
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

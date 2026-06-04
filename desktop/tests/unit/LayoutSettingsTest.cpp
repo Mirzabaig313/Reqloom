@@ -7,7 +7,7 @@
 #include <QtCore/QSettings>
 #include <QtCore/QTemporaryDir>
 
-namespace chainapi::desktop::tests {
+namespace reqloom::desktop::tests {
 
 namespace {
 
@@ -55,4 +55,4 @@ TEST(LayoutSettings, density_round_trips_and_defaults_to_comfortable) {
     EXPECT_EQ(LayoutSettings::loadDensity(settings), Density::Compact);
 }
 
-}  // namespace chainapi::desktop::tests
+}  // namespace reqloom::desktop::tests

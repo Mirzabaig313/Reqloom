@@ -44,7 +44,7 @@ operations:
     actor: user
     depends_on: [repo.create_user_repo]
     body:
-      description: "Updated by ChainAPI validation"
+      description: "Updated by Reqloom validation"
     expect_status: 200
 
   delete_repo:

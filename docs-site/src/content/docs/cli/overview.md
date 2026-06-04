@@ -1,13 +1,13 @@
 ---
 title: CLI overview
-description: "The chainapi command-line interface: run, lint, import, dry-run, environments, and CI-friendly output formats."
+description: "The reqloom command-line interface: run, lint, import, dry-run, environments, and CI-friendly output formats."
 ---
 
-The CLI is the daily-driver tool for ChainAPI. Three subcommands:
+The CLI is the daily-driver tool for Reqloom. Three subcommands:
 
-- [`chainapi run`](/cli/run/) — execute an operation chain
-- [`chainapi lint`](/cli/lint/) — validate the schema
-- [`chainapi import`](/cli/import/) — convert OpenAPI / Postman / Bruno / curl logs
+- [`reqloom run`](/cli/run/) — execute an operation chain
+- [`reqloom lint`](/cli/lint/) — validate the schema
+- [`reqloom import`](/cli/import/) — convert OpenAPI / Postman / Bruno / curl logs
 
 Common flags that work across commands:
 

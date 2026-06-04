@@ -10,7 +10,7 @@
 
 #include <cstdint>
 
-namespace chainapi::desktop::theming {
+namespace reqloom::desktop::theming {
 
 enum class Appearance : std::uint8_t { Light, Dark };
 
@@ -122,4 +122,4 @@ private:
     Palette palette_;
 };
 
-}  // namespace chainapi::desktop::theming
+}  // namespace reqloom::desktop::theming

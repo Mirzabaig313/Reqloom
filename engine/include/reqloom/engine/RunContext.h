@@ -2,9 +2,9 @@
 
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Events.h>
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Events.h>
+#include <reqloom/engine/Operation.h>
 
 #include <chrono>
 #include <cstdint>
@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// One actor session, lifecycled per run.
 struct ActorSession {
@@ -138,4 +138,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

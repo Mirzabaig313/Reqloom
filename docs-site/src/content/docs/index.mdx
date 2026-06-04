@@ -1,18 +1,18 @@
 ---
-title: ChainAPI
+title: Reqloom
 description: "A workflow-aware API testing tool that auto-resolves request dependency chains."
 template: splash
 hero:
-  tagline: Postman is an HTTP client. ChainAPI is an API workflow engine.
+  tagline: Postman is an HTTP client. Reqloom is an API workflow engine.
   image:
     file: ../../assets/hero.svg
   actions:
     - text: Get started in 5 minutes
-      link: /start/tour/
+      link: /ChainAPi/start/tour/
       icon: right-arrow
       variant: primary
     - text: View on GitHub
-      link: https://github.com/chainapi/chainapi
+      link: https://github.com/Mirzabaig313/ChainAPi
       icon: external
 ---
 
@@ -22,12 +22,12 @@ import { Card, CardGrid, Code, Tabs, TabItem } from "@astrojs/starlight/componen
 
 Modern SaaS backends are multi-actor. To test "admin approves a customer
 refund", you need to log in as three actors and create six prerequisite
-records first. ChainAPI treats your API as a dependency graph: define
+records first. Reqloom treats your API as a dependency graph: define
 each actor and resource **once**, then run any endpoint with a single
 command — the engine auto-resolves the entire chain.
 
 ```bash
-chainapi run refund.approve --project marketplace
+reqloom run refund.approve --project marketplace
 # resolves: vendor.login → customer.verify_otp →
 #           product.create → product.publish →
 #           order.create → order.pay →
@@ -69,27 +69,27 @@ chainapi run refund.approve --project marketplace
         ```bash
         # Coming with v1 release. Today: build from source — see
         # /dev/building/
-        brew install chainapi/tap/chainapi
+        brew install reqloom/tap/reqloom
         ```
     </TabItem>
     <TabItem label="Linux">
         ```bash
         # AppImage:
-        curl -L https://github.com/chainapi/chainapi/releases/latest/download/chainapi-linux-x86_64.AppImage -o chainapi
-        chmod +x chainapi
+        curl -L https://github.com/reqloom/reqloom/releases/latest/download/reqloom-linux-x86_64.AppImage -o reqloom
+        chmod +x reqloom
         ```
     </TabItem>
     <TabItem label="Windows">
         ```powershell
         # Scoop:
-        scoop bucket add chainapi https://github.com/chainapi/scoop-bucket
-        scoop install chainapi
+        scoop bucket add reqloom https://github.com/reqloom/scoop-bucket
+        scoop install reqloom
         ```
     </TabItem>
     <TabItem label="Build from source">
         ```bash
-        git clone https://github.com/chainapi/chainapi
-        cd chainapi
+        git clone https://github.com/reqloom/reqloom
+        cd reqloom
         cmake --preset macos-debug
         cmake --build --preset macos-debug
         ```
@@ -99,7 +99,7 @@ chainapi run refund.approve --project marketplace
 
 ## Compared to other tools
 
-|                                | Postman | Bruno | Insomnia | **ChainAPI** |
+|                                | Postman | Bruno | Insomnia | **Reqloom** |
 |--------------------------------|---------|-------|----------|--------------|
 | Auto-resolved request chains   | ❌      | ❌    | ❌       | **✅**       |
 | First-class actor abstraction  | ❌      | ❌    | ❌       | **✅**       |
@@ -113,7 +113,7 @@ chainapi run refund.approve --project marketplace
 
 <CardGrid stagger>
     <Card title="5-minute tour" icon="seti:smarty">
-        See ChainAPI run the marketplace sample end-to-end.
+        See Reqloom run the marketplace sample end-to-end.
         [Take the tour →](/start/tour/)
     </Card>
     <Card title="Authoring guide" icon="open-book">

@@ -67,7 +67,7 @@
 #include <utility>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -567,13 +567,13 @@ namespace {
 constexpr auto kHookTimeout = std::chrono::seconds(1);
 constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
 
-[[nodiscard]] std::expected<HookOutcome, ChainApiError> runScript(const std::string& script,
+[[nodiscard]] std::expected<HookOutcome, ReqloomError> runScript(const std::string& script,
                                                                   HookContext context,
                                                                   bool includeResponse) {
     JsRuntimePtr const rt{JS_NewRuntime()};
     if (!rt) {
         return std::unexpected(
-            ChainApiError{ErrorCode::HookFailure, ErrorClass::Hook, "JS_NewRuntime returned null"});
+            ReqloomError{ErrorCode::HookFailure, ErrorClass::Hook, "JS_NewRuntime returned null"});
     }
     JS_SetMaxStackSize(rt.get(), kStackSize);
 
@@ -583,22 +583,22 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
     JsContextPtr const jsctx{JS_NewContext(rt.get())};
     if (!jsctx) {
         return std::unexpected(
-            ChainApiError{ErrorCode::HookFailure, ErrorClass::Hook, "JS_NewContext returned null"});
+            ReqloomError{ErrorCode::HookFailure, ErrorClass::Hook, "JS_NewContext returned null"});
     }
 
     JSContext* c = jsctx.get();
 
-    // Build the `ctx` object and stash it on the global as `__chainapi_ctx`
+    // Build the `ctx` object and stash it on the global as `__reqloom_ctx`
     // so wrapper code can reach it whether the script is a module or an
     // inline body.
     JSValue const hookCtxObj = buildHookCtx(c, context, includeResponse);
     JSValue const global = JS_GetGlobalObject(c);
     JsValueGuard const globalGuard{c, global};
-    JS_SetPropertyStr(c, global, "__chainapi_ctx", JS_DupValue(c, hookCtxObj));
+    JS_SetPropertyStr(c, global, "__reqloom_ctx", JS_DupValue(c, hookCtxObj));
     JsValueGuard const hookCtxGuard{c, hookCtxObj};
 
     auto fail = [&](ErrorCode code, std::string detail) {
-        return std::unexpected(ChainApiError{code, ErrorClass::Hook, std::move(detail)});
+        return std::unexpected(ReqloomError{code, ErrorClass::Hook, std::move(detail)});
     };
 
     if (looksLikeModule(script)) {
@@ -627,7 +627,7 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
         // QuickJS are cached by name.
         const std::string driver =
             "import fn from 'hook.mjs';\n"
-            "globalThis.__chainapi_invoke = () => fn(globalThis.__chainapi_ctx);\n";
+            "globalThis.__reqloom_invoke = () => fn(globalThis.__reqloom_ctx);\n";
         JSValue const driverEval =
             JS_Eval(c, driver.data(), driver.size(), "<driver>", JS_EVAL_TYPE_MODULE);
         if (JS_IsException(driverEval)) {
@@ -637,7 +637,7 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
         }
         JS_FreeValue(c, driverEval);
 
-        JSValue const invoke = JS_GetPropertyStr(c, global, "__chainapi_invoke");
+        JSValue const invoke = JS_GetPropertyStr(c, global, "__reqloom_invoke");
         JsValueGuard const invokeGuard{c, invoke};
         if (!JS_IsFunction(c, invoke)) {
             return fail(ErrorCode::HookFailure, "module did not export a default function");
@@ -652,12 +652,12 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
             return fail(ErrorCode::HookFailure, "hook threw: " + err);
         }
     } else {
-        // Inline body. Wrap in `(function(ctx){ <body> })(__chainapi_ctx)`.
+        // Inline body. Wrap in `(function(ctx){ <body> })(__reqloom_ctx)`.
         // We don't add `'use strict';` because hook bodies are user code
         // and forcing strict mode would silently break valid loose-mode
         // snippets. Crypto helpers don't care either way.
         const std::string wrapped =
-            "(function(ctx){\n" + script + "\n}).call(undefined, globalThis.__chainapi_ctx);\n";
+            "(function(ctx){\n" + script + "\n}).call(undefined, globalThis.__reqloom_ctx);\n";
         JSValue const evalRes =
             JS_Eval(c, wrapped.data(), wrapped.size(), "hook.js", JS_EVAL_TYPE_GLOBAL);
         JsValueGuard const evalGuard{c, evalRes};
@@ -682,14 +682,14 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
 
 }  // namespace
 
-std::expected<HookOutcome, ChainApiError> QuickJsHookRunner::runPreRequest(
+std::expected<HookOutcome, ReqloomError> QuickJsHookRunner::runPreRequest(
     const std::string& script, HookContext context) {
     return runScript(script, std::move(context), /*includeResponse=*/false);
 }
 
-std::expected<HookOutcome, ChainApiError> QuickJsHookRunner::runPostResponse(
+std::expected<HookOutcome, ReqloomError> QuickJsHookRunner::runPostResponse(
     const std::string& script, HookContext context) {
     return runScript(script, std::move(context), /*includeResponse=*/true);
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

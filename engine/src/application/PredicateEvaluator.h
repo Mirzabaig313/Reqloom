@@ -15,7 +15,7 @@
 // which the domain layer is not allowed to pull in.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 
 #include <cstdint>
 #include <expected>
@@ -23,7 +23,7 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// One evaluation outcome. Structurally invalid expressions or misses
 /// produce `False`, never an error.
@@ -80,9 +80,9 @@ class PredicateEvaluator {
 public:
     PredicateEvaluator();
 
-    /// Parse and validate. Returns `ChainApiError{SchemaInvalid}` when the
+    /// Parse and validate. Returns `ReqloomError{SchemaInvalid}` when the
     /// expression is malformed.
-    [[nodiscard]] std::expected<ParsedPredicate, ChainApiError> parse(
+    [[nodiscard]] std::expected<ParsedPredicate, ReqloomError> parse(
         std::string_view expression) const;
 
     /// Parse a response body once for reuse across multiple `evaluate`
@@ -112,9 +112,9 @@ public:
                                           int statusCode = 0) const noexcept;
 
     /// Convenience: parse and evaluate in one shot.
-    [[nodiscard]] std::expected<PredicateValue, ChainApiError> eval(std::string_view expression,
+    [[nodiscard]] std::expected<PredicateValue, ReqloomError> eval(std::string_view expression,
                                                                     std::string_view jsonBody,
                                                                     int statusCode = 0) const;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

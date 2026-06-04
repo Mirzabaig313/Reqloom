@@ -2,7 +2,7 @@
 // operation nodes with connectors (DESIGN.md §6.3 chain preview, the product's
 // hero surface per §1.2). Each node shows its HTTP method as a colour-coded
 // pill plus the operation id; the target operation is marked. This replaces the
-// plain-text dependency list so ChainAPI's core value — the resolved chain — is
+// plain-text dependency list so Reqloom's core value — the resolved chain — is
 // shown visually, not spelled out as a label.
 #pragma once
 
@@ -15,7 +15,7 @@
 
 class QVBoxLayout;
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 class ChainView : public QWidget {
     Q_OBJECT
@@ -55,4 +55,4 @@ private:
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

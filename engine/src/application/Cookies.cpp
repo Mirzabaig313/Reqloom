@@ -5,7 +5,7 @@
 #include <cctype>
 #include <string>
 
-namespace chainapi::engine::cookies {
+namespace reqloom::engine::cookies {
 
 namespace {
 
@@ -79,4 +79,4 @@ std::string formatRequestHeader(const std::map<std::string, std::string>& jar) {
     return out;
 }
 
-}  // namespace chainapi::engine::cookies
+}  // namespace reqloom::engine::cookies

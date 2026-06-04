@@ -13,11 +13,11 @@
 #include <variant>
 #include <vector>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 /// Roll a header pair list into a single newline-joined string for display.
 [[nodiscard]] QString joinHeaders(const std::vector<std::pair<std::string, std::string>>& headers) {
@@ -338,4 +338,4 @@ void RunController::publishEvent(const ce::RunEvent& event) {
         event);
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

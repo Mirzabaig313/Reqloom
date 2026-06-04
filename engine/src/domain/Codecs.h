@@ -7,13 +7,13 @@
 //   - Pure functions of their input.
 #pragma once
 
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/Operation.h>
 
 #include <optional>
 #include <string>
 #include <string_view>
 
-namespace chainapi::engine::codecs {
+namespace reqloom::engine::codecs {
 
 // ─── base64 (RFC 4648, standard alphabet, with padding) ─────────────────────
 
@@ -79,4 +79,4 @@ namespace chainapi::engine::codecs {
     return "GET";
 }
 
-}  // namespace chainapi::engine::codecs
+}  // namespace reqloom::engine::codecs

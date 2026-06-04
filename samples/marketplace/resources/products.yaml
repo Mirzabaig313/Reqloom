@@ -10,7 +10,7 @@ operations:
       name: "Demo Product {{$.uuid}}"
       price: 999
       stock: 50
-      description: "Sample product created by ChainAPI"
+      description: "Sample product created by Reqloom"
     expect_status: 201
     extract:
       product_id: $.data.id

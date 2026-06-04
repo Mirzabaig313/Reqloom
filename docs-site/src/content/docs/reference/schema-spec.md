@@ -3,7 +3,7 @@ title: Schema specification
 description: "The canonical YAML schema spec — every field, every type, every default."
 ---
 
-The full schema specification is in [`doc/ChainAPI - PRD.md`](https://github.com/chainapi/chainapi/blob/main/doc/ChainAPI%20-%20PRD.md) §5 in the source tree.
+The full schema specification is in [`doc/Reqloom - PRD.md`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20PRD.md) §5 in the source tree.
 
 Key reference tables:
 

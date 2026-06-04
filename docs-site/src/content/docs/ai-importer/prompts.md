@@ -1,6 +1,6 @@
 ---
 title: Multi-stage prompt suite
-description: "Six prompts that turn API documentation into a runnable ChainAPI project. Read the playbook first."
+description: "Six prompts that turn API documentation into a runnable Reqloom project. Read the playbook first."
 ---
 
 The prompt suite splits AI schema generation into six stages, each with its own review gate. See the [AI importer playbook](/ai-importer/playbook/) for the full workflow.

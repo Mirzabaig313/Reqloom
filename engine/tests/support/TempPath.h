@@ -7,7 +7,7 @@
 #include <random>
 #include <string>
 
-namespace chainapi::tests {
+namespace reqloom::tests {
 
 /// A process-unique token, stable for the life of the process. Seeded from
 /// std::random_device so concurrent test processes don't collide, without
@@ -21,7 +21,7 @@ namespace chainapi::tests {
 }
 
 /// Build a unique path under the system temp directory. `prefix` names the
-/// component (e.g. "chainapi-history"); `suffix` is appended verbatim, so a
+/// component (e.g. "reqloom-history"); `suffix` is appended verbatim, so a
 /// caller wanting an extension passes ".sqlite". Uniqueness comes from the
 /// process token plus a monotonic counter, so repeated calls within one
 /// process never alias.
@@ -38,4 +38,4 @@ namespace chainapi::tests {
     return std::filesystem::temp_directory_path() / name;
 }
 
-}  // namespace chainapi::tests
+}  // namespace reqloom::tests

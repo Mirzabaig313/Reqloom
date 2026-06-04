@@ -1,41 +1,40 @@
-# Build artefacts
+# ─── Build artefacts ──────────────────────────────────────────────────────────
 build/
 build-*/
 out/
 cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
 
-# IDE / editor
+# ─── CMake user overrides (not shared) ────────────────────────────────────────
+CMakeUserPresets.json
+compile_commands.json
+
+# ─── IDE / editor ─────────────────────────────────────────────────────────────
 .vs/
 .vscode/
 .idea/
 *.swp
 *.swo
 .DS_Store
+
+# GitHub ruleset JSON files (managed in the UI, not in source) ────────────────
 .github/rulesets
 
-# CMake
-CMakeCache.txt
-CMakeFiles/
-CMakeUserPresets.json
-cmake_install.cmake
-compile_commands.json
-install_manifest.txt
+# ─── Kiro workspace state (local per-machine) ─────────────────────────────────
+.kiro/
 
-# vcpkg
+# ─── vcpkg ────────────────────────────────────────────────────────────────────
 vcpkg_installed/
 .vcpkg-root
 # vcpkg checkout when bootstrapped at the repo root by CI/local.
 /vcpkg/
 
-# Qt — installed via tools/setup-qt.sh into ~/Qt by default; ignored when
-# someone installs it inside the repo tree.
+# ─── Qt (installed via tools/setup-qt.sh into ~/Qt; ignored if installed
+#     inside the repo tree) ────────────────────────────────────────────────────
 /Qt/
-
-# Conan
-.conan/
-conan.lock
-
-# Qt
 *.user
 *.user.*
 moc_*.cpp
@@ -43,21 +42,29 @@ moc_*.h
 qrc_*.cpp
 ui_*.h
 
-# Clang tooling
+# ─── Conan (unused but silenced if accidentally initialised) ──────────────────
+.conan/
+conan.lock
+
+# ─── Clang tooling caches ─────────────────────────────────────────────────────
 .cache/
 .clangd/
 
-# Coverage
+# ─── Coverage artefacts ───────────────────────────────────────────────────────
 *.gcno
 *.gcda
 *.profraw
 *.profdata
 coverage/
 
-# Logs
+# ─── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 
-# Validation — raw results and per-API working notes
+# ─── Local development notes (private, per-author) ────────────────────────────
+doc/local/
+doc/adr/
+
+# ─── Validation — raw results and per-API working notes ───────────────────────
 validation/llm-feasibility/runs/
 validation/design-partners/results-template.md
 validation/testreuslt.md
@@ -65,10 +72,7 @@ validation/github/findings.md
 validation/stripe/findings.md
 validation/discourse/findings.md
 
-# local 
-.kiro/hooks
-doc/local
-# Anchored to repo root: only the top-level chainapi/ working dir
-
-/chainapi/
-doc/adr
+# ─── Reqloom working-project directory ────────────────────────────────────────
+# Anchored to repo root so only the top-level reqloom/ sample/working project
+# is ignored; test fixtures under engine/tests/fixtures/ are tracked normally.
+/reqloom/

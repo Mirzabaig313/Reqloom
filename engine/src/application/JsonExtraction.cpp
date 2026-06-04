@@ -15,7 +15,7 @@
 #include <string_view>
 #include <utility>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 using json = nlohmann::json;
@@ -42,7 +42,7 @@ std::string truncateForTrace(std::string s) {
 
 }  // namespace
 
-std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson(
+std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
     const std::string& body, const std::vector<Extraction>& extractions) {
     if (extractions.empty()) {
         return std::map<std::string, std::string>{};
@@ -53,7 +53,7 @@ std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson
         doc = json::parse(body);
     } catch (const json::parse_error& e) {
         return std::unexpected(
-            ChainApiError{ErrorCode::ResponseParse,
+            ReqloomError{ErrorCode::ResponseParse,
                           ErrorClass::Extraction,
                           std::string("response is not valid JSON: ") + e.what()});
     }
@@ -128,7 +128,7 @@ std::expected<std::map<std::string, std::string>, ChainApiError> extractFromJson
         }
         if (!found) {
             return std::unexpected(
-                ChainApiError{ErrorCode::ExtractionFailed,
+                ReqloomError{ErrorCode::ExtractionFailed,
                               ErrorClass::Extraction,
                               "extract path '" + ext.sourcePath +
                                   "' not found in response (variable: " + ext.variableName + ")"});
@@ -319,14 +319,14 @@ void resolveJsonPath(const json& doc,
 
 }  // namespace
 
-std::expected<DetailedExtraction, ChainApiError> extractFromJsonDetailed(
+std::expected<DetailedExtraction, ReqloomError> extractFromJsonDetailed(
     const OperationId& opId, const std::string& body, const std::vector<Extraction>& extractions) {
     // Body-only entry point: zero status code and no headers means
     // Header / StatusCode / Cookie / Regex all surface as Missing.
     return extractFromResponseDetailed(opId, body, 0, {}, extractions);
 }
 
-std::expected<DetailedExtraction, ChainApiError> extractFromResponseDetailed(
+std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
     const OperationId& opId,
     const std::string& body,
     int statusCode,
@@ -345,7 +345,7 @@ std::expected<DetailedExtraction, ChainApiError> extractFromResponseDetailed(
             docParsed = true;
         } catch (const json::parse_error& e) {
             return std::unexpected(
-                ChainApiError{ErrorCode::ResponseParse,
+                ReqloomError{ErrorCode::ResponseParse,
                               ErrorClass::Extraction,
                               std::string("response is not valid JSON: ") + e.what()});
         }
@@ -443,4 +443,4 @@ std::expected<DetailedExtraction, ChainApiError> extractFromResponseDetailed(
     return out;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

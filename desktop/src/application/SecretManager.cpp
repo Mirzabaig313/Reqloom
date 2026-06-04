@@ -3,11 +3,11 @@
 
 #include "ProjectModel.h"
 
-#include <chainapi/engine/Factories.h>
+#include <reqloom/engine/Factories.h>
 
 #include <utility>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 SecretManager::SecretManager(QObject* parent)
     : QObject(parent),
@@ -67,4 +67,4 @@ bool SecretManager::clear(const QString& name, QString& error) {
     return true;
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

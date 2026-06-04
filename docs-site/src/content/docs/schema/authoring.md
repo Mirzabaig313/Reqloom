@@ -1,9 +1,9 @@
 ---
 title: Schema authoring guide
-description: "How to write or review ChainAPI YAML schemas. Real patterns, real bugs, real fixes — grounded in production validation."
+description: "How to write or review Reqloom YAML schemas. Real patterns, real bugs, real fixes — grounded in production validation."
 ---
 
-This guide is for anyone hand-writing a ChainAPI schema or reviewing
+This guide is for anyone hand-writing a Reqloom schema or reviewing
 output from the AI importer. The patterns here come from real-world
 validation against the GiGwala backend (174 endpoints, 5 actors).
 
@@ -27,7 +27,7 @@ Use the [AI importer](/ai-importer/playbook/) when:
 The smallest useful schema has one actor and one operation:
 
 ```yaml
-# chainapi.yaml
+# reqloom.yaml
 version: 1
 name: My API
 environment:
@@ -59,7 +59,7 @@ resources:
 Run it:
 
 ```bash
-chainapi run hello.get
+reqloom run hello.get
 ```
 
 The engine logs in as `user`, captures the token, and calls `/api/hello`
@@ -88,7 +88,7 @@ resources:
         actor: user
 ```
 
-`chainapi run order.get` resolves the chain automatically:
+`reqloom run order.get` resolves the chain automatically:
 
 1. `user.login` (cached if recent)
 2. `order.create` (because `order.get`'s path references `{{order.order_id}}`)
@@ -148,7 +148,7 @@ body:
 ```
 
 ```bash
-chainapi run auth.register --var new_user_phone="+91999000123"
+reqloom run auth.register --var new_user_phone="+91999000123"
 ```
 
 ```yaml

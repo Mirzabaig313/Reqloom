@@ -1,9 +1,9 @@
-// chainapi CLI entry point.
+// reqloom CLI entry point.
 //
 // Subcommands:
-//   chainapi run <op>      — execute an operation chain
-//   chainapi lint          — validate a project schema
-//   chainapi import <file> — import OpenAPI / Postman / Bruno
+//   reqloom run <op>      — execute an operation chain
+//   reqloom lint          — validate a project schema
+//   reqloom import <file> — import OpenAPI / Postman / Bruno
 #include "commands/ImportCommand.h"
 #include "commands/LintCommand.h"
 #include "commands/RunCommand.h"
@@ -19,18 +19,18 @@ namespace {
 
 void printUsage() {
     std::println(
-        "ChainAPI CLI\n"
-        "  chainapi run <operation> [opts]   Execute a chain ending at <operation>\n"
+        "Reqloom CLI\n"
+        "  reqloom run <operation> [opts]   Execute a chain ending at <operation>\n"
         "    --project <path>                Project directory (default: cwd)\n"
         "    --env <name>                    Environment to run against\n"
         "    --var KEY=VALUE                 Override an env variable (repeatable)\n"
         "    --format text|json|junit        Output format (default: text)\n"
         "    --output <file>                 Write rendered output to <file>\n"
         "    --quiet                         Suppress live progress on stdout\n"
-        "  chainapi lint                     Validate the schema in current project\n"
+        "  reqloom lint                     Validate the schema in current project\n"
         "    --project <path>                Project directory (default: cwd)\n"
-        "  chainapi import <file>            Import an external API spec\n"
-        "  chainapi --help                   Show this message");
+        "  reqloom import <file>            Import an external API spec\n"
+        "  reqloom --help                   Show this message");
 }
 
 }  // namespace
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
         // below: it initializes the Qt application state that
         // QCoreApplication::arguments() reads from.
         [[maybe_unused]] const QCoreApplication app(argc, argv);
-        QCoreApplication::setApplicationName(QStringLiteral("chainapi"));
+        QCoreApplication::setApplicationName(QStringLiteral("reqloom"));
         QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
 
         const QStringList args = QCoreApplication::arguments();
@@ -52,13 +52,13 @@ int main(int argc, char** argv) {
 
         const QString& verb = args.at(1);
         if (verb == QStringLiteral("run")) {
-            return chainapi::cli::runCommand(args.mid(2));
+            return reqloom::cli::runCommand(args.mid(2));
         }
         if (verb == QStringLiteral("lint")) {
-            return chainapi::cli::lintCommand(args.mid(2));
+            return reqloom::cli::lintCommand(args.mid(2));
         }
         if (verb == QStringLiteral("import")) {
-            return chainapi::cli::importCommand(args.mid(2));
+            return reqloom::cli::importCommand(args.mid(2));
         }
 
         std::println(stderr, "Unknown command: {}", verb.toStdString());

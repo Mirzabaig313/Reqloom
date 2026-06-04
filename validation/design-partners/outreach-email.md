@@ -12,7 +12,7 @@ Hi {first_name},
 
 You came up because I'm building a developer tool around a frustration I've heard from {context — "you mentioned at $event" / "your tweet about" / "we worked together on $project"}: the manual chain of "log in as admin, log in as vendor, create product, create order, pay, then test the actual endpoint" that backend devs run through every morning to test multi-role APIs.
 
-I'm calling it ChainAPI. The core idea is treating an API as a graph: define each role and each resource once, and the tool auto-resolves the chain when you click any endpoint. No more copying tokens between tabs.
+I'm calling it Reqloom. The core idea is treating an API as a graph: define each role and each resource once, and the tool auto-resolves the chain when you click any endpoint. No more copying tokens between tabs.
 
 Before I commit to building this for ten weeks I'm validating the design with ten engineers who actually live this pain. Would you be up for a 30-minute call this or next week? I'll show you the schema and the proposed UI; you tell me whether it would replace your current setup or whether I've missed something.
 

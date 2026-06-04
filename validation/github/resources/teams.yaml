@@ -6,8 +6,8 @@ operations:
     path: /orgs/{{env.test_org}}/teams
     actor: admin
     body:
-      name: "chainapi-validation-{{$.uuid}}"
-      description: "Created by ChainAPI validation"
+      name: "reqloom-validation-{{$.uuid}}"
+      description: "Created by Reqloom validation"
       privacy: "closed"
     expect_status: 201
     extract:

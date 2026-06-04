@@ -2,7 +2,7 @@
 
 #include <memory>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 class MainWindow;
 class Bootstrapper;
@@ -32,4 +32,4 @@ private:
     std::unique_ptr<MainWindow> mainWindow_;
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 
-namespace chainapi::desktop::widgets::diff {
+namespace reqloom::desktop::widgets::diff {
 
 namespace {
 
@@ -72,4 +72,4 @@ std::vector<DiffLine> lineDiff(const QString& oldText, const QString& newText) {
     return out;
 }
 
-}  // namespace chainapi::desktop::widgets::diff
+}  // namespace reqloom::desktop::widgets::diff

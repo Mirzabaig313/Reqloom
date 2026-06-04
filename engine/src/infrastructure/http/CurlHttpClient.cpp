@@ -11,7 +11,7 @@
 #include <memory>
 #include <mutex>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -166,10 +166,10 @@ CurlHttpClient::CurlHttpClient() {
 
 CurlHttpClient::~CurlHttpClient() = default;
 
-std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpRequest& request) {
+std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest& request) {
     CurlEasyHandle const curl{curl_easy_init()};
     if (!curl) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::NetworkTimeout, ErrorClass::Network, "Failed to initialize curl handle"});
     }
 
@@ -219,7 +219,7 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
         auto headerLine = std::format("{}: {}", key, value);
         auto* appended = curl_slist_append(headerList.get(), headerLine.c_str());
         if (appended == nullptr) {
-            return std::unexpected(ChainApiError{
+            return std::unexpected(ReqloomError{
                 ErrorCode::NetworkTimeout, ErrorClass::Network, "Failed to append header: " + key});
         }
         // curl_slist_append returns the updated head; we release the old
@@ -241,7 +241,7 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
     if (!request.multipart.empty()) {
         mime.reset(curl_mime_init(curl.get()));
         if (!mime) {
-            return std::unexpected(ChainApiError{ErrorCode::NetworkTimeout,
+            return std::unexpected(ReqloomError{ErrorCode::NetworkTimeout,
                                                  ErrorClass::Network,
                                                  "curl_mime_init failed (multipart request)"});
         }
@@ -249,13 +249,13 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
             curl_mimepart* mp = curl_mime_addpart(mime.get());
             if (mp == nullptr) {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::NetworkTimeout,
+                    ReqloomError{ErrorCode::NetworkTimeout,
                                   ErrorClass::Network,
                                   "curl_mime_addpart failed for part: " + part.name});
             }
             if (curl_mime_name(mp, part.name.c_str()) != CURLE_OK) {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::NetworkTimeout,
+                    ReqloomError{ErrorCode::NetworkTimeout,
                                   ErrorClass::Network,
                                   "curl_mime_name failed for part: " + part.name});
             }
@@ -265,7 +265,7 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
             // MultipartBuilder.cpp's prologue for the full rationale.
             if (curl_mime_data(mp, part.value.data(), part.value.size()) != CURLE_OK) {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::NetworkTimeout,
+                    ReqloomError{ErrorCode::NetworkTimeout,
                                   ErrorClass::Network,
                                   "curl_mime_data failed for part: " + part.name});
             }
@@ -295,7 +295,7 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
 
     if (res != CURLE_OK) {
         return std::unexpected(
-            ChainApiError{classifyCurlError(res),
+            ReqloomError{classifyCurlError(res),
                           ErrorClass::Network,
                           std::string("curl error: ") + curl_easy_strerror(res)});
     }
@@ -310,4 +310,4 @@ std::expected<HttpResponse, ChainApiError> CurlHttpClient::send(const HttpReques
     return response;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

@@ -5,7 +5,7 @@
 
 #include <QtGui/QColor>
 
-namespace chainapi::desktop::theming {
+namespace reqloom::desktop::theming {
 
 /// Convert an OKLCH color to an sRGB QColor (8-bit, opaque).
 ///
@@ -18,4 +18,4 @@ namespace chainapi::desktop::theming {
 /// Same as `oklch` but returns a `#rrggbb` string for QSS interpolation.
 [[nodiscard]] QString oklchHex(double lightness, double chroma, double hueDegrees);
 
-}  // namespace chainapi::desktop::theming
+}  // namespace reqloom::desktop::theming

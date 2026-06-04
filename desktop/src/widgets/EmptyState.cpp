@@ -8,7 +8,7 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QVBoxLayout>
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
     auto* outer = new QVBoxLayout(this);
@@ -78,4 +78,4 @@ void EmptyState::setTheme(const theming::Theme& theme) {
         QStringLiteral("color: %1;").arg(theme_.palette().textSecondary.name(QColor::HexRgb)));
 }
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

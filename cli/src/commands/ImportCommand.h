@@ -2,9 +2,9 @@
 
 #include <QtCore/QStringList>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 /// Import an external API spec (OpenAPI, Postman, Bruno, Insomnia).
 int importCommand(const QStringList& args);
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

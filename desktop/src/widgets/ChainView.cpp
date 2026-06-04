@@ -10,7 +10,7 @@
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QVBoxLayout>
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 namespace {
 
@@ -138,4 +138,4 @@ void ChainView::rebuild() {
     body_->addStretch(1);
 }
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

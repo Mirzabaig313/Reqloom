@@ -9,7 +9,7 @@
 #include <QtCore/QString>
 #include <QtCore/QTemporaryFile>
 
-namespace chainapi::desktop::tests {
+namespace reqloom::desktop::tests {
 
 namespace {
 
@@ -90,4 +90,4 @@ TEST(EnvironmentSettings, empty_key_or_value_is_ignored) {
               QStringLiteral("prod"));
 }
 
-}  // namespace chainapi::desktop::tests
+}  // namespace reqloom::desktop::tests

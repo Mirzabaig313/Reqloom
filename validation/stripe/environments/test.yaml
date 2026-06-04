@@ -4,4 +4,4 @@ variables:
   platform_key: !secret STRIPE_PLATFORM_TEST_KEY
   connect_account_id: !secret STRIPE_TEST_CONNECT_ACCOUNT
   test_card_token: tok_visa
-  test_email_domain: chainapi.test
+  test_email_domain: reqloom.test
