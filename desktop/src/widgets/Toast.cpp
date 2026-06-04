@@ -9,7 +9,7 @@
 
 #include <QtCore/QPropertyAnimation>
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 namespace {
 
@@ -91,4 +91,4 @@ void Toast::reposition() {
     move(x, y);
 }
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

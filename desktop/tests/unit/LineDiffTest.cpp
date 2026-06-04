@@ -5,7 +5,7 @@
 
 #include <cstddef>
 
-namespace chainapi::desktop::widgets::diff::tests {
+namespace reqloom::desktop::widgets::diff::tests {
 
 namespace {
 
@@ -79,4 +79,4 @@ TEST(LineDiff, empty_old_makes_everything_added) {
     EXPECT_GE(countOf(d, K::Added), 1);
 }
 
-}  // namespace chainapi::desktop::widgets::diff::tests
+}  // namespace reqloom::desktop::widgets::diff::tests

@@ -1,8 +1,8 @@
-// HookTypingsEmitter — writes `chainapi.d.ts` to a project directory
+// HookTypingsEmitter — writes `reqloom.d.ts` to a project directory
 // so hook authors get TypeScript autocomplete on the sandbox `ctx` object.
 //
 // The typings shape is static today — every project gets the same
-// `ChainApiContext` interface. The per-project emitter API is kept
+// `ReqloomContext` interface. The per-project emitter API is kept
 // (rather than shipping a static file) for two reasons:
 //   1. The shape will grow per-project once `ctx.actors.<id>.token` is typed.
 //   2. Importer-generated projects need to drop the typings file alongside
@@ -11,16 +11,16 @@
 // Same atomic-write pattern as `YamlSchemaWriter`.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/ExecutionEngine.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/ExecutionEngine.h>
 
 #include <expected>
 #include <filesystem>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
-/// Returns the written `chainapi.d.ts` path on success.
-using TypingsEmitResult = std::expected<std::filesystem::path, ChainApiError>;
+/// Returns the written `reqloom.d.ts` path on success.
+using TypingsEmitResult = std::expected<std::filesystem::path, ReqloomError>;
 
 class HookTypingsEmitter {
 public:
@@ -31,7 +31,7 @@ public:
     HookTypingsEmitter& operator=(HookTypingsEmitter&&) = delete;
     virtual ~HookTypingsEmitter() = default;
 
-    /// Write `<targetDir>/chainapi.d.ts` describing the hook `ctx` surface.
+    /// Write `<targetDir>/reqloom.d.ts` describing the hook `ctx` surface.
     /// Creates the directory if it does not exist. `overwrite=false` (default)
     /// refuses to clobber an existing file.
     ///
@@ -41,4 +41,4 @@ public:
                                    bool overwrite = false) = 0;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

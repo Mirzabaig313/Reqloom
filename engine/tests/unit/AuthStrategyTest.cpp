@@ -4,8 +4,8 @@
 #include "domain/VariableResolver.h"
 #include "infrastructure/http/HttpClient.h"
 
-#include <chainapi/engine/Actor.h>
-#include <chainapi/engine/RunContext.h>
+#include <reqloom/engine/Actor.h>
+#include <reqloom/engine/RunContext.h>
 
 #include <gtest/gtest.h>
 
@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 
@@ -38,10 +38,10 @@ public:
         responses_.push_back(std::move(resp));
     }
 
-    std::expected<ce::HttpResponse, ce::ChainApiError> send(const ce::HttpRequest& req) override {
+    std::expected<ce::HttpResponse, ce::ReqloomError> send(const ce::HttpRequest& req) override {
         recorded_.push_back({req.url, req.body.value_or("")});
         if (responses_.empty()) {
-            return std::unexpected(ce::ChainApiError{
+            return std::unexpected(ce::ReqloomError{
                 ce::ErrorCode::NetworkTimeout, ce::ErrorClass::Network, "fake: queue exhausted"});
         }
         auto resp = std::move(responses_.front());

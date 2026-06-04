@@ -1,19 +1,19 @@
-// Engine-internal interface for parsing chainapi.yaml into a validated Project.
+// Engine-internal interface for parsing reqloom.yaml into a validated Project.
 // Concrete impl: YamlSchemaParser (yaml-cpp).
-// Errors carry file:line context via `ChainApiError::detail`.
+// Errors carry file:line context via `ReqloomError::detail`.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/ExecutionEngine.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/ExecutionEngine.h>
 
 #include <expected>
 #include <filesystem>
 #include <string>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
-/// `ChainApiError::detail` is of the form `"<path>:<line>: <message>"`.
-using SchemaParseResult = std::expected<Project, ChainApiError>;
+/// `ReqloomError::detail` is of the form `"<path>:<line>: <message>"`.
+using SchemaParseResult = std::expected<Project, ReqloomError>;
 
 class SchemaParser {
 public:
@@ -27,4 +27,4 @@ public:
     virtual SchemaParseResult parse(const std::filesystem::path& rootYaml) = 0;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

@@ -24,19 +24,19 @@
 #include <string_view>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
 namespace fs = std::filesystem;
 
-ChainApiError invalid(std::string detail) {
-    return ChainApiError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
+ReqloomError invalid(std::string detail) {
+    return ReqloomError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
 }
 
 // Containment check: resolved path must live under projectRoot with a
 // path-separator boundary so `/home/user/proj` doesn't admit `/home/user/proj-evil`.
-std::expected<fs::path, ChainApiError> canonicalSpecPath(const fs::path& spec,
+std::expected<fs::path, ReqloomError> canonicalSpecPath(const fs::path& spec,
                                                          const fs::path& projectRoot) {
     std::error_code ec;
     auto canonical = fs::weakly_canonical(spec, ec);
@@ -478,7 +478,7 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
 
 }  // namespace
 
-std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
+std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
     const fs::path& spec, const fs::path& projectRoot) const {
     auto canonical = canonicalSpecPath(spec, projectRoot);
     if (!canonical) {
@@ -511,7 +511,7 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
         root = YAML::Load(buffer.str());
     } catch (const YAML::Exception& e) {
         return std::unexpected(
-            ChainApiError{ErrorCode::YamlParse,
+            ReqloomError{ErrorCode::YamlParse,
                           ErrorClass::Schema,
                           std::string{"openapi import: YAML parse failed: "} + e.what()});
     }
@@ -723,4 +723,4 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
     return outcome;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

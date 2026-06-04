@@ -3,7 +3,7 @@
 
 #include <QtCore/QSettings>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
@@ -37,4 +37,4 @@ QString EnvironmentSettings::load(QSettings& settings, const QString& projectKey
     return env;
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

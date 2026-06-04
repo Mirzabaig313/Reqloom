@@ -1,6 +1,6 @@
 // ExecutionEngine — resolves dependency chains, authenticates actors, executes steps.
 
-#include <chainapi/engine/ExecutionEngine.h>
+#include <reqloom/engine/ExecutionEngine.h>
 
 #include "../domain/Codecs.h"
 #include "../domain/DependencyResolver.h"
@@ -31,7 +31,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 using json = nlohmann::json;
 
@@ -254,7 +254,7 @@ struct ExecutionEngine::Impl {
     // Run the polling phase for an operation. Returns the FINAL poll response on
     // success. Errors: PollFailPredicate, PollTimeout, PollMaxAttemptsExceeded,
     // SchemaInvalid. Cancellation is checked each iteration.
-    std::expected<HttpResponse, ChainApiError> runPollLoop(const Operation& op,
+    std::expected<HttpResponse, ReqloomError> runPollLoop(const Operation& op,
                                                            const PollUntil& poll,
                                                            const Project& project,
                                                            RunContext& ctx,
@@ -268,7 +268,7 @@ struct ExecutionEngine::Impl {
         auto successPredicate = evaluator.parse(poll.successWhen);
         if (!successPredicate) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SchemaInvalid,
+                ReqloomError{ErrorCode::SchemaInvalid,
                               ErrorClass::Schema,
                               "poll_until.success_when: " + successPredicate.error().detail});
         }
@@ -278,7 +278,7 @@ struct ExecutionEngine::Impl {
             auto parsed = evaluator.parse(*poll.failWhen);
             if (!parsed) {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::SchemaInvalid,
+                    ReqloomError{ErrorCode::SchemaInvalid,
                                   ErrorClass::Schema,
                                   "poll_until.fail_when: " + parsed.error().detail});
             }
@@ -302,7 +302,7 @@ struct ExecutionEngine::Impl {
         }
 
         if ((pollActor != nullptr) && !ensureSession(*pollActor, ctx, rctx, runId, stepIndex)) {
-            return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
                                                  ErrorClass::Auth,
                                                  "poll_until: actor session refresh failed"});
         }
@@ -314,7 +314,7 @@ struct ExecutionEngine::Impl {
         for (int attempt = 0; attempt < poll.maxAttempts; ++attempt) {
             if (isCancelled(runId)) {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::Cancelled, ErrorClass::Run, "poll_until: cancelled"});
+                    ReqloomError{ErrorCode::Cancelled, ErrorClass::Run, "poll_until: cancelled"});
             }
 
             HttpRequest req;
@@ -322,7 +322,7 @@ struct ExecutionEngine::Impl {
             req.transport = rctx.transport;
             auto resolvedPath = varResolver.resolve(poll.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
-                return std::unexpected(ChainApiError{
+                return std::unexpected(ReqloomError{
                     ErrorCode::VarUnresolved,
                     ErrorClass::Resolution,
                     "poll_until: unresolved variable in path: " + resolvedPath.unresolved.front()});
@@ -368,7 +368,7 @@ struct ExecutionEngine::Impl {
                     if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
                         if (!signOAuth1Request(req, *session)) {
                             return std::unexpected(
-                                ChainApiError{ErrorCode::SessionRefreshFailed,
+                                ReqloomError{ErrorCode::SessionRefreshFailed,
                                               ErrorClass::Auth,
                                               "poll_until: oauth1 signing failed (missing "
                                               "consumer credentials or malformed URL)"});
@@ -376,7 +376,7 @@ struct ExecutionEngine::Impl {
                     } else if (session->signingScheme == ActorSession::SigningScheme::AwsSigV4) {
                         if (!signSigV4Request(req, *session)) {
                             return std::unexpected(
-                                ChainApiError{ErrorCode::SessionRefreshFailed,
+                                ReqloomError{ErrorCode::SessionRefreshFailed,
                                               ErrorClass::Auth,
                                               "poll_until: aws_sigv4 signing failed "
                                               "(missing access_key/secret_key/region/service "
@@ -454,7 +454,7 @@ struct ExecutionEngine::Impl {
             attemptRows.push_back(std::move(attemptRow));
 
             if (failMatched) {
-                return std::unexpected(ChainApiError{ErrorCode::PollFailPredicate,
+                return std::unexpected(ReqloomError{ErrorCode::PollFailPredicate,
                                                      ErrorClass::Polling,
                                                      "poll_until.fail_when matched (HTTP " +
                                                          std::to_string(lastResponse.status) +
@@ -480,7 +480,7 @@ struct ExecutionEngine::Impl {
 
             const auto remaining = deadline - std::chrono::steady_clock::now();
             if (remaining <= std::chrono::milliseconds{0}) {
-                return std::unexpected(ChainApiError{
+                return std::unexpected(ReqloomError{
                     ErrorCode::PollTimeout,
                     ErrorClass::Polling,
                     haveLastResponse ? "poll_until: timeout exceeded — last response: HTTP " +
@@ -492,7 +492,7 @@ struct ExecutionEngine::Impl {
             std::this_thread::sleep_for(sleepFor);
         }
 
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::PollMaxAttemptsExceeded,
             ErrorClass::Polling,
             haveLastResponse
@@ -655,7 +655,7 @@ struct ExecutionEngine::Impl {
 
         const int maxAttempts = op.retry.maxAttempts;
         std::optional<HttpResponse> httpResp;
-        ChainApiError lastError{};
+        ReqloomError lastError{};
         int attemptCount = 0;
 
         for (int attempt = 0; attempt <= maxAttempts; ++attempt) {
@@ -1016,7 +1016,7 @@ ExecutionEngine::~ExecutionEngine() = default;
 ExecutionEngine::ExecutionEngine(ExecutionEngine&&) noexcept = default;
 ExecutionEngine& ExecutionEngine::operator=(ExecutionEngine&&) noexcept = default;
 
-std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& project,
+std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& project,
                                                              const OperationId& target,
                                                              RunContext& ctx,
                                                              const RunOptions& options) {
@@ -1066,7 +1066,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
         for (const auto& name : DependencyResolver::collectSecretReferences(project)) {
             auto value = impl_->deps.secrets->read(name);
             if (!value) {
-                return std::unexpected(ChainApiError{
+                return std::unexpected(ReqloomError{
                     ErrorCode::SecretAccessFailed,
                     ErrorClass::Auth,
                     "secret store: failed to read '" + name + "': " + value.error().detail});
@@ -1205,4 +1205,4 @@ void ExecutionEngine::subscribe(EventCallback callback) {
     impl_->subscribers.push_back(std::move(callback));
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

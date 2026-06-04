@@ -1,4 +1,4 @@
-// `chainapi run <op>` — load a project, resolve a chain, execute,
+// `reqloom run <op>` — load a project, resolve a chain, execute,
 // and emit results through the requested renderer (text / json / junit).
 
 #include "RunCommand.h"
@@ -7,8 +7,8 @@
 #include "../output/JsonRenderer.h"
 #include "../output/TextRenderer.h"
 
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <cstdint>
 #include <expected>
@@ -23,9 +23,9 @@
 #include <utility>
 
 namespace fs = std::filesystem;
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 namespace {
 
@@ -43,7 +43,7 @@ struct RunArgs {
 
 void printUsage(std::ostream& os) {
     std::println(os,
-                 "Usage: chainapi run <resource.operation> [options]\n"
+                 "Usage: reqloom run <resource.operation> [options]\n"
                  "Options:\n"
                  "  --project <path>     Project directory (default: cwd)\n"
                  "  --env <name>         Environment to run against\n"
@@ -70,7 +70,7 @@ void printUsage(std::ostream& os) {
 
 [[nodiscard]] std::expected<RunArgs, int> parseArgs(const QStringList& args) {
     if (args.isEmpty()) {
-        std::println(stderr, "chainapi run: missing <operation>");
+        std::println(stderr, "reqloom run: missing <operation>");
         printUsage(std::cerr);
         return std::unexpected(2);
     }
@@ -92,14 +92,14 @@ void printUsage(std::ostream& os) {
             const auto kv = args[++i].toStdString();
             const auto eq = kv.find('=');
             if (eq == std::string::npos) {
-                std::println(stderr, "chainapi run: --var requires KEY=VALUE, got '{}'", kv);
+                std::println(stderr, "reqloom run: --var requires KEY=VALUE, got '{}'", kv);
                 return std::unexpected(2);
             }
             out.overrides[kv.substr(0, eq)] = kv.substr(eq + 1);
         } else if (flag == QStringLiteral("--format") && i + 1 < args.size()) {
             auto parsed = parseFormat(args[++i].toStdString());
             if (!parsed) {
-                std::println(stderr, "chainapi run: {}", parsed.error());
+                std::println(stderr, "reqloom run: {}", parsed.error());
                 return std::unexpected(2);
             }
             out.format = *parsed;
@@ -111,7 +111,7 @@ void printUsage(std::ostream& os) {
             printUsage(std::cout);
             return std::unexpected(0);
         } else {
-            std::println(stderr, "chainapi run: unknown argument '{}'", flag.toStdString());
+            std::println(stderr, "reqloom run: unknown argument '{}'", flag.toStdString());
             printUsage(std::cerr);
             return std::unexpected(2);
         }
@@ -134,7 +134,7 @@ void printUsage(std::ostream& os) {
     }
     owned = std::make_unique<std::ofstream>(path);
     if (!*owned) {
-        std::println(stderr, "chainapi run: cannot open --output file '{}'", path.string());
+        std::println(stderr, "reqloom run: cannot open --output file '{}'", path.string());
         return fallback;  // best-effort fallback; the caller checks owned->good()
     }
     return *owned;
@@ -149,9 +149,9 @@ int runCommand(const QStringList& args) {
     }
     auto& cfg = *parsed;
 
-    auto yamlPath = cfg.projectPath / "chainapi.yaml";
+    auto yamlPath = cfg.projectPath / "reqloom.yaml";
     if (!fs::exists(yamlPath)) {
-        std::println(stderr, "Error: chainapi.yaml not found in {}", cfg.projectPath.string());
+        std::println(stderr, "Error: reqloom.yaml not found in {}", cfg.projectPath.string());
         return 1;
     }
 
@@ -233,4 +233,4 @@ int runCommand(const QStringList& args) {
     return result->succeeded() ? 0 : 1;
 }
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

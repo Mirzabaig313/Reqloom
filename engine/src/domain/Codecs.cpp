@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::engine::codecs {
+namespace reqloom::engine::codecs {
 
 // ─── base64 ─────────────────────────────────────────────────────────────────
 
@@ -243,4 +243,4 @@ std::string truncateUtf8(std::string_view input, std::size_t maxBytes) {
     return std::string{input.substr(0, cut)};
 }
 
-}  // namespace chainapi::engine::codecs
+}  // namespace reqloom::engine::codecs

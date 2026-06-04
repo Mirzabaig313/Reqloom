@@ -8,7 +8,7 @@
 // into a log, a screenshot, or the clipboard by accident.
 #pragma once
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <QtCore/QObject>
 #include <QtCore/QString>
@@ -16,7 +16,7 @@
 
 #include <memory>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 class ProjectModel;
 
@@ -71,4 +71,4 @@ private:
     bool backendAvailable_{true};
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

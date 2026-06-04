@@ -16,11 +16,11 @@ class QMenu;
 class QSplitter;
 class QStackedWidget;
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 class ExecutionEngine;
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace theming {
 class ThemeManager;
@@ -121,4 +121,4 @@ private:
     bool restoringEnv_{false};
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

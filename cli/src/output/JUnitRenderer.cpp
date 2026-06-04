@@ -10,7 +10,7 @@
 
 #include "StepFormatting.h"
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <cstdint>
 #include <sstream>
@@ -18,11 +18,11 @@
 #include <string_view>
 #include <vector>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 namespace {
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 /// XML 1.0 attribute / text escape. Drops control characters that the
 /// XML 1.0 spec disallows entirely (e.g. raw 0x00–0x08); Jenkins' parser
@@ -127,7 +127,7 @@ void JUnitRenderer::render(const ce::OperationId& target,
 
     const double seconds = static_cast<double>(totalMs) / 1000.0;
     const std::string envName{environment.empty() ? std::string_view{"default"} : environment};
-    const std::string suiteName = "chainapi." + xmlEscape(target.value);
+    const std::string suiteName = "reqloom." + xmlEscape(target.value);
 
     out_ << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
     out_ << "<testsuites name=\"" << xmlEscape(target.value) << "\" tests=\"" << groups.size()
@@ -141,15 +141,15 @@ void JUnitRenderer::render(const ce::OperationId& target,
          << " errors=\"" << errors << "\""
          << " skipped=\"" << skipped << "\""
          << " time=\"" << seconds << "\""
-         << " hostname=\"chainapi-cli\">\n";
+         << " hostname=\"reqloom-cli\">\n";
     out_ << "    <properties>\n";
-    out_ << R"(      <property name="chainapi.target" value=")" << xmlEscape(target.value)
+    out_ << R"(      <property name="reqloom.target" value=")" << xmlEscape(target.value)
          << "\"/>\n";
-    out_ << R"(      <property name="chainapi.environment" value=")" << xmlEscape(envName)
+    out_ << R"(      <property name="reqloom.environment" value=")" << xmlEscape(envName)
          << "\"/>\n";
-    out_ << R"(      <property name="chainapi.outcome" value=")" << runOutcomeName(result.outcome)
+    out_ << R"(      <property name="reqloom.outcome" value=")" << runOutcomeName(result.outcome)
          << "\"/>\n";
-    out_ << R"(      <property name="chainapi.run_id" value=")" << result.runId.value << "\"/>\n";
+    out_ << R"(      <property name="reqloom.run_id" value=")" << result.runId.value << "\"/>\n";
     out_ << "    </properties>\n";
 
     for (const auto& g : groups) {
@@ -199,4 +199,4 @@ void JUnitRenderer::render(const ce::OperationId& target,
     out_ << "</testsuites>\n";
 }
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

@@ -9,16 +9,16 @@
 
 #include "../http/HttpClient.h"
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 class HttpLlmClient final : public LlmClient {
 public:
     explicit HttpLlmClient(HttpClient& transport) noexcept : transport_(&transport) {}
 
-    std::expected<LlmResponse, ChainApiError> complete(const LlmRequest& request) override;
+    std::expected<LlmResponse, ReqloomError> complete(const LlmRequest& request) override;
 
 private:
     HttpClient* transport_{nullptr};
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

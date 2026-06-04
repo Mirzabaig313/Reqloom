@@ -10,7 +10,7 @@
 
 #include "StepFormatting.h"
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <cstdint>
 #include <iomanip>
@@ -18,11 +18,11 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 namespace {
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 /// Escape a UTF-8 byte sequence per RFC 8259 §7. Bytes ≤ 0x1F use the
 /// short escape forms; everything else passes through. Engine-emitted
@@ -163,4 +163,4 @@ void JsonRenderer::render(const ce::OperationId& target,
     out_ << "}\n";
 }
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

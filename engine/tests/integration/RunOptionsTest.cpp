@@ -14,8 +14,8 @@
 
 #include "infrastructure/storage/SqliteHistoryStore.h"
 
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -27,22 +27,22 @@
 #include <type_traits>
 #include <variant>
 
-namespace ce = chainapi::engine;
-namespace ct = chainapi::tests;
+namespace ce = reqloom::engine;
+namespace ct = reqloom::tests;
 namespace fs = std::filesystem;
 
 namespace {
 
 [[nodiscard]] fs::path fixturesDir() {
-    return fs::path(CHAINAPI_FIXTURES_DIR);
+    return fs::path(REQLOOM_FIXTURES_DIR);
 }
 
 class RunOptionsScratchProject {
 public:
     explicit RunOptionsScratchProject(const std::string& yamlBody) {
-        path_ = ct::uniqueTempPath("chainapi-runopts-itest");
+        path_ = ct::uniqueTempPath("reqloom-runopts-itest");
         fs::create_directories(path_);
-        std::ofstream{path_ / "chainapi.yaml"} << yamlBody;
+        std::ofstream{path_ / "reqloom.yaml"} << yamlBody;
     }
 
     ~RunOptionsScratchProject() {
@@ -50,7 +50,7 @@ public:
         fs::remove_all(path_, ec);
     }
 
-    [[nodiscard]] fs::path yaml() const { return path_ / "chainapi.yaml"; }
+    [[nodiscard]] fs::path yaml() const { return path_ / "reqloom.yaml"; }
 
 private:
     fs::path path_;
@@ -724,7 +724,7 @@ TEST_F(RunOptionsFixture, step_cancelled_event_fires_for_each_cancelled_step) {
 // instance) can read back what the first wrote.
 
 TEST_F(RunOptionsFixture, run_persists_full_event_stream_to_history_store) {
-    const auto dbPath = ct::uniqueTempPath("chainapi-history-itest", ".sqlite");
+    const auto dbPath = ct::uniqueTempPath("reqloom-history-itest", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
@@ -805,7 +805,7 @@ TEST_F(RunOptionsFixture, history_store_persists_request_headers_already_masked)
     // The desktop history pane reads headers directly out of the
     // payload column; the masker that runs at emit time is the only
     // line of defence between the bearer token and the disk. Pin it.
-    const auto dbPath = ct::uniqueTempPath("chainapi-history-mask", ".sqlite");
+    const auto dbPath = ct::uniqueTempPath("reqloom-history-mask", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
@@ -880,7 +880,7 @@ resources:
           session_token: $.id
 )YAML";
 
-    const auto dbPath = ct::uniqueTempPath("chainapi-history-secret", ".sqlite");
+    const auto dbPath = ct::uniqueTempPath("reqloom-history-secret", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
     fs::remove(fs::path{dbPath.string() + "-wal"}, ec);

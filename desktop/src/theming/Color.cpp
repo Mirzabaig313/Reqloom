@@ -6,7 +6,7 @@
 #include <cmath>
 #include <numbers>
 
-namespace chainapi::desktop::theming {
+namespace reqloom::desktop::theming {
 
 namespace {
 
@@ -59,4 +59,4 @@ QString oklchHex(double lightness, double chroma, double hueDegrees) {
     return oklch(lightness, chroma, hueDegrees).name(QColor::HexRgb);
 }
 
-}  // namespace chainapi::desktop::theming
+}  // namespace reqloom::desktop::theming

@@ -10,7 +10,7 @@
 
 class QSettings;
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 /// Row density (DESIGN.md §5.3). Comfortable is the default; Compact tightens
 /// list rows for users with hundreds of operations.
@@ -29,4 +29,4 @@ public:
     [[nodiscard]] static Density loadDensity(QSettings& settings);
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

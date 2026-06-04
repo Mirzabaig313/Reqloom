@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -101,4 +101,4 @@ std::vector<std::pair<std::string, std::string>> maskHeaders(
     return out;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

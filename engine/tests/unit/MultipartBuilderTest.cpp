@@ -7,7 +7,7 @@
 
 #include "application/MultipartBuilder.h"
 
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 
 #include <gtest/gtest.h>
 
@@ -19,7 +19,7 @@
 #include <map>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -27,7 +27,7 @@ namespace {
 class TempFile {
 public:
     explicit TempFile(std::string contents = "hello") {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-multipart", ".bin");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-multipart", ".bin");
         std::ofstream out(path_, std::ios::binary);
         out << contents;
     }

@@ -6,7 +6,7 @@
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 namespace {
 
@@ -154,4 +154,4 @@ void StatusBadge::paintEvent(QPaintEvent* /*event*/) {
     painter.drawText(rect, Qt::AlignCenter, label);
 }
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

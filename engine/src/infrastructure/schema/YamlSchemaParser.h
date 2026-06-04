@@ -2,7 +2,7 @@
 
 #include "SchemaParser.h"
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 class YamlSchemaParser final : public SchemaParser {
 public:
@@ -16,4 +16,4 @@ public:
     SchemaParseResult parse(const std::filesystem::path& rootYaml) override;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

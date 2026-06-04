@@ -12,8 +12,8 @@
 #include <string>
 #include <string_view>
 
-namespace ce = chainapi::engine;
-namespace codecs = chainapi::engine::codecs;
+namespace ce = reqloom::engine;
+namespace codecs = reqloom::engine::codecs;
 
 // ─── base64Encode ────────────────────────────────────────────────────────────
 

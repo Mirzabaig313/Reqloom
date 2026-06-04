@@ -1,12 +1,12 @@
-# ChainApiSanitizers.cmake
-# Reusable function: chainapi_apply_sanitizers(<target>)
-# Honors CHAINAPI_ENABLE_ASAN and CHAINAPI_ENABLE_UBSAN options.
+# ReqloomSanitizers.cmake
+# Reusable function: reqloom_apply_sanitizers(<target>)
+# Honors REQLOOM_ENABLE_ASAN and REQLOOM_ENABLE_UBSAN options.
 # No-op on MSVC for ASan to avoid runtime weirdness; CI matrix runs ASan on
 # clang/gcc only per the project layout doc.
 
-function(chainapi_apply_sanitizers target)
+function(reqloom_apply_sanitizers target)
     if(NOT TARGET ${target})
-        message(FATAL_ERROR "chainapi_apply_sanitizers: '${target}' is not a target")
+        message(FATAL_ERROR "reqloom_apply_sanitizers: '${target}' is not a target")
     endif()
 
     if(MSVC)
@@ -14,10 +14,10 @@ function(chainapi_apply_sanitizers target)
     endif()
 
     set(_san_flags "")
-    if(CHAINAPI_ENABLE_ASAN)
+    if(REQLOOM_ENABLE_ASAN)
         list(APPEND _san_flags address)
     endif()
-    if(CHAINAPI_ENABLE_UBSAN)
+    if(REQLOOM_ENABLE_UBSAN)
         list(APPEND _san_flags undefined)
     endif()
 

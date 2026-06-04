@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// Stable identifier for an operation: "<resource>.<op_name>", e.g. "order.create".
 struct OperationId {
@@ -172,4 +172,4 @@ struct Operation {
     std::optional<Provenance> provenance;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

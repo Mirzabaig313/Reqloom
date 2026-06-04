@@ -10,9 +10,9 @@
 #include <queue>
 #include <set>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
-std::expected<std::vector<OperationId>, ChainApiError> topologicalSort(
+std::expected<std::vector<OperationId>, ReqloomError> topologicalSort(
     const std::map<OperationId, std::vector<OperationId>>& edges) {
     // Empty graph trivially satisfies any topological order.
     if (edges.empty()) {
@@ -82,11 +82,11 @@ std::expected<std::vector<OperationId>, ChainApiError> topologicalSort(
                 cycleOps += node.value;
             }
         }
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::Cycle, ErrorClass::Schema, "Circular dependency detected: " + cycleOps});
     }
 
     return sorted;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

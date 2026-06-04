@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 // ─── parseSetCookie ─────────────────────────────────────────────────────────
 

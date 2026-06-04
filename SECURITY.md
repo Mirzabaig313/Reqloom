@@ -1,14 +1,14 @@
 # Security Policy
 
-ChainAPI is a local developer tool: a CLI (`chainapi`) and a Qt desktop app
+Reqloom is a local developer tool: a CLI (`reqloom`) and a Qt desktop app
 built on a pure C++ engine. It parses untrusted input (OpenAPI specs,
-`chainapi.yaml` project files), executes user-supplied JavaScript hooks, and
+`reqloom.yaml` project files), executes user-supplied JavaScript hooks, and
 handles API credentials via the OS keychain. We take reports against any of
 these surfaces seriously.
 
 ## Supported versions
 
-ChainAPI is pre-0.1.0 and ships from `main`. Security fixes land on `main` and
+Reqloom is pre-0.1.0 and ships from `main`. Security fixes land on `main` and
 in the next tagged release. Older tags do not receive backports until a
 stable release line exists.
 
@@ -24,7 +24,7 @@ problem.** Public disclosure before a fix puts every user at risk.
 
 Report privately through GitHub's private vulnerability reporting:
 
-1. Go to **https://github.com/Mirzabaig313/ChainAPI/security/advisories/new**
+1. Go to **https://github.com/Mirzabaig313/Reqloom/security/advisories/new**
 2. Or: repo **Security** tab → **Report a vulnerability**
 
 If you cannot use GitHub Security Advisories, contact the maintainer
@@ -35,7 +35,7 @@ Please include:
 
 - Affected component (engine / CLI / desktop) and version or commit SHA.
 - A clear description of the issue and its impact.
-- Reproduction steps, a proof-of-concept project, or a minimal `chainapi.yaml`
+- Reproduction steps, a proof-of-concept project, or a minimal `reqloom.yaml`
   / OpenAPI spec that triggers it.
 - Your assessment of severity and any known mitigation.
 
@@ -68,7 +68,7 @@ fix ships.
 In scope:
 
 - The engine library, CLI, and desktop app in this repository.
-- Untrusted-input handling: OpenAPI import, `chainapi.yaml` parsing.
+- Untrusted-input handling: OpenAPI import, `reqloom.yaml` parsing.
 - The JavaScript hook runner (sandbox escape, resource exhaustion).
 - Secret handling: keychain storage, header/log redaction.
 - The HTTP client's TLS verification behavior.
@@ -94,4 +94,4 @@ We will not pursue or support legal action against researchers who:
 - Avoid privacy violations, data destruction, and service disruption.
 - Only test against their own projects and installations.
 
-Thank you for helping keep ChainAPI and its users safe.
+Thank you for helping keep Reqloom and its users safe.

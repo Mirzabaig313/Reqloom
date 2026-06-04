@@ -13,7 +13,7 @@
 #include <QtWidgets/QToolButton>
 #include <QtWidgets/QVBoxLayout>
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 namespace {
 
@@ -236,4 +236,4 @@ bool KeyValueEditor::isEmptyOfContent() const {
     return toStdMap().empty();
 }
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets
