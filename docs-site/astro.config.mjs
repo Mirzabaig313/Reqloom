@@ -4,13 +4,13 @@ import starlight from "@astrojs/starlight";
 import remarkBaseLinks from "./src/plugins/remark-base-links.mjs";
 
 // Site URL is set per-deploy via the SITE/BASE env vars (see deploy-docs.yml).
-// Defaults target the project page at https://mirzabaig313.github.io/ChainAPi/
+// Defaults target the project page at https://mirzabaig313.github.io/Reqloom/
 // so a local or non-CI build still produces correct, prefixed internal links.
 // CI overrides these:
-//   SITE = https://<user>.github.io   BASE = /ChainAPi/   (project page)
+//   SITE = https://<user>.github.io   BASE = /Reqloom/   (project page)
 //   SITE = https://<user>.github.io   BASE = /            (org page)
 const site = process.env.SITE ?? "https://mirzabaig313.github.io";
-const base = process.env.BASE ?? "/ChainAPi/";
+const base = process.env.BASE ?? "/Reqloom/";
 
 export default defineConfig({
     site,
@@ -29,12 +29,12 @@ export default defineConfig({
                 {
                     icon: "github",
                     label: "GitHub",
-                    href: "https://github.com/Mirzabaig313/ChainAPi",
+                    href: "https://github.com/Mirzabaig313/Reqloom",
                 },
             ],
             editLink: {
                 baseUrl:
-                    "https://github.com/Mirzabaig313/ChainAPi/edit/main/docs-site/",
+                    "https://github.com/Mirzabaig313/Reqloom/edit/main/docs-site/",
             },
             customCss: ["./src/styles/custom.css"],
             head: [
