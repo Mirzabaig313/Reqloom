@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <cstddef>
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 namespace {
 
@@ -223,4 +223,4 @@ bool CommandPalette::eventFilter(QObject* watched, QEvent* event) {
     return QWidget::eventFilter(watched, event);
 }
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

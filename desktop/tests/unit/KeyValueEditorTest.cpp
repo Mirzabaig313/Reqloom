@@ -4,10 +4,12 @@
 
 #include <gtest/gtest.h>
 
+#include <QtWidgets/QLineEdit>
+
 #include <map>
 #include <string>
 
-namespace chainapi::desktop::widgets::tests {
+namespace reqloom::desktop::widgets::tests {
 
 TEST(KeyValueEditor, round_trips_pairs_to_map) {
     KeyValueEditor editor;
@@ -49,4 +51,27 @@ TEST(KeyValueEditor, file_mode_preserves_at_path_value) {
     EXPECT_EQ(map.at("avatar"), "@/tmp/pic.png");
 }
 
-}  // namespace chainapi::desktop::widgets::tests
+TEST(KeyValueEditor, keeps_one_trailing_blank_row_for_auto_grow) {
+    // The Apidog-style ghost row means a fresh editor already has a place to
+    // type, and setting pairs leaves exactly one trailing blank row — so the
+    // count of QLineEdit key fields is pairs + 1, while toStdMap drops blanks.
+    KeyValueEditor editor;
+    const auto keyFieldCount = [&editor]() {
+        int n = 0;
+        for (auto* f : editor.findChildren<QLineEdit*>(QStringLiteral("kvKey"))) {
+            (void)f;
+            ++n;
+        }
+        return n;
+    };
+
+    EXPECT_EQ(keyFieldCount(), 1);  // ghost row on construction
+    EXPECT_TRUE(editor.isEmptyOfContent());
+
+    editor.setPairs(
+        {{QStringLiteral("a"), QStringLiteral("1")}, {QStringLiteral("b"), QStringLiteral("2")}});
+    EXPECT_EQ(keyFieldCount(), 3);  // two populated + one trailing ghost
+    EXPECT_EQ(editor.toStdMap().size(), 2u);
+}
+
+}  // namespace reqloom::desktop::widgets::tests

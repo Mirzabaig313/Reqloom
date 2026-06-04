@@ -14,12 +14,17 @@
 class QJsonValue;
 class QLabel;
 class QPlainTextEdit;
+class QStackedWidget;
 class QTabWidget;
 class QTextEdit;
 class QTreeWidget;
 class QTreeWidgetItem;
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
+
+namespace widgets {
+class EmptyState;
+}  // namespace widgets
 
 class ResponseViewerPanel : public QWidget {
     Q_OBJECT
@@ -58,6 +63,8 @@ private:
     [[nodiscard]] QColor statusColor(int httpStatus) const;
 
     QLabel* statusLabel_{nullptr};
+    QStackedWidget* viewStack_{nullptr};
+    widgets::EmptyState* emptyState_{nullptr};
     QTabWidget* tabs_{nullptr};
     QTreeWidget* bodyTree_{nullptr};
     QPlainTextEdit* bodyRaw_{nullptr};
@@ -73,4 +80,4 @@ private:
     QString currentBody_;
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

@@ -2,11 +2,11 @@
 // validated Project to the views.
 #include "ProjectModel.h"
 
-#include <chainapi/engine/Factories.h>
+#include <reqloom/engine/Factories.h>
 
 #include <utility>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 ProjectModel::ProjectModel(QObject* parent) : QObject(parent) {}
 
@@ -14,7 +14,7 @@ ProjectModel::~ProjectModel() = default;
 
 void ProjectModel::loadFromDirectory(const QString& directory) {
     const std::filesystem::path dir{directory.toStdString()};
-    const auto yaml = dir / "chainapi.yaml";
+    const auto yaml = dir / "reqloom.yaml";
 
     auto parsed = engine::parseProject(yaml);
     if (!parsed) {
@@ -133,4 +133,4 @@ const engine::Operation* ProjectModel::findOperation(const engine::OperationId& 
     return &opIt->second;
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

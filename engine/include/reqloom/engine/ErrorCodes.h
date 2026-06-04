@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 enum class ErrorCode : std::uint8_t {
     // Schema layer
@@ -95,13 +95,13 @@ enum class ErrorClass : std::uint8_t {
 [[nodiscard]] ErrorClass classify(ErrorCode code) noexcept;
 
 /// Application-layer error type. Infrastructure and application layers
-/// return `std::expected<T, ChainApiError>` rather than throwing.
+/// return `std::expected<T, ReqloomError>` rather than throwing.
 /// `ErrorCode` is the stable identifier; `detail` carries human-readable
 /// context (file:line, response excerpt, etc.).
-struct ChainApiError {
+struct ReqloomError {
     ErrorCode code{ErrorCode::SchemaInvalid};
     ErrorClass cls{ErrorClass::Schema};
     std::string detail;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

@@ -3,14 +3,14 @@
 //
 // Each test instantiates a `MockSutHarness` with a routes JSON file. The
 // `baseUrl()` accessor returns "http://127.0.0.1:<port>" suitable for
-// injection into a chainapi project's environment.
+// injection into a reqloom project's environment.
 #pragma once
 
 #include <filesystem>
 #include <optional>
 #include <string>
 
-namespace chainapi::tests {
+namespace reqloom::tests {
 
 class MockSutHarness {
 public:
@@ -38,4 +38,4 @@ private:
 #endif
 };
 
-}  // namespace chainapi::tests
+}  // namespace reqloom::tests

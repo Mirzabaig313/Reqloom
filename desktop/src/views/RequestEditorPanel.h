@@ -8,7 +8,7 @@
 
 #include "../theming/Theme.h"
 
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/Operation.h>
 
 #include <QtWidgets/QWidget>
 
@@ -18,19 +18,20 @@ class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
-class QListWidget;
 class QScrollArea;
 class QSpinBox;
 class QStackedWidget;
 class QTabWidget;
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 class ProjectModel;
 struct RequestOverride;
 
 namespace widgets {
 class KeyValueEditor;
+class EmptyState;
+class ChainView;
 }  // namespace widgets
 
 class RequestEditorPanel : public QWidget {
@@ -79,20 +80,33 @@ private:
     void loadOverrideFields(const ProjectModel& project, const engine::Operation& op);
     /// Refresh the edit-tab labels with live counts (Postman-style "Headers 8").
     void refreshTabBadges();
+    /// Recolour the method pill from the current method + theme.
+    void refreshMethodPill();
 
     // Constructor helpers — keep the ctor under the function-length limit by
     // building each region in its own method.
-    [[nodiscard]] QWidget* buildHeaderRow();
+    [[nodiscard]] QWidget* buildContent();
+    [[nodiscard]] QWidget* buildAddressBar();
+    [[nodiscard]] QWidget* buildSecondaryActions();
     [[nodiscard]] QWidget* buildPreviewPage();
     [[nodiscard]] QWidget* buildEditPage();
-    [[nodiscard]] QWidget* buildActionRow();
     void wireConnections();
 
-    QLabel* title_{nullptr};
-    QLabel* actorLabel_{nullptr};
+    // Outer stack: a teaching empty-state until an operation is selected
+    // (DESIGN.md §10), then the real editor content.
+    QStackedWidget* rootStack_{nullptr};
+    widgets::EmptyState* emptyState_{nullptr};
+
+    // Address bar (top): method + path + the prominent Send.
+    QStackedWidget* methodStack_{nullptr};
+    QLabel* methodPill_{nullptr};
+    QComboBox* methodCombo_{nullptr};
+    QLineEdit* pathEdit_{nullptr};
+
+    QLabel* actorCaption_{nullptr};
     QCheckBox* overrideToggle_{nullptr};
     QLabel* overrideBanner_{nullptr};
-    QListWidget* chainList_{nullptr};
+    widgets::ChainView* chainView_{nullptr};
 
     // Read-only preview (shown when Override Mode is off).
     QStackedWidget* requestStack_{nullptr};
@@ -100,8 +114,6 @@ private:
     QPlainTextEdit* bodyView_{nullptr};
 
     // Editable controls (shown when Override Mode is on).
-    QComboBox* methodCombo_{nullptr};
-    QLineEdit* pathEdit_{nullptr};
     QTabWidget* editTabs_{nullptr};
     QComboBox* actorCombo_{nullptr};
     QLineEdit* expectStatusEdit_{nullptr};
@@ -120,8 +132,9 @@ private:
     QPushButton* saveButton_{nullptr};
 
     QString currentOp_;
+    QString currentMethod_;
     bool overrideActive_{false};
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

@@ -1,10 +1,10 @@
 ---
-title: chainapi lint
+title: reqloom lint
 description: "Validate the schema and dependency graph without making any HTTP requests."
 ---
 
 ```
-chainapi lint [--project <path>]
+reqloom lint [--project <path>]
 ```
 
 Validates:

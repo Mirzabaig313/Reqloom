@@ -7,11 +7,11 @@
 //   - RetryabilityMatchesSpec      → fails if isRetryable() classification breaks
 //   - RunContextSessionLifecycle   → fails if RunContext session API breaks
 //   - RunContextExtractionCache    → fails if RunContext extraction API breaks
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 TEST(EngineSmoke, ErrorCodeStringsAreStable) {
     EXPECT_EQ(ce::toCodeString(ce::ErrorCode::Cycle), "E_CYCLE");
@@ -84,13 +84,13 @@ TEST(EngineSmoke, RunContextExtractionCacheIsIndexable) {
     EXPECT_EQ(ctx.instances(order)[1].variables.at("order_id"), "ord-2");
 }
 
-TEST(EngineSmoke, ChainApiErrorIsCarriedThroughExpected) {
-    // Construct a ChainApiError and round-trip it through std::expected
+TEST(EngineSmoke, ReqloomErrorIsCarriedThroughExpected) {
+    // Construct a ReqloomError and round-trip it through std::expected
     // to confirm the error-channel idiom compiles end-to-end.
-    auto failingOperation = []() -> std::expected<int, ce::ChainApiError> {
-        return std::unexpected(ce::ChainApiError{ce::ErrorCode::VarUnresolved,
-                                                 ce::ErrorClass::Resolution,
-                                                 "missing: order.order_id; last set by: never"});
+    auto failingOperation = []() -> std::expected<int, ce::ReqloomError> {
+        return std::unexpected(ce::ReqloomError{ce::ErrorCode::VarUnresolved,
+                                                ce::ErrorClass::Resolution,
+                                                "missing: order.order_id; last set by: never"});
     };
 
     auto result = failingOperation();

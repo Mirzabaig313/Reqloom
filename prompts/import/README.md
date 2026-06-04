@@ -1,4 +1,4 @@
-# ChainAPI AI Importer — Prompt Suite
+# Reqloom AI Importer — Prompt Suite
 
 > Stop trying to do AI import in one prompt. The first attempt against GiGwala produced a syntactically valid schema that broke on contact with the real backend in five different ways. This suite splits the work across stages, each with its own prompt and review gate.
 
@@ -11,7 +11,7 @@
 | 3. Generate actors | `03-generate-actors.md` | Stage 2 plan | YAML files for every actor | 1 LLM call |
 | 4. Generate resources | `04-generate-resources.md` | Stage 2 plan + actor names | YAML files for every resource (one batch per resource — N calls) | N LLM calls |
 | 5. Generate environment | `05-generate-environment.md` | Stage 2 plan | The `local.yaml` env file with placeholders for credentials | 1 LLM call |
-| 6. Lint and fix | `06-fix-lint-errors.md` | `chainapi lint` output + the failing schema | Patched files | iterative |
+| 6. Lint and fix | `06-fix-lint-errors.md` | `reqloom lint` output + the failing schema | Patched files | iterative |
 
 Total: typically 8–15 LLM calls for a 50-endpoint API. Cost: ~$0.10–$0.40 with Claude Sonnet or GPT-4o.
 
@@ -35,13 +35,13 @@ input docs (OpenAPI / Markdown / curls)
         ↓
    [Stage 3+4+5] GENERATE
         ↓
-        chainapi lint
+        reqloom lint
         ↓
         if errors → [Stage 6] FIX
         ↓
-        chainapi run <op> --dry-run    ← validate without hitting the live API
+        reqloom run <op> --dry-run    ← validate without hitting the live API
         ↓
-        chainapi run <op>              ← real run
+        reqloom run <op>              ← real run
         ↓
         if backend rejects → schema vs reality drift → iterate
 ```
@@ -82,4 +82,4 @@ The AI importer is a starting point, not a finisher. Expect to spend 30-60 minut
 - Status codes (especially for create-vs-replace operations)
 - Order of `depends_on` edges (the model often gets the order right but misses transitive deps)
 
-This is Phase 3 work — the desktop UI's "Review and Edit" panel will make this fast. For now, do it in your editor with `chainapi lint` running in a watch loop.
+This is Phase 3 work — the desktop UI's "Review and Edit" panel will make this fast. For now, do it in your editor with `reqloom lint` running in a watch loop.

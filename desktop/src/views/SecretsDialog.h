@@ -12,7 +12,7 @@ class QLabel;
 class QPushButton;
 class QTableWidget;
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 class ProjectModel;
 class SecretManager;
@@ -48,4 +48,4 @@ private:
     QPushButton* clearButton_{nullptr};
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

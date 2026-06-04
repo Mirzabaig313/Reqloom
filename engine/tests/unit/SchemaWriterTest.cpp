@@ -6,9 +6,9 @@
 // surface as a structural mismatch.
 //
 // Each test fails on the parent commit (no SchemaWriter existed):
-// `chainapi::engine::writeProject` is a brand-new public symbol.
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+// `reqloom::engine::writeProject` is a brand-new public symbol.
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -20,7 +20,7 @@
 #include <iterator>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -28,7 +28,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-writer");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-writer");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -220,7 +220,7 @@ TEST(SchemaWriter, written_yaml_emits_all_three_sub_directories) {
     auto written = ce::writeProject(scratch.path(), project);
     ASSERT_TRUE(written.has_value()) << written.error().detail;
 
-    EXPECT_TRUE(fs::exists(scratch.path() / "chainapi.yaml"));
+    EXPECT_TRUE(fs::exists(scratch.path() / "reqloom.yaml"));
     EXPECT_TRUE(fs::is_directory(scratch.path() / "actors"));
     EXPECT_TRUE(fs::is_directory(scratch.path() / "resources"));
     EXPECT_TRUE(fs::is_directory(scratch.path() / "environments"));

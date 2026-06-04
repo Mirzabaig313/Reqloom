@@ -4,4 +4,4 @@
 // header so embedders (desktop secret manager) can manage credentials.
 #pragma once
 
-#include <chainapi/engine/SecretStore.h>
+#include <reqloom/engine/SecretStore.h>

@@ -11,7 +11,7 @@
 class QLabel;
 class QPropertyAnimation;
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 class Toast : public QWidget {
     Q_OBJECT
@@ -39,4 +39,4 @@ private:
     QPropertyAnimation* fade_{nullptr};
 };
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

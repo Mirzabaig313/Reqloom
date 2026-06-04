@@ -6,7 +6,7 @@
 
 #include <QtCore/QString>
 
-namespace chainapi::desktop::widgets::fuzzy {
+namespace reqloom::desktop::widgets::fuzzy {
 
 /// Whether `query` is a case-insensitive subsequence of `candidate`. An empty
 /// query matches everything.
@@ -16,4 +16,4 @@ namespace chainapi::desktop::widgets::fuzzy {
 /// match. Contiguous and word-start matches score higher.
 [[nodiscard]] int score(const QString& query, const QString& candidate);
 
-}  // namespace chainapi::desktop::widgets::fuzzy
+}  // namespace reqloom::desktop::widgets::fuzzy

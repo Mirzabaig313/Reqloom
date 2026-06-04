@@ -12,7 +12,7 @@
 
 #include <functional>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
@@ -194,4 +194,4 @@ void TimelinePanel::onRunEnded(QString outcome) {
     header_->setText(QStringLiteral("%1  ·  %2").arg(header_->text(), outcome));
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

@@ -1,10 +1,10 @@
-# ChainApiCompilerWarnings.cmake
-# Reusable function: chainapi_set_warnings(<target>)
+# ReqloomCompilerWarnings.cmake
+# Reusable function: reqloom_set_warnings(<target>)
 # Applies a strict, modern set of warnings appropriate to each compiler.
 
-function(chainapi_set_warnings target)
+function(reqloom_set_warnings target)
     if(NOT TARGET ${target})
-        message(FATAL_ERROR "chainapi_set_warnings: '${target}' is not a target")
+        message(FATAL_ERROR "reqloom_set_warnings: '${target}' is not a target")
     endif()
 
     if(MSVC)

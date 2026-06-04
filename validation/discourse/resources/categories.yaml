@@ -12,7 +12,7 @@ operations:
     path: /categories.json
     actor: admin
     body:
-      name: "ChainAPI Validation {{$.uuid}}"
+      name: "Reqloom Validation {{$.uuid}}"
       color: "0088CC"
       text_color: "FFFFFF"
     expect_status: 200
@@ -26,7 +26,7 @@ operations:
     actor: admin
     depends_on: [category.create]
     body:
-      description: "Updated by ChainAPI validation"
+      description: "Updated by Reqloom validation"
     expect_status: 200
 
   delete:

@@ -1,14 +1,14 @@
-// Public façade for libchainapi-engine.
+// Public façade for libreqloom-engine.
 // pImpl + value types only — no Qt UI types, no infra-library types leak.
 #pragma once
 
-#include <chainapi/engine/Actor.h>
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Events.h>
-#include <chainapi/engine/Operation.h>
-#include <chainapi/engine/Resource.h>
-#include <chainapi/engine/RunContext.h>
-#include <chainapi/engine/Transport.h>
+#include <reqloom/engine/Actor.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Events.h>
+#include <reqloom/engine/Operation.h>
+#include <reqloom/engine/Resource.h>
+#include <reqloom/engine/RunContext.h>
+#include <reqloom/engine/Transport.h>
 
 #include <expected>
 #include <functional>
@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 // Forward-declared infrastructure interfaces. Concrete implementations
 // live in `engine/src/infrastructure/` and are not part of the public ABI.
@@ -39,7 +39,7 @@ struct RunResult {
 
 /// A loaded, validated project. The schema parser produces this; the engine
 /// consumes it. Cycles, undefined references, and unsupported versions are
-/// caught at parse time and surfaced as `ChainApiError`.
+/// caught at parse time and surfaced as `ReqloomError`.
 struct Project {
     std::string name;
     std::string defaultEnvironment;
@@ -111,15 +111,15 @@ public:
 
     /// Execute a single operation, auto-resolving its dependency chain.
     ///
-    /// Returns a populated `RunResult` on success or a `ChainApiError` on
+    /// Returns a populated `RunResult` on success or a `ReqloomError` on
     /// schema-time failures (cycle, undefined reference, etc.). A chain
     /// whose target step fails at runtime returns a `RunResult` with
     /// `outcome == Failed`, not an error — inspect `steps` to find which
     /// step failed.
-    [[nodiscard]] std::expected<RunResult, ChainApiError> run(const Project& project,
-                                                              const OperationId& target,
-                                                              RunContext& ctx,
-                                                              const RunOptions& options = {});
+    [[nodiscard]] std::expected<RunResult, ReqloomError> run(const Project& project,
+                                                             const OperationId& target,
+                                                             RunContext& ctx,
+                                                             const RunOptions& options = {});
 
     /// Cancel an in-flight run.
     void cancel(RunId run);
@@ -133,4 +133,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

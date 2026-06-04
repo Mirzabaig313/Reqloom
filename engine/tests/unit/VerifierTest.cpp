@@ -4,13 +4,13 @@
 // include itself wouldn't resolve.
 #include "application/Verifier.h"
 
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/Operation.h>
 
 #include <gtest/gtest.h>
 
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 

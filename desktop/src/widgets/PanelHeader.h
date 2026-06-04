@@ -11,7 +11,7 @@
 class QHBoxLayout;
 class QLabel;
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 class PanelHeader : public QWidget {
     Q_OBJECT
@@ -38,4 +38,4 @@ private:
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

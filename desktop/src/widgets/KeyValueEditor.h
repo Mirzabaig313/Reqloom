@@ -20,7 +20,7 @@
 class QToolButton;
 class QVBoxLayout;
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 class KeyValueEditor : public QWidget {
     Q_OBJECT
@@ -58,11 +58,14 @@ signals:
 
 private:
     void addRow(const QString& key, const QString& value, bool focusKey);
+    /// Keep exactly one trailing blank row (Apidog-style auto-grow) and hide
+    /// the remove button on empty rows. Runs after any row edit.
+    void syncRows();
 
     QVBoxLayout* rows_{nullptr};
-    QToolButton* addButton_{nullptr};
+    QWidget* captionSpacer_{nullptr};
     Mode mode_{Mode::Plain};
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

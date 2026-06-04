@@ -4,7 +4,7 @@
 #include "application/ProjectModel.h"
 #include "application/SecretManager.h"
 
-#include <chainapi/engine/SecretStore.h>
+#include <reqloom/engine/SecretStore.h>
 
 #include <gtest/gtest.h>
 
@@ -18,16 +18,16 @@
 #include <optional>
 #include <string>
 
-namespace chainapi::desktop::tests {
+namespace reqloom::desktop::tests {
 
 namespace {
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 /// In-memory SecretStore standing in for the OS keychain.
 class FakeSecretStore final : public ce::SecretStore {
 public:
-    std::expected<std::optional<std::string>, ce::ChainApiError> read(
+    std::expected<std::optional<std::string>, ce::ReqloomError> read(
         const std::string& name) override {
         if (auto it = values_.find(name); it != values_.end()) {
             return std::optional<std::string>{it->second};
@@ -35,13 +35,13 @@ public:
         return std::optional<std::string>{};
     }
 
-    std::expected<void, ce::ChainApiError> write(const std::string& name,
-                                                 const std::string& value) override {
+    std::expected<void, ce::ReqloomError> write(const std::string& name,
+                                                const std::string& value) override {
         values_[name] = value;
         return {};
     }
 
-    std::expected<void, ce::ChainApiError> remove(const std::string& name) override {
+    std::expected<void, ce::ReqloomError> remove(const std::string& name) override {
         values_.erase(name);
         return {};
     }
@@ -105,7 +105,7 @@ resources:
 /// Write kProjectYaml into a temp dir and load it through ProjectModel.
 /// The QTemporaryDir is returned so it outlives the loaded project.
 void writeProject(const QTemporaryDir& dir) {
-    const QString path = QDir(dir.path()).filePath(QStringLiteral("chainapi.yaml"));
+    const QString path = QDir(dir.path()).filePath(QStringLiteral("reqloom.yaml"));
     std::ofstream out(path.toStdString());
     out << kProjectYaml;
 }
@@ -156,7 +156,7 @@ TEST(SecretManager, referenced_secrets_reports_set_and_unset_against_project) {
     EXPECT_EQ(after[1].state, SecretState::NotSet);
 }
 
-}  // namespace chainapi::desktop::tests
+}  // namespace reqloom::desktop::tests
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);

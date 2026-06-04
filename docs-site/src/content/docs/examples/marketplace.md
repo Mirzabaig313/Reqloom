@@ -12,8 +12,8 @@ The bundled `samples/marketplace/` project models a two-sided marketplace:
 Try it:
 
 ```bash
-chainapi lint --project samples/marketplace
-chainapi run refund.approve --project samples/marketplace
+reqloom lint --project samples/marketplace
+reqloom run refund.approve --project samples/marketplace
 ```
 
 The repository structure: see `samples/marketplace/` in the source tree.

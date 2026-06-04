@@ -7,7 +7,7 @@
 #include <QtGui/QFontDatabase>
 #include <QtWidgets/QApplication>
 
-namespace chainapi::desktop::theming {
+namespace reqloom::desktop::theming {
 
 namespace {
 
@@ -46,6 +46,15 @@ constexpr double kAccentHue = 285.0;
     // lightness so text stays readable on top (§2.9 / §6.4).
     p.tintDiffAdd = oklch(0.930, 0.040, 150.0);
     p.tintDiffRemove = oklch(0.930, 0.045, 27.0);
+
+    // HTTP method vocabulary (§6.2a): mnemonic hues, distinct from status.
+    // GET blue(255), POST green(150), PUT orange(55), PATCH yellow(95),
+    // DELETE red(27). Mid lightness for AA text on a light surface.
+    p.methodGet = oklch(0.550, 0.150, 255.0);
+    p.methodPost = oklch(0.560, 0.150, 150.0);
+    p.methodPut = oklch(0.600, 0.150, 55.0);
+    p.methodPatch = oklch(0.620, 0.140, 95.0);
+    p.methodDelete = oklch(0.560, 0.200, 27.0);
     return p;
 }
 
@@ -80,6 +89,14 @@ constexpr double kAccentHue = 285.0;
     // so light text stays readable on top in dark mode (§2.9 / §6.4).
     p.tintDiffAdd = oklch(0.300, 0.050, 150.0);
     p.tintDiffRemove = oklch(0.310, 0.060, 27.0);
+
+    // HTTP method vocabulary (§6.2a): brighter in dark to clear AA on the
+    // raised surface, same hues as light (§6.2a).
+    p.methodGet = oklch(0.720, 0.140, 255.0);
+    p.methodPost = oklch(0.780, 0.160, 150.0);
+    p.methodPut = oklch(0.770, 0.150, 55.0);
+    p.methodPatch = oklch(0.820, 0.150, 95.0);
+    p.methodDelete = oklch(0.700, 0.180, 27.0);
     return p;
 }
 
@@ -123,6 +140,38 @@ QColor Theme::statusTint(StatusToken token) const noexcept {
     constexpr double kStatusWeight = 0.16;
     const auto mix = [&](int s, int b) {
         return static_cast<int>((s * kStatusWeight) + (b * (1.0 - kStatusWeight)));
+    };
+    return QColor{mix(base.red(), surface.red()),
+                  mix(base.green(), surface.green()),
+                  mix(base.blue(), surface.blue())};
+}
+
+QColor Theme::method(MethodColor token) const noexcept {
+    switch (token) {
+        case MethodColor::Get:
+            return palette_.methodGet;
+        case MethodColor::Post:
+            return palette_.methodPost;
+        case MethodColor::Put:
+            return palette_.methodPut;
+        case MethodColor::Patch:
+            return palette_.methodPatch;
+        case MethodColor::Delete:
+            return palette_.methodDelete;
+        case MethodColor::Neutral:
+            return palette_.textSecondary;
+    }
+    return palette_.textSecondary;
+}
+
+QColor Theme::methodTint(MethodColor token) const noexcept {
+    // Same opaque-mix technique as statusTint (DESIGN.md §2.9): blend the
+    // method hue toward the raised surface so the chip fill is predictable.
+    const QColor base = method(token);
+    const QColor surface = palette_.surfaceRaised;
+    constexpr double kMethodWeight = 0.18;
+    const auto mix = [&](int s, int b) {
+        return static_cast<int>((s * kMethodWeight) + (b * (1.0 - kMethodWeight)));
     };
     return QColor{mix(base.red(), surface.red()),
                   mix(base.green(), surface.green()),
@@ -260,12 +309,85 @@ QStatusBar {
     color: %13;
 }
 
-/* Trees, lists, tables — the data surfaces */
+/* Surface elevation (DESIGN.md §2.8: depth from surface lightness, not
+   shadow). The explorer sits on the deepest surface.base; the center and
+   right workspaces are elevated onto surface.raised so the three panes read
+   as distinct layers. Set on the panels via object name + WA_StyledBackground. */
+QWidget#explorerPanel {
+    background-color: %1;
+    border-right: 1px solid %3;
+}
+QWidget#workspacePanel {
+    background-color: %4;
+}
+
+/* Request "address bar": method + path + Send, pinned to the top of the
+   center pane (Postman/Apidog convention). A single sunken field strip — the
+   one framed element in the editor; everything below it is flat. */
+QWidget#requestLineBar {
+    background-color: %14;
+    border: 1px solid %3;
+    border-radius: 8px;
+}
+
+/* Inputs inside the address bar are chromeless — the bar is the single frame.
+   The method combo keeps a trailing divider so it reads as a segment. */
+QWidget#requestLineBar QLineEdit {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    padding-left: 8px;
+}
+QWidget#requestLineBar QComboBox {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+}
+/* Keep a visible focus state for keyboard users (DESIGN.md §11.1 / NFR-5.1):
+   a 1px accent underline rather than a full ring, so it still reads as part of
+   the single bar frame. */
+QWidget#requestLineBar QLineEdit:focus,
+QWidget#requestLineBar QComboBox:focus {
+    border: none;
+    border-bottom: 1px solid %15;
+}
+QWidget#requestLineBar QComboBox#methodCombo {
+    border: none;
+    border-right: 1px solid %3;
+    border-radius: 0;
+    padding: 0 12px;
+}
+QWidget#requestLineBar QComboBox#methodCombo:focus {
+    border: none;
+    border-right: 1px solid %3;
+    border-bottom: 1px solid %15;
+}
+
+/* Method pill badge in the request address bar. Per-method colour comes from
+   the dedicated method vocabulary (DESIGN.md §6.2a) via a dynamic `methodClass`
+   property — a mnemonic hue per verb, distinct from the status palette so a
+   method chip never reads as a run state. Backgrounds are the opaque methodTint. */
+QLabel#methodPill {
+    margin-left: 8px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-weight: 600;
+}
+QLabel#methodPill[methodClass="get"]    { background-color: %20; color: %25; }
+QLabel#methodPill[methodClass="post"]   { background-color: %21; color: %26; }
+QLabel#methodPill[methodClass="put"]    { background-color: %22; color: %27; }
+QLabel#methodPill[methodClass="patch"]  { background-color: %23; color: %28; }
+QLabel#methodPill[methodClass="delete"] { background-color: %24; color: %29; }
+
+/* Trees, lists, tables — the data surfaces. Flat: no card border, separated
+   by surface colour and panel dividers (Apidog/Linear read, DESIGN.md §15 "no
+   nested cards"). */
 QTreeWidget, QTreeView, QListWidget, QListView, QTableWidget, QTableView {
     background-color: %4;
     alternate-background-color: %4;
-    border: 1px solid %3;
-    border-radius: 6px;
+    border: none;
     outline: none;
 }
 QTreeWidget::item, QListWidget::item, QTableWidget::item {
@@ -288,13 +410,14 @@ QHeaderView::section {
     padding: %7px %6px;
 }
 
-/* Inputs */
+/* Inputs. Generous internal padding (sm vertical, md horizontal) so values
+   never crowd the field edge — the single biggest "looks professional" win. */
 QLineEdit, QPlainTextEdit, QTextEdit {
     background-color: %14;
     color: %2;
     border: 1px solid %3;
     border-radius: 6px;
-    padding: %7px %6px;
+    padding: %5px %6px;
     selection-background-color: %11;
     selection-color: %2;
 }
@@ -306,7 +429,7 @@ QComboBox {
     color: %2;
     border: 1px solid %3;
     border-radius: 6px;
-    padding: %7px %6px;
+    padding: %5px %6px;
     min-height: 20px;
 }
 QComboBox:focus { border: 1px solid %15; }
@@ -342,6 +465,32 @@ QPushButton#primaryAction {
 QPushButton#primaryAction:hover { background-color: %19; border-color: %19; }
 QPushButton#primaryAction:disabled { background-color: %3; border-color: %3; color: %18; }
 
+/* Ghost action: a low-emphasis button (no fill, no border at rest) for rare
+   actions like Save to Project, so it never competes with Send (DESIGN.md
+   §7.2 button hierarchy). */
+QPushButton#ghostAction {
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: %13;
+}
+QPushButton#ghostAction:hover { background-color: %8; color: %2; }
+QPushButton#ghostAction:disabled { color: %18; border-color: transparent; }
+
+/* Actor session chip: a first-class concept (§8), so it reads as a tinted
+   pill, not faint metadata. The accent-muted fill ties it to the run identity;
+   the "no actor" variant stays neutral. */
+QLabel#actorChip {
+    background-color: %11;
+    color: %2;
+    border-radius: 10px;
+    padding: 2px 10px;
+}
+QLabel#actorChip[hasActor="false"] {
+    background-color: transparent;
+    color: %13;
+    padding: 2px 0;
+}
+
 /* Checkboxes */
 QCheckBox { color: %2; spacing: %6px; }
 QCheckBox::indicator {
@@ -356,16 +505,16 @@ QCheckBox::indicator:checked {
 }
 QCheckBox:focus { color: %2; }
 
-/* Tabs */
+/* Tabs — flat, underline-indicator only (no boxed pane). */
 QTabWidget::pane {
-    border: 1px solid %3;
-    border-radius: 6px;
+    border: none;
+    border-top: 1px solid %3;
     top: -1px;
 }
 QTabBar::tab {
     background-color: transparent;
     color: %13;
-    padding: %7px %6px;
+    padding: %5px %6px;
     border: none;
     border-bottom: 2px solid transparent;
 }
@@ -440,6 +589,51 @@ QLabel[role="sectionHeading"] {
     padding-top: %7px;
 }
 
+/* KeyValueEditor: a flat table — captions header with a divider, rows with a
+   subtle hover, no card border (Apidog read). */
+QWidget#kvCaptions {
+    border-bottom: 1px solid %3;
+}
+QWidget#kvCaptions QLabel {
+    padding-left: 8px; /* align header text with input text */
+}
+QWidget#kvRow {
+    border-bottom: 1px solid %3;
+    background-color: transparent;
+}
+QWidget#kvRow:hover {
+    background-color: %8;
+}
+QWidget#kvRow QLineEdit {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 6px 8px;
+}
+QWidget#kvRow QLineEdit:focus {
+    background-color: %14;
+    border: 1px solid %15;
+}
+QWidget#kvRow QToolButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 4px;
+    color: %13;
+    font-weight: bold;
+    padding: 2px;
+    min-width: 20px;
+    max-width: 20px;
+    min-height: 20px;
+    max-height: 20px;
+}
+QWidget#kvRow QToolButton:hover {
+    background-color: %8;
+    color: %2;
+}
+QWidget#kvRow QToolButton:pressed {
+    background-color: %9;
+}
+
 QToolTip {
     background-color: %10;
     color: %2;
@@ -454,26 +648,42 @@ QWidget[density="compact"] QListWidget::item,
 QWidget[density="compact"] QTableWidget::item {
     padding: 1px %7px;
 }
+
+/* Execution chain: a flat sunken panel; nodes carry their own method pills. */
+QWidget#chainView {
+    background-color: %14; /* surfaceSunken */
+    border-radius: 6px;
+}
 )")
-        .arg(hex(p.surfaceBase),                 // %1
-             hex(p.textPrimary),                 // %2
-             hex(p.borderSubtle),                // %3
-             hex(p.surfaceRaised),               // %4
-             QString::number(sm),                // %5
-             QString::number(md),                // %6
-             QString::number(xs))                // %7
-        .arg(hex(p.accentMuted),                 // %8
-             hex(p.borderStrong),                // %9
-             hex(p.surfaceOverlay),              // %10
-             hex(p.accentMuted),                 // %11  selected row tint
-             hex(p.textInverse),                 // %12
-             hex(p.textSecondary),               // %13
-             hex(p.surfaceSunken),               // %14
-             hex(p.accentBase))                  // %15
-        .arg(hex(p.borderStrong),                // %16
-             QString::number(space(Space::Lg)),  // %17
-             hex(p.textDisabled),                // %18
-             hex(p.accentHover));                // %19
+        .arg(hex(p.surfaceBase),                    // %1
+             hex(p.textPrimary),                    // %2
+             hex(p.borderSubtle),                   // %3
+             hex(p.surfaceRaised),                  // %4
+             QString::number(sm),                   // %5
+             QString::number(md),                   // %6
+             QString::number(xs))                   // %7
+        .arg(hex(p.accentMuted),                    // %8
+             hex(p.borderStrong),                   // %9
+             hex(p.surfaceOverlay),                 // %10
+             hex(p.accentMuted),                    // %11  selected row tint
+             hex(p.textInverse),                    // %12
+             hex(p.textSecondary),                  // %13
+             hex(p.surfaceSunken),                  // %14
+             hex(p.accentBase))                     // %15
+        .arg(hex(p.borderStrong),                   // %16
+             QString::number(space(Space::Lg)),     // %17
+             hex(p.textDisabled),                   // %18
+             hex(p.accentHover))                    // %19
+        .arg(hex(methodTint(MethodColor::Get)),     // %20  GET pill bg
+             hex(methodTint(MethodColor::Post)),    // %21  POST pill bg
+             hex(methodTint(MethodColor::Put)),     // %22  PUT pill bg
+             hex(methodTint(MethodColor::Patch)),   // %23  PATCH pill bg
+             hex(methodTint(MethodColor::Delete)),  // %24  DELETE pill bg
+             hex(method(MethodColor::Get)),         // %25  GET pill fg
+             hex(method(MethodColor::Post)),        // %26  POST pill fg
+             hex(method(MethodColor::Put)),         // %27  PUT pill fg
+             hex(method(MethodColor::Patch)),       // %28  PATCH pill fg
+             hex(method(MethodColor::Delete)));     // %29  DELETE pill fg
 }
 
-}  // namespace chainapi::desktop::theming
+}  // namespace reqloom::desktop::theming

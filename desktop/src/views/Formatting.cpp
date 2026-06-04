@@ -1,7 +1,7 @@
 // Formatting — see header. Enum→display-string maps for the UI panels.
 #include "Formatting.h"
 
-namespace chainapi::desktop::format {
+namespace reqloom::desktop::format {
 
 QString method(engine::HttpMethod method) {
     switch (method) {
@@ -21,6 +21,41 @@ QString method(engine::HttpMethod method) {
             return QStringLiteral("OPTIONS");
     }
     return QStringLiteral("GET");
+}
+
+theming::StatusToken methodStatusToken(const QString& method) {
+    if (method == QStringLiteral("GET") || method == QStringLiteral("HEAD") ||
+        method == QStringLiteral("OPTIONS")) {
+        return theming::StatusToken::Success;
+    }
+    if (method == QStringLiteral("POST")) {
+        return theming::StatusToken::Running;
+    }
+    if (method == QStringLiteral("DELETE")) {
+        return theming::StatusToken::Error;
+    }
+    // PUT / PATCH — mutation.
+    return theming::StatusToken::Warning;
+}
+
+theming::MethodColor methodColor(const QString& method) {
+    if (method == QStringLiteral("GET")) {
+        return theming::MethodColor::Get;
+    }
+    if (method == QStringLiteral("POST")) {
+        return theming::MethodColor::Post;
+    }
+    if (method == QStringLiteral("PUT")) {
+        return theming::MethodColor::Put;
+    }
+    if (method == QStringLiteral("PATCH")) {
+        return theming::MethodColor::Patch;
+    }
+    if (method == QStringLiteral("DELETE")) {
+        return theming::MethodColor::Delete;
+    }
+    // HEAD / OPTIONS / unknown — no dedicated hue.
+    return theming::MethodColor::Neutral;
 }
 
 QString statusGlyph(engine::StepResult::Status status) {
@@ -104,4 +139,4 @@ QString skipReason(engine::SkipReason reason) {
     return QStringLiteral("cached");
 }
 
-}  // namespace chainapi::desktop::format
+}  // namespace reqloom::desktop::format

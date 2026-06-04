@@ -1,8 +1,12 @@
-// RequestEditorPanel — see header. Read-only preview + in-place editor.
+// RequestEditorPanel — see header. Address-bar request editor with a teaching
+// zero-state (DESIGN.md §10), a top method+path+Send bar (Postman/Apidog
+// convention), and tabbed Params/Headers/Body/Options below.
 #include "RequestEditorPanel.h"
 
 #include "../application/ProjectModel.h"
 #include "../application/RunController.h"  // RequestOverride
+#include "../widgets/ChainView.h"
+#include "../widgets/EmptyState.h"
 #include "../widgets/KeyValueEditor.h"
 #include "Formatting.h"
 
@@ -14,25 +18,33 @@
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
-#include <QtWidgets/QListWidget>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QScrollArea>
 #include <QtWidgets/QSpinBox>
 #include <QtWidgets/QStackedWidget>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QVBoxLayout>
 
 #include <cstddef>
 #include <vector>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
 // Body-kind stack indices.
 constexpr int kBodyRaw = 0;
 constexpr int kBodyForm = 1;
+
+// Root stack pages: teaching empty-state vs. the live editor.
+constexpr int kPageEmpty = 0;
+constexpr int kPageContent = 1;
+
+// Method-stack pages: read-only pill vs. editable combo.
+constexpr int kMethodPill = 0;
+constexpr int kMethodCombo = 1;
 
 [[nodiscard]] std::vector<std::pair<QString, QString>> toPairs(
     const std::map<std::string, std::string>& m) {
@@ -45,7 +57,7 @@ constexpr int kBodyForm = 1;
 }
 
 /// A lightweight section heading — a label, not a framed group box. DESIGN.md
-/// §5 bans nested cards; sections are signalled by a heading + spacing.
+/// §15 bans nested cards; sections are signalled by a heading + spacing.
 [[nodiscard]] QLabel* sectionHeading(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text, parent);
     label->setProperty("role", QStringLiteral("sectionHeading"));
@@ -55,107 +67,76 @@ constexpr int kBodyForm = 1;
 }  // namespace
 
 RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
+    setObjectName(QStringLiteral("workspacePanel"));
+    setAttribute(Qt::WA_StyledBackground, true);
+
+    // Teaching empty-state until an operation is selected (DESIGN.md §10).
+    emptyState_ = new widgets::EmptyState(this);
+    emptyState_->setTitle(QStringLiteral("No operation selected"));
+    emptyState_->setMessage(QStringLiteral(
+        "Select an endpoint from the Explorer to preview its request and run it with the full "
+        "dependency chain resolved. Press Cmd+P to search operations."));
+
+    rootStack_ = new QStackedWidget(this);
+    rootStack_->addWidget(emptyState_);     // kPageEmpty
+    rootStack_->addWidget(buildContent());  // kPageContent
+
     auto* outer = new QVBoxLayout(this);
-    const int gap = theming::Theme::space(theming::Space::Md);
-    outer->setContentsMargins(gap, gap, gap, gap);
-    outer->setSpacing(theming::Theme::space(theming::Space::Sm));
-
-    outer->addWidget(buildHeaderRow());
-
-    // Scrollable detail (so the panel can shrink without clipping).
-    auto* scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    auto* scrollBody = new QWidget(scroll);
-    auto* detail = new QVBoxLayout(scrollBody);
-    detail->setContentsMargins(0, 0, 0, 0);
-    detail->setSpacing(theming::Theme::space(theming::Space::Md));
-
-    detail->addWidget(sectionHeading(QStringLiteral("Dependencies"), scrollBody));
-    chainList_ = new QListWidget(scrollBody);
-    chainList_->setMaximumHeight(90);
-    chainList_->setFont(theme_.font(theming::TextStyle::Mono));
-    detail->addWidget(chainList_);
-
-    requestStack_ = new QStackedWidget(scrollBody);
-    requestStack_->addWidget(buildPreviewPage());  // index 0
-    requestStack_->addWidget(buildEditPage());     // index 1
-    detail->addWidget(requestStack_, 1);
-
-    scroll->setWidget(scrollBody);
-    outer->addWidget(scroll, 1);
-
-    outer->addWidget(buildActionRow());
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->addWidget(rootStack_);
 
     wireConnections();
     clearOperation();
 }
 
-QWidget* RequestEditorPanel::buildHeaderRow() {
-    auto* container = new QWidget(this);
-    auto* layout = new QVBoxLayout(container);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(theming::Theme::space(theming::Space::Xs));
+QWidget* RequestEditorPanel::buildContent() {
+    auto* page = new QWidget(this);
+    auto* layout = new QVBoxLayout(page);
+    const int gap = theming::Theme::space(theming::Space::Md);
+    layout->setContentsMargins(gap, gap, gap, gap);
+    layout->setSpacing(theming::Theme::space(theming::Space::Sm));
 
-    title_ = new QLabel(QStringLiteral("No operation selected"), container);
-    title_->setFont(theme_.font(theming::TextStyle::Title));
-    title_->setWordWrap(true);
-    title_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    layout->addWidget(title_);
-
-    auto* metaRow = new QHBoxLayout;
-    actorLabel_ = new QLabel(container);
-    actorLabel_->setFont(theme_.font(theming::TextStyle::Caption));
-    actorLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    metaRow->addWidget(actorLabel_);
-    metaRow->addStretch(1);
-    overrideToggle_ = new QCheckBox(QStringLiteral("Edit"), container);
-    overrideToggle_->setToolTip(QStringLiteral(
-        "Edit this request (method, path, query, headers, body, etc.). Send applies the edits to "
-        "the next run; Save to Project writes them to disk."));
-    metaRow->addWidget(overrideToggle_);
-    layout->addLayout(metaRow);
+    layout->addWidget(buildAddressBar());
+    layout->addWidget(buildSecondaryActions());
 
     overrideBanner_ = new QLabel(
         QStringLiteral("Editing — Send applies changes to the next run; Save writes them to the "
                        "project."),
-        container);
+        page);
     overrideBanner_->setWordWrap(true);
     overrideBanner_->setVisible(false);
     layout->addWidget(overrideBanner_);
-    return container;
+
+    // The execution chain is the product's hero surface (DESIGN.md §1.2): show
+    // it visually, not as a plain label. Capped height so it stays a preview.
+    layout->addWidget(sectionHeading(QStringLiteral("Execution Chain"), page));
+    chainView_ = new widgets::ChainView(page);
+    chainView_->setMaximumHeight(160);
+    layout->addWidget(chainView_);
+
+    requestStack_ = new QStackedWidget(page);
+    requestStack_->addWidget(buildPreviewPage());  // index 0
+    requestStack_->addWidget(buildEditPage());     // index 1
+    layout->addWidget(requestStack_, 1);
+
+    return page;
 }
 
-QWidget* RequestEditorPanel::buildPreviewPage() {
-    auto* previewPage = new QWidget(this);
-    auto* previewLayout = new QVBoxLayout(previewPage);
-    previewLayout->setContentsMargins(0, 0, 0, 0);
-    previewLayout->setSpacing(theming::Theme::space(theming::Space::Md));
-    previewLayout->addWidget(sectionHeading(QStringLiteral("Headers"), previewPage));
-    headersView_ = new QPlainTextEdit(previewPage);
-    headersView_->setReadOnly(true);
-    headersView_->setMaximumHeight(120);
-    headersView_->setFont(theme_.font(theming::TextStyle::Mono));
-    previewLayout->addWidget(headersView_);
-    previewLayout->addWidget(sectionHeading(QStringLiteral("Body"), previewPage));
-    bodyView_ = new QPlainTextEdit(previewPage);
-    bodyView_->setReadOnly(true);
-    bodyView_->setFont(theme_.font(theming::TextStyle::Mono));
-    previewLayout->addWidget(bodyView_, 1);
-    return previewPage;
-}
+QWidget* RequestEditorPanel::buildAddressBar() {
+    auto* bar = new QWidget(this);
+    bar->setObjectName(QStringLiteral("requestLineBar"));
+    bar->setAttribute(Qt::WA_StyledBackground, true);
+    auto* row = new QHBoxLayout(bar);
+    row->setContentsMargins(0, 0, theming::Theme::space(theming::Space::Sm), 0);
+    row->setSpacing(0);
 
-QWidget* RequestEditorPanel::buildEditPage() {
-    auto* editPage = new QWidget(this);
-    auto* editLayout = new QVBoxLayout(editPage);
-    editLayout->setContentsMargins(0, 0, 0, 0);
-    editLayout->setSpacing(theming::Theme::space(theming::Space::Sm));
-
-    // Method + path bar (the Postman "request line").
-    auto* lineRow = new QHBoxLayout;
-    lineRow->setSpacing(theming::Theme::space(theming::Space::Xs));
-    methodCombo_ = new QComboBox(editPage);
+    // Method: a coloured pill when previewing, an editable combo when editing.
+    methodStack_ = new QStackedWidget(bar);
+    methodStack_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    methodPill_ = new QLabel(bar);
+    methodPill_->setObjectName(QStringLiteral("methodPill"));
+    methodPill_->setAlignment(Qt::AlignCenter);
+    methodCombo_ = new QComboBox(bar);
     methodCombo_->addItems({QStringLiteral("GET"),
                             QStringLiteral("POST"),
                             QStringLiteral("PUT"),
@@ -164,20 +145,105 @@ QWidget* RequestEditorPanel::buildEditPage() {
                             QStringLiteral("HEAD"),
                             QStringLiteral("OPTIONS")});
     methodCombo_->setObjectName(QStringLiteral("methodCombo"));
-    pathEdit_ = new QLineEdit(editPage);
-    pathEdit_->setPlaceholderText(QStringLiteral("/api/v1/…"));
-    lineRow->addWidget(methodCombo_);
-    lineRow->addWidget(pathEdit_, 1);
-    editLayout->addLayout(lineRow);
+    methodStack_->addWidget(methodPill_);   // kMethodPill
+    methodStack_->addWidget(methodCombo_);  // kMethodCombo
+    row->addWidget(methodStack_);
 
-    editTabs_ = new QTabWidget(editPage);
+    pathEdit_ = new QLineEdit(bar);
+    pathEdit_->setPlaceholderText(QStringLiteral("/api/v1/…"));
+    pathEdit_->setReadOnly(true);
+    pathEdit_->setFont(theme_.font(theming::TextStyle::Mono));
+    pathEdit_->setFrame(false);
+    pathEdit_->setAccessibleName(QStringLiteral("Request path"));
+    row->addWidget(pathEdit_, 1);
+
+    row->addSpacing(theming::Theme::space(theming::Space::Sm));
+
+    // The prominent primary action, in the address bar where the eye lands.
+    sendButton_ = new QPushButton(QStringLiteral("Send"), bar);
+    sendButton_->setObjectName(QStringLiteral("primaryAction"));
+    sendButton_->setDefault(true);
+    row->addWidget(sendButton_, 0, Qt::AlignVCenter);
+
+    return bar;
+}
+
+QWidget* RequestEditorPanel::buildSecondaryActions() {
+    auto* container = new QWidget(this);
+    auto* row = new QHBoxLayout(container);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(theming::Theme::space(theming::Space::Sm));
+
+    actorCaption_ = new QLabel(container);
+    actorCaption_->setObjectName(QStringLiteral("actorChip"));
+    actorCaption_->setFont(theme_.font(theming::TextStyle::Label));
+    actorCaption_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    row->addWidget(actorCaption_);
+    row->addStretch(1);
+
+    overrideToggle_ = new QCheckBox(QStringLiteral("Edit"), container);
+    overrideToggle_->setToolTip(QStringLiteral(
+        "Edit this request (method, path, query, headers, body, etc.). Send applies the edits to "
+        "the next run; Save to Project writes them to disk."));
+    row->addWidget(overrideToggle_);
+
+    // Button hierarchy (DESIGN.md §7.2: one primary + at most two secondary):
+    // Send (primary) lives in the address bar; Dry Run / Send Cleanly are
+    // plain secondary; Save to Project is a ghost action (edit-mode only).
+    dryRunButton_ = new QPushButton(QStringLiteral("Dry Run"), container);
+    sendCleanButton_ = new QPushButton(QStringLiteral("Send Cleanly"), container);
+    saveButton_ = new QPushButton(QStringLiteral("Save to Project"), container);
+    saveButton_->setObjectName(QStringLiteral("ghostAction"));
+    saveButton_->setVisible(false);  // only meaningful in edit mode
+    row->addWidget(dryRunButton_);
+    row->addWidget(sendCleanButton_);
+    row->addWidget(saveButton_);
+
+    return container;
+}
+
+QWidget* RequestEditorPanel::buildPreviewPage() {
+    // Tabbed read-only preview (Headers / Body) so the panel recovers the
+    // vertical space the old stacked text areas wasted.
+    auto* tabs = new QTabWidget(this);
+    tabs->setDocumentMode(true);
+
+    headersView_ = new QPlainTextEdit(tabs);
+    headersView_->setReadOnly(true);
+    headersView_->setFrameShape(QFrame::NoFrame);
+    headersView_->setFont(theme_.font(theming::TextStyle::Mono));
+    tabs->addTab(headersView_, QStringLiteral("Headers"));
+
+    bodyView_ = new QPlainTextEdit(tabs);
+    bodyView_->setReadOnly(true);
+    bodyView_->setFrameShape(QFrame::NoFrame);
+    bodyView_->setFont(theme_.font(theming::TextStyle::Mono));
+    tabs->addTab(bodyView_, QStringLiteral("Body"));
+
+    return tabs;
+}
+
+QWidget* RequestEditorPanel::buildEditPage() {
+    // Editable controls only — method + path live in the shared address bar.
+    editTabs_ = new QTabWidget(this);
     editTabs_->setDocumentMode(true);
 
-    queryEditor_ = new widgets::KeyValueEditor(editTabs_);
-    editTabs_->addTab(queryEditor_, QStringLiteral("Params"));
+    // The KeyValueEditor grows with its rows, so a long list must scroll inside
+    // the (non-scrolling) tab. Wrap each in a frameless QScrollArea.
+    const auto scrollWrap = [this](QWidget* inner) -> QScrollArea* {
+        auto* scroll = new QScrollArea(editTabs_);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->setWidget(inner);
+        return scroll;
+    };
 
-    headersEditor_ = new widgets::KeyValueEditor(editTabs_);
-    editTabs_->addTab(headersEditor_, QStringLiteral("Headers"));
+    queryEditor_ = new widgets::KeyValueEditor;
+    editTabs_->addTab(scrollWrap(queryEditor_), QStringLiteral("Params"));
+
+    headersEditor_ = new widgets::KeyValueEditor;
+    editTabs_->addTab(scrollWrap(headersEditor_), QStringLiteral("Headers"));
 
     // Body tab: kind selector + raw/form stack.
     auto* bodyTab = new QWidget(editTabs_);
@@ -192,11 +258,12 @@ QWidget* RequestEditorPanel::buildEditPage() {
     bodyStack_ = new QStackedWidget(bodyTab);
     bodyRawEdit_ = new QPlainTextEdit(bodyStack_);
     bodyRawEdit_->setFont(theme_.font(theming::TextStyle::Mono));
+    bodyRawEdit_->setFrameShape(QFrame::NoFrame);
     bodyRawEdit_->setPlaceholderText(QStringLiteral("{ }"));
     bodyStack_->addWidget(bodyRawEdit_);  // kBodyRaw
-    formEditor_ = new widgets::KeyValueEditor(bodyStack_);
+    formEditor_ = new widgets::KeyValueEditor;
     formEditor_->setMode(widgets::KeyValueEditor::Mode::FileCapable);
-    bodyStack_->addWidget(formEditor_);  // kBodyForm
+    bodyStack_->addWidget(scrollWrap(formEditor_));  // kBodyForm
     bodyTabLayout->addWidget(bodyStack_, 1);
     editTabs_->addTab(bodyTab, QStringLiteral("Body"));
 
@@ -225,27 +292,7 @@ QWidget* RequestEditorPanel::buildEditPage() {
     optionsForm->addRow(QString{}, forceCheck_);
     editTabs_->addTab(optionsTab, QStringLiteral("Options"));
 
-    editLayout->addWidget(editTabs_, 1);
-    return editPage;
-}
-
-QWidget* RequestEditorPanel::buildActionRow() {
-    auto* container = new QWidget(this);
-    auto* buttonRow = new QHBoxLayout(container);
-    buttonRow->setContentsMargins(0, 0, 0, 0);
-    sendButton_ = new QPushButton(QStringLiteral("Send"), container);
-    sendButton_->setObjectName(QStringLiteral("primaryAction"));
-    sendButton_->setDefault(true);
-    sendCleanButton_ = new QPushButton(QStringLiteral("Send Cleanly"), container);
-    dryRunButton_ = new QPushButton(QStringLiteral("Dry Run"), container);
-    saveButton_ = new QPushButton(QStringLiteral("Save to Project"), container);
-    saveButton_->setVisible(false);  // only meaningful in edit mode
-    buttonRow->addWidget(sendButton_);
-    buttonRow->addWidget(sendCleanButton_);
-    buttonRow->addWidget(dryRunButton_);
-    buttonRow->addStretch(1);
-    buttonRow->addWidget(saveButton_);
-    return container;
+    return editTabs_;
 }
 
 void RequestEditorPanel::wireConnections() {
@@ -288,25 +335,69 @@ void RequestEditorPanel::setOverrideMode(bool on) {
     overrideActive_ = on;
     overrideBanner_->setVisible(on);
     saveButton_->setVisible(on);
+    methodStack_->setCurrentIndex(on ? kMethodCombo : kMethodPill);
+    pathEdit_->setReadOnly(!on);
     requestStack_->setCurrentIndex(on ? 1 : 0);
+}
+
+void RequestEditorPanel::refreshMethodPill() {
+    if (methodPill_ == nullptr) {
+        return;
+    }
+    methodPill_->setText(currentMethod_);
+    // Map the verb to its method-vocabulary class; the central sheet colours
+    // each from the method palette (DESIGN.md §6.2a / §13 property selector).
+    QString cls;
+    switch (format::methodColor(currentMethod_)) {
+        case theming::MethodColor::Get:
+            cls = QStringLiteral("get");
+            break;
+        case theming::MethodColor::Post:
+            cls = QStringLiteral("post");
+            break;
+        case theming::MethodColor::Put:
+            cls = QStringLiteral("put");
+            break;
+        case theming::MethodColor::Patch:
+            cls = QStringLiteral("patch");
+            break;
+        case theming::MethodColor::Delete:
+            cls = QStringLiteral("delete");
+            break;
+        case theming::MethodColor::Neutral:
+            cls = QString{};
+            break;
+    }
+    methodPill_->setProperty("methodClass", cls);
+    // Property changes don't restyle automatically — repolish this one label.
+    if (auto* s = methodPill_->style()) {
+        s->unpolish(methodPill_);
+        s->polish(methodPill_);
+    }
 }
 
 void RequestEditorPanel::applyTheme(const theming::Theme& theme) {
     theme_ = theme;
-    title_->setFont(theme_.font(theming::TextStyle::Title));
-    actorLabel_->setFont(theme_.font(theming::TextStyle::Caption));
+    emptyState_->setTheme(theme);
+    // Keep the actor chip at the Label style it's built with (§8 wants the
+    // actor prominent, not caption-sized).
+    actorCaption_->setFont(theme_.font(theming::TextStyle::Label));
     overrideBanner_->setFont(theme_.font(theming::TextStyle::Caption));
     overrideBanner_->setStyleSheet(
-        QStringLiteral("color: %1;")
-            .arg(theme_.status(theming::StatusToken::Warning).name(QColor::HexRgb)));
+        QStringLiteral("color: %1; background-color: %2; border: 1px solid %1; border-radius: 6px; "
+                       "padding: 8px 12px;")
+            .arg(theme_.status(theming::StatusToken::Warning).name(QColor::HexRgb),
+                 theme_.statusTint(theming::StatusToken::Warning).name(QColor::HexRgb)));
     const QFont mono = theme_.font(theming::TextStyle::Mono);
-    chainList_->setFont(mono);
+    pathEdit_->setFont(mono);
+    chainView_->setTheme(theme);
     headersView_->setFont(mono);
     bodyView_->setFont(mono);
     bodyRawEdit_->setFont(mono);
     headersEditor_->setTheme(theme);
     queryEditor_->setTheme(theme);
     formEditor_->setTheme(theme);
+    refreshMethodPill();
 }
 
 QString RequestEditorPanel::currentOperationId() const {
@@ -351,14 +442,17 @@ void RequestEditorPanel::setRunEnabled(bool enabled) {
 
 void RequestEditorPanel::clearOperation() {
     currentOp_.clear();
+    currentMethod_.clear();
     overrideToggle_->setChecked(false);
     overrideToggle_->setEnabled(false);
-    title_->setText(QStringLiteral("No operation selected"));
-    actorLabel_->clear();
-    chainList_->clear();
+    actorCaption_->clear();
+    chainView_->setEmptyMessage(QString{});
     headersView_->clear();
     bodyView_->clear();
+    pathEdit_->clear();
     setRunEnabled(false);
+    // Back to the teaching empty-state — no inputs, no buttons (DESIGN.md §10).
+    rootStack_->setCurrentIndex(kPageEmpty);
 }
 
 void RequestEditorPanel::showOperation(const ProjectModel& project, const QString& operationId) {
@@ -374,13 +468,24 @@ void RequestEditorPanel::showOperation(const ProjectModel& project, const QStrin
     overrideToggle_->setEnabled(true);
 
     currentOp_ = operationId;
-    title_->setText(QStringLiteral("%1  %2").arg(format::method(op->method),
-                                                 QString::fromStdString(op->pathTemplate)));
-    actorLabel_->setText(QStringLiteral("Operation: %1     Actor: %2")
-                             .arg(operationId,
-                                  op->actor.value.empty()
-                                      ? QStringLiteral("(none)")
-                                      : QString::fromStdString(op->actor.value)));
+    currentMethod_ = format::method(op->method);
+    pathEdit_->setText(QString::fromStdString(op->pathTemplate));
+    refreshMethodPill();
+
+    // Actor is a first-class Reqloom concept (the session identity the chain
+    // runs as), so surface it as a labelled chip, not faint metadata (§8).
+    if (op->actor.value.empty()) {
+        actorCaption_->setText(QStringLiteral("⊘  No actor"));
+        actorCaption_->setProperty("hasActor", false);
+    } else {
+        actorCaption_->setText(
+            QStringLiteral("👤  %1").arg(QString::fromStdString(op->actor.value)));
+        actorCaption_->setProperty("hasActor", true);
+    }
+    if (auto* s = actorCaption_->style()) {
+        s->unpolish(actorCaption_);
+        s->polish(actorCaption_);
+    }
 
     renderChainPreview(project, target);
 
@@ -406,6 +511,7 @@ void RequestEditorPanel::showOperation(const ProjectModel& project, const QStrin
 
     loadOverrideFields(project, *op);
     setRunEnabled(true);
+    rootStack_->setCurrentIndex(kPageContent);
 }
 
 void RequestEditorPanel::loadOverrideFields(const ProjectModel& project,
@@ -413,7 +519,6 @@ void RequestEditorPanel::loadOverrideFields(const ProjectModel& project,
     // Seed the editable controls from the operation so a fresh edit starts as a
     // faithful copy the user then tweaks.
     methodCombo_->setCurrentText(format::method(op.method));
-    pathEdit_->setText(QString::fromStdString(op.pathTemplate));
 
     actorCombo_->clear();
     actorCombo_->addItem(QString{});  // "(none)" / unchanged
@@ -479,24 +584,32 @@ void RequestEditorPanel::refreshTabBadges() {
 
 void RequestEditorPanel::renderChainPreview(const ProjectModel& project,
                                             const engine::OperationId& target) {
-    chainList_->clear();
     const auto* op = project.findOperation(target);
     if (op == nullptr) {
+        chainView_->setEmptyMessage(QString{});
         return;
     }
     if (op->explicitDependencies.empty()) {
-        auto* item = new QListWidgetItem(
-            QStringLiteral("No declared dependencies — run Dry Run for the full resolved chain"),
-            chainList_);
-        item->setForeground(theme_.palette().textSecondary);
+        chainView_->setEmptyMessage(
+            QStringLiteral("No declared dependencies — run Dry Run for the full resolved chain."));
         return;
     }
-    // Static view of the operation's own declared dependencies. Implicit
-    // ({{var}}) dependencies and the full topological order are resolved by
-    // the engine — surfaced in the timeline after a Dry Run (FR-2.8).
+    // Static view of the operation's own declared dependencies in declared
+    // order, then the target itself last. Implicit ({{var}}) dependencies and
+    // the full topological order are resolved by the engine — surfaced in the
+    // timeline after a Dry Run (FR-2.8).
+    std::vector<widgets::ChainView::Node> nodes;
+    nodes.reserve(op->explicitDependencies.size() + 1);
     for (const auto& dep : op->explicitDependencies) {
-        chainList_->addItem(QString::fromStdString(dep.value));
+        const engine::OperationId depId{dep.value};
+        const auto* depOp = project.findOperation(depId);
+        nodes.push_back({QString::fromStdString(dep.value),
+                         depOp != nullptr ? format::method(depOp->method) : QString{},
+                         /*isTarget=*/false});
     }
+    nodes.push_back(
+        {QString::fromStdString(target.value), format::method(op->method), /*isTarget=*/true});
+    chainView_->setNodes(nodes);
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

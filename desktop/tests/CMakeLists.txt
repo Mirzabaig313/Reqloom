@@ -4,7 +4,7 @@ include(GoogleTest)
 # View-level tests. ResponseViewerPanel is self-contained (Qt-only, no engine
 # dependency), so we compile it straight into the test binary rather than
 # exposing the desktop sources as a library. AUTOMOC handles its Q_OBJECT.
-add_executable(chainapi-desktop-ui-tests
+add_executable(reqloom-desktop-ui-tests
     ui/ResponseViewerPanelTest.cpp
     ui/EnvironmentSettingsTest.cpp
     unit/ColorTest.cpp
@@ -31,24 +31,26 @@ add_executable(chainapi-desktop-ui-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LineDiff.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/KeyValueEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/KeyValueEditor.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/EmptyState.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/EmptyState.h
 )
-target_include_directories(chainapi-desktop-ui-tests
+target_include_directories(reqloom-desktop-ui-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
-target_link_libraries(chainapi-desktop-ui-tests
+target_link_libraries(reqloom-desktop-ui-tests
     PRIVATE
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
         GTest::gtest
 )
-set_target_properties(chainapi-desktop-ui-tests PROPERTIES
+set_target_properties(reqloom-desktop-ui-tests PROPERTIES
     AUTOMOC ON
 )
-chainapi_set_warnings(chainapi-desktop-ui-tests)
-chainapi_apply_sanitizers(chainapi-desktop-ui-tests)
+reqloom_set_warnings(reqloom-desktop-ui-tests)
+reqloom_apply_sanitizers(reqloom-desktop-ui-tests)
 
-gtest_discover_tests(chainapi-desktop-ui-tests
+gtest_discover_tests(reqloom-desktop-ui-tests
     # PRE_TEST defers test enumeration to ctest run time. The default
     # POST_BUILD mode executes the binary during the build, before the
     # ENVIRONMENT property below applies, so Qt would try the xcb plugin,
@@ -64,30 +66,30 @@ gtest_discover_tests(chainapi-desktop-ui-tests
 # SecretManager test: needs the engine (SecretStore interface, project parse,
 # secret enumeration) and ProjectModel. Uses an in-memory SecretStore, so no
 # real OS keychain is touched. Separate target from the Qt-only UI tests
-# because it links chainapi::engine.
-add_executable(chainapi-desktop-secret-tests
+# because it links reqloom::engine.
+add_executable(reqloom-desktop-secret-tests
     unit/SecretManagerTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.h
 )
-target_include_directories(chainapi-desktop-secret-tests
+target_include_directories(reqloom-desktop-secret-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
-target_link_libraries(chainapi-desktop-secret-tests
+target_link_libraries(reqloom-desktop-secret-tests
     PRIVATE
-        chainapi::engine
+        reqloom::engine
         Qt6::Core
         GTest::gtest
 )
-set_target_properties(chainapi-desktop-secret-tests PROPERTIES
+set_target_properties(reqloom-desktop-secret-tests PROPERTIES
     AUTOMOC ON
 )
-chainapi_set_warnings(chainapi-desktop-secret-tests)
-chainapi_apply_sanitizers(chainapi-desktop-secret-tests)
+reqloom_set_warnings(reqloom-desktop-secret-tests)
+reqloom_apply_sanitizers(reqloom-desktop-secret-tests)
 
-gtest_discover_tests(chainapi-desktop-secret-tests
+gtest_discover_tests(reqloom-desktop-secret-tests
     PROPERTIES
         LABELS "desktop_unit"
     DISCOVERY_TIMEOUT 60

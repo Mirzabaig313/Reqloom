@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace chainapi::desktop::widgets::diff {
+namespace reqloom::desktop::widgets::diff {
 
 struct DiffLine {
     enum class Kind : std::uint8_t {
@@ -27,4 +27,4 @@ struct DiffLine {
 /// replace them, context lines in place.
 [[nodiscard]] std::vector<DiffLine> lineDiff(const QString& oldText, const QString& newText);
 
-}  // namespace chainapi::desktop::widgets::diff
+}  // namespace reqloom::desktop::widgets::diff

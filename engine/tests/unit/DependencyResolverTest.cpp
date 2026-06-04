@@ -6,13 +6,13 @@
 // Each test fails on the parent commit if the resolver is broken.
 #include "domain/DependencyResolver.h"
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/ExecutionEngine.h>
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/ExecutionEngine.h>
+#include <reqloom/engine/Operation.h>
 
 #include <gtest/gtest.h>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 

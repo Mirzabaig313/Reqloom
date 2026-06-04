@@ -1,4 +1,4 @@
-# ChainAPI — macOS CI on Azure DevOps Pipelines.
+# Reqloom — macOS CI on Azure DevOps Pipelines.
 #
 # Branch routing:
 #   * push to dev  → static checks + macos-debug   (ASan + UBSan + tests)
