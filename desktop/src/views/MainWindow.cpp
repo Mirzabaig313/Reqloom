@@ -87,8 +87,10 @@ void MainWindow::buildLayout() {
     timeline_ = new TimelinePanel(this);
 
     // Right column stacks Response + Timeline in tabs (PRD §9.3 Cmd+1/2/3
-    // tab switching lands with the shortcut registry later).
+    // tab switching lands with the shortcut registry later). Object-named so
+    // it sits on the elevated workspace surface (DESIGN.md §2.8 depth).
     auto* rightTabs = new QTabWidget(this);
+    rightTabs->setObjectName(QStringLiteral("workspacePanel"));
     rightTabs->addTab(responseViewer_, QStringLiteral("Response"));
     rightTabs->addTab(timeline_, QStringLiteral("Timeline"));
 

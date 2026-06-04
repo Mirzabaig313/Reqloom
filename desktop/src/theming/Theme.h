@@ -57,10 +57,25 @@ struct Palette {
     QColor tintSubstituted;
     QColor tintDiffAdd;
     QColor tintDiffRemove;
+
+    // HTTP method vocabulary (§6.2a) — a mnemonic hue per verb, distinct from
+    // the status palette so a method chip never reads as a run state.
+    QColor methodGet;
+    QColor methodPost;
+    QColor methodPut;
+    QColor methodPatch;
+    QColor methodDelete;
 };
 
 /// Spacing scale step (DESIGN.md §5.1).
 enum class Space : std::uint8_t { Xs, Sm, Md, Lg, Xl, Xxl };
+
+/// HTTP method colour vocabulary (DESIGN.md §6.2a). A dedicated, mnemonic
+/// hue per verb — distinct from both the accent (285) and the status palette
+/// — so developers recognise request types at a glance (GET blue, POST green,
+/// PUT orange, PATCH yellow, DELETE red, others neutral). Kept separate from
+/// StatusToken so a method chip's colour never collides with run-state meaning.
+enum class MethodColor : std::uint8_t { Get, Post, Put, Patch, Delete, Neutral };
 
 /// Type-scale role (DESIGN.md §4.2).
 enum class TextStyle : std::uint8_t { Title, Subtitle, Body, Label, Caption, Mono };
@@ -80,6 +95,14 @@ public:
     /// precomputed opaque values, never alpha composites). Used as the fill
     /// behind status pills and chips so they stay legible on any surface.
     [[nodiscard]] QColor statusTint(StatusToken token) const noexcept;
+
+    /// HTTP method hue resolved for the active appearance (DESIGN.md §6.2a).
+    [[nodiscard]] QColor method(MethodColor token) const noexcept;
+
+    /// An opaque, low-emphasis background tint for a method colour, mixed
+    /// toward the raised surface (same technique as statusTint, §2.9). Used as
+    /// the fill behind a method chip/pill.
+    [[nodiscard]] QColor methodTint(MethodColor token) const noexcept;
 
     /// Spacing in device-independent px (pre-OS-scaling; Qt scales fonts/DPI).
     [[nodiscard]] static int space(Space step) noexcept;
