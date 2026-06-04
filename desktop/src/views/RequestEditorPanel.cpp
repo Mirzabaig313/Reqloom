@@ -590,8 +590,8 @@ void RequestEditorPanel::renderChainPreview(const ProjectModel& project,
         return;
     }
     if (op->explicitDependencies.empty()) {
-        chainView_->setEmptyMessage(QStringLiteral(
-            "No declared dependencies — run Dry Run for the full resolved chain."));
+        chainView_->setEmptyMessage(
+            QStringLiteral("No declared dependencies — run Dry Run for the full resolved chain."));
         return;
     }
     // Static view of the operation's own declared dependencies in declared
