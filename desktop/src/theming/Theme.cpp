@@ -655,35 +655,35 @@ QWidget#chainView {
     border-radius: 6px;
 }
 )")
-        .arg(hex(p.surfaceBase),                     // %1
-             hex(p.textPrimary),                     // %2
-             hex(p.borderSubtle),                    // %3
-             hex(p.surfaceRaised),                   // %4
-             QString::number(sm),                    // %5
-             QString::number(md),                    // %6
-             QString::number(xs))                    // %7
-        .arg(hex(p.accentMuted),                     // %8
-             hex(p.borderStrong),                    // %9
-             hex(p.surfaceOverlay),                  // %10
-             hex(p.accentMuted),                     // %11  selected row tint
-             hex(p.textInverse),                     // %12
-             hex(p.textSecondary),                   // %13
-             hex(p.surfaceSunken),                   // %14
-             hex(p.accentBase))                      // %15
-        .arg(hex(p.borderStrong),                    // %16
-             QString::number(space(Space::Lg)),      // %17
-             hex(p.textDisabled),                    // %18
-             hex(p.accentHover))                     // %19
-        .arg(hex(methodTint(MethodColor::Get)),      // %20  GET pill bg
-             hex(methodTint(MethodColor::Post)),     // %21  POST pill bg
-             hex(methodTint(MethodColor::Put)),      // %22  PUT pill bg
-             hex(methodTint(MethodColor::Patch)),    // %23  PATCH pill bg
-             hex(methodTint(MethodColor::Delete)),   // %24  DELETE pill bg
-             hex(method(MethodColor::Get)),          // %25  GET pill fg
-             hex(method(MethodColor::Post)),         // %26  POST pill fg
-             hex(method(MethodColor::Put)),          // %27  PUT pill fg
-             hex(method(MethodColor::Patch)),        // %28  PATCH pill fg
-             hex(method(MethodColor::Delete)));      // %29  DELETE pill fg
+        .arg(hex(p.surfaceBase),                    // %1
+             hex(p.textPrimary),                    // %2
+             hex(p.borderSubtle),                   // %3
+             hex(p.surfaceRaised),                  // %4
+             QString::number(sm),                   // %5
+             QString::number(md),                   // %6
+             QString::number(xs))                   // %7
+        .arg(hex(p.accentMuted),                    // %8
+             hex(p.borderStrong),                   // %9
+             hex(p.surfaceOverlay),                 // %10
+             hex(p.accentMuted),                    // %11  selected row tint
+             hex(p.textInverse),                    // %12
+             hex(p.textSecondary),                  // %13
+             hex(p.surfaceSunken),                  // %14
+             hex(p.accentBase))                     // %15
+        .arg(hex(p.borderStrong),                   // %16
+             QString::number(space(Space::Lg)),     // %17
+             hex(p.textDisabled),                   // %18
+             hex(p.accentHover))                    // %19
+        .arg(hex(methodTint(MethodColor::Get)),     // %20  GET pill bg
+             hex(methodTint(MethodColor::Post)),    // %21  POST pill bg
+             hex(methodTint(MethodColor::Put)),     // %22  PUT pill bg
+             hex(methodTint(MethodColor::Patch)),   // %23  PATCH pill bg
+             hex(methodTint(MethodColor::Delete)),  // %24  DELETE pill bg
+             hex(method(MethodColor::Get)),         // %25  GET pill fg
+             hex(method(MethodColor::Post)),        // %26  POST pill fg
+             hex(method(MethodColor::Put)),         // %27  PUT pill fg
+             hex(method(MethodColor::Patch)),       // %28  PATCH pill fg
+             hex(method(MethodColor::Delete)));     // %29  DELETE pill fg
 }
 
 }  // namespace chainapi::desktop::theming
