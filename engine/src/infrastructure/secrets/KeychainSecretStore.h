@@ -19,7 +19,7 @@ public:
 
     std::expected<std::optional<std::string>, ReqloomError> read(const std::string& name) override;
     std::expected<void, ReqloomError> write(const std::string& name,
-                                             const std::string& value) override;
+                                            const std::string& value) override;
     std::expected<void, ReqloomError> remove(const std::string& name) override;
 };
 

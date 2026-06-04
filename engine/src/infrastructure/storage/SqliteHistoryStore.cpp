@@ -223,8 +223,8 @@ private:
 [[nodiscard]] ReqloomError sqliteError(sqlite3* db, std::string_view what) {
     const char* msg = (db != nullptr) ? sqlite3_errmsg(db) : "no database";
     return ReqloomError{ErrorCode::SchemaInvalid,
-                         ErrorClass::Schema,
-                         std::string{what} + ": " + (msg != nullptr ? msg : "?")};
+                        ErrorClass::Schema,
+                        std::string{what} + ": " + (msg != nullptr ? msg : "?")};
 }
 
 // ─── Event → JSON (per variant) ──────────────────────────────────────────────
@@ -528,8 +528,8 @@ struct SqliteHistoryStore::Impl {
         const int rc = sqlite3_exec(db.get(), std::string{sql}.c_str(), nullptr, nullptr, &err);
         if (rc != SQLITE_OK) {
             ReqloomError e{ErrorCode::SchemaInvalid,
-                            ErrorClass::Schema,
-                            std::string{"history: exec failed: "} + (err != nullptr ? err : "?")};
+                           ErrorClass::Schema,
+                           std::string{"history: exec failed: "} + (err != nullptr ? err : "?")};
             sqlite3_free(err);
             return std::unexpected(std::move(e));
         }
@@ -664,8 +664,8 @@ std::expected<void, ReqloomError> SqliteHistoryStore::open(const fs::path& dbPat
         if (ec) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "history: cannot create parent dir: " + ec.message()});
+                             ErrorClass::Schema,
+                             "history: cannot create parent dir: " + ec.message()});
         }
     }
 

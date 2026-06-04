@@ -105,8 +105,8 @@ std::expected<FormBody, ReqloomError> buildFormBody(
         if (rawPath.empty()) {
             return std::unexpected(
                 ReqloomError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              "body_form field '" + k + "': empty file path after '@'"});
+                             ErrorClass::Resolution,
+                             "body_form field '" + k + "': empty file path after '@'"});
         }
 
         std::error_code ec;
@@ -140,8 +140,8 @@ std::expected<FormBody, ReqloomError> buildFormBody(
         if (!in) {
             return std::unexpected(
                 ReqloomError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              std::format("body_form field '{}': could not open: {}", k, rawPath)});
+                             ErrorClass::Resolution,
+                             std::format("body_form field '{}': could not open: {}", k, rawPath)});
         }
 
         in.seekg(0, std::ios::end);
@@ -156,12 +156,12 @@ std::expected<FormBody, ReqloomError> buildFormBody(
         if (size > kMaxUploadBytes) {
             return std::unexpected(
                 ReqloomError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              std::format("body_form field '{}': file exceeds 50 MiB upload cap "
-                                          "({} bytes): {}",
-                                          k,
-                                          size,
-                                          rawPath)});
+                             ErrorClass::Resolution,
+                             std::format("body_form field '{}': file exceeds 50 MiB upload cap "
+                                         "({} bytes): {}",
+                                         k,
+                                         size,
+                                         rawPath)});
         }
         in.seekg(0, std::ios::beg);
 
@@ -173,8 +173,8 @@ std::expected<FormBody, ReqloomError> buildFormBody(
         if (in.bad()) {
             return std::unexpected(
                 ReqloomError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              std::format("body_form field '{}': read error: {}", k, rawPath)});
+                             ErrorClass::Resolution,
+                             std::format("body_form field '{}': read error: {}", k, rawPath)});
         }
 
         part.value = std::move(contents);

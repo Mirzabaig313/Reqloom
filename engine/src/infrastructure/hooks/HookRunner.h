@@ -54,10 +54,10 @@ public:
     virtual ~HookRunner() = default;
 
     virtual std::expected<HookOutcome, ReqloomError> runPreRequest(const std::string& script,
-                                                                    HookContext context) = 0;
+                                                                   HookContext context) = 0;
 
     virtual std::expected<HookOutcome, ReqloomError> runPostResponse(const std::string& script,
-                                                                      HookContext context) = 0;
+                                                                     HookContext context) = 0;
 };
 
 }  // namespace reqloom::engine

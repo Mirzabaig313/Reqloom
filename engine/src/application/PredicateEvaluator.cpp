@@ -846,8 +846,8 @@ PredicateValue PredicateEvaluator::evaluate(const ParsedPredicate& predicate,
 }
 
 std::expected<PredicateValue, ReqloomError> PredicateEvaluator::eval(std::string_view expression,
-                                                                      std::string_view jsonBody,
-                                                                      int statusCode) const {
+                                                                     std::string_view jsonBody,
+                                                                     int statusCode) const {
     auto p = parse(expression);
     if (!p) {
         return std::unexpected(p.error());

@@ -129,17 +129,16 @@ std::expected<void, ReqloomError> writeAtomic(const fs::path& target, std::strin
     {
         std::ofstream out{temp, std::ios::binary | std::ios::trunc};
         if (!out) {
-            return std::unexpected(
-                ReqloomError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "typings: cannot open temp file " + temp.string()});
+            return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                                ErrorClass::Schema,
+                                                "typings: cannot open temp file " + temp.string()});
         }
         out << content;
         if (!out) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "typings: failed writing temp file " + temp.string()});
+                             ErrorClass::Schema,
+                             "typings: failed writing temp file " + temp.string()});
         }
     }
 
@@ -156,9 +155,9 @@ std::expected<void, ReqloomError> writeAtomic(const fs::path& target, std::strin
         std::error_code _;
         fs::remove(temp, _);
         return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
-                                             ErrorClass::Schema,
-                                             "typings: cannot rename " + temp.string() + " → " +
-                                                 target.string() + ": " + ec.message()});
+                                            ErrorClass::Schema,
+                                            "typings: cannot rename " + temp.string() + " → " +
+                                                target.string() + ": " + ec.message()});
     }
     return {};
 }
@@ -176,18 +175,18 @@ TypingsEmitResult StaticHookTypingsEmitter::emit(const fs::path& targetDir,
     std::error_code ec;
     if (fs::exists(target, ec) && !overwrite) {
         return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
-                                             ErrorClass::Schema,
-                                             "typings: reqloom.d.ts exists in " +
-                                                 targetDir.string() +
-                                                 " (pass overwrite=true to replace)"});
+                                            ErrorClass::Schema,
+                                            "typings: reqloom.d.ts exists in " +
+                                                targetDir.string() +
+                                                " (pass overwrite=true to replace)"});
     }
 
     fs::create_directories(targetDir, ec);
     if (ec) {
         return std::unexpected(
             ReqloomError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "typings: cannot create " + targetDir.string() + ": " + ec.message()});
+                         ErrorClass::Schema,
+                         "typings: cannot create " + targetDir.string() + ": " + ec.message()});
     }
 
     if (auto r = writeAtomic(target, kTypingsBody); !r) {

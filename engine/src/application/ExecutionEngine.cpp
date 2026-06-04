@@ -255,22 +255,22 @@ struct ExecutionEngine::Impl {
     // success. Errors: PollFailPredicate, PollTimeout, PollMaxAttemptsExceeded,
     // SchemaInvalid. Cancellation is checked each iteration.
     std::expected<HttpResponse, ReqloomError> runPollLoop(const Operation& op,
-                                                           const PollUntil& poll,
-                                                           const Project& project,
-                                                           RunContext& ctx,
-                                                           const ResolveContext& rctx,
-                                                           RunId runId,
-                                                           std::size_t stepIndex,
-                                                           const HttpResponse& /*initialResponse*/,
-                                                           std::vector<StepResult>& attemptRows) {
+                                                          const PollUntil& poll,
+                                                          const Project& project,
+                                                          RunContext& ctx,
+                                                          const ResolveContext& rctx,
+                                                          RunId runId,
+                                                          std::size_t stepIndex,
+                                                          const HttpResponse& /*initialResponse*/,
+                                                          std::vector<StepResult>& attemptRows) {
         PredicateEvaluator const evaluator;
 
         auto successPredicate = evaluator.parse(poll.successWhen);
         if (!successPredicate) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "poll_until.success_when: " + successPredicate.error().detail});
+                             ErrorClass::Schema,
+                             "poll_until.success_when: " + successPredicate.error().detail});
         }
 
         std::optional<ParsedPredicate> failPredicate;
@@ -279,8 +279,8 @@ struct ExecutionEngine::Impl {
             if (!parsed) {
                 return std::unexpected(
                     ReqloomError{ErrorCode::SchemaInvalid,
-                                  ErrorClass::Schema,
-                                  "poll_until.fail_when: " + parsed.error().detail});
+                                 ErrorClass::Schema,
+                                 "poll_until.fail_when: " + parsed.error().detail});
             }
             failPredicate = std::move(*parsed);
         }
@@ -303,8 +303,8 @@ struct ExecutionEngine::Impl {
 
         if ((pollActor != nullptr) && !ensureSession(*pollActor, ctx, rctx, runId, stepIndex)) {
             return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                                 ErrorClass::Auth,
-                                                 "poll_until: actor session refresh failed"});
+                                                ErrorClass::Auth,
+                                                "poll_until: actor session refresh failed"});
         }
 
         const auto deadline = std::chrono::steady_clock::now() + poll.timeout;
@@ -369,18 +369,18 @@ struct ExecutionEngine::Impl {
                         if (!signOAuth1Request(req, *session)) {
                             return std::unexpected(
                                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                                              ErrorClass::Auth,
-                                              "poll_until: oauth1 signing failed (missing "
-                                              "consumer credentials or malformed URL)"});
+                                             ErrorClass::Auth,
+                                             "poll_until: oauth1 signing failed (missing "
+                                             "consumer credentials or malformed URL)"});
                         }
                     } else if (session->signingScheme == ActorSession::SigningScheme::AwsSigV4) {
                         if (!signSigV4Request(req, *session)) {
                             return std::unexpected(
                                 ReqloomError{ErrorCode::SessionRefreshFailed,
-                                              ErrorClass::Auth,
-                                              "poll_until: aws_sigv4 signing failed "
-                                              "(missing access_key/secret_key/region/service "
-                                              "or malformed URL)"});
+                                             ErrorClass::Auth,
+                                             "poll_until: aws_sigv4 signing failed "
+                                             "(missing access_key/secret_key/region/service "
+                                             "or malformed URL)"});
                         }
                     }
                 }
@@ -455,10 +455,9 @@ struct ExecutionEngine::Impl {
 
             if (failMatched) {
                 return std::unexpected(ReqloomError{ErrorCode::PollFailPredicate,
-                                                     ErrorClass::Polling,
-                                                     "poll_until.fail_when matched (HTTP " +
-                                                         std::to_string(lastResponse.status) +
-                                                         ")"});
+                                                    ErrorClass::Polling,
+                                                    "poll_until.fail_when matched (HTTP " +
+                                                        std::to_string(lastResponse.status) + ")"});
             }
             if (successMatched) {
                 return lastResponse;
@@ -1017,9 +1016,9 @@ ExecutionEngine::ExecutionEngine(ExecutionEngine&&) noexcept = default;
 ExecutionEngine& ExecutionEngine::operator=(ExecutionEngine&&) noexcept = default;
 
 std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& project,
-                                                             const OperationId& target,
-                                                             RunContext& ctx,
-                                                             const RunOptions& options) {
+                                                            const OperationId& target,
+                                                            RunContext& ctx,
+                                                            const RunOptions& options) {
     impl_->cancelledRunId.store(0, std::memory_order_release);
     impl_->captureResponseBodies = options.captureResponseBodies;
 
