@@ -5,14 +5,14 @@ description: "Run a 9-step API chain end-to-end against the bundled marketplace 
 
 import { Steps, Aside, FileTree } from "@astrojs/starlight/components";
 
-This tour walks through the canonical ChainAPI demo: testing
+This tour walks through the canonical Reqloom demo: testing
 `refund.approve` against a marketplace API. The chain spans **3 actors**
 and **9 operations** — the kind of scenario that takes 10 minutes of
 copy-paste in Postman.
 
 ## What you'll need
 
-- ChainAPI built locally ([install guide](/start/install/))
+- Reqloom built locally ([install guide](/start/install/))
 - ~5 minutes
 - No backend running — the test harness will start a mock server
 
@@ -23,7 +23,7 @@ that defines:
 
 <FileTree>
 - samples/marketplace/
-    - chainapi.yaml          Project root + imports
+    - reqloom.yaml          Project root + imports
     - environments/
         - local.yaml         baseUrl + per-env variables
     - actors/
@@ -45,7 +45,7 @@ that defines:
    graph is valid:
 
     ```bash
-    ./build/macos-debug/cli/chainapi lint --project samples/marketplace
+    ./build/macos-debug/cli/reqloom lint --project samples/marketplace
     ```
 
     Expected output:
@@ -79,7 +79,7 @@ that defines:
    and prints the result.
 
     ```bash
-    ./build/macos-debug/engine/tests/chainapi-engine-integration-tests \
+    ./build/macos-debug/engine/tests/reqloom-engine-integration-tests \
         --gtest_filter=MarketplaceHappyPath.RefundApproveResolvesAndExecutes
     ```
 
@@ -104,7 +104,7 @@ that defines:
    For example, running just `order.pay` skips the refund-related steps:
 
     ```bash
-    ./build/macos-debug/engine/tests/chainapi-engine-integration-tests \
+    ./build/macos-debug/engine/tests/reqloom-engine-integration-tests \
         --gtest_filter=MarketplaceHappyPath.RerunUsesCachedSessions
     ```
 
@@ -115,7 +115,7 @@ that defines:
 
 ## What just happened
 
-You exercised the core ChainAPI value prop:
+You exercised the core Reqloom value prop:
 
 - **One command, one operation.** You didn't write any glue scripts.
 - **Auto-resolved chain.** The engine read your schema's `depends_on`
@@ -135,7 +135,7 @@ against a real running API, point `baseUrl` in
 `environments/local.yaml` at your backend and run:
 
 ```bash
-chainapi run refund.approve --project samples/marketplace --env local
+reqloom run refund.approve --project samples/marketplace --env local
 ```
 </Aside>
 

@@ -5,7 +5,7 @@
 
 #include <gtest/gtest.h>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 

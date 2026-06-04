@@ -30,7 +30,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
@@ -472,7 +472,7 @@ void RequestEditorPanel::showOperation(const ProjectModel& project, const QStrin
     pathEdit_->setText(QString::fromStdString(op->pathTemplate));
     refreshMethodPill();
 
-    // Actor is a first-class ChainAPI concept (the session identity the chain
+    // Actor is a first-class Reqloom concept (the session identity the chain
     // runs as), so surface it as a labelled chip, not faint metadata (§8).
     if (op->actor.value.empty()) {
         actorCaption_->setText(QStringLiteral("⊘  No actor"));
@@ -612,4 +612,4 @@ void RequestEditorPanel::renderChainPreview(const ProjectModel& project,
     chainView_->setNodes(nodes);
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

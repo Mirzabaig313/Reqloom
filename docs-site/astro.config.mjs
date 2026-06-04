@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import remarkBaseLinks from "./src/plugins/remark-base-links.mjs";
 
 // Site URL is set per-deploy via the SITE/BASE env vars (see deploy-docs.yml).
 // Defaults target the project page at https://mirzabaig313.github.io/ChainAPi/
@@ -14,9 +15,12 @@ const base = process.env.BASE ?? "/ChainAPi/";
 export default defineConfig({
     site,
     base,
+    markdown: {
+        remarkPlugins: [[remarkBaseLinks, { base }]],
+    },
     integrations: [
         starlight({
-            title: "ChainAPI",
+            title: "Reqloom",
             description:
                 "Workflow-aware API testing tool that auto-resolves request dependency chains.",
             logo: { src: "./src/assets/logo.svg", replacesTitle: false },
@@ -46,7 +50,7 @@ export default defineConfig({
                 {
                     label: "Start Here",
                     items: [
-                        { label: "What is ChainAPI?", slug: "start/overview" },
+                        { label: "What is Reqloom?", slug: "start/overview" },
                         { label: "Installation", slug: "start/install" },
                         { label: "5-minute tour", slug: "start/tour" },
                     ],
@@ -76,9 +80,9 @@ export default defineConfig({
                     label: "CLI",
                     items: [
                         { label: "Overview", slug: "cli/overview" },
-                        { label: "chainapi run", slug: "cli/run" },
-                        { label: "chainapi lint", slug: "cli/lint" },
-                        { label: "chainapi import", slug: "cli/import" },
+                        { label: "reqloom run", slug: "cli/run" },
+                        { label: "reqloom lint", slug: "cli/lint" },
+                        { label: "reqloom import", slug: "cli/import" },
                     ],
                 },
                 {

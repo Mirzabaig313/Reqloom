@@ -9,14 +9,14 @@
 // so a secret's length isn't leaked as a side channel.
 #pragma once
 
-#include <chainapi/engine/Events.h>
+#include <reqloom/engine/Events.h>
 
 #include <map>
 #include <string>
 #include <string_view>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// True when this header's value should be redacted. Case-insensitive.
 [[nodiscard]] bool isSensitiveHeader(std::string_view name) noexcept;
@@ -37,4 +37,4 @@ namespace chainapi::engine {
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> maskHeaders(
     const std::vector<std::pair<std::string, std::string>>& headers);
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

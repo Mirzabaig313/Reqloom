@@ -9,8 +9,8 @@
 
 #include "MockSutHarness.h"
 
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -22,17 +22,17 @@
 #include <string>
 
 namespace fs = std::filesystem;
-namespace ce = chainapi::engine;
-namespace ct = chainapi::tests;
+namespace ce = reqloom::engine;
+namespace ct = reqloom::tests;
 
 namespace {
 
 [[nodiscard]] fs::path fixturesDir() {
-    return fs::path(CHAINAPI_FIXTURES_DIR);
+    return fs::path(REQLOOM_FIXTURES_DIR);
 }
 
 [[nodiscard]] ce::Project loadProject(const std::string& mockBaseUrl) {
-    auto project = ce::parseProject(fixturesDir() / "hooks-project" / "chainapi.yaml");
+    auto project = ce::parseProject(fixturesDir() / "hooks-project" / "reqloom.yaml");
     EXPECT_TRUE(project.has_value()) << (project ? "" : project.error().detail);
     project->environments["local"]["baseUrl"] = mockBaseUrl;
     return std::move(*project);

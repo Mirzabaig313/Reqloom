@@ -35,7 +35,7 @@
 #include <system_error>
 #include <utility>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace fs = std::filesystem;
 
@@ -72,7 +72,7 @@ bool wantsMultipart(const std::map<std::string, std::string>& headers,
     return headerSaysMultipart(headers) || anyValueIsFileRef(resolvedFormFields);
 }
 
-std::expected<FormBody, ChainApiError> buildFormBody(
+std::expected<FormBody, ReqloomError> buildFormBody(
     const std::map<std::string, std::string>& resolvedFormFields, bool routeMultipart) {
     if (!routeMultipart) {
         std::string urlEncoded;
@@ -104,9 +104,9 @@ std::expected<FormBody, ChainApiError> buildFormBody(
         const std::string rawPath = v.substr(1);  // drop leading '@'
         if (rawPath.empty()) {
             return std::unexpected(
-                ChainApiError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              "body_form field '" + k + "': empty file path after '@'"});
+                ReqloomError{ErrorCode::UploadFileUnreadable,
+                             ErrorClass::Resolution,
+                             "body_form field '" + k + "': empty file path after '@'"});
         }
 
         std::error_code ec;
@@ -119,13 +119,13 @@ std::expected<FormBody, ChainApiError> buildFormBody(
         // and content checks below go through an open fd instead of
         // re-statting the path.
         if (!fs::exists(effective, ec) || ec) {
-            return std::unexpected(ChainApiError{
+            return std::unexpected(ReqloomError{
                 ErrorCode::UploadFileUnreadable,
                 ErrorClass::Resolution,
                 std::format("body_form field '{}': file does not exist: {}", k, rawPath)});
         }
         if (!fs::is_regular_file(effective, ec) || ec) {
-            return std::unexpected(ChainApiError{
+            return std::unexpected(ReqloomError{
                 ErrorCode::UploadFileUnreadable,
                 ErrorClass::Resolution,
                 std::format("body_form field '{}': not a regular file: {}", k, rawPath)});
@@ -139,15 +139,15 @@ std::expected<FormBody, ChainApiError> buildFormBody(
         std::ifstream in(effective, std::ios::binary);
         if (!in) {
             return std::unexpected(
-                ChainApiError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              std::format("body_form field '{}': could not open: {}", k, rawPath)});
+                ReqloomError{ErrorCode::UploadFileUnreadable,
+                             ErrorClass::Resolution,
+                             std::format("body_form field '{}': could not open: {}", k, rawPath)});
         }
 
         in.seekg(0, std::ios::end);
         const auto endPos = in.tellg();
         if (endPos == std::streampos{-1}) {
-            return std::unexpected(ChainApiError{
+            return std::unexpected(ReqloomError{
                 ErrorCode::UploadFileUnreadable,
                 ErrorClass::Resolution,
                 std::format("body_form field '{}': could not measure size: {}", k, rawPath)});
@@ -155,13 +155,13 @@ std::expected<FormBody, ChainApiError> buildFormBody(
         const auto size = static_cast<std::uintmax_t>(endPos);
         if (size > kMaxUploadBytes) {
             return std::unexpected(
-                ChainApiError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              std::format("body_form field '{}': file exceeds 50 MiB upload cap "
-                                          "({} bytes): {}",
-                                          k,
-                                          size,
-                                          rawPath)});
+                ReqloomError{ErrorCode::UploadFileUnreadable,
+                             ErrorClass::Resolution,
+                             std::format("body_form field '{}': file exceeds 50 MiB upload cap "
+                                         "({} bytes): {}",
+                                         k,
+                                         size,
+                                         rawPath)});
         }
         in.seekg(0, std::ios::beg);
 
@@ -172,9 +172,9 @@ std::expected<FormBody, ChainApiError> buildFormBody(
         contents.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>{});
         if (in.bad()) {
             return std::unexpected(
-                ChainApiError{ErrorCode::UploadFileUnreadable,
-                              ErrorClass::Resolution,
-                              std::format("body_form field '{}': read error: {}", k, rawPath)});
+                ReqloomError{ErrorCode::UploadFileUnreadable,
+                             ErrorClass::Resolution,
+                             std::format("body_form field '{}': read error: {}", k, rawPath)});
         }
 
         part.value = std::move(contents);
@@ -186,4 +186,4 @@ std::expected<FormBody, ChainApiError> buildFormBody(
     return FormBody{std::move(mb)};
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

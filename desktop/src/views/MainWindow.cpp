@@ -17,7 +17,7 @@
 #include "SecretsDialog.h"
 #include "TimelinePanel.h"
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <QtCore/QSettings>
 #include <QtGui/QAction>
@@ -38,14 +38,14 @@
 #include <QtWidgets/QToolBar>
 #include <QtWidgets/QWidget>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 MainWindow::MainWindow(engine::ExecutionEngine& engine,
                        ProjectModel& project,
                        theming::ThemeManager& themeManager,
                        QWidget* parent)
     : QMainWindow(parent), project_(project), themeManager_(themeManager) {
-    setWindowTitle(QStringLiteral("ChainAPI"));
+    setWindowTitle(QStringLiteral("Reqloom"));
     resize(1280, 800);
 
     runController_ = new RunController(engine, project, this);
@@ -112,7 +112,7 @@ void MainWindow::buildLayout() {
     emptyState_ = new widgets::EmptyState(this);
     emptyState_->setTitle(QStringLiteral("No project open"));
     emptyState_->setMessage(QStringLiteral(
-        "Open a ChainAPI project folder to explore its actors, resources, and operations, "
+        "Open a Reqloom project folder to explore its actors, resources, and operations, "
         "then run any endpoint with its full dependency chain resolved for you."));
     emptyState_->setAction(QStringLiteral("Open Project…"), [this]() { onOpenProject(); });
 
@@ -343,7 +343,7 @@ void MainWindow::connectSignals() {
 
 void MainWindow::onOpenProject() {
     const QString dir =
-        QFileDialog::getExistingDirectory(this, QStringLiteral("Open ChainAPI Project"), QString{});
+        QFileDialog::getExistingDirectory(this, QStringLiteral("Open Reqloom Project"), QString{});
     if (!dir.isEmpty()) {
         openProjectDirectory(dir);
     }
@@ -516,7 +516,7 @@ void MainWindow::onProjectLoaded() {
     }
     restoringEnv_ = false;
 
-    setWindowTitle(QStringLiteral("ChainAPI — %1").arg(project_.name()));
+    setWindowTitle(QStringLiteral("Reqloom — %1").arg(project_.name()));
     statusLabel_->setText(QStringLiteral("Project: %1").arg(project_.name()));
     statusBar()->showMessage(
         QStringLiteral("Loaded %1 — select an operation and press Send.").arg(project_.name()),
@@ -610,4 +610,4 @@ void MainWindow::saveSelectedEnvironment(const QString& env) {
     EnvironmentSettings::save(settings, project_.rootPath(), env);
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

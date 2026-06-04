@@ -12,7 +12,7 @@
 
 #include <cstdint>
 
-namespace chainapi::desktop::theming {
+namespace reqloom::desktop::theming {
 
 class ThemeManager : public QObject {
     Q_OBJECT
@@ -54,4 +54,4 @@ private:
     Theme theme_{Theme::resolve(Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop::theming
+}  // namespace reqloom::desktop::theming

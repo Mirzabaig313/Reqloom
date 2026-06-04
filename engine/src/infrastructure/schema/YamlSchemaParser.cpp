@@ -22,7 +22,7 @@
 
 namespace fs = std::filesystem;
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -320,8 +320,8 @@ TransportConfig parseTransport(const YAML::Node& node) {
 // file, load the file content; otherwise treat as inline JS. Paths are
 // canonicalised via weakly_canonical against baseDir and rejected if outside
 // root. File size capped at 1 MiB.
-[[nodiscard]] std::expected<std::string, ChainApiError> resolveHookScript(const std::string& value,
-                                                                          const fs::path& baseDir) {
+[[nodiscard]] std::expected<std::string, ReqloomError> resolveHookScript(const std::string& value,
+                                                                         const fs::path& baseDir) {
     if (value.empty()) {
         return value;
     }
@@ -366,15 +366,15 @@ TransportConfig parseTransport(const YAML::Node& node) {
     };
     if (raw.is_absolute() || hasRootedPrefix(value)) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script path must be relative to the project root: " + value});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script path must be relative to the project root: " + value});
     }
 
     std::error_code ec;
     const auto canonical = fs::weakly_canonical(baseDir / raw, ec);
     if (ec) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid,
             ErrorClass::Schema,
             "hook script path is not resolvable: " + value + " (" + ec.message() + ")"});
@@ -387,9 +387,9 @@ TransportConfig parseTransport(const YAML::Node& node) {
     const auto canonicalBase = fs::canonical(baseDir, ec);
     if (ec) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "could not canonicalise project root: " + ec.message()});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "could not canonicalise project root: " + ec.message()});
     }
     {
         const auto canonStr = canonical.lexically_normal().string();
@@ -400,52 +400,52 @@ TransportConfig parseTransport(const YAML::Node& node) {
              canonStr[baseStr.size()] == fs::path::preferred_separator);
         if (!contained) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "hook script path escapes the project root: " + value});
+                ReqloomError{ErrorCode::SchemaInvalid,
+                             ErrorClass::Schema,
+                             "hook script path escapes the project root: " + value});
         }
     }
 
     if (!fs::exists(canonical, ec) || ec) {
-        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
-                                             ErrorClass::Schema,
-                                             "hook script not found: " + canonical.string()});
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            "hook script not found: " + canonical.string()});
     }
     if (!fs::is_regular_file(canonical, ec) || ec) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script is not a regular file: " + canonical.string()});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script is not a regular file: " + canonical.string()});
     }
 
     constexpr std::uintmax_t kMaxHookBytes = std::uintmax_t{1} * 1024 * 1024;  // 1 MiB
     const auto size = fs::file_size(canonical, ec);
     if (ec) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid,
-            ErrorClass::Schema,
-            "could not stat hook script " + canonical.string() + ": " + ec.message()});
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "could not stat hook script " + canonical.string() + ": " + ec.message()});
     }
     if (size > kMaxHookBytes) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script exceeds 1 MiB cap: " + canonical.string()});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script exceeds 1 MiB cap: " + canonical.string()});
     }
 
     std::ifstream in(canonical, std::ios::binary);
     if (!in) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script could not be opened: " + canonical.string()});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script could not be opened: " + canonical.string()});
     }
     std::string contents(static_cast<std::size_t>(size), '\0');
     in.read(contents.data(), static_cast<std::streamsize>(size));
     if (in.gcount() != static_cast<std::streamsize>(size)) {
-        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
-                                             ErrorClass::Schema,
-                                             "hook script read truncated: " + canonical.string()});
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            "hook script read truncated: " + canonical.string()});
     }
     return contents;
 }
@@ -605,9 +605,9 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
 
 // ─── Resource/Operation parsing ──────────────────────────────────────────────
 
-std::expected<Resource, ChainApiError> parseResource(const std::string& resourceId,
-                                                     const YAML::Node& node,
-                                                     const fs::path& baseDir) {
+std::expected<Resource, ReqloomError> parseResource(const std::string& resourceId,
+                                                    const YAML::Node& node,
+                                                    const fs::path& baseDir) {
     Resource resource;
     resource.id = ResourceId{resourceId};
     resource.description = node["description"].as<std::string>("");
@@ -749,24 +749,24 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
 // above any legitimate hand-written schema.
 constexpr std::uintmax_t kMaxYamlBytes = std::uintmax_t{8} * 1024 * 1024;
 
-[[nodiscard]] std::expected<YAML::Node, ChainApiError> loadYamlCapped(const fs::path& file) {
+[[nodiscard]] std::expected<YAML::Node, ReqloomError> loadYamlCapped(const fs::path& file) {
     std::error_code ec;
     const auto size = fs::file_size(file, ec);
     if (ec) {
         return std::unexpected(
-            ChainApiError{ErrorCode::YamlParse,
-                          ErrorClass::Schema,
-                          "could not stat schema file " + file.string() + ": " + ec.message()});
+            ReqloomError{ErrorCode::YamlParse,
+                         ErrorClass::Schema,
+                         "could not stat schema file " + file.string() + ": " + ec.message()});
     }
     if (size > kMaxYamlBytes) {
-        return std::unexpected(ChainApiError{ErrorCode::YamlParse,
-                                             ErrorClass::Schema,
-                                             "schema file exceeds 8 MiB cap: " + file.string()});
+        return std::unexpected(ReqloomError{ErrorCode::YamlParse,
+                                            ErrorClass::Schema,
+                                            "schema file exceeds 8 MiB cap: " + file.string()});
     }
     try {
         return YAML::LoadFile(file.string());
     } catch (const YAML::Exception& e) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::YamlParse, ErrorClass::Schema, file.string() + ": " + e.what()});
     }
 }
@@ -808,14 +808,14 @@ YamlSchemaParser::~YamlSchemaParser() = default;
 
 SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
     if (!fs::exists(rootYaml)) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::YamlParse, ErrorClass::Schema, "File not found: " + rootYaml.string()});
     }
 
     // yaml-cpp's Node::as<T>() (without a default) throws YAML::Exception on
     // a type mismatch. Those calls are scattered across the parse helpers
     // below on attacker-controlled input; this guard keeps every one of them
-    // inside the std::expected<Project, ChainApiError> contract instead of
+    // inside the std::expected<Project, ReqloomError> contract instead of
     // unwinding out of the engine.
     try {
         auto loadedRoot = loadYamlCapped(rootYaml);
@@ -827,10 +827,10 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         auto version = root["version"].as<int>(0);
         if (version < 1 || version > 3) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SchemaVersion,
-                              ErrorClass::Schema,
-                              "Unsupported schema version " + std::to_string(version) +
-                                  " (supported: 1–3). Run `chainapi migrate` to upgrade."});
+                ReqloomError{ErrorCode::SchemaVersion,
+                             ErrorClass::Schema,
+                             "Unsupported schema version " + std::to_string(version) +
+                                 " (supported: 1–3). Run `reqloom migrate` to upgrade."});
         }
 
         Project project;
@@ -839,7 +839,7 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
 
         const auto baseDir = rootYaml.parent_path();
 
-        auto loadSubFile = [&](const fs::path& file) -> std::optional<ChainApiError> {
+        auto loadSubFile = [&](const fs::path& file) -> std::optional<ReqloomError> {
             auto loadedSub = loadYamlCapped(file);
             if (!loadedSub) {
                 return loadedSub.error();
@@ -918,7 +918,7 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
             return std::nullopt;
         };
 
-        auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ChainApiError> {
+        auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ReqloomError> {
             if (!importsNode) {
                 return std::nullopt;
             }
@@ -995,9 +995,9 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
 
         return project;
     } catch (const YAML::Exception& e) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::YamlParse, ErrorClass::Schema, rootYaml.string() + ": " + e.what()});
     }
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

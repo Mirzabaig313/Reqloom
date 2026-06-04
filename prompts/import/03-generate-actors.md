@@ -1,10 +1,10 @@
 # Stage 3 — Generate Actor Files
 
-Input: the Stage 2 schema plan. Output: one YAML file per actor, written to `chainapi/actors/<actor_id>.yaml`. Use your file-writing tools — do NOT dump YAML inline in chat.
+Input: the Stage 2 schema plan. Output: one YAML file per actor, written to `reqloom/actors/<actor_id>.yaml`. Use your file-writing tools — do NOT dump YAML inline in chat.
 
 ## Per-actor file template
 
-For every actor in the plan, produce `chainapi/actors/<actor_id>.yaml` with this exact shape:
+For every actor in the plan, produce `reqloom/actors/<actor_id>.yaml` with this exact shape:
 
 ```yaml
 # Two formats are accepted by the parser. Use the wrapped format below — it

@@ -2,8 +2,8 @@
 
 //   - poll_until block is silently dropped → pollUntil stays nullopt
 //   - expect_status: [200, 202] → as<int>() throws inside YamlSchemaParser
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -14,7 +14,7 @@
 #include <fstream>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -25,7 +25,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-schema-poll");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-schema-poll");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -50,7 +50,7 @@ private:
 
 TEST(SchemaParserPolling, parses_poll_until_block_with_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: PollSample
 environment:
@@ -111,7 +111,7 @@ resources:
 
 TEST(SchemaParserPolling, parses_poll_until_with_backoff_and_actor_override) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: PollSample
 environment:
@@ -165,7 +165,7 @@ resources:
 
 TEST(SchemaParserPolling, ops_without_poll_until_remain_nullopt) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: NoPolling
 environment:
@@ -200,7 +200,7 @@ resources:
 
 TEST(SchemaParserBasicAuth, parses_basic_strategy_into_authConfig) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: BasicSample
 default_environment: local
@@ -242,7 +242,7 @@ resources:
 
 TEST(SchemaParserApiKeyAuth, parses_api_key_strategy_with_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ApiKeySample
 default_environment: local
@@ -282,7 +282,7 @@ resources:
 TEST(SchemaParserApiKeyAuth, parses_api_key_with_only_required_key) {
     // Manual-inject form: just `key`, no `location`/`name`.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ApiKeyManualSample
 default_environment: local
@@ -322,7 +322,7 @@ resources:
 
 TEST(SchemaParserOAuth2ClientCreds, parses_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth2Sample
 default_environment: local
@@ -363,7 +363,7 @@ resources:
 
 TEST(SchemaParserOAuth2ClientCreds, scope_is_optional) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth2NoScope
 default_environment: local
@@ -400,7 +400,7 @@ resources:
 
 TEST(SchemaParserOAuth2Password, parses_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth2PasswordSample
 default_environment: local
@@ -458,7 +458,7 @@ TEST(SchemaParserHooks, loads_sibling_js_file_for_pre_request) {
             << "}\n";
     hookOut.close();
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookFromFile
 default_environment: local
@@ -498,7 +498,7 @@ TEST(SchemaParserHooks, loads_post_response_from_file_too) {
     hookOut << "export default function (ctx) { return ctx.response; }\n";
     hookOut.close();
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookPostResponseFromFile
 default_environment: local
@@ -535,7 +535,7 @@ TEST(SchemaParserHooks, inline_js_with_braces_falls_through_unchanged) {
     // write something like `const x = 1; // foo.js` from being
     // mis-parsed as a path.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookInline
 default_environment: local
@@ -573,7 +573,7 @@ TEST(SchemaParserHooks, rejects_path_traversal_outside_project_root) {
     // AGENTS.md "Reading user input" §"Path inputs".
     ScratchDir scratch;
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookEscape
 default_environment: local
@@ -604,7 +604,7 @@ resources:
 
 TEST(SchemaParserHooks, rejects_absolute_path) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookAbsolute
 default_environment: local
@@ -635,7 +635,7 @@ resources:
 
 TEST(SchemaParserHooks, rejects_missing_hook_file) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookMissing
 default_environment: local
@@ -676,7 +676,7 @@ TEST(SchemaParserHooks, rejects_oversized_hook_file) {
         }
     }
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookOversized
 default_environment: local
@@ -709,7 +709,7 @@ resources:
 
 TEST(SchemaParserOAuth1, parses_three_legged_with_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth1Sample
 default_environment: local
@@ -751,7 +751,7 @@ resources:
 
 TEST(SchemaParserOAuth1, parses_two_legged_minimal) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth1TwoLegged
 default_environment: local
@@ -791,7 +791,7 @@ resources:
 
 TEST(SchemaParserAwsSigV4, parses_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: AwsSample
 default_environment: local
@@ -833,7 +833,7 @@ resources:
 
 TEST(SchemaParserAwsSigV4, optional_fields_are_omitted_when_absent) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: AwsMinimal
 default_environment: local

@@ -16,7 +16,7 @@ operations:
     actor: user
     depends_on: [branch.get_default]
     body:
-      ref: "refs/heads/feature/chainapi-{{$.uuid}}"
+      ref: "refs/heads/feature/reqloom-{{$.uuid}}"
       sha: "{{branch.head_sha}}"
     expect_status: 201
     extract:

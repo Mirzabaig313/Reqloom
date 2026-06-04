@@ -1,9 +1,9 @@
 # Stage 6 — Fix Lint Errors
 
 Input:
-1. The current schema (in `chainapi/`)
-2. Output from `chainapi lint --project chainapi`
-3. Optionally, output from `chainapi run <op>` if a runtime issue surfaced
+1. The current schema (in `reqloom/`)
+2. Output from `reqloom lint --project reqloom`
+3. Optionally, output from `reqloom run <op>` if a runtime issue surfaced
 
 Output: edits to existing schema files via your file-writing tools. Do NOT regenerate from scratch.
 
@@ -11,16 +11,16 @@ Output: edits to existing schema files via your file-writing tools. Do NOT regen
 
 For each error, decide which of these patterns it matches and apply the matching fix:
 
-### Schema-time errors (caught by `chainapi lint`)
+### Schema-time errors (caught by `reqloom lint`)
 
 | Error code | Pattern | Fix |
 |---|---|---|
 | `E_YAML_PARSE` | YAML syntax error | Open the cited file:line. Fix indentation or quoting. Most common cause: tab-indented inside a space-indented file. |
 | `E_REF_UNDEFINED` | Operation references `{{X.y}}` where X is not a known actor/resource/env | Either add the producer (extraction) or change the reference. Check the plan's variable producer/consumer table for the canonical producer of `y`. |
 | `E_CYCLE` | A → B → A | Almost always means an op extracts a field its dependency consumes. Break the cycle by moving the extraction to an earlier op or removing a needless `depends_on`. |
-| `E_SCHEMA_VERSION` | `version:` outside the supported range (1–3) | Set `version: 1` at the top of `chainapi.yaml`. |
+| `E_SCHEMA_VERSION` | `version:` outside the supported range (1–3) | Set `version: 1` at the top of `reqloom.yaml`. |
 
-### Runtime errors (caught by `chainapi run`)
+### Runtime errors (caught by `reqloom run`)
 
 | Error code | Likely cause | Fix |
 |---|---|---|
@@ -36,7 +36,7 @@ For each error, decide which of these patterns it matches and apply the matching
 
 1. **Don't regenerate from scratch.** Stage 1–5 already cost time. Make minimal edits.
 2. **Read the failing op's section** of the plan before editing. If the plan was wrong, fix the plan in chat first, then apply the fix.
-3. **Test one fix at a time.** Run `chainapi lint` after every edit. For runtime fixes, run the op via `chainapi run` to confirm.
+3. **Test one fix at a time.** Run `reqloom lint` after every edit. For runtime fixes, run the op via `reqloom run` to confirm.
 4. **Document fixes in the plan.** If you discover the API actually requires `{phone+OTP}` not `{phone+password}`, update the plan's auth flow section so the next iteration matches.
 5. **If the response contradicts the plan**, the plan is wrong. Update it. The plan is the source of truth — schema files derive from it.
 

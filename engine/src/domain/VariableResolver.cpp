@@ -19,7 +19,7 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -474,4 +474,4 @@ VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
     return Result{std::move(output), std::move(unresolved)};
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

@@ -7,14 +7,14 @@
 
 #include "../infrastructure/http/HttpClient.h"
 
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 
 #include <expected>
 #include <map>
 #include <string>
 #include <variant>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// Result of translating a `body_form` map at request-build time.
 ///
@@ -48,7 +48,7 @@ using FormBody = std::variant<UrlEncodedBody, MultipartBody>;
 ///
 /// Returns `UploadFileUnreadable` when a referenced file is missing,
 /// not a regular file, or exceeds the upload size cap.
-[[nodiscard]] std::expected<FormBody, ChainApiError> buildFormBody(
+[[nodiscard]] std::expected<FormBody, ReqloomError> buildFormBody(
     const std::map<std::string, std::string>& resolvedFormFields, bool routeMultipart);
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

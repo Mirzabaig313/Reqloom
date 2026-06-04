@@ -19,7 +19,7 @@
 #   SKIP_BOUNDARY=1    skip the boundary-check grep
 #
 # Override the preset:
-#   CHAINAPI_PRESET=macos-release ./tools/pre-push-check.sh
+#   REQLOOM_PRESET=macos-release ./tools/pre-push-check.sh
 
 set -uo pipefail
 
@@ -33,7 +33,7 @@ case "$(uname -s)" in
   *)       default_preset="macos-debug" ;;
 esac
 
-preset="${CHAINAPI_PRESET:-$default_preset}"
+preset="${REQLOOM_PRESET:-$default_preset}"
 build_dir="build/$preset"
 
 red()    { printf '\033[31m%s\033[0m\n' "$*"; }

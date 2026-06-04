@@ -232,7 +232,7 @@ auto j = nlohmann::json::parse(text);
 
 ### 15. `find_package(Qt6 ...)` for UI components in engine CMake
 
-Boundary violation. CI's `chainapi_forbid_dependencies` catches it, but only after the configure step.
+Boundary violation. CI's `reqloom_forbid_dependencies` catches it, but only after the configure step.
 
 ```cmake
 # Wrong — engine/CMakeLists.txt

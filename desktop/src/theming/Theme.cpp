@@ -7,7 +7,7 @@
 #include <QtGui/QFontDatabase>
 #include <QtWidgets/QApplication>
 
-namespace chainapi::desktop::theming {
+namespace reqloom::desktop::theming {
 
 namespace {
 
@@ -686,4 +686,4 @@ QWidget#chainView {
              hex(method(MethodColor::Delete)));     // %29  DELETE pill fg
 }
 
-}  // namespace chainapi::desktop::theming
+}  // namespace reqloom::desktop::theming

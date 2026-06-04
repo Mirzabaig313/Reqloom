@@ -1,11 +1,11 @@
 // LlmClient — provider-agnostic interface for the AI importer.
 //
 // The user supplies their own API key (no proxy through
-// ChainAPI servers). The LLM call returns the assistant message verbatim;
+// Reqloom servers). The LLM call returns the assistant message verbatim;
 // JSON-shape validation is the importer's job, not the client's.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 
 #include <chrono>
 #include <cstdint>
@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 enum class LlmProvider : std::uint8_t {
     OpenAI,     ///< POST <endpoint>/v1/chat/completions
@@ -71,7 +71,7 @@ public:
     /// failures (with the response body excerpt in `detail` for
     /// debugging); `LlmResponseInvalid` when the body decodes but is
     /// missing the assistant message.
-    virtual std::expected<LlmResponse, ChainApiError> complete(const LlmRequest& request) = 0;
+    virtual std::expected<LlmResponse, ReqloomError> complete(const LlmRequest& request) = 0;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

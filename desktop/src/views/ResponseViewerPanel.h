@@ -20,7 +20,7 @@ class QTextEdit;
 class QTreeWidget;
 class QTreeWidgetItem;
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace widgets {
 class EmptyState;
@@ -80,4 +80,4 @@ private:
     QString currentBody_;
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

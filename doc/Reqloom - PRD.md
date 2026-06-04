@@ -1,4 +1,4 @@
-# ChainAPI — Product Requirements Document
+# Reqloom — Product Requirements Document
 
 > **A workflow-aware API testing tool that auto-resolves request dependency chains, eliminating the manual copy-paste loop developers suffer through with Postman.**
 
@@ -53,13 +53,13 @@ That's **8 manual requests** with **7 IDs** to copy-paste, just to test one endp
 
 ### 1.3 Vision
 
-ChainAPI treats your API as a **graph of resources, actors, and dependencies**. Define each actor (auth flow) and each resource (endpoints + dependencies) **once**. Then click any endpoint and it auto-resolves the entire chain — login, prerequisites, target call — and executes them in the correct order.
+Reqloom treats your API as a **graph of resources, actors, and dependencies**. Define each actor (auth flow) and each resource (endpoints + dependencies) **once**. Then click any endpoint and it auto-resolves the entire chain — login, prerequisites, target call — and executes them in the correct order.
 
 Add an **AI doc importer** that reads existing API docs (OpenAPI, Postman collections, Markdown, curl examples) and auto-generates the dependency graph, and the tool goes from zero to "run any endpoint with one click" in under five minutes.
 
 ### 1.4 Strategic Positioning
 
-> **"Postman is an HTTP client. ChainAPI is an API workflow engine."**
+> **"Postman is an HTTP client. Reqloom is an API workflow engine."**
 
 Wedge: **backend developers and QAs working on multi-role SaaS** (B2B platforms, marketplaces, enterprise admin panels). This is the majority of modern SaaS.
 
@@ -80,8 +80,8 @@ Wedge: **backend developers and QAs working on multi-role SaaS** (B2B platforms,
 
 These are committed product directions but explicitly out of scope for v1. The architectural decision to make is that the **same schema** that powers testing must be reusable for these features — no parallel definitions.
 
-- **G7** — Schema-driven **mock server**: any project's `chainapi.yaml` can be flipped into "serve mode" to expose a local HTTP server returning recorded or templated responses for the defined operations. Useful for frontend development, demoing flows offline, and reproducing edge-case responses (errors, slow responses, malformed payloads).
-- **G8** — Schema-driven **API documentation generation**: render `chainapi.yaml` to a browsable static site (HTML/Markdown) that documents every actor, resource, and operation, complete with example request/response pairs captured from real runs.
+- **G7** — Schema-driven **mock server**: any project's `reqloom.yaml` can be flipped into "serve mode" to expose a local HTTP server returning recorded or templated responses for the defined operations. Useful for frontend development, demoing flows offline, and reproducing edge-case responses (errors, slow responses, malformed payloads).
+- **G8** — Schema-driven **API documentation generation**: render `reqloom.yaml` to a browsable static site (HTML/Markdown) that documents every actor, resource, and operation, complete with example request/response pairs captured from real runs.
 - **G9** — **Browser-based version**: a hosted web app for testing public/staging APIs without installing the desktop app. Excluded from MVP because browsers cannot reach `localhost` from a remote origin (CORS + mixed-content restrictions), which is the dominant testing scenario for backend devs. Viable later as either (a) a remote runner paired with a tiny local agent that proxies requests, or (b) a hosted version targeted at staging/production API testing only.
 
 ### 2.3 Non-Goals (MVP)
@@ -107,7 +107,7 @@ These are committed product directions but explicitly out of scope for v1. The a
   - Has 200+ Postman requests, can't find anything
   - When DB is reset, all her saved variables are stale
 
-**ChainAPI value**: One-click testing of any endpoint. Skip the morning re-login ritual. Stop hunting for IDs.
+**Reqloom value**: One-click testing of any endpoint. Skip the morning re-login ritual. Stop hunting for IDs.
 
 ### 3.2 Secondary Persona — QA Tester
 
@@ -120,7 +120,7 @@ These are committed product directions but explicitly out of scope for v1. The a
   - Hard to test "what if admin rejects after vendor confirms" without complex UI dance
   - Can't easily reproduce edge cases without dev help
 
-**ChainAPI value**: Run complex multi-actor flows in seconds. Test edge cases without the UI overhead.
+**Reqloom value**: Run complex multi-actor flows in seconds. Test edge cases without the UI overhead.
 
 ### 3.3 Tertiary Persona — Solo Developer / Small Team Tech Lead
 
@@ -132,7 +132,7 @@ These are committed product directions but explicitly out of scope for v1. The a
   - Onboarding new devs takes ages because no one understands the data dependency graph
   - Bug repros require detailed setup steps that everyone forgets
 
-**ChainAPI value**: Reusable schema across projects. Onboarding becomes "import this YAML, run any endpoint."
+**Reqloom value**: Reusable schema across projects. Onboarding becomes "import this YAML, run any endpoint."
 
 ---
 
@@ -189,7 +189,7 @@ The top-level container.
 
 - One project = one API
 - Contains: actors, resources, environments, schema metadata
-- Stored as a folder of YAML files (`chainapi.yaml` + sub-files), git-friendly
+- Stored as a folder of YAML files (`reqloom.yaml` + sub-files), git-friendly
 
 ---
 
@@ -202,7 +202,7 @@ This is the heart of the product — the format AI agents will generate, that hu
 The simplest schema that runs is a single file. The spec is layered: simple cases stay simple, complex cases scale up.
 
 ```yaml
-# chainapi.yaml — minimum viable schema (single file, single actor, single endpoint)
+# reqloom.yaml — minimum viable schema (single file, single actor, single endpoint)
 version: 1
 name: My API
 environment:
@@ -232,7 +232,7 @@ That's a valid project. Click `hello.get`, the engine logs the user in, then cal
 
 ```
 my-project/
-├── chainapi.yaml              # Project root config
+├── reqloom.yaml              # Project root config
 ├── environments/
 │   ├── local.yaml
 │   └── staging.yaml
@@ -246,7 +246,7 @@ my-project/
     └── refunds.yaml
 ```
 
-### 5.3 Project Root (`chainapi.yaml`)
+### 5.3 Project Root (`reqloom.yaml`)
 
 ```yaml
 version: 1
@@ -475,11 +475,11 @@ The intent is that the **template-level builtins cover the 80% of cases** where 
 The schema spec itself will evolve. To avoid breaking existing projects:
 
 - Every project YAML declares `version: 1` at the top
-- Major version bumps (breaking changes) require explicit user migration via `chainapi migrate`
+- Major version bumps (breaking changes) require explicit user migration via `reqloom migrate`
 - Minor version bumps are backward-compatible additions
 - The app supports the **last 3 major versions** simultaneously
 - Deprecated fields emit warnings for one minor version cycle before removal
-- A schema linter (`chainapi lint`) catches deprecated patterns before they become errors
+- A schema linter (`reqloom lint`) catches deprecated patterns before they become errors
 
 ### 5.10 Hooks & Scripting API
 
@@ -488,7 +488,7 @@ Most signing and dynamic-payload needs are covered by the built-in functions in 
 **Hook authoring rules**
 
 - Hooks live in **sibling `.js` files**, referenced by relative path. Inline JS-in-YAML strings are supported but discouraged — they lose syntax highlighting, formatting, and editor LSP support.
-- The project ships a generated `chainapi.d.ts` so any editor with TypeScript LSP gives autocomplete on `ctx.request`, `ctx.env`, `ctx.actors`, and the built-in helpers (`hmac`, `jwt`, `base64`, …).
+- The project ships a generated `reqloom.d.ts` so any editor with TypeScript LSP gives autocomplete on `ctx.request`, `ctx.env`, `ctx.actors`, and the built-in helpers (`hmac`, `jwt`, `base64`, …).
 - Hooks are sandboxed via QuickJS — no filesystem, no network beyond the request itself, no `require`. The built-in helpers from §5.7 are exposed on the `ctx` object so hooks don't need to re-implement crypto.
 - 1-second timeout per hook. Hooks have read-only access to other actors' variables; can only write to their own request/response.
 - Hooks are explicitly opt-in via the `pre_request` / `post_response` keys (no implicit script execution).
@@ -568,7 +568,7 @@ A built-in strategy that can't be expressed declaratively (vendor-specific signi
 
 ### 5.11 Polling & Async Operations
 
-Many production APIs return `202 Accepted` for write operations and require the client to poll a status endpoint until completion. ChainAPI models polling as a first-class part of an operation, not a separate "wait" primitive.
+Many production APIs return `202 Accepted` for write operations and require the client to poll a status endpoint until completion. Reqloom models polling as a first-class part of an operation, not a separate "wait" primitive.
 
 ```yaml
 operations:
@@ -619,12 +619,12 @@ operations:
 
 ### 6.1 Schema & Project Management
 
-- **FR-1.1** Load a project from a folder containing `chainapi.yaml` + sub-files
+- **FR-1.1** Load a project from a folder containing `reqloom.yaml` + sub-files
 - **FR-1.2** Validate schema on load; show clear errors with file + line numbers
 - **FR-1.3** Hot-reload on file changes (file watcher)
 - **FR-1.4** Support multiple projects open in tabs
 - **FR-1.5** Export project as a single bundled YAML for sharing
-- **FR-1.6** Schema linter (`chainapi lint`) flags broken references, circular deps, deprecated fields
+- **FR-1.6** Schema linter (`reqloom lint`) flags broken references, circular deps, deprecated fields
 
 ### 6.2 Execution Engine
 
@@ -693,7 +693,7 @@ operations:
 
 - **FR-9.1** Accept input formats: OpenAPI 3.x (YAML/JSON), Markdown API docs, curl command lists, raw HAR files
 - **FR-9.2** Send content to LLM (user's API key — OpenAI, Anthropic, or local Ollama) with structured prompt
-- **FR-9.3** Generate ChainAPI YAML schema with inferred actors, resources, and dependencies
+- **FR-9.3** Generate Reqloom YAML schema with inferred actors, resources, and dependencies
 - **FR-9.4** Show diff/preview before writing files
 - **FR-9.5** Allow user corrections; learn from corrections within session
 - **FR-9.6** Store no data in the cloud; all LLM calls go from user's machine to their chosen provider
@@ -710,9 +710,9 @@ operations:
 - **FR-10.1** Direct import of Postman collection JSON (v2.1+)
 - **FR-10.2** Direct import of Bruno collections (folder of `.bru` files)
 - **FR-10.3** Direct import of Insomnia v4 export
-- **FR-10.4** Map Postman environments → ChainAPI environments
+- **FR-10.4** Map Postman environments → Reqloom environments
 - **FR-10.5** Map Postman folder structure → resources (best-effort)
-- **FR-10.6** Convert Postman pre-request/test scripts to ChainAPI hooks (best-effort with warnings)
+- **FR-10.6** Convert Postman pre-request/test scripts to Reqloom hooks (best-effort with warnings)
 - **FR-10.7** Show pre-import preview with confidence indicators per item
 
 ### 6.11 Environments & Secrets
@@ -732,12 +732,12 @@ operations:
 
 ### 6.13 CLI Mode
 
-- **FR-13.1** `chainapi run <operation>` executes from terminal using same schema
-- **FR-13.2** `chainapi run --flow=full-onboarding` runs a named flow
+- **FR-13.1** `reqloom run <operation>` executes from terminal using same schema
+- **FR-13.2** `reqloom run --flow=full-onboarding` runs a named flow
 - **FR-13.3** Output formats: text (human), JSON (machine), JUnit XML (CI)
 - **FR-13.4** Exit codes for CI integration (0 = pass, non-zero = fail)
 - **FR-13.5** Headless mode for CI/CD pipelines
-- **FR-13.6** `chainapi lint` validates schema, returns non-zero on errors
+- **FR-13.6** `reqloom lint` validates schema, returns non-zero on errors
 
 ### 6.14 Command Palette
 
@@ -757,7 +757,7 @@ operations:
 | Cold start (app launch to interactive) | < 2 seconds |
 | Schema parse + validate (500 operations) | < 500ms |
 | Render request panel after click | < 100ms |
-| Single HTTP request overhead (ChainAPI vs. raw curl) | < 50ms |
+| Single HTTP request overhead (Reqloom vs. raw curl) | < 50ms |
 | Memory footprint (idle) | < 250 MB |
 | Memory footprint (heavy use, 100 requests in history) | < 500 MB |
 
@@ -772,7 +772,7 @@ operations:
 
 - **NFR-3.1** Local-first — no telemetry without explicit opt-in
 - **NFR-3.2** Secrets never leave the user's machine
-- **NFR-3.3** AI imports use the user's own LLM API key — no proxy through ChainAPI servers
+- **NFR-3.3** AI imports use the user's own LLM API key — no proxy through Reqloom servers
 - **NFR-3.4** TLS-only for outbound requests by default (user can override per-environment)
 - **NFR-3.5** Code signing on all binaries (Apple notarization, Windows Authenticode)
 - **NFR-3.6** Hooks sandboxed (QuickJS, no filesystem/network access)
@@ -849,13 +849,13 @@ operations:
 | **Domain** | Entities, value objects, domain services. Pure C++ (no Qt types) | `Project`, `Actor`, `Resource`, `Operation`, `DependencyResolver`, `RunContext` |
 | **Infrastructure** | YAML parsing, HTTP client, SQLite, keychain, JS sandbox | `YamlSchemaRepository` (yaml-cpp), `HttpClient` (libcurl or QNetworkAccessManager), `SqliteHistoryStore`, `QtKeychainSecretStore`, `QuickJsHookRunner` |
 
-**Critical architectural rule (preserves the future Option B path):** the **Domain** and **Infrastructure** layers MUST NOT depend on any Qt header outside of `QtCore` types like `QString` and `QByteArray` — and even those are confined behind thin adapters. The dependency-resolution engine, schema parser, HTTP client, cache, and history store are buildable as a pure C++ library (`libchainapi-engine`) that links into the Qt UI today and into a separate process or other language binding tomorrow.
+**Critical architectural rule (preserves the future Option B path):** the **Domain** and **Infrastructure** layers MUST NOT depend on any Qt header outside of `QtCore` types like `QString` and `QByteArray` — and even those are confined behind thin adapters. The dependency-resolution engine, schema parser, HTTP client, cache, and history store are buildable as a pure C++ library (`libreqloom-engine`) that links into the Qt UI today and into a separate process or other language binding tomorrow.
 
 ### 8.3 Execution Engine Internals
 
 ```cpp
 // Pure-C++ engine class — no Qt UI dependency.
-// Lives in libchainapi-engine; today linked into the Qt app,
+// Lives in libreqloom-engine; today linked into the Qt app,
 // tomorrow extractable to a CLI binary or out-of-process daemon.
 class ExecutionEngine {
 public:
@@ -917,7 +917,7 @@ RunResult ExecutionEngine::run(OperationId target, RunContext& ctx) {
 
 To stay disciplined and keep the future option open without paying its cost today:
 
-**Phase A (MVP, locked in):** UI shell and engine ship as a **single Qt application** with the engine compiled in-process as a static or shared library (`libchainapi-engine`). Fastest path to a shipped product. The engine has zero Qt-UI dependencies — only `QtCore` value types behind narrow adapter interfaces.
+**Phase A (MVP, locked in):** UI shell and engine ship as a **single Qt application** with the engine compiled in-process as a static or shared library (`libreqloom-engine`). Fastest path to a shipped product. The engine has zero Qt-UI dependencies — only `QtCore` value types behind narrow adapter interfaces.
 
 **Phase B (post-MVP, kept open):** when the CLI (FR-13.x) demands a serious second consumer of the engine, or when team workspaces / cloud (Phase 8) demand a server-side runner, the engine is extracted into a **separate process** (or even a separate language — Rust is the leading candidate for memory-safety + no-GC). Communication moves to an IPC contract (JSON-RPC over stdio is the working assumption).
 
@@ -925,7 +925,7 @@ To stay disciplined and keep the future option open without paying its cost toda
 
 | Guardrail | Mechanism | Verified by |
 |-----------|-----------|-------------|
-| Engine has no Qt-UI types | Module split: `libchainapi-engine` does not link `Qt::Widgets` / `Qt::Gui` / `Qt::Quick` | CMake target dependency check in CI |
+| Engine has no Qt-UI types | Module split: `libreqloom-engine` does not link `Qt::Widgets` / `Qt::Gui` / `Qt::Quick` | CMake target dependency check in CI |
 | Engine has no UI threading assumptions | All engine APIs return values or invoke callbacks; no Qt signals from engine | Code review checklist |
 | Engine surface is callable as a clean C++ API | All public engine APIs use STL types or POD `QtCore` types only | Header review |
 | Engine's serialization formats are language-agnostic | Schema is YAML; persisted history is SQLite; events are POD structs serializable to JSON | Existing decisions |
@@ -1014,7 +1014,7 @@ If those rules hold throughout the MVP, splitting the engine into a separate pro
 ### 10.2 LLM Prompt Strategy
 
 The prompt sends the LLM:
-1. ChainAPI schema spec (so it knows the output format)
+1. Reqloom schema spec (so it knows the output format)
 2. The user's input documents
 3. Hints (e.g., "this API has admin/vendor/customer roles")
 4. Few-shot examples of correct schema generation
@@ -1124,7 +1124,7 @@ Most "subtly wrong extraction" bugs become obvious the moment users *see* the da
 - OpenAI (GPT-4o, GPT-4 Turbo)
 - Anthropic (Claude Sonnet, Claude Opus)
 - Local Ollama (for privacy-conscious users)
-- BYO API key — stored in keychain, never sent to ChainAPI servers
+- BYO API key — stored in keychain, never sent to Reqloom servers
 
 ### 10.5 Acceptance Criteria
 
@@ -1148,8 +1148,8 @@ This is **critical for adoption** — no developer will switch tools without a o
 
 - Accept Postman Collection JSON (v2.1+)
 - Map Postman folders → resources (best-effort, with manual override)
-- Map Postman environments → ChainAPI environments
-- Map Postman pre-request/test scripts → ChainAPI hooks (with warnings for unsupported APIs like `pm.collectionVariables`)
+- Map Postman environments → Reqloom environments
+- Map Postman pre-request/test scripts → Reqloom hooks (with warnings for unsupported APIs like `pm.collectionVariables`)
 - Detect token extraction patterns in scripts → convert to declarative `extract` blocks
 - Show confidence score per imported item; let user review before commit
 
@@ -1157,28 +1157,28 @@ This is **critical for adoption** — no developer will switch tools without a o
 
 - Accept folder of `.bru` files
 - Bruno's structure already maps cleanly to actors/resources
-- Convert Bruno JS scripts to ChainAPI hooks
+- Convert Bruno JS scripts to Reqloom hooks
 
 ### 11.3 Insomnia Import
 
 - Accept Insomnia v4 export (JSON)
 - Map Insomnia request groups → resources
-- Map Insomnia environments → ChainAPI environments
+- Map Insomnia environments → Reqloom environments
 
 ### 11.4 Migration Quality Bar
 
 - Postman collections of < 50 requests should import with ≥ 80% success (operations runnable as-is)
 - All authentication patterns (Bearer, API key, Basic, OAuth2) supported out of the box
-- A user should be able to switch from Postman to ChainAPI in < 30 minutes for a typical project
+- A user should be able to switch from Postman to Reqloom in < 30 minutes for a typical project
 
 ---
 
 ## 12. First-Run Experience
 
-User opens ChainAPI for the first time. What they see:
+User opens Reqloom for the first time. What they see:
 
 **Step 1 — Welcome screen** (3 seconds)
-- "ChainAPI: API testing without the copy-paste"
+- "Reqloom: API testing without the copy-paste"
 - 3 buttons: **Try Sample Project**, **Open Existing Project**, **Import**
 
 **Step 2a — If "Try Sample"**
@@ -1222,7 +1222,7 @@ User opens ChainAPI for the first time. What they see:
 - [ ] HTTP execution
 - [ ] Variable extraction (JSONPath)
 - [ ] Session caching with TTL
-- [ ] CLI: `chainapi run <op>` with text + JSON output
+- [ ] CLI: `reqloom run <op>` with text + JSON output
 - [ ] **Milestone**: Run any sample endpoint from terminal in one command
 
 ### 13.3 Phase 2 — Qt Desktop UI (Weeks 4–6)
@@ -1261,18 +1261,18 @@ User opens ChainAPI for the first time. What they see:
 
 - **Phase 5** — Browser extension (capture requests from running apps to auto-build schema)
 - **Phase 6** — Team sync via git (lockfiles for shared state)
-- **Phase 7** — **Mock server mode (G7)** — schema-driven mock server reusing `chainapi.yaml`:
+- **Phase 7** — **Mock server mode (G7)** — schema-driven mock server reusing `reqloom.yaml`:
   - "Serve" command launches a local HTTP server on a configurable port
   - Operations resolve to recorded responses from history, or to templated responses defined inline
   - Stateful mocks (the mock can update its own state when a write operation is hit, so chained flows work)
   - Useful for: frontend dev without backend, contract testing, demoing offline, reproducing rare error responses
 - **Phase 8** — Hosted cloud version with team workspaces
 - **Phase 9** — VSCode extension
-- **Phase 10** — **Schema-driven API documentation (G8)** — generate a browsable docs site from `chainapi.yaml`:
+- **Phase 10** — **Schema-driven API documentation (G8)** — generate a browsable docs site from `reqloom.yaml`:
   - Static HTML/Markdown output, themeable
   - Auto-includes real request/response examples captured during runs
   - Documents actor auth flows, resource dependencies, and operation contracts
-  - Optional "Try it" button that delegates to the user's local ChainAPI instance via deep link
+  - Optional "Try it" button that delegates to the user's local Reqloom instance via deep link
 - **Phase 11** — WebSocket / SSE / GraphQL subscription support
 
 ---
@@ -1358,7 +1358,7 @@ If any fail, iterate or pivot before committing 10 weeks.
 
 ## 17. Competitive Analysis
 
-| Tool | Strengths | Weaknesses | ChainAPI Differentiation |
+| Tool | Strengths | Weaknesses | Reqloom Differentiation |
 |------|-----------|------------|--------------------------|
 | **Postman** | Massive ecosystem, team features, mock servers | Manual chaining, bloated, slow | Auto-resolved dependencies, fast, focused |
 | **Postman Flows** | Visual workflows | Manual wiring per relationship, premium feature | Schema-driven, no manual wiring |
@@ -1397,10 +1397,10 @@ If any fail, iterate or pivot before committing 10 weeks.
 
 ## 19. Open Questions
 
-1. **Branding** — Is "ChainAPI" the right name? Domain availability + trademark check needed.
+1. **Branding** — Is "Reqloom" the right name? Domain availability + trademark check needed.
 2. **Plugin system** — Should v1 ship a plugin API (custom auth schemes like AWS SigV4, HMAC), or is the JS hook escape hatch enough?
-3. **Embeddable engine** — Should the engine be publishable as a Dart/Node library so test suites can use it directly (ChainAPI in Jest/Vitest tests)?
-4. **Encrypted project files** — Some users will want to commit projects to private repos but encrypt sensitive parts. Is `.chainapi-vault` encrypted bundle worth shipping in v1?
+3. **Embeddable engine** — Should the engine be publishable as a Dart/Node library so test suites can use it directly (Reqloom in Jest/Vitest tests)?
+4. **Encrypted project files** — Some users will want to commit projects to private repos but encrypt sensitive parts. Is `.reqloom-vault` encrypted bundle worth shipping in v1?
 5. **Real-time mock server** — Strong adjacent feature; could ride the same schema. Worth slipping into Phase 4?
 
 ---
@@ -1458,7 +1458,7 @@ The system prompt template, few-shot examples, and post-processing logic will li
 
 - **Status**: Accepted (PRD v0.3)
 - **Context**: The dependency-resolution engine is the load-bearing component. CLI mode (FR-13.x), team workspaces, and a future browser version (G9) will all consume the same engine. We must ship MVP fast without painting ourselves into a corner.
-- **Decision**: **Phase A** — engine is a pure-C++ library (`libchainapi-engine`) compiled into the Qt desktop app in-process. **Phase B** (post-MVP, kept open) — engine extracted to a separate process or separate language (Rust is the leading candidate) when a second major consumer (CLI in CI, server-side runner) demands it.
+- **Decision**: **Phase A** — engine is a pure-C++ library (`libreqloom-engine`) compiled into the Qt desktop app in-process. **Phase B** (post-MVP, kept open) — engine extracted to a separate process or separate language (Rust is the leading candidate) when a second major consumer (CLI in CI, server-side runner) demands it.
 - **Rationale**: In-process keeps MVP simple (one build, one binary, one debugger). The architectural guardrails in §8.6 (engine has no Qt-UI dependencies, no signals from engine, language-agnostic serialization) keep the cost of Phase B as a build-system change rather than a rewrite.
 - **Trade-offs accepted**: We pay a small upfront discipline tax (no Qt types in the engine layer, narrow adapters for everything) to preserve a path we may not need.
 - **Triggers for Phase B**: (a) CLI binary needs to ship without the Qt runtime, (b) second consumer (server / browser) emerges, (c) memory-safety bugs prove painful enough to justify Rust.

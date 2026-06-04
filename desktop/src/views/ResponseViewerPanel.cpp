@@ -26,7 +26,7 @@
 
 #include <cmath>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
@@ -386,4 +386,4 @@ void ResponseViewerPanel::populateTree(QTreeWidgetItem* parent,
     }
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

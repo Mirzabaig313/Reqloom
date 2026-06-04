@@ -15,7 +15,7 @@
 #include <unistd.h>
 #endif
 
-namespace chainapi::tests {
+namespace reqloom::tests {
 
 namespace {
 
@@ -105,7 +105,7 @@ MockSutHarness::MockSutHarness(const std::filesystem::path& routesFile) {
         ::dup2(pipeFds[1], STDOUT_FILENO);
         ::close(pipeFds[1]);
 
-        const char* mockPath = CHAINAPI_MOCK_SUT_PATH;
+        const char* mockPath = REQLOOM_MOCK_SUT_PATH;
         ::execl(
             mockPath, mockPath, "--routes", routesFile.c_str(), static_cast<const char*>(nullptr));
         std::_Exit(127);
@@ -151,7 +151,7 @@ MockSutHarness::MockSutHarness(const std::filesystem::path& routesFile) {
     // CreateProcessW needs a mutable wide buffer; quote both paths so spaces
     // in the build directory don't split arguments.
     std::wstring cmd = L"\"";
-    cmd += std::filesystem::path(CHAINAPI_MOCK_SUT_PATH).wstring();
+    cmd += std::filesystem::path(REQLOOM_MOCK_SUT_PATH).wstring();
     cmd += L"\" --routes \"";
     cmd += routesFile.wstring();
     cmd += L"\"";
@@ -215,4 +215,4 @@ MockSutHarness::~MockSutHarness() {
 
 #endif
 
-}  // namespace chainapi::tests
+}  // namespace reqloom::tests

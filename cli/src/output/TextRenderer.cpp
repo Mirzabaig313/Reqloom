@@ -1,4 +1,4 @@
-// TextRenderer — see header. Default human-readable format for `chainapi run`.
+// TextRenderer — see header. Default human-readable format for `reqloom run`.
 
 #include "TextRenderer.h"
 
@@ -9,11 +9,11 @@
 #include <utility>
 #include <variant>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 namespace {
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 }  // namespace
 
@@ -117,4 +117,4 @@ void TextRenderer::render(const ce::OperationId& target,
     }
 }
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

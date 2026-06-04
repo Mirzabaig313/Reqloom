@@ -4,7 +4,7 @@
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 PanelHeader::PanelHeader(const QString& title, QWidget* parent) : QWidget(parent) {
     layout_ = new QHBoxLayout(this);
@@ -35,4 +35,4 @@ void PanelHeader::setTheme(const theming::Theme& theme) {
     titleLabel_->setFont(theme_.font(theming::TextStyle::Subtitle));
 }
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

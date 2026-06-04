@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.0)
 
-project(chainapi
+project(reqloom
     VERSION 0.1.0
     DESCRIPTION "Workflow-aware API testing tool with auto-resolved dependency chains"
     LANGUAGES CXX
@@ -26,19 +26,19 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # ─── Build options ────────────────────────────────────────────────────────────
-option(CHAINAPI_BUILD_DESKTOP "Build the Qt desktop app"          ON)
-option(CHAINAPI_BUILD_CLI     "Build the CLI binary"              ON)
-option(CHAINAPI_BUILD_TESTS   "Build the test suite"              ON)
-option(CHAINAPI_BUILD_IPC     "Build engine IPC server (Phase B)" OFF)
-option(CHAINAPI_ENABLE_ASAN   "Enable AddressSanitizer in Debug"  OFF)
-option(CHAINAPI_ENABLE_UBSAN  "Enable UBSan in Debug"             OFF)
+option(REQLOOM_BUILD_DESKTOP "Build the Qt desktop app"          ON)
+option(REQLOOM_BUILD_CLI     "Build the CLI binary"              ON)
+option(REQLOOM_BUILD_TESTS   "Build the test suite"              ON)
+option(REQLOOM_BUILD_IPC     "Build engine IPC server (Phase B)" OFF)
+option(REQLOOM_ENABLE_ASAN   "Enable AddressSanitizer in Debug"  OFF)
+option(REQLOOM_ENABLE_UBSAN  "Enable UBSan in Debug"             OFF)
 
 # ─── Module path ──────────────────────────────────────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-include(ChainApiCompilerWarnings)
-include(ChainApiSanitizers)
-include(ChainApiBoundaryGuards)
+include(ReqloomCompilerWarnings)
+include(ReqloomSanitizers)
+include(ReqloomBoundaryGuards)
 
 # ─── Dependencies (used by every target) ──────────────────────────────────────
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core)
@@ -76,11 +76,11 @@ endif()
 # FetchContent against the already-present Qt6 — deliberately avoiding the
 # vcpkg `qtkeychain` port, which drags qtbase from source and blows past
 # CI's job time budget (see vcpkg.json $qt-comment). Either way the engine
-# ends up with the real KeychainSecretStore (CHAINAPI_HAS_QTKEYCHAIN=1).
+# ends up with the real KeychainSecretStore (REQLOOM_HAS_QTKEYCHAIN=1).
 find_package(Qt6Keychain CONFIG QUIET)
 
 # UI-only deps
-if(CHAINAPI_BUILD_DESKTOP)
+if(REQLOOM_BUILD_DESKTOP)
     find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Gui Quick QuickWidgets Concurrent)
     # QScintilla is added later when the desktop module starts using it.
 endif()
@@ -89,7 +89,7 @@ endif()
 # Note: enable_testing() must run BEFORE any add_subdirectory() that calls
 # add_test() / gtest_discover_tests(); otherwise the tests are silently
 # dropped from CTest's view. See the CMake docs for enable_testing().
-if(CHAINAPI_BUILD_TESTS)
+if(REQLOOM_BUILD_TESTS)
     enable_testing()
     include(CTest)
 endif()
@@ -97,31 +97,31 @@ endif()
 add_subdirectory(third_party)
 add_subdirectory(engine)
 
-if(CHAINAPI_BUILD_CLI)
+if(REQLOOM_BUILD_CLI)
     add_subdirectory(cli)
 endif()
 
-if(CHAINAPI_BUILD_DESKTOP)
+if(REQLOOM_BUILD_DESKTOP)
     add_subdirectory(desktop)
 endif()
 
-if(CHAINAPI_BUILD_IPC)
+if(REQLOOM_BUILD_IPC)
     add_subdirectory(ipc)
 endif()
 
 # ─── Boundary enforcement runs after all targets are declared ────────────────
-chainapi_enforce_boundary_rules()
+reqloom_enforce_boundary_rules()
 
 # ─── Status summary ───────────────────────────────────────────────────────────
 message(STATUS "")
-message(STATUS "ChainAPI configuration:")
+message(STATUS "Reqloom configuration:")
 message(STATUS "  Version:           ${PROJECT_VERSION}")
 message(STATUS "  Build type:        ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard:      ${CMAKE_CXX_STANDARD}")
-message(STATUS "  Build desktop:     ${CHAINAPI_BUILD_DESKTOP}")
-message(STATUS "  Build CLI:         ${CHAINAPI_BUILD_CLI}")
-message(STATUS "  Build tests:       ${CHAINAPI_BUILD_TESTS}")
-message(STATUS "  Build IPC:         ${CHAINAPI_BUILD_IPC}")
-message(STATUS "  ASan:              ${CHAINAPI_ENABLE_ASAN}")
-message(STATUS "  UBSan:             ${CHAINAPI_ENABLE_UBSAN}")
+message(STATUS "  Build desktop:     ${REQLOOM_BUILD_DESKTOP}")
+message(STATUS "  Build CLI:         ${REQLOOM_BUILD_CLI}")
+message(STATUS "  Build tests:       ${REQLOOM_BUILD_TESTS}")
+message(STATUS "  Build IPC:         ${REQLOOM_BUILD_IPC}")
+message(STATUS "  ASan:              ${REQLOOM_ENABLE_ASAN}")
+message(STATUS "  UBSan:             ${REQLOOM_ENABLE_UBSAN}")
 message(STATUS "")

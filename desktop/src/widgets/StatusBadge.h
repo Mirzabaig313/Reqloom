@@ -11,7 +11,7 @@
 
 class QVariantAnimation;
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 class StatusBadge : public QWidget {
     Q_OBJECT
@@ -56,4 +56,4 @@ private:
     double pulseOpacity_{1.0};
 };
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

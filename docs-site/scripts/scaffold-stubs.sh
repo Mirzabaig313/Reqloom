@@ -12,7 +12,7 @@ stub() {
     local slug="$1"; shift
     local title="$1"; shift
     local desc="$1"; shift
-    local body="${1:-Coming soon. This page is part of the ChainAPI documentation roadmap.}"
+    local body="${1:-Coming soon. This page is part of the Reqloom documentation roadmap.}"
     local path="$DOCS/$slug.md"
     mkdir -p "$(dirname "$path")"
     if [[ -f "$path" ]]; then
@@ -34,7 +34,7 @@ EOF
 
 # ─── Concepts ────────────────────────────────────────────────────────────────
 stub "concepts/actors" "Actors" \
-    "Actor abstraction in ChainAPI: identities with their own auth flows, session caches, and injected headers." \
+    "Actor abstraction in Reqloom: identities with their own auth flows, session caches, and injected headers." \
     "Actors are identities with their own auth flows. Each actor defines a sequence of HTTP requests that produce a session, and a set of headers to inject into every operation that runs as this actor.
 
 See [Mental model](/concepts/mental-model/) and [Auth strategies](/schema/auth-strategies/) for the concrete details. Full content for this page is part of Phase 2 documentation."
@@ -46,7 +46,7 @@ stub "concepts/resources" "Resources & operations" \
 See [Schema authoring guide](/schema/authoring/) for examples and the [Schema spec](/reference/schema-spec/) for the full field reference. Full content for this page is part of Phase 2 documentation."
 
 stub "concepts/dependencies" "Dependency resolution" \
-    "How ChainAPI builds the prerequisite chain for any target operation: implicit edges from variable references plus explicit depends_on declarations." \
+    "How Reqloom builds the prerequisite chain for any target operation: implicit edges from variable references plus explicit depends_on declarations." \
     "When you ask to run an operation, the engine resolves the dependency chain by combining:
 
 1. **Implicit edges** — any \`{{X.y}}\` reference in a path/body/header implies a dep on whichever operation produces \`X.y\`
@@ -56,8 +56,8 @@ stub "concepts/dependencies" "Dependency resolution" \
 See [Mental model](/concepts/mental-model/) for the algorithmic overview and [Engine requirement](/reference/engine-requirement/) §3.1 for the full spec."
 
 stub "concepts/variables" "Variables & references" \
-    "Six namespaces of variable references in ChainAPI: builtins, actor sessions, resource extractions, environment, secrets." \
-    "ChainAPI's variable substitution syntax is \`{{<scope>.<field>}}\`. Resolution order:
+    "Six namespaces of variable references in Reqloom: builtins, actor sessions, resource extractions, environment, secrets." \
+    "Reqloom's variable substitution syntax is \`{{<scope>.<field>}}\`. Resolution order:
 
 1. Builtins (\`{{\$.uuid}}\`, \`{{\$.now}}\`, \`{{\$.faker.*}}\`)
 2. Actor sessions (\`{{<actor>.<var>}}\`)
@@ -76,16 +76,16 @@ See [Engine requirement](/reference/engine-requirement/) §3.3 for the full sess
 # ─── Schema ──────────────────────────────────────────────────────────────────
 stub "schema/file-structure" "File structure" \
     "Multi-file vs single-file project layouts, glob imports, and the two accepted YAML shapes." \
-    "ChainAPI projects are folders. Two structural styles are accepted:
+    "Reqloom projects are folders. Two structural styles are accepted:
 
-- **Multi-file** (preferred for projects with > 5 resources) — separate files for actors, resources, environments, glued together by \`imports:\` in the project root \`chainapi.yaml\`.
+- **Multi-file** (preferred for projects with > 5 resources) — separate files for actors, resources, environments, glued together by \`imports:\` in the project root \`reqloom.yaml\`.
 - **Single-file** — everything inline. Good for very small projects or examples.
 
 See the [authoring guide](/schema/authoring/) for examples of both shapes."
 
 stub "schema/auth-strategies" "Auth strategies" \
     "Six auth strategies: simple, chain, api_key, oauth2_client_credentials, oauth2_password, oauth1." \
-    "ChainAPI ships six auth strategies covering the patterns 95% of APIs use:
+    "Reqloom ships six auth strategies covering the patterns 95% of APIs use:
 
 | Strategy | When to use |
 |---|---|
@@ -132,12 +132,12 @@ stub "schema/cheatsheet" "Cheat sheet" \
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 stub "cli/overview" "CLI overview" \
-    "The chainapi command-line interface: run, lint, import, dry-run, environments, and CI-friendly output formats." \
-    "The CLI is the daily-driver tool for ChainAPI. Three subcommands:
+    "The reqloom command-line interface: run, lint, import, dry-run, environments, and CI-friendly output formats." \
+    "The CLI is the daily-driver tool for Reqloom. Three subcommands:
 
-- [\`chainapi run\`](/cli/run/) — execute an operation chain
-- [\`chainapi lint\`](/cli/lint/) — validate the schema
-- [\`chainapi import\`](/cli/import/) — convert OpenAPI / Postman / Bruno / curl logs
+- [\`reqloom run\`](/cli/run/) — execute an operation chain
+- [\`reqloom lint\`](/cli/lint/) — validate the schema
+- [\`reqloom import\`](/cli/import/) — convert OpenAPI / Postman / Bruno / curl logs
 
 Common flags that work across commands:
 
@@ -145,10 +145,10 @@ Common flags that work across commands:
 - \`--env <name>\` — select environment file (defaults to \`local\`)
 - \`--var key=value\` — override env vars at run time"
 
-stub "cli/run" "chainapi run" \
+stub "cli/run" "reqloom run" \
     "Execute an operation chain. Auto-resolves prerequisites, runs in topological order, prints HTTP status and timing per step." \
     "\`\`\`
-chainapi run <resource.operation> [flags]
+reqloom run <resource.operation> [flags]
 \`\`\`
 
 Flags:
@@ -165,10 +165,10 @@ the failing step.
 
 Full content for this page is part of Phase 2 documentation."
 
-stub "cli/lint" "chainapi lint" \
+stub "cli/lint" "reqloom lint" \
     "Validate the schema and dependency graph without making any HTTP requests." \
     "\`\`\`
-chainapi lint [--project <path>]
+reqloom lint [--project <path>]
 \`\`\`
 
 Validates:
@@ -182,10 +182,10 @@ Validates:
 Exits 0 on success, non-zero on any error. Use in pre-commit hooks and
 CI pipelines."
 
-stub "cli/import" "chainapi import" \
-    "Convert OpenAPI specs, Postman collections, Bruno files, Insomnia exports, or curl logs into a ChainAPI project." \
+stub "cli/import" "reqloom import" \
+    "Convert OpenAPI specs, Postman collections, Bruno files, Insomnia exports, or curl logs into a Reqloom project." \
     "\`\`\`
-chainapi import <file>
+reqloom import <file>
 \`\`\`
 
 The direct importer (no LLM) supports:
@@ -202,7 +202,7 @@ Full content for this page is part of Phase 3 of the roadmap."
 
 # ─── AI Importer ─────────────────────────────────────────────────────────────
 stub "ai-importer/prompts" "Multi-stage prompt suite" \
-    "Six prompts that turn API documentation into a runnable ChainAPI project. Read the playbook first." \
+    "Six prompts that turn API documentation into a runnable Reqloom project. Read the playbook first." \
     "The prompt suite splits AI schema generation into six stages, each with its own review gate. See the [AI importer playbook](/ai-importer/playbook/) for the full workflow.
 
 The prompts themselves live at \`prompts/import/\` in the repository:
@@ -220,7 +220,7 @@ stub "ai-importer/openapi" "Importing from OpenAPI" \
     "Use the AI importer with OpenAPI 3.x specs. Direct parser available for non-LLM imports." \
     "Two paths for OpenAPI input:
 
-1. **Direct parser (no LLM)** — \`chainapi import openapi.yaml\`. Faster, deterministic, free.
+1. **Direct parser (no LLM)** — \`reqloom import openapi.yaml\`. Faster, deterministic, free.
 2. **AI importer with prompts** — better for OpenAPI specs that lack rich descriptions or have unusual auth flows.
 
 Use the direct parser first; fall back to the AI importer if the result needs significant editing.
@@ -228,18 +228,18 @@ Use the direct parser first; fall back to the AI importer if the result needs si
 See [AI importer playbook](/ai-importer/playbook/) for the prompt workflow."
 
 stub "ai-importer/postman" "Importing from Postman" \
-    "Use ChainAPI's direct Postman importer. Faster and more reliable than going through an LLM." \
+    "Use Reqloom's direct Postman importer. Faster and more reliable than going through an LLM." \
     "Postman collections (v2.1+) import directly without an LLM:
 
 \`\`\`bash
-chainapi import postman-collection.json
+reqloom import postman-collection.json
 \`\`\`
 
 The importer:
 
 - Maps Postman folders to resources (best-effort, with manual override)
-- Maps Postman environments to ChainAPI environments
-- Converts pre-request and test scripts to ChainAPI hooks (with warnings for unsupported APIs)
+- Maps Postman environments to Reqloom environments
+- Converts pre-request and test scripts to Reqloom hooks (with warnings for unsupported APIs)
 - Detects token-extraction patterns and converts them to declarative \`extract:\` blocks
 
 Plan to spend 15-30 min reviewing the output for any non-trivial collection."
@@ -264,8 +264,8 @@ stub "examples/marketplace" "Marketplace API example" \
 Try it:
 
 \`\`\`bash
-chainapi lint --project samples/marketplace
-chainapi run refund.approve --project samples/marketplace
+reqloom lint --project samples/marketplace
+reqloom run refund.approve --project samples/marketplace
 \`\`\`
 
 The repository structure: see \`samples/marketplace/\` in the source tree.
@@ -298,7 +298,7 @@ Full annotated walkthrough is part of Phase 2 documentation."
 # ─── Reference ───────────────────────────────────────────────────────────────
 stub "reference/schema-spec" "Schema specification" \
     "The canonical YAML schema spec — every field, every type, every default." \
-    "The full schema specification is in [\`doc/ChainAPI - PRD.md\`](https://github.com/chainapi/chainapi/blob/main/doc/ChainAPI%20-%20PRD.md) §5 in the source tree.
+    "The full schema specification is in [\`doc/Reqloom - PRD.md\`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20PRD.md) §5 in the source tree.
 
 Key reference tables:
 
@@ -352,7 +352,7 @@ Full taxonomy is in [Engine requirement](/reference/engine-requirement/) §5."
 
 stub "reference/engine-requirement" "Engine requirement (full spec)" \
     "The complete engine specification: state machines, error taxonomy, edge cases, and acceptance criteria." \
-    "The full engine specification is at [\`doc/ChainAPI - Engine Requirement.md\`](https://github.com/chainapi/chainapi/blob/main/doc/ChainAPI%20-%20Engine%20Requirement.md) in the source tree.
+    "The full engine specification is at [\`doc/Reqloom - Engine Requirement.md\`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20Engine%20Requirement.md) in the source tree.
 
 Sections:
 
@@ -368,11 +368,11 @@ This page will eventually inline the spec for offline reading. For now the sourc
 # ─── Development ─────────────────────────────────────────────────────────────
 stub "dev/architecture" "Architecture" \
     "The two-phase architecture: in-process engine for MVP, extractable to a separate process or Rust later." \
-    "ChainAPI's architecture is documented in [\`doc/ChainAPI - Project Layout.md\`](https://github.com/chainapi/chainapi/blob/main/doc/ChainAPI%20-%20Project%20Layout.md) and PRD §8.
+    "Reqloom's architecture is documented in [\`doc/Reqloom - Project Layout.md\`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20Project%20Layout.md) and PRD §8.
 
 Key principles:
 
-- **Engine boundary** — \`libchainapi-engine\` has no Qt UI dependency. Mechanically enforced via CMake link guards, CI grep checks, and pImpl public headers.
+- **Engine boundary** — \`libreqloom-engine\` has no Qt UI dependency. Mechanically enforced via CMake link guards, CI grep checks, and pImpl public headers.
 - **Layered C++** — domain → application → infrastructure, dependencies pointing inward only.
 - **Phase B option** — the engine is constructable as an in-process library today and extractable to a separate process or rewritten in Rust later. Architectural guardrails make this a build-system change, not a rewrite.
 
@@ -402,7 +402,7 @@ stub "dev/contributing" "Contributing" \
 - Engine changes must keep the architectural firewall intact (no Qt UI deps)
 - Tests required for all new features and bug fixes (80%+ coverage in domain layer)
 
-The full contribution guide is in [\`AGENTS.md\`](https://github.com/chainapi/chainapi/blob/main/AGENTS.md) in the source tree.
+The full contribution guide is in [\`AGENTS.md\`](https://github.com/reqloom/reqloom/blob/main/AGENTS.md) in the source tree.
 
 Polished contributor docs are part of Phase 2 documentation."
 
@@ -419,7 +419,7 @@ stub "dev/roadmap" "Roadmap" \
 | 4 — Polish & v1 launch | Planned | Auto-update, sample projects, public release |
 | 5+ — Mock server, team sync, hosted | Post-MVP | Per PRD §13.6 |
 
-The canonical roadmap is in [\`doc/ChainAPI - PRD.md\`](https://github.com/chainapi/chainapi/blob/main/doc/ChainAPI%20-%20PRD.md) §13."
+The canonical roadmap is in [\`doc/Reqloom - PRD.md\`](https://github.com/reqloom/reqloom/blob/main/doc/Reqloom%20-%20PRD.md) §13."
 
 echo ""
 echo "Stub generation complete."

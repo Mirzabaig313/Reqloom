@@ -8,15 +8,15 @@
 //   - Read-only access to other actors' variables
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Operation.h>
 
 #include <expected>
 #include <map>
 #include <optional>
 #include <string>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 struct HookRequestView {
     HttpMethod method{};
@@ -53,11 +53,11 @@ public:
     HookRunner& operator=(HookRunner&&) = delete;
     virtual ~HookRunner() = default;
 
-    virtual std::expected<HookOutcome, ChainApiError> runPreRequest(const std::string& script,
-                                                                    HookContext context) = 0;
+    virtual std::expected<HookOutcome, ReqloomError> runPreRequest(const std::string& script,
+                                                                   HookContext context) = 0;
 
-    virtual std::expected<HookOutcome, ChainApiError> runPostResponse(const std::string& script,
-                                                                      HookContext context) = 0;
+    virtual std::expected<HookOutcome, ReqloomError> runPostResponse(const std::string& script,
+                                                                     HookContext context) = 0;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

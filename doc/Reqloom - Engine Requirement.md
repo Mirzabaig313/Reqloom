@@ -1,15 +1,15 @@
-# ChainAPI — Dependency Resolution Engine: Detailed Requirement
+# Reqloom — Dependency Resolution Engine: Detailed Requirement
 
 > **Scope:** This document refines PRD §5.8 (Dependency Resolution Algorithm), §8.3 (Execution Engine Internals), §8.4 (Engine Error Handling Strategy), and the union of FR-2.1 through FR-2.8 into an implementable specification.
 > **Status:** Detailed Draft v1.1
-> **Source PRD:** `docs/ChainAPI - PRD.md` (v0.3 — Qt 6 + C++ stack)
+> **Source PRD:** `docs/Reqloom - PRD.md` (v0.3 — Qt 6 + C++ stack)
 > **Owner:** Engine / Tech Lead
 
 ---
 
 ## 1. Purpose
 
-The Dependency Resolution Engine is the runtime that, given a target operation, builds and executes the minimum chain of prerequisite operations needed to reach it, while caching intermediate results and surfacing every step transparently. It is the load-bearing component of ChainAPI: every UI feature (FR-5 through FR-8), the CLI (FR-13), and the AI importer (FR-9) depend on its behavior being predictable and deterministic.
+The Dependency Resolution Engine is the runtime that, given a target operation, builds and executes the minimum chain of prerequisite operations needed to reach it, while caching intermediate results and surfacing every step transparently. It is the load-bearing component of Reqloom: every UI feature (FR-5 through FR-8), the CLI (FR-13), and the AI importer (FR-9) depend on its behavior being predictable and deterministic.
 
 This document constrains that behavior tightly enough that two independent integration testers reach identical pass/fail conclusions on every scenario.
 

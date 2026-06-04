@@ -1,6 +1,6 @@
 # Stage 2 — Plan the Schema
 
-You are designing a ChainAPI schema. Input: the Stage 1 digest plus any human corrections. Output: a written plan that a developer can review in 5 minutes before any YAML is generated. Do NOT generate YAML in this stage.
+You are designing a Reqloom schema. Input: the Stage 1 digest plus any human corrections. Output: a written plan that a developer can review in 5 minutes before any YAML is generated. Do NOT generate YAML in this stage.
 
 ## Output format
 

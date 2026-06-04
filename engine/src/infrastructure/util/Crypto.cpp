@@ -26,7 +26,7 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::engine::crypto {
+namespace reqloom::engine::crypto {
 
 namespace {
 
@@ -138,4 +138,4 @@ std::string jwtSignHs512(std::string_view payloadJson, std::string_view key) {
     return jwtSignHs(payloadJson, key, EVP_sha512(), "HS512");
 }
 
-}  // namespace chainapi::engine::crypto
+}  // namespace reqloom::engine::crypto

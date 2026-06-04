@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -540,4 +540,4 @@ bool signSigV4Request(HttpRequest& req,
     return true;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

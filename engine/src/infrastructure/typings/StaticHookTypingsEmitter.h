@@ -1,11 +1,11 @@
 // StaticHookTypingsEmitter — concrete `HookTypingsEmitter` that writes a
-// fixed `chainapi.d.ts` body. When per-project specialisation lands, this
+// fixed `reqloom.d.ts` body. When per-project specialisation lands, this
 // class either grows the logic or gets joined by a sibling.
 #pragma once
 
 #include "HookTypingsEmitter.h"
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 class StaticHookTypingsEmitter final : public HookTypingsEmitter {
 public:
@@ -21,4 +21,4 @@ public:
                            bool overwrite = false) override;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

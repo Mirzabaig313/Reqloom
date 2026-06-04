@@ -5,8 +5,8 @@
 // layer because it parses JSON (third-party dep).
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Operation.h>
 
 #include <algorithm>
 #include <cctype>
@@ -18,7 +18,7 @@
 #include <string_view>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// One extraction's verification outcome.
 enum class VerificationStatus : std::uint8_t {
@@ -85,10 +85,10 @@ class Verifier {
 public:
     Verifier();
 
-    /// Returns `ChainApiError{SchemaInvalid}` only when an extraction source
+    /// Returns `ReqloomError{SchemaInvalid}` only when an extraction source
     /// path is malformed. A path that doesn't match the sample is NOT an
     /// error — it surfaces as `NoMatch`.
-    [[nodiscard]] std::expected<VerificationReport, ChainApiError> verify(
+    [[nodiscard]] std::expected<VerificationReport, ReqloomError> verify(
         const Operation& op, const SampleResponse& sample) const;
 
     /// Verify with an empty sample. Every extraction comes back tagged
@@ -101,4 +101,4 @@ public:
     [[nodiscard]] VerificationReport verifyWithoutSample(const Operation& op) const;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

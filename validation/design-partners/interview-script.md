@@ -37,7 +37,7 @@ What you're listening for:
 
 Don't over-explain. The pitch is:
 
-> "I'm building ChainAPI. It treats your API as a graph. You define each actor's auth flow once and each resource's endpoints and dependencies once. Then when you click any endpoint, ChainAPI auto-resolves the entire prerequisite chain — login as admin, log in as customer, create the order, pay, request the refund — and runs the chain. No copy-paste of tokens. No 200-request Postman folder."
+> "I'm building Reqloom. It treats your API as a graph. You define each actor's auth flow once and each resource's endpoints and dependencies once. Then when you click any endpoint, Reqloom auto-resolves the entire prerequisite chain — login as admin, log in as customer, create the order, pay, request the refund — and runs the chain. No copy-paste of tokens. No 200-request Postman folder."
 
 Pause. Let them ask questions. Their first question is usually their biggest concern.
 

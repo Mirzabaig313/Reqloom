@@ -10,18 +10,18 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QString>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
 /// Locate the bundled MarketplaceAPI sample so first-run is useful without
 /// a file dialog (PRD §12). Walks up from the executable directory looking
-/// for `samples/marketplace/chainapi.yaml`; returns empty if not found
+/// for `samples/marketplace/reqloom.yaml`; returns empty if not found
 /// (e.g. an installed bundle without samples) — the app then opens empty.
 [[nodiscard]] QString locateSampleProject() {
     QDir dir(QCoreApplication::applicationDirPath());
     for (int hops = 0; hops < 8; ++hops) {
-        const QString candidate = dir.filePath(QStringLiteral("samples/marketplace/chainapi.yaml"));
+        const QString candidate = dir.filePath(QStringLiteral("samples/marketplace/reqloom.yaml"));
         if (QFileInfo::exists(candidate)) {
             return dir.filePath(QStringLiteral("samples/marketplace"));
         }
@@ -55,4 +55,4 @@ void App::show() {
     }
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

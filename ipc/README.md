@@ -16,16 +16,16 @@ Triggers (any one):
 
 When triggered:
 
-1. Switch `chainapi-engine` from `STATIC` to `SHARED` in
+1. Switch `reqloom-engine` from `STATIC` to `SHARED` in
    `engine/CMakeLists.txt` (one-line change).
-2. Add the JSON-RPC-over-stdio façade here that links `chainapi::engine`
+2. Add the JSON-RPC-over-stdio façade here that links `reqloom::engine`
    and exposes the public API as RPC methods.
 3. Add `IpcEngineClient` to `desktop/` that spawns the IPC server and
    talks to it; replace direct `ExecutionEngine` calls in
    `Bootstrapper.cpp` with the client.
 4. Optionally, port `engine/src/` to Rust over time. The C++ headers in
-   `engine/include/chainapi/engine/` stay; only `.cpp` files change.
+   `engine/include/reqloom/engine/` stay; only `.cpp` files change.
 
-The architectural guardrails in `cmake/ChainApiBoundaryGuards.cmake`
+The architectural guardrails in `cmake/ReqloomBoundaryGuards.cmake`
 already keep the engine free of UI dependencies, which is what makes
 this extraction cheap.

@@ -3,7 +3,7 @@
 // QObject signalling the UI needs and nothing the engine shouldn't see.
 #pragma once
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <QtCore/QObject>
 #include <QtCore/QString>
@@ -12,7 +12,7 @@
 #include <filesystem>
 #include <memory>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 /// Loaded-project state holder. Loading parses + validates via the engine;
 /// failures surface through `loadFailed`. The owned Project must outlive any
@@ -29,7 +29,7 @@ public:
     ProjectModel(ProjectModel&&) = delete;
     ProjectModel& operator=(ProjectModel&&) = delete;
 
-    /// Parse `<dir>/chainapi.yaml`. Emits `loaded` on success (and updates
+    /// Parse `<dir>/reqloom.yaml`. Emits `loaded` on success (and updates
     /// `project()`), or `loadFailed` with a stable code + detail otherwise.
     void loadFromDirectory(const QString& directory);
 
@@ -76,4 +76,4 @@ private:
     std::filesystem::path root_;
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

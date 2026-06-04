@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -159,7 +159,7 @@ std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& p
 
 DependencyResolver::DependencyResolver() = default;
 
-std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resolve(
+std::expected<std::vector<OperationId>, ReqloomError> DependencyResolver::resolve(
     const Project& project, const OperationId& target) const {
     // 1. Build the full dependency graph (explicit + implicit edges) for the
     //    transitive closure of `target`.
@@ -180,26 +180,26 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
         auto dotPos = current.value.find('.');
         if (dotPos == std::string::npos) {
             return std::unexpected(
-                ChainApiError{ErrorCode::RefUndefined,
-                              ErrorClass::Schema,
-                              "Invalid operation id (missing dot): " + current.value});
+                ReqloomError{ErrorCode::RefUndefined,
+                             ErrorClass::Schema,
+                             "Invalid operation id (missing dot): " + current.value});
         }
         auto resName = current.value.substr(0, dotPos);
         auto opName = current.value.substr(dotPos + 1);
 
         auto resIt = project.resources.find(ResourceId{resName});
         if (resIt == project.resources.end()) {
-            return std::unexpected(ChainApiError{ErrorCode::RefUndefined,
-                                                 ErrorClass::Schema,
-                                                 "Resource not found: " + resName +
-                                                     " (referenced by operation " + current.value +
-                                                     ")"});
+            return std::unexpected(ReqloomError{ErrorCode::RefUndefined,
+                                                ErrorClass::Schema,
+                                                "Resource not found: " + resName +
+                                                    " (referenced by operation " + current.value +
+                                                    ")"});
         }
         auto opIt = resIt->second.operations.find(opName);
         if (opIt == resIt->second.operations.end()) {
-            return std::unexpected(ChainApiError{ErrorCode::RefUndefined,
-                                                 ErrorClass::Schema,
-                                                 "Operation not found: " + current.value});
+            return std::unexpected(ReqloomError{ErrorCode::RefUndefined,
+                                                ErrorClass::Schema,
+                                                "Operation not found: " + current.value});
         }
 
         const auto& op = opIt->second;
@@ -278,14 +278,14 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
                 cycleOps += node.value;
             }
         }
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::Cycle, ErrorClass::Schema, "Circular dependency detected: " + cycleOps});
     }
 
     return sorted;
 }
 
-std::expected<void, ChainApiError> DependencyResolver::validate(const Project& project) const {
+std::expected<void, ReqloomError> DependencyResolver::validate(const Project& project) const {
     // A resolvable reference root: $ builtins, env, secret, or any
     // defined actor or resource.
     const auto isKnownScope = [&](const std::string& scope) -> bool {
@@ -313,7 +313,7 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
             // never resolve — reject at load.
             for (const auto& ref : scanReferences(operationTemplates(op))) {
                 if (!isKnownScope(ref.scope)) {
-                    return std::unexpected(ChainApiError{
+                    return std::unexpected(ReqloomError{
                         ErrorCode::RefUndefined,
                         ErrorClass::Schema,
                         std::format("Operation '{}' references undefined symbol '{}.{}': "
@@ -340,12 +340,12 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
                 }
                 if (!exists) {
                     return std::unexpected(
-                        ChainApiError{ErrorCode::RefUndefined,
-                                      ErrorClass::Schema,
-                                      std::format("Operation '{}' declares depends_on '{}', "
-                                                  "which is not a defined operation",
-                                                  opId.value,
-                                                  dep.value)});
+                        ReqloomError{ErrorCode::RefUndefined,
+                                     ErrorClass::Schema,
+                                     std::format("Operation '{}' declares depends_on '{}', "
+                                                 "which is not a defined operation",
+                                                 opId.value,
+                                                 dep.value)});
                 }
                 allDeps.insert(dep);
             }
@@ -400,7 +400,7 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
                 cycleOps += node.value;
             }
         }
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::Cycle, ErrorClass::Schema, "Circular dependency detected: " + cycleOps});
     }
 
@@ -481,4 +481,4 @@ std::vector<std::string> DependencyResolver::collectSecretReferences(const Proje
     return {names.begin(), names.end()};
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

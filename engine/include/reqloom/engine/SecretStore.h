@@ -8,13 +8,13 @@
 // links QtKeychain directly.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 
 #include <expected>
 #include <optional>
 #include <string>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 class SecretStore {
 public:
@@ -26,17 +26,17 @@ public:
     virtual ~SecretStore() = default;
 
     /// Read a named secret. Returns an empty optional if the key is not
-    /// present in the keychain; returns `ChainApiError` (code
+    /// present in the keychain; returns `ReqloomError` (code
     /// `SecretAccessFailed`) on backend failure.
-    [[nodiscard]] virtual std::expected<std::optional<std::string>, ChainApiError> read(
+    [[nodiscard]] virtual std::expected<std::optional<std::string>, ReqloomError> read(
         const std::string& name) = 0;
 
     /// Create or overwrite a secret.
-    [[nodiscard]] virtual std::expected<void, ChainApiError> write(const std::string& name,
-                                                                   const std::string& value) = 0;
+    [[nodiscard]] virtual std::expected<void, ReqloomError> write(const std::string& name,
+                                                                  const std::string& value) = 0;
 
     /// Remove a secret. Succeeds (no-op) if the key is already absent.
-    [[nodiscard]] virtual std::expected<void, ChainApiError> remove(const std::string& name) = 0;
+    [[nodiscard]] virtual std::expected<void, ReqloomError> remove(const std::string& name) = 0;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

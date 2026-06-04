@@ -1,9 +1,9 @@
 ---
 title: Variables & references
-description: "Six namespaces of variable references in ChainAPI: builtins, actor sessions, resource extractions, environment, secrets."
+description: "Six namespaces of variable references in Reqloom: builtins, actor sessions, resource extractions, environment, secrets."
 ---
 
-ChainAPI's variable substitution syntax is `{{<scope>.<field>}}`. Resolution order:
+Reqloom's variable substitution syntax is `{{<scope>.<field>}}`. Resolution order:
 
 1. Builtins (`{{$.uuid}}`, `{{$.now}}`, `{{$.faker.*}}`)
 2. Actor sessions (`{{<actor>.<var>}}`)

@@ -12,7 +12,7 @@
 class QLabel;
 class QPushButton;
 
-namespace chainapi::desktop::widgets {
+namespace reqloom::desktop::widgets {
 
 class EmptyState : public QWidget {
     Q_OBJECT
@@ -43,4 +43,4 @@ private:
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 
-}  // namespace chainapi::desktop::widgets
+}  // namespace reqloom::desktop::widgets

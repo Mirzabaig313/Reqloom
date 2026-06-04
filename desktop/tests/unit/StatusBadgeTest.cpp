@@ -8,7 +8,7 @@
 #include <QtCore/QSet>
 #include <QtCore/QString>
 
-namespace chainapi::desktop::widgets::tests {
+namespace reqloom::desktop::widgets::tests {
 
 namespace {
 
@@ -45,4 +45,4 @@ TEST(StatusBadge, glyphs_are_distinct_so_colour_is_never_the_only_signal) {
     EXPECT_EQ(seen.size(), std::size(kAllStatuses));
 }
 
-}  // namespace chainapi::desktop::widgets::tests
+}  // namespace reqloom::desktop::widgets::tests

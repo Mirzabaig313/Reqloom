@@ -1,10 +1,10 @@
 // Stable mapping of ErrorCode → string code, retryability, and class.
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 
 #include <array>
 #include <optional>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 std::string_view toCodeString(ErrorCode code) noexcept {
     switch (code) {
@@ -174,4 +174,4 @@ ErrorClass classify(ErrorCode code) noexcept {
     return ErrorClass::Run;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

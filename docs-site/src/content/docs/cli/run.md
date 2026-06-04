@@ -1,10 +1,10 @@
 ---
-title: chainapi run
+title: reqloom run
 description: "Execute an operation chain. Auto-resolves prerequisites, runs in topological order, prints HTTP status and timing per step."
 ---
 
 ```
-chainapi run <resource.operation> [flags]
+reqloom run <resource.operation> [flags]
 ```
 
 Flags:

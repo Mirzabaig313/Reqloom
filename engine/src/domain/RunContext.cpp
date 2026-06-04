@@ -1,9 +1,9 @@
-#include <chainapi/engine/RunContext.h>
+#include <reqloom/engine/RunContext.h>
 
 #include <map>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 struct RunContext::Impl {
     std::map<ActorId, ActorSession> sessions;
@@ -89,4 +89,4 @@ const std::vector<ExtractionTrace>& RunContext::extractionTrace() const noexcept
     return impl_->extractionTrace;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine
