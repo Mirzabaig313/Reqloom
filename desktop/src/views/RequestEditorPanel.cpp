@@ -64,6 +64,33 @@ constexpr int kMethodCombo = 1;
     return label;
 }
 
+/// Render a path template as HTML with `{{variable}}` segments tinted, so the
+/// dynamic parts of a URL stand out at a glance. `accentHex` colours the vars.
+[[nodiscard]] QString highlightVariables(const QString& path, const QString& accentHex) {
+    QString html;
+    html.reserve(path.size() * 2);
+    qsizetype i = 0;
+    const qsizetype n = path.size();
+    while (i < n) {
+        const qsizetype open = path.indexOf(QStringLiteral("{{"), i);
+        if (open < 0) {
+            html += path.mid(i).toHtmlEscaped();
+            break;
+        }
+        html += path.mid(i, open - i).toHtmlEscaped();
+        const qsizetype close = path.indexOf(QStringLiteral("}}"), open);
+        if (close < 0) {
+            html += path.mid(open).toHtmlEscaped();
+            break;
+        }
+        const QString var = path.mid(open, close - open + 2);
+        html += QStringLiteral("<span style='color:%1; font-weight:600;'>%2</span>")
+                    .arg(accentHex, var.toHtmlEscaped());
+        i = close + 2;
+    }
+    return html;
+}
+
 }  // namespace
 
 RequestEditorPanel::RequestEditorPanel(QWidget* parent) : QWidget(parent) {
@@ -149,13 +176,20 @@ QWidget* RequestEditorPanel::buildAddressBar() {
     methodStack_->addWidget(methodCombo_);  // kMethodCombo
     row->addWidget(methodStack_);
 
+    pathStack_ = new QStackedWidget(bar);
+    pathPreview_ = new QLabel(bar);
+    pathPreview_->setObjectName(QStringLiteral("pathPreview"));
+    pathPreview_->setTextFormat(Qt::RichText);
+    pathPreview_->setFont(theme_.font(theming::TextStyle::Mono));
+    pathPreview_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     pathEdit_ = new QLineEdit(bar);
     pathEdit_->setPlaceholderText(QStringLiteral("/api/v1/…"));
-    pathEdit_->setReadOnly(true);
     pathEdit_->setFont(theme_.font(theming::TextStyle::Mono));
     pathEdit_->setFrame(false);
     pathEdit_->setAccessibleName(QStringLiteral("Request path"));
-    row->addWidget(pathEdit_, 1);
+    pathStack_->addWidget(pathPreview_);  // index 0 — preview (highlighted)
+    pathStack_->addWidget(pathEdit_);     // index 1 — editable
+    row->addWidget(pathStack_, 1);
 
     row->addSpacing(theming::Theme::space(theming::Space::Sm));
 
@@ -181,7 +215,9 @@ QWidget* RequestEditorPanel::buildSecondaryActions() {
     row->addWidget(actorCaption_);
     row->addStretch(1);
 
-    overrideToggle_ = new QCheckBox(QStringLiteral("Edit"), container);
+    overrideToggle_ = new QPushButton(QStringLiteral("✎  Edit"), container);
+    overrideToggle_->setObjectName(QStringLiteral("editToggle"));
+    overrideToggle_->setCheckable(true);
     overrideToggle_->setToolTip(QStringLiteral(
         "Edit this request (method, path, query, headers, body, etc.). Send applies the edits to "
         "the next run; Save to Project writes them to disk."));
@@ -316,7 +352,7 @@ void RequestEditorPanel::wireConnections() {
             emit saveRequested(currentOp_);
         }
     });
-    connect(overrideToggle_, &QCheckBox::toggled, this, [this](bool on) { setOverrideMode(on); });
+    connect(overrideToggle_, &QPushButton::toggled, this, [this](bool on) { setOverrideMode(on); });
     connect(bodyKindCombo_, &QComboBox::currentIndexChanged, this, [this](int idx) {
         bodyStack_->setCurrentIndex(idx == 1 ? kBodyForm : kBodyRaw);
         refreshTabBadges();
@@ -336,7 +372,7 @@ void RequestEditorPanel::setOverrideMode(bool on) {
     overrideBanner_->setVisible(on);
     saveButton_->setVisible(on);
     methodStack_->setCurrentIndex(on ? kMethodCombo : kMethodPill);
-    pathEdit_->setReadOnly(!on);
+    pathStack_->setCurrentIndex(on ? 1 : 0);
     requestStack_->setCurrentIndex(on ? 1 : 0);
 }
 
@@ -390,6 +426,12 @@ void RequestEditorPanel::applyTheme(const theming::Theme& theme) {
                  theme_.statusTint(theming::StatusToken::Warning).name(QColor::HexRgb)));
     const QFont mono = theme_.font(theming::TextStyle::Mono);
     pathEdit_->setFont(mono);
+    pathPreview_->setFont(mono);
+    // Re-highlight the preview path so the variable tint follows the theme.
+    if (!currentOp_.isEmpty()) {
+        pathPreview_->setText(highlightVariables(
+            pathEdit_->text(), theme_.status(theming::StatusToken::Warning).name(QColor::HexRgb)));
+    }
     chainView_->setTheme(theme);
     headersView_->setFont(mono);
     bodyView_->setFont(mono);
@@ -450,6 +492,7 @@ void RequestEditorPanel::clearOperation() {
     headersView_->clear();
     bodyView_->clear();
     pathEdit_->clear();
+    pathPreview_->clear();
     setRunEnabled(false);
     // Back to the teaching empty-state — no inputs, no buttons (DESIGN.md §10).
     rootStack_->setCurrentIndex(kPageEmpty);
@@ -469,7 +512,10 @@ void RequestEditorPanel::showOperation(const ProjectModel& project, const QStrin
 
     currentOp_ = operationId;
     currentMethod_ = format::method(op->method);
-    pathEdit_->setText(QString::fromStdString(op->pathTemplate));
+    const QString path = QString::fromStdString(op->pathTemplate);
+    pathEdit_->setText(path);
+    pathPreview_->setText(highlightVariables(
+        path, theme_.status(theming::StatusToken::Warning).name(QColor::HexRgb)));
     refreshMethodPill();
 
     // Actor is a first-class Reqloom concept (the session identity the chain
@@ -506,7 +552,14 @@ void RequestEditorPanel::showOperation(const ProjectModel& project, const QStrin
         }
         bodyView_->setPlainText(form.trimmed());
     } else {
-        bodyView_->setPlainText(QStringLiteral("(no body)"));
+        // Helpful, method-aware empty state instead of a bare "(no body)" void.
+        const QString verb = currentMethod_;
+        const bool bodyless = verb == QStringLiteral("GET") || verb == QStringLiteral("DELETE") ||
+                              verb == QStringLiteral("HEAD") || verb == QStringLiteral("OPTIONS");
+        bodyView_->setPlainText(bodyless
+                                    ? QStringLiteral("No body required for %1 requests.").arg(verb)
+                                    : QStringLiteral("No request body defined. Toggle Edit to add "
+                                                     "a raw or form-data body."));
     }
 
     loadOverrideFields(project, *op);

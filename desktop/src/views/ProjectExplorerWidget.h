@@ -17,6 +17,7 @@ namespace reqloom::desktop {
 
 namespace widgets {
 class PanelHeader;
+class MethodItemDelegate;
 }  // namespace widgets
 
 class ProjectModel;
@@ -55,6 +56,7 @@ private:
     QLineEdit* filter_{nullptr};
     QTreeWidget* tree_{nullptr};
     widgets::PanelHeader* header_{nullptr};
+    widgets::MethodItemDelegate* methodDelegate_{nullptr};
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 

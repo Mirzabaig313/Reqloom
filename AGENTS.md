@@ -1,17 +1,17 @@
-# AGENTS.md — ChainAPI
+# AGENTS.md — Reqloom
 
 Project-level instructions for AI coding agents (Kiro, Codex, Claude Code, Cursor, etc.). Keep terse. The full product spec lives in `doc/`.
 
 ## Context
 
-**ChainAPI** is a workflow-aware API testing tool. Treats an API as a graph of resources, actors, and dependencies; auto-resolves request chains. Three deliverables:
+**Reqloom** is a workflow-aware API testing tool. Treats an API as a graph of resources, actors, and dependencies; auto-resolves request chains. Three deliverables:
 
-- **`engine/`** — `libchainapi-engine`, a pure C++ engine library. **No Qt UI dependency.**
-- **`cli/`** — `chainapi` CLI binary. Links engine + `Qt6::Core` only.
+- **`engine/`** — `libreqloom-engine`, a pure C++ engine library. **No Qt UI dependency.**
+- **`cli/`** — `reqloom` CLI binary. Links engine + `Qt6::Core` only.
 - **`desktop/`** — Qt 6 desktop UI app. The *only* place Qt UI libraries are allowed.
 - **`ipc/`** — Phase B scaffold (currently empty).
 
-Read [`doc/ChainAPI - Project Layout.md`](doc/ChainAPI%20-%20Project%20Layout.md) before making structural changes.
+Read [`doc/Reqloom - Project Layout.md`](doc/Reqloom%20-%20Project%20Layout.md) before making structural changes.
 
 ## Stack Baseline
 
@@ -23,7 +23,7 @@ Read [`doc/ChainAPI - Project Layout.md`](doc/ChainAPI%20-%20Project%20Layout.md
 | Compiler | Apple Clang 16+, Clang 18+, GCC 14+, MSVC 19.40+ |
 | Dependency manager | **vcpkg** (manifest mode, `master` baseline) for non-Qt deps; **aqtinstall** for Qt 6.8 LTS |
 | Test framework | GoogleTest |
-| CI | AppVeyor (Linux + Windows) and Azure DevOps Pipelines (macOS). GitHub Actions is **not** used. |
+| CI | GitHub Actions (Linux + Windows, public-repo free runners) and Azure DevOps Pipelines (macOS). |
 
 C++26 is not portable yet; do not use C++26-only features (reflection, contracts, `std::execution`) without feature-test gating. Use C++23 idioms (`std::expected`, `std::print`, ranges additions, `deducing this`) freely — they are stable on all supported compilers.
 
@@ -31,11 +31,11 @@ C++26 is not portable yet; do not use C++26-only features (reflection, contracts
 
 The engine layer must not directly or transitively depend on Qt UI or the QScintilla code editor. Enforced in three places:
 
-1. **CMake link guard** — `cmake/ChainApiBoundaryGuards.cmake` fails configure if the engine, CLI, or engine tests link `Qt6::Widgets`, `Qt6::Gui`, `Qt6::Quick`, `Qt6::QuickWidgets`, or `QScintilla::QScintilla`.
+1. **CMake link guard** — `cmake/ReqloomBoundaryGuards.cmake` fails configure if the engine, CLI, or engine tests link `Qt6::Widgets`, `Qt6::Gui`, `Qt6::Quick`, `Qt6::QuickWidgets`, or `QScintilla::QScintilla`.
 2. **CI grep job** — `.github/workflows/boundary-check.yml` rejects any `#include <QWidget>` / `<QApplication>` / `<Qsci...>` under `engine/` or `cli/`.
-3. **Public header surface** — `engine/include/chainapi/engine/*.h` uses pImpl + value types. No Qt UI types appear.
+3. **Public header surface** — `engine/include/reqloom/engine/*.h` uses pImpl + value types. No Qt UI types appear.
 
-If you need to expose engine state to the desktop UI, do it via `engine/include/chainapi/engine/Events.h` callbacks or expand `PublicApi.h`. Do not add a `chainapi-ui-shared` target that imports both worlds.
+If you need to expose engine state to the desktop UI, do it via `engine/include/reqloom/engine/Events.h` callbacks or expand `PublicApi.h`. Do not add a `reqloom-ui-shared` target that imports both worlds.
 
 ## Build & Test Commands
 
@@ -45,16 +45,16 @@ cmake --preset macos-debug
 cmake --build --preset macos-debug
 
 # Run all tests
-ctest --preset macos-debug --output-on-failure
+ctest --test-dir build/macos-debug -j $(sysctl -n hw.ncpu) --output-on-failure
 
 # Engine tests only (fastest)
-ctest --preset macos-debug --label-regex engine
+ctest --test-dir build/macos-debug -j $(sysctl -n hw.ncpu) --label-regex engine
 
 # Run the CLI
-./build/macos-debug/cli/chainapi --help
+./build/macos-debug/cli/reqloom --help
 
 # Run the desktop app
-./build/macos-debug/desktop/ChainAPI.app/Contents/MacOS/ChainAPI
+./build/macos-debug/desktop/Reqloom.app/Contents/MacOS/Reqloom
 
 # Pre-push smoke check (configure + build + tests + boundary check)
 ./tools/pre-push-check.sh
@@ -76,7 +76,7 @@ tools\setup-qt.cmd
 set CMAKE_PREFIX_PATH=C:\Qt\6.8.3\msvc2022_64
 ```
 
-CI does the equivalent in `appveyor.yml` (Linux + Windows) and `azure-pipelines.yml` (macOS). Both pin `QT_VERSION` and `AQT_VERSION` near the top of the file — keep them in sync with `tools/setup-qt.sh`.
+CI does the equivalent in `.github/workflows/build.yml` (Linux + Windows) and `azure-pipelines.yml` (macOS). Both pin `QT_VERSION` — keep it in sync with `tools/setup-qt.sh`.
 
 **Pre-push hook.** Run `git config core.hooksPath tools/git-hooks` once to wire up the pre-push smoke check. Bypass with `git push --no-verify` when justified.
 
@@ -84,17 +84,69 @@ CI does the equivalent in `appveyor.yml` (Linux + Windows) and `azure-pipelines.
 
 - **Formatter**: `clang-format` per `.clang-format`. Run `tools/format.sh` before committing.
 - **Lint**: `clang-tidy` per `.clang-tidy`.
-- **Warnings**: `-Wall -Wextra -Wpedantic -Wconversion`, applied via `chainapi_set_warnings()`. `-Werror` is gated behind CI, not local builds.
+- **Warnings**: `-Wall -Wextra -Wpedantic -Wconversion`, applied via `reqloom_set_warnings()`. `-Werror` is gated behind CI, not local builds.
 - **File size**: ≤ 800 lines; ≤ 50 lines per function. Split rather than scroll.
 - **Headers**: forward-declare in `.h`, include in `.cpp`. One class per public header.
 - **Error handling**: prefer `std::expected<T, E>` (C++23) over error-code globals or out-parameters. Reserve exceptions for genuinely unrecoverable conditions; never throw across ABI boundaries or in destructors.
+
+## Hard Rules — Write Code That Doesn't Trigger Lint Warnings
+
+These rules exist because clang-tidy and the project warning set generate hundreds of warnings on AI-written C++ that ignores them. Apply these as you write, not after. The reviewer hooks will reject diffs that violate them.
+
+### Always
+
+- **Always brace control flow.** Every `if`, `else`, `for`, `while`, `do` gets `{}` even if the body is one line. No `if (x) doFoo();`. Reduces patch errors and matches the project's `.clang-format`.
+- **Always declare enum size.** `enum class Foo : std::uint8_t { ... }` unless a wider type is genuinely needed. The narrow type catches truncation bugs and is required by `cppcoreguidelines-explicit-virtual-functions`.
+- **Always brace-initialize.** `int x{};`, `std::string s{};`, never `int x;` for fundamental types. Avoids C++26 erroneous-behavior warnings on uninitialized reads.
+- **Always `const` member functions** that don't mutate. Always `const` parameters that aren't moved-from.
+- **Always `noexcept`** on move ctor / move assign / `swap` / destructors. Without it, `std::vector<T>` falls back to copy on growth — silent perf regression that clang-tidy flags as `performance-noexcept-move-constructor`.
+- **Always `[[nodiscard]]`** on:
+  - Functions returning `std::expected`, `std::optional`, `std::unique_ptr`.
+  - Pure / query functions where ignoring the return value is a bug (e.g. `RunContext::session(id)`).
+- **Always `explicit`** on single-arg constructors (and conversion operators) unless implicit conversion is intentional. Without it, `modernize-use-explicit` fires.
+- **Always include what you use.** If you use `std::string`, include `<string>`. The recent `ErrorCodes.h` bug shipped because `<string>` was missing — clang-tidy `misc-include-cleaner` would have caught it.
+- **Always close namespaces with a comment.** `}  // namespace reqloom::engine` — required by `google-readability-namespace-comments`.
+
+### Never
+
+- **Never use `std::endl`.** Use `'\n'` or `std::println`. Forces flush and dominates `performance-avoid-endl` warnings.
+- **Never use C-style casts** `(int)x`. Use `static_cast`, `dynamic_cast`, `reinterpret_cast`, `const_cast`, or `std::bit_cast`. Trips `cppcoreguidelines-pro-type-cstyle-cast`.
+- **Never use `NULL`.** Use `nullptr`.
+- **Never use `typedef`.** Use `using Foo = ...;`.
+- **Never use plain `enum`** (without `class`). Implicit-int conversion is a hazard.
+- **Never use raw `new` / `delete` outside RAII wrappers.** `std::make_unique` / `std::make_shared`.
+- **Never use `printf`-family.** Use `std::print` / `std::println` (C++23) or `std::format`.
+- **Never write a manual range-for over indices** when `<ranges>` works. `for (auto& x : views::enumerate(v))` over `for (size_t i = 0; i < v.size(); ++i)`.
+- **Never use `<bits/stdc++.h>`.** Non-portable; Apple Clang doesn't ship it.
+- **Never use `using namespace std;` at namespace or header scope.** OK *inside* a function body for brevity.
+- **Never use `goto`.** No exceptions on this project.
+- **Never use `-DNDEBUG` to silence `assert`** — change the assert.
+
+### Strongly prefer
+
+- **Pass by value + move** for sink parameters; **`const T&`** for big read-only; **value** for cheap-to-copy.
+- **`emplace_back`** over `push_back(T(...))`.
+- **`reserve`** before known-size insertion loops.
+- **`const auto&`** in range-for loops to avoid copies.
+- **`std::array<T, N>`** over C arrays.
+- **`std::span<T>`** over `T*` + length pair for non-owning views.
+- **`std::string_view`** for non-owning string parameters; **`std::string`** when sinking.
+
+### Specific to this project
+
+- **`Q_OBJECT`** must appear in any class deriving from `QObject` that uses signals/slots. Forgetting it makes signals silently unreachable.
+- **`Q_PROPERTY` setters** must early-return if value didn't change, then emit the `NOTIFY` signal — otherwise QML binding loops.
+- **`connect()`** in function-pointer form only: `connect(a, &A::sig, b, &B::slot)`. String form `SIGNAL()/SLOT()` is banned.
+- **Lambda passed to `connect()`** must include a receiver `QObject*` so it auto-disconnects on destruction.
+- **All public engine API returns** `std::expected<T, ReqloomError>`. Add a code to `ErrorCode` rather than a parallel error enum.
+- **All `target_link_libraries`** use `PUBLIC` / `PRIVATE` / `INTERFACE` keywords explicitly. Plain forms are banned.
 
 ## Naming Conventions
 
 - Files: `PascalCase.{h,cpp}` (matches Qt convention used in this repo).
 - Types: `PascalCase`. Functions and methods: `camelCase`. Constants: `kCamelCase` or `SCREAMING_SNAKE_CASE` for macros only.
-- Namespace: `chainapi::engine` for engine types, `chainapi::cli`, `chainapi::desktop` for app code.
-- CMake targets: `chainapi-<layer>` (`chainapi-engine`, `chainapi-cli`, `chainapi-desktop`). Aliases: `chainapi::engine`.
+- Namespace: `reqloom::engine` for engine types, `reqloom::cli`, `reqloom::desktop` for app code.
+- CMake targets: `reqloom-<layer>` (`reqloom-engine`, `reqloom-cli`, `reqloom-desktop`). Aliases: `reqloom::engine`.
 
 ## Comments & Documentation
 
@@ -110,12 +162,12 @@ CI does the equivalent in `appveyor.yml` (Linux + Windows) and `azure-pipelines.
 | Where | What | Example |
 |---|---|---|
 | Top of every `.h` and `.cpp` | One-line purpose + spec ref | `// Per-run mutable state. Engine Requirement §3.3.` |
-| `namespace` close brace | Namespace name | `}  // namespace chainapi::engine` |
+| `namespace` close brace | Namespace name | `}  // namespace reqloom::engine` |
 | Non-obvious algorithm | Brief rationale + complexity | `// Kahn's algorithm — O(V+E), avoids recursion for large graphs.` |
 | `NOLINT` / `NOLINTNEXTLINE` | Why the suppression is justified | `// NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): required for C interop with sqlite3` |
 | Public API functions in headers | `///` doc-comment: brief, params, return, errors | See "Doxygen style" below |
 | Magic numbers or constants | What the value means | `constexpr int kMaxYamlDepth = 64;  // prevent stack overflow on malicious input` |
-| Preprocessor guards | Condition description when non-trivial | `#ifdef CHAINAPI_HAS_QTKEYCHAIN  // vcpkg provides this on Linux/Windows; macOS uses Security.framework directly` |
+| Preprocessor guards | Condition description when non-trivial | `#ifdef REQLOOM_HAS_QTKEYCHAIN  // vcpkg provides this on Linux/Windows; macOS uses Security.framework directly` |
 
 ### Forbidden comments
 
@@ -138,10 +190,10 @@ Use `///` (triple-slash) style, not `/** */` blocks. Keep it tight.
 ///
 /// @param target  The operation the user clicked / invoked.
 /// @param ctx     Current run context (session cache, extraction state).
-/// @return Ordered execution plan, or ChainApiError on cycle / missing ref.
+/// @return Ordered execution plan, or ReqloomError on cycle / missing ref.
 ///
 /// @note Thread-safety: not re-entrant. Caller must serialize access.
-std::expected<ExecutionPlan, ChainApiError>
+std::expected<ExecutionPlan, ReqloomError>
 resolve(const OperationId& target, const RunContext& ctx);
 ```
 
@@ -182,7 +234,7 @@ application/   ← use cases. Allowed deps: domain + infrastructure (privately).
 infrastructure/← I/O adapters (HTTP, SQLite, secrets, schema). Concrete impls behind interfaces.
 ```
 
-Public engine headers (`engine/include/chainapi/engine/`) contain only domain + application surfaces. Infrastructure types are private.
+Public engine headers (`engine/include/reqloom/engine/`) contain only domain + application surfaces. Infrastructure types are private.
 
 ## Coding Conventions (Reference)
 
@@ -193,15 +245,15 @@ The following patterns are the project's conventions. Match them when adding new
 Every header starts with a one-line comment naming the type's purpose (and the spec section if applicable), `#pragma once`, then includes ordered: project, third-party, standard.
 
 ```cpp
-// engine/include/chainapi/engine/Foo.h
+// engine/include/reqloom/engine/Foo.h
 // Public-facing value type. Engine Requirement §X.Y.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 #include <string>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 class Foo {
 public:
@@ -217,15 +269,15 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine
 ```
 
 ### Error handling
 
-The canonical error type is `chainapi::engine::ErrorCode` (see `engine/include/chainapi/engine/ErrorCodes.h`). Wrap recoverable failures in `std::expected<T, ErrorCode>`:
+The canonical error type is `reqloom::engine::ErrorCode` (see `engine/include/reqloom/engine/ErrorCodes.h`). Wrap recoverable failures in `std::expected<T, ErrorCode>`:
 
 ```cpp
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 #include <expected>
 
 std::expected<RunResult, ErrorCode>
@@ -254,9 +306,9 @@ Rules:
    ```cpp
    #pragma once
    #include <expected>
-   #include <chainapi/engine/ErrorCodes.h>
+   #include <reqloom/engine/ErrorCodes.h>
 
-   namespace chainapi::engine {
+   namespace reqloom::engine {
 
    class HookRunner {
    public:
@@ -269,8 +321,8 @@ Rules:
    ```
 
 2. Concrete impl in `engine/src/infrastructure/<area>/<Concrete>{.h,.cpp}` — never on the public include path.
-3. Add the `.cpp` to `engine/CMakeLists.txt` under `chainapi-engine-infrastructure`.
-4. If the adapter introduces a new engine sub-target, append it to the `chainapi_forbid_dependencies(...)` loop in `engine/CMakeLists.txt`.
+3. Add the `.cpp` to `engine/CMakeLists.txt` under `reqloom-engine-infrastructure`.
+4. If the adapter introduces a new engine sub-target, append it to the `reqloom_forbid_dependencies(...)` loop in `engine/CMakeLists.txt`.
 
 ### Defining a new use case
 
@@ -312,7 +364,7 @@ Rules:
 ### Logging
 
 - Log via the engine's logger (Engine Requirement §10), not `qDebug` and not `std::cout`.
-- Categories use the `chainapi.<area>` namespace: `chainapi.http`, `chainapi.schema`, `chainapi.run`.
+- Categories use the `reqloom.<area>` namespace: `reqloom.http`, `reqloom.schema`, `reqloom.run`.
 - **Never log secrets, full request bodies, or full response bodies.** Log first 64 bytes of bodies max; redact `Authorization`, `Cookie`, `X-API-Key`, and any header containing `token` or `secret`.
 
 ### Reading user input
@@ -320,7 +372,7 @@ Rules:
 The two attacker-controlled surfaces are:
 
 - `engine/src/application/ImportFromOpenApi.cpp` — URLs and file paths from CLI/desktop.
-- `engine/src/infrastructure/schema/YamlSchemaParser.cpp` — `chainapi.yaml` content.
+- `engine/src/infrastructure/schema/YamlSchemaParser.cpp` — `reqloom.yaml` content.
 
 Rules for both:
 
@@ -334,10 +386,10 @@ Rules for both:
 ```cpp
 // engine/tests/unit/RunBatchUseCaseTest.cpp
 #include <gtest/gtest.h>
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 #include "application/RunBatchUseCase.h"
 
-namespace chainapi::engine::tests {
+namespace reqloom::engine::tests {
 
 TEST(RunBatchUseCase, fails_with_cycle_when_topology_invalid) {
     // Arrange — fake resolver that reports a cycle
@@ -355,7 +407,7 @@ TEST(RunBatchUseCase, fails_with_cycle_when_topology_invalid) {
     EXPECT_EQ(ctx.steps().size(), 0u);
 }
 
-}  // namespace chainapi::engine::tests
+}  // namespace reqloom::engine::tests
 ```
 
 Conventions:
@@ -374,24 +426,24 @@ Conventions:
 
 #include "<Name>.h"
 
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 #include <expected>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 // implementation
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine
 ```
 
 ### CMake addition checklist
 
 When adding a new `.cpp` to the engine:
 
-- [ ] Add the file path to the right `add_library(chainapi-engine-<layer> OBJECT ...)` block in `engine/CMakeLists.txt`.
+- [ ] Add the file path to the right `add_library(reqloom-engine-<layer> OBJECT ...)` block in `engine/CMakeLists.txt`.
 - [ ] Update `target_link_libraries` only if the file pulls in a new third-party.
 - [ ] If introducing a new third-party, add it to `vcpkg.json` and re-pin `vcpkgGitCommitId` if necessary.
-- [ ] Confirm `chainapi_forbid_dependencies(...)` still covers the layer.
+- [ ] Confirm `reqloom_forbid_dependencies(...)` still covers the layer.
 - [ ] Add a unit test under `engine/tests/unit/` with matching `gtest_discover_tests` registration.
 
 ## Testing Expectations
@@ -431,7 +483,7 @@ A non-exhaustive list of mistakes models make repeatedly here is documented in [
 
 Two file-save hooks run automatically on `*.cpp` / `*.h` saves:
 
-- **`cpp-build-on-edit`** — runs `tools/build-incremental.sh`, which builds the appropriate preset for your OS (`macos-debug`, `linux-debug`, or `windows-debug`). Skips cleanly with a hint if the preset hasn't been configured yet — set it up once with `cmake --preset <preset>`. Override the preset with `$CHAINAPI_PRESET`.
+- **`cpp-build-on-edit`** — runs `tools/build-incremental.sh`, which builds the appropriate preset for your OS (`macos-debug`, `linux-debug`, or `windows-debug`). Skips cleanly with a hint if the preset hasn't been configured yet — set it up once with `cmake --preset <preset>`. Override the preset with `$REQLOOM_PRESET`.
 - **`clang-tidy-on-edit`** — runs clang-tidy on the changed file using `.clang-tidy`. Reports `modernize-*`, `bugprone-*`, `performance-*`, `cert-*`, `cppcoreguidelines-*` findings only. Bails cleanly if the build directory or clang-tidy is missing.
 
 Toggle them in the Agent Hooks panel if a long compile blocks edit flow. Don't disable them silently before a PR.
@@ -459,8 +511,8 @@ Skills:
 - Adding a `find_package(Qt6 ...)` call for `Widgets`, `Gui`, or `Quick` outside `desktop/CMakeLists.txt`.
 - `#include <QWidget>` (or any UI-namespaced Qt header) under `engine/` or `cli/`.
 - `file(GLOB ...)` for source lists in any `CMakeLists.txt`.
-- Bumping the public API surface without updating `engine/include/chainapi/engine/PublicApi.h`.
-- Using `using namespace std;` or `using namespace chainapi;` at namespace or header scope.
+- Bumping the public API surface without updating `engine/include/reqloom/engine/PublicApi.h`.
+- Using `using namespace std;` or `using namespace reqloom;` at namespace or header scope.
 - Catching exceptions just to log and rethrow without context. Use `std::expected` in new code.
 - Adding agent-generated tests that don't actually exercise the change. Each test must fail without the code under test.
 - **C++26-only features**: `^^T` reflection operator, `pre`/`post`/`contract_assert`, `std::execution` / sender-receiver, `std::inplace_vector`, `std::hive`, `=delete("reason")`. Apple Clang 16 / Clang 18 / GCC 14 / MSVC 19.40 do not support these uniformly. If you're tempted, the answer is no until 2027.
@@ -469,11 +521,11 @@ Skills:
 
 ## Things Worth Doing Proactively
 
-- Use `std::expected<T, ChainApiError>` for new error paths in the engine application layer.
+- Use `std::expected<T, ReqloomError>` for new error paths in the engine application layer.
 - Use `std::print` / `std::println` instead of `iostream` chains for new code.
 - Use C++23 ranges additions (`views::zip`, `views::enumerate`, `ranges::fold_left`, `ranges::to`) where they replace explicit loops.
 - When adding a new infrastructure adapter, define the pure interface in `engine/src/infrastructure/<area>/<Name>.h` first, then the concrete `.cpp`.
-- Add the matching `chainapi_forbid_dependencies(...)` call when introducing a new engine sub-target.
+- Add the matching `reqloom_forbid_dependencies(...)` call when introducing a new engine sub-target.
 
 ## License & Scope
 

@@ -40,6 +40,8 @@ qt_add_executable(reqloom-desktop WIN32 MACOSX_BUNDLE
     src/widgets/KeyValueEditor.h
     src/widgets/ChainView.cpp
     src/widgets/ChainView.h
+    src/widgets/MethodItemDelegate.cpp
+    src/widgets/MethodItemDelegate.h
     src/views/Formatting.cpp
     src/views/Formatting.h
     src/views/MainWindow.cpp
