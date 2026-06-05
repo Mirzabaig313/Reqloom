@@ -46,6 +46,9 @@ public:
 signals:
     void operationSelected(QString operationId);
     void operationActivated(QString operationId);
+    /// The user clicked the header's collapse control; the shell hides this
+    /// panel and shows the thin rail.
+    void collapseRequested();
 
 private:
     void onSelectionChanged();
