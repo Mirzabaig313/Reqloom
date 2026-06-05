@@ -27,6 +27,10 @@ public:
 
     void setTitle(const QString& title);
 
+    /// Set a smaller secondary line under the title (e.g. a section label).
+    /// Pass an empty string to hide it.
+    void setSubtitle(const QString& subtitle);
+
     /// Add a trailing control (button, badge) to the header's right side.
     void addTrailingWidget(QWidget* widget);
 
@@ -34,6 +38,7 @@ public:
 
 private:
     QLabel* titleLabel_{nullptr};
+    QLabel* subtitleLabel_{nullptr};
     QHBoxLayout* layout_{nullptr};
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
