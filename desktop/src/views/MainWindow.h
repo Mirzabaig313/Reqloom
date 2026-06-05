@@ -6,6 +6,7 @@
 
 #include "../application/LayoutSettings.h"
 
+#include <QtCore/QList>
 #include <QtWidgets/QMainWindow>
 
 class QAction;
@@ -15,6 +16,7 @@ class QLabel;
 class QMenu;
 class QSplitter;
 class QStackedWidget;
+class QToolButton;
 
 namespace reqloom::engine {
 class ExecutionEngine;
@@ -94,6 +96,14 @@ private:
     void persistSplitterSizes();
     void applyDensity(Density density);
 
+    /// Collapse the explorer to a thin rail (with an expand chevron) or restore
+    /// it. Persisted so the workbench reopens in the same state.
+    void setExplorerCollapsed(bool collapsed);
+
+    /// Collapse the response/timeline panel to a thin rail on the right, giving
+    /// the request editor the full remaining width. Persisted.
+    void setResponseCollapsed(bool collapsed);
+
     ProjectModel& project_;
     RunController* runController_{nullptr};
     SecretManager* secretManager_{nullptr};
@@ -102,18 +112,30 @@ private:
     QStackedWidget* rootStack_{nullptr};
     widgets::EmptyState* emptyState_{nullptr};
     QSplitter* mainSplitter_{nullptr};
+    QWidget* explorerRail_{nullptr};
+    QWidget* responseRail_{nullptr};
     ProjectExplorerWidget* explorer_{nullptr};
     RequestEditorPanel* requestEditor_{nullptr};
+    QTabWidget* rightTabs_{nullptr};
     ResponseViewerPanel* responseViewer_{nullptr};
     TimelinePanel* timeline_{nullptr};
 
     QAction* manageSecretsAction_{nullptr};
+    QAction* toggleExplorerAction_{nullptr};
+    QAction* toggleResponseAction_{nullptr};
     QMenu* viewMenu_{nullptr};
     widgets::CommandPalette* palette_{nullptr};
     QComboBox* envCombo_{nullptr};
     QCheckBox* captureBodiesCheck_{nullptr};
     QLabel* statusLabel_{nullptr};
     Density density_{Density::Comfortable};
+
+    // Splitter sizes captured just before a pane collapses, so expanding
+    // restores its previous width rather than a default.
+    QList<int> preCollapseSizes_;
+    QList<int> responsePreCollapseSizes_;
+    bool explorerCollapsed_{false};
+    bool responseCollapsed_{false};
 
     // Set while programmatically restoring the saved environment on project
     // load, so the combo's change handler doesn't echo the value back to

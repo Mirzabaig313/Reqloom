@@ -13,6 +13,7 @@
 #include <QtGui/QColor>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QToolButton>
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QTreeWidgetItem>
 #include <QtWidgets/QVBoxLayout>
@@ -74,6 +75,14 @@ ProjectExplorerWidget::ProjectExplorerWidget(QWidget* parent) : QWidget(parent) 
 
     header_ = new widgets::PanelHeader(QStringLiteral("Explorer"), this);
     header_->setSubtitle(QStringLiteral("No project open"));
+    auto* collapseBtn = new QToolButton(this);
+    collapseBtn->setObjectName(QStringLiteral("railButton"));
+    collapseBtn->setText(QStringLiteral("‹"));
+    collapseBtn->setAutoRaise(true);
+    collapseBtn->setToolTip(QStringLiteral("Collapse sidebar (Cmd+B)"));
+    collapseBtn->setAccessibleName(QStringLiteral("Collapse sidebar"));
+    connect(collapseBtn, &QToolButton::clicked, this, [this]() { emit collapseRequested(); });
+    header_->addTrailingWidget(collapseBtn);
     layout->addWidget(header_);
 
     filter_ = new QLineEdit(this);

@@ -28,6 +28,7 @@
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QFileDialog>
+#include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QMenuBar>
@@ -36,6 +37,8 @@
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QToolBar>
+#include <QtWidgets/QToolButton>
+#include <QtWidgets/QVBoxLayout>
 #include <QtWidgets/QWidget>
 
 namespace reqloom::desktop {
@@ -63,6 +66,12 @@ MainWindow::MainWindow(engine::ExecutionEngine& engine,
     density_ = LayoutSettings::loadDensity(settings);
     applyDensity(density_);
     restoreSplitterSizes();
+    if (settings.value(QStringLiteral("layout/explorerCollapsed"), false).toBool()) {
+        setExplorerCollapsed(true);
+    }
+    if (settings.value(QStringLiteral("layout/responseCollapsed"), false).toBool()) {
+        setResponseCollapsed(true);
+    }
 
     // Push the already-resolved theme into the custom-painted panels so their
     // status colours and fonts match the QSS chrome from the first frame.
@@ -89,10 +98,22 @@ void MainWindow::buildLayout() {
     // Right column stacks Response + Timeline in tabs (PRD §9.3 Cmd+1/2/3
     // tab switching lands with the shortcut registry later). Object-named so
     // it sits on the elevated workspace surface (DESIGN.md §2.8 depth).
-    auto* rightTabs = new QTabWidget(this);
-    rightTabs->setObjectName(QStringLiteral("workspacePanel"));
-    rightTabs->addTab(responseViewer_, QStringLiteral("Response"));
-    rightTabs->addTab(timeline_, QStringLiteral("Timeline"));
+    rightTabs_ = new QTabWidget(this);
+    rightTabs_->setObjectName(QStringLiteral("workspacePanel"));
+    rightTabs_->setMinimumWidth(260);
+    rightTabs_->addTab(responseViewer_, QStringLiteral("Response"));
+    rightTabs_->addTab(timeline_, QStringLiteral("Timeline"));
+    // A collapse chevron in the tab strip's top-right corner (collapses the
+    // response panel toward the right edge, giving the editor more room).
+    auto* collapseResponseBtn = new QToolButton(rightTabs_);
+    collapseResponseBtn->setObjectName(QStringLiteral("railButton"));
+    collapseResponseBtn->setText(QStringLiteral("›"));
+    collapseResponseBtn->setAutoRaise(true);
+    collapseResponseBtn->setToolTip(QStringLiteral("Collapse response panel (Cmd+J)"));
+    collapseResponseBtn->setAccessibleName(QStringLiteral("Collapse response panel"));
+    connect(
+        collapseResponseBtn, &QToolButton::clicked, this, [this]() { setResponseCollapsed(true); });
+    rightTabs_->setCornerWidget(collapseResponseBtn, Qt::TopRightCorner);
 
     // Three-pane workbench (DESIGN.md §5.2): explorer | request editor |
     // response/timeline tabs. Default ratio 22 / 44 / 34; the user's drag is
@@ -101,11 +122,58 @@ void MainWindow::buildLayout() {
     mainSplitter_->setObjectName(QStringLiteral("mainSplitter"));
     mainSplitter_->addWidget(explorer_);
     mainSplitter_->addWidget(requestEditor_);
-    mainSplitter_->addWidget(rightTabs);
+    mainSplitter_->addWidget(rightTabs_);
     mainSplitter_->setStretchFactor(0, 22);
     mainSplitter_->setStretchFactor(1, 44);
     mainSplitter_->setStretchFactor(2, 34);
     mainSplitter_->setChildrenCollapsible(false);
+
+    // Thin collapsed rails (hidden until a pane is collapsed): a single expand
+    // chevron each, DESIGN.md §5.2 "a panel hides via the View menu, not by
+    // dragging to zero". The left rail mirrors the explorer; the right mirrors
+    // the response panel.
+    const auto makeRail = [this](const QString& objectName,
+                                 const QString& glyph,
+                                 const QString& tip,
+                                 auto onExpand) -> QWidget* {
+        auto* rail = new QWidget(this);
+        rail->setObjectName(objectName);
+        rail->setAttribute(Qt::WA_StyledBackground, true);
+        rail->setFixedWidth(36);
+        rail->setVisible(false);
+        auto* layout = new QVBoxLayout(rail);
+        layout->setContentsMargins(0, theming::Theme::space(theming::Space::Sm), 0, 0);
+        layout->setSpacing(0);
+        auto* button = new QToolButton(rail);
+        button->setObjectName(QStringLiteral("railButton"));
+        button->setText(glyph);
+        button->setAutoRaise(true);
+        button->setToolTip(tip);
+        button->setAccessibleName(tip);
+        connect(button, &QToolButton::clicked, this, onExpand);
+        layout->addWidget(button, 0, Qt::AlignHCenter);
+        layout->addStretch(1);
+        return rail;
+    };
+    explorerRail_ = makeRail(QStringLiteral("explorerRail"),
+                             QStringLiteral("›"),
+                             QStringLiteral("Expand sidebar (Cmd+B)"),
+                             [this]() { setExplorerCollapsed(false); });
+    responseRail_ = makeRail(QStringLiteral("responseRail"),
+                             QStringLiteral("‹"),
+                             QStringLiteral("Expand response panel (Cmd+J)"),
+                             [this]() { setResponseCollapsed(false); });
+
+    // Workspace = [leftRail | splitter | rightRail]; the rails only show when
+    // their pane is collapsed, so the splitter keeps its three children
+    // (persisted sizes stay valid).
+    auto* workspace = new QWidget(this);
+    auto* workspaceLayout = new QHBoxLayout(workspace);
+    workspaceLayout->setContentsMargins(0, 0, 0, 0);
+    workspaceLayout->setSpacing(0);
+    workspaceLayout->addWidget(explorerRail_);
+    workspaceLayout->addWidget(mainSplitter_, 1);
+    workspaceLayout->addWidget(responseRail_);
 
     // First-run / no-project surface (DESIGN.md §10, PRD §12): teach the next
     // step instead of showing empty panels. Swapped out once a project loads.
@@ -117,8 +185,8 @@ void MainWindow::buildLayout() {
     emptyState_->setAction(QStringLiteral("Open Project…"), [this]() { onOpenProject(); });
 
     rootStack_ = new QStackedWidget(this);
-    rootStack_->addWidget(emptyState_);    // index 0
-    rootStack_->addWidget(mainSplitter_);  // index 1
+    rootStack_->addWidget(emptyState_);  // index 0
+    rootStack_->addWidget(workspace);    // index 1
     setCentralWidget(rootStack_);
 }
 
@@ -221,6 +289,25 @@ void MainWindow::buildDensityMenu() {
 
     addDensity(QStringLiteral("&Comfortable"), Density::Comfortable);
     addDensity(QStringLiteral("Co&mpact"), Density::Compact);
+
+    // Explorer visibility toggle (Cmd/Ctrl+B), mirrored by the rail chevron.
+    QMenu* menu = viewMenu_ != nullptr ? viewMenu_ : menuBar()->addMenu(QStringLiteral("&View"));
+    menu->addSeparator();
+    toggleExplorerAction_ = menu->addAction(QStringLiteral("Show &Explorer"));
+    toggleExplorerAction_->setCheckable(true);
+    toggleExplorerAction_->setChecked(true);
+    toggleExplorerAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
+    connect(toggleExplorerAction_, &QAction::triggered, this, [this](bool checked) {
+        setExplorerCollapsed(!checked);
+    });
+
+    toggleResponseAction_ = menu->addAction(QStringLiteral("Show &Response"));
+    toggleResponseAction_->setCheckable(true);
+    toggleResponseAction_->setChecked(true);
+    toggleResponseAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_J));
+    connect(toggleResponseAction_, &QAction::triggered, this, [this](bool checked) {
+        setResponseCollapsed(!checked);
+    });
 }
 
 void MainWindow::buildShortcuts() {
@@ -284,6 +371,9 @@ void MainWindow::connectSignals() {
             requestEditor_->showOperation(project_, opId);
             onRunRequested(opId, /*clean=*/false, /*dryRun=*/false);
         });
+    connect(explorer_, &ProjectExplorerWidget::collapseRequested, this, [this]() {
+        setExplorerCollapsed(true);
+    });
 
     connect(requestEditor_, &RequestEditorPanel::runRequested, this, &MainWindow::onRunRequested);
     connect(requestEditor_, &RequestEditorPanel::saveRequested, this, &MainWindow::onSaveRequested);
@@ -456,6 +546,55 @@ void MainWindow::persistSplitterSizes() {
     LayoutSettings::saveSplitter(settings, QStringLiteral("mainSplitter"), mainSplitter_->sizes());
 }
 
+void MainWindow::setExplorerCollapsed(bool collapsed) {
+    if (collapsed == explorerCollapsed_) {
+        return;
+    }
+    explorerCollapsed_ = collapsed;
+    if (collapsed) {
+        // Remember the current pane widths so expanding restores them, then
+        // hide the explorer (the splitter hands its space to the other panes)
+        // and show the thin rail.
+        preCollapseSizes_ = mainSplitter_->sizes();
+        explorer_->hide();
+        explorerRail_->setVisible(true);
+    } else {
+        explorerRail_->setVisible(false);
+        explorer_->show();
+        if (preCollapseSizes_.size() == mainSplitter_->count()) {
+            mainSplitter_->setSizes(preCollapseSizes_);
+        }
+    }
+    if (toggleExplorerAction_ != nullptr) {
+        toggleExplorerAction_->setChecked(!collapsed);
+    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("layout/explorerCollapsed"), collapsed);
+}
+
+void MainWindow::setResponseCollapsed(bool collapsed) {
+    if (collapsed == responseCollapsed_) {
+        return;
+    }
+    responseCollapsed_ = collapsed;
+    if (collapsed) {
+        responsePreCollapseSizes_ = mainSplitter_->sizes();
+        rightTabs_->hide();
+        responseRail_->setVisible(true);
+    } else {
+        responseRail_->setVisible(false);
+        rightTabs_->show();
+        if (responsePreCollapseSizes_.size() == mainSplitter_->count()) {
+            mainSplitter_->setSizes(responsePreCollapseSizes_);
+        }
+    }
+    if (toggleResponseAction_ != nullptr) {
+        toggleResponseAction_->setChecked(!collapsed);
+    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("layout/responseCollapsed"), collapsed);
+}
+
 void MainWindow::applyDensity(Density density) {
     // Compact tightens list-row vertical padding for users with hundreds of
     // operations (DESIGN.md §5.3). Driven by a dynamic property the central
@@ -494,8 +633,8 @@ void MainWindow::onProjectLoaded() {
     responseViewer_->clearHistory();
     timeline_->reset();
 
-    // Swap from the first-run empty state to the workbench.
-    rootStack_->setCurrentWidget(mainSplitter_);
+    // Swap from the first-run empty state to the workbench (index 1).
+    rootStack_->setCurrentIndex(1);
 
     envCombo_->clear();
     envCombo_->addItems(project_.environmentNames());

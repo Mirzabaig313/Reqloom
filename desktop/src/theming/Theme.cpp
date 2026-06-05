@@ -321,6 +321,34 @@ QWidget#workspacePanel {
     background-color: %4;
 }
 
+/* Collapsed pane rails: a thin strip matching the panel surface, with a single
+   chevron expand button. Left rail mirrors the explorer; right mirrors the
+   response panel. */
+QWidget#explorerRail {
+    background-color: %1;
+    border-right: 1px solid %3;
+}
+QWidget#responseRail {
+    background-color: %4;
+    border-left: 1px solid %3;
+}
+QToolButton#railButton {
+    background-color: %14;
+    border: 1px solid %3;
+    border-radius: 6px;
+    color: %2;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 2px;
+    min-width: 22px;
+    min-height: 22px;
+}
+QToolButton#railButton:hover {
+    background-color: %8;
+    border-color: %15;
+    color: %2;
+}
+
 /* Request "address bar": method + path + Send, pinned to the top of the
    center pane (Postman/Apidog convention). A single sunken field strip — the
    one framed element in the editor; everything below it is flat. */
