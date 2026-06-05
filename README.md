@@ -5,6 +5,7 @@
 **A workflow-aware API testing tool that auto-resolves request dependency chains.**
 
 [![Build & Test](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml/badge.svg)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml)
+[![Build Status](https://dev.azure.com/mirza4ever/chainapi/_apis/build/status%2FMirzabaig313.Reqloom?branchName=main)](https://dev.azure.com/mirza4ever/chainapi/_build/latest?definitionId=3&branchName=main)
 [![Docs](https://img.shields.io/badge/docs-online-2496ED.svg)](https://reqloom.dev/docs/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)](https://en.cppreference.com/w/cpp/23)
