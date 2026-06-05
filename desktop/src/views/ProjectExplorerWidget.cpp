@@ -1,28 +1,29 @@
 // ProjectExplorerWidget — see header. Tree view of actors + resource ops.
+// Operation rows render via MethodItemDelegate: a left-aligned, colour-coded
+// HTTP method badge followed by the operation name (Postman/Apidog read), all
+// on one line so the verb sits at the left and moves with tree indentation.
 #include "ProjectExplorerWidget.h"
 
 #include "../application/ProjectModel.h"
+#include "../widgets/MethodItemDelegate.h"
 #include "../widgets/PanelHeader.h"
 #include "Formatting.h"
 
 #include <QtCore/Qt>
-#include <QtGui/QBrush>
+#include <QtGui/QColor>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QTreeWidgetItem>
 #include <QtWidgets/QVBoxLayout>
 
+#include <cstddef>
+
 namespace reqloom::desktop {
 
 namespace {
 
-// Roles for stashing the fully-qualified operation id on a tree row.
-constexpr int kOperationIdRole = Qt::UserRole + 1;
-// Marks a row as an operation (vs. a category/actor/resource header).
-constexpr int kIsOperationRole = Qt::UserRole + 2;
-// The HTTP method string, kept so a theme change can re-tint the chip.
-constexpr int kMethodRole = Qt::UserRole + 3;
+namespace roles = widgets::roles;
 
 /// Recursively show rows that match `needle` (or have a matching descendant)
 /// and hide the rest. Returns whether `item` ended up visible. A free helper
@@ -32,24 +33,25 @@ bool applyFilterTo(QTreeWidgetItem* item, const QString& needle) {
     for (int i = 0; i < item->childCount(); ++i) {
         anyChildVisible = applyFilterTo(item->child(i), needle) || anyChildVisible;
     }
-    const bool isOperation = item->data(0, kIsOperationRole).toBool();
+    const bool isOperation = item->data(0, roles::kIsOperation).toBool();
     bool selfMatches = needle.isEmpty();
     if (!selfMatches && isOperation) {
-        selfMatches = item->text(0).contains(needle, Qt::CaseInsensitive) ||
-                      item->text(1).contains(needle, Qt::CaseInsensitive);
+        // Match on the operation id (carries the name) and the method verb.
+        selfMatches =
+            item->data(0, roles::kOperationId).toString().contains(needle, Qt::CaseInsensitive) ||
+            item->data(0, roles::kMethodText).toString().contains(needle, Qt::CaseInsensitive);
     }
     const bool visible = selfMatches || anyChildVisible;
     item->setHidden(!visible);
     return visible;
 }
 
-/// Re-tint one row's method chip (and recurse). Free helper, mirroring
-/// applyFilterTo, so the recursion doesn't allocate a std::function.
+/// Re-tint one operation row's stored method colour (and recurse) so a runtime
+/// theme switch updates the delegate-painted badges.
 void recolorMethodsIn(QTreeWidgetItem* item, const theming::Theme& theme) {
-    const QString method = item->data(1, kMethodRole).toString();
+    const QString method = item->data(0, roles::kMethodText).toString();
     if (!method.isEmpty()) {
-        item->setFont(1, theme.font(theming::TextStyle::Mono));
-        item->setForeground(1, QBrush(theme.method(format::methodColor(method))));
+        item->setData(0, roles::kMethodColor, theme.method(format::methodColor(method)));
     }
     for (int i = 0; i < item->childCount(); ++i) {
         recolorMethodsIn(item->child(i), theme);
@@ -71,6 +73,7 @@ ProjectExplorerWidget::ProjectExplorerWidget(QWidget* parent) : QWidget(parent) 
     layout->setSpacing(gap);
 
     header_ = new widgets::PanelHeader(QStringLiteral("Explorer"), this);
+    header_->setSubtitle(QStringLiteral("No project open"));
     layout->addWidget(header_);
 
     filter_ = new QLineEdit(this);
@@ -79,17 +82,16 @@ ProjectExplorerWidget::ProjectExplorerWidget(QWidget* parent) : QWidget(parent) 
     filter_->setAccessibleName(QStringLiteral("Filter operations"));
     layout->addWidget(filter_);
 
+    // Single-column tree: the method badge is painted inside the row by the
+    // delegate (left of the name), not in a separate column.
     tree_ = new QTreeWidget(this);
-    tree_->setColumnCount(2);
-    tree_->setHeaderLabels({QStringLiteral("Name"), QStringLiteral("Method")});
-    // Name column takes the slack; Method is a fixed, right-sized chip column
-    // so a long verb (OPTIONS) can't squeeze the names.
-    tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    tree_->header()->setSectionResizeMode(1, QHeaderView::Fixed);
-    tree_->header()->resizeSection(1, 72);
-    tree_->header()->setStretchLastSection(false);
+    tree_->setObjectName(QStringLiteral("explorerTree"));
+    tree_->setColumnCount(1);
+    tree_->setHeaderHidden(true);
     tree_->setIndentation(14);
     tree_->setUniformRowHeights(true);
+    methodDelegate_ = new widgets::MethodItemDelegate(this);
+    tree_->setItemDelegate(methodDelegate_);
     layout->addWidget(tree_, 1);
 
     connect(tree_,
@@ -109,40 +111,59 @@ void ProjectExplorerWidget::clear() {
 void ProjectExplorerWidget::populate(const ProjectModel& project) {
     tree_->clear();
     if (!project.hasProject()) {
+        header_->setTitle(QStringLiteral("Explorer"));
+        header_->setSubtitle(QStringLiteral("No project open"));
         return;
     }
     const auto& proj = project.project();
 
+    // Surface the project name as the explorer's header (the reference's
+    // "<API name>" title), with the operation count as the secondary line.
+    std::size_t opCount = 0;
+    for (const auto& [resId, resource] : proj.resources) {
+        opCount += resource.operations.size();
+    }
+    const QString projectName = project.name();
+    header_->setTitle(projectName.isEmpty() ? QStringLiteral("Explorer") : projectName);
+    header_->setSubtitle(
+        QStringLiteral("%1 operations · %2 actors").arg(opCount).arg(proj.actors.size()));
+
     auto* actorsRoot = new QTreeWidgetItem(tree_);
-    actorsRoot->setText(0, QStringLiteral("Actors"));
-    actorsRoot->setData(0, kIsOperationRole, false);
-    actorsRoot->setFirstColumnSpanned(true);
+    actorsRoot->setText(0, QStringLiteral("📁  Actors"));
+    actorsRoot->setData(0, roles::kIsOperation, false);
     for (const auto& [actorId, actor] : proj.actors) {
         auto* actorItem = new QTreeWidgetItem(actorsRoot);
-        actorItem->setText(0, QString::fromStdString(actorId.value));
-        actorItem->setData(0, kIsOperationRole, false);
+        const QString name = QString::fromStdString(actorId.value);
+        actorItem->setText(0, name);
+        actorItem->setToolTip(0, name);  // full name on hover (names truncate)
+        actorItem->setData(0, roles::kIsOperation, false);
     }
 
     auto* resourcesRoot = new QTreeWidgetItem(tree_);
-    resourcesRoot->setText(0, QStringLiteral("Resources"));
-    resourcesRoot->setData(0, kIsOperationRole, false);
-    resourcesRoot->setFirstColumnSpanned(true);
+    resourcesRoot->setText(0, QStringLiteral("📁  Resources"));
+    resourcesRoot->setData(0, roles::kIsOperation, false);
     for (const auto& [resId, resource] : proj.resources) {
         auto* resItem = new QTreeWidgetItem(resourcesRoot);
-        resItem->setText(0, QString::fromStdString(resId.value));
-        resItem->setData(0, kIsOperationRole, false);
+        const QString resName = QString::fromStdString(resId.value);
+        resItem->setText(0, QStringLiteral("📂  %1").arg(resName));
+        resItem->setToolTip(0, resName);
+        resItem->setData(0, roles::kIsOperation, false);
         for (const auto& [opName, op] : resource.operations) {
             auto* opItem = new QTreeWidgetItem(resItem);
-            opItem->setText(0, QString::fromStdString(opName));
+            const QString name = QString::fromStdString(opName);
             const QString method = format::method(op.method);
-            opItem->setText(1, method);
-            opItem->setData(0, kIsOperationRole, true);
-            opItem->setData(0, kOperationIdRole, QString::fromStdString(op.id.value));
-            opItem->setData(1, kMethodRole, method);
-            // Method chip: mono, uppercase, tinted by method class (§6.2).
-            opItem->setFont(1, theme_.font(theming::TextStyle::Mono));
-            opItem->setTextAlignment(1, Qt::AlignCenter);
-            opItem->setForeground(1, QBrush(theme_.method(format::methodColor(method))));
+            // The delegate paints the badge + name; the row text holds the
+            // name so the default fallback and accessibility stay sensible.
+            opItem->setText(0, name);
+            opItem->setToolTip(0,
+                               QStringLiteral("%1\n%2 %3")
+                                   .arg(QString::fromStdString(op.id.value),
+                                        method,
+                                        QString::fromStdString(op.pathTemplate)));
+            opItem->setData(0, roles::kIsOperation, true);
+            opItem->setData(0, roles::kOperationId, QString::fromStdString(op.id.value));
+            opItem->setData(0, roles::kMethodText, method);
+            opItem->setData(0, roles::kMethodColor, theme_.method(format::methodColor(method)));
         }
     }
 
@@ -152,11 +173,13 @@ void ProjectExplorerWidget::populate(const ProjectModel& project) {
 void ProjectExplorerWidget::applyTheme(const theming::Theme& theme) {
     theme_ = theme;
     header_->setTheme(theme);
+    methodDelegate_->setTheme(theme);
     recolorMethods();
+    tree_->viewport()->update();
 }
 
 void ProjectExplorerWidget::recolorMethods() {
-    // Re-tint every operation row's method chip from the current theme.
+    // Refresh each operation row's stored method colour from the current theme.
     for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
         recolorMethodsIn(tree_->topLevelItem(i), theme_);
     }
@@ -168,14 +191,14 @@ void ProjectExplorerWidget::onSelectionChanged() {
         return;
     }
     auto* item = items.first();
-    if (item->data(0, kIsOperationRole).toBool()) {
-        emit operationSelected(item->data(0, kOperationIdRole).toString());
+    if (item->data(0, roles::kIsOperation).toBool()) {
+        emit operationSelected(item->data(0, roles::kOperationId).toString());
     }
 }
 
 void ProjectExplorerWidget::onItemActivated(QTreeWidgetItem* item, int /*column*/) {
-    if (item != nullptr && item->data(0, kIsOperationRole).toBool()) {
-        emit operationActivated(item->data(0, kOperationIdRole).toString());
+    if (item != nullptr && item->data(0, roles::kIsOperation).toBool()) {
+        emit operationActivated(item->data(0, roles::kOperationId).toString());
     }
 }
 

@@ -338,6 +338,10 @@ QWidget#requestLineBar QLineEdit {
     border-radius: 0;
     padding-left: 8px;
 }
+QLabel#pathPreview {
+    background-color: transparent;
+    padding-left: 8px;
+}
 QWidget#requestLineBar QComboBox {
     background-color: transparent;
     border: none;
@@ -401,6 +405,12 @@ QTreeWidget::item:selected, QListWidget::item:selected,
 QTableWidget::item:selected {
     background-color: %11;
     color: %2;
+}
+/* Explorer selection reads as the primary accent so the active operation
+   clearly pops (not the muddy muted tint). Inverse text for contrast. */
+QTreeWidget#explorerTree::item:selected {
+    background-color: %15;
+    color: %12;
 }
 QHeaderView::section {
     background-color: %1;
@@ -476,6 +486,20 @@ QPushButton#ghostAction {
 QPushButton#ghostAction:hover { background-color: %8; color: %2; }
 QPushButton#ghostAction:disabled { color: %18; border-color: transparent; }
 
+/* Edit toggle: a checkable button (clearer than a checkbox for a mode switch,
+   §3). Ghost at rest, accent-tinted when active (Override Mode on). */
+QPushButton#editToggle {
+    background-color: transparent;
+    border: 1px solid %16;
+    color: %13;
+}
+QPushButton#editToggle:hover { background-color: %8; color: %2; }
+QPushButton#editToggle:checked {
+    background-color: %11;
+    border-color: %15;
+    color: %2;
+}
+
 /* Actor session chip: a first-class concept (§8), so it reads as a tinted
    pill, not faint metadata. The accent-muted fill ties it to the run identity;
    the "no actor" variant stays neutral. */
@@ -499,9 +523,16 @@ QCheckBox::indicator {
     border-radius: 4px;
     background-color: %14;
 }
+QCheckBox::indicator:hover {
+    border-color: %15;
+}
 QCheckBox::indicator:checked {
     background-color: %15;
     border-color: %15;
+}
+QCheckBox::indicator:disabled {
+    border-color: %3;
+    background-color: %4;
 }
 QCheckBox:focus { color: %2; }
 

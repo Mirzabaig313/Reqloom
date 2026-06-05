@@ -97,14 +97,18 @@ private:
     QStackedWidget* rootStack_{nullptr};
     widgets::EmptyState* emptyState_{nullptr};
 
-    // Address bar (top): method + path + the prominent Send.
+    // Address bar (top): method + path + the prominent Send. The path shows as
+    // a rich-text label (with {{variables}} highlighted) in preview, and an
+    // editable line edit in Override Mode — swapped via pathStack_.
     QStackedWidget* methodStack_{nullptr};
     QLabel* methodPill_{nullptr};
     QComboBox* methodCombo_{nullptr};
+    QStackedWidget* pathStack_{nullptr};
+    QLabel* pathPreview_{nullptr};
     QLineEdit* pathEdit_{nullptr};
 
     QLabel* actorCaption_{nullptr};
-    QCheckBox* overrideToggle_{nullptr};
+    QPushButton* overrideToggle_{nullptr};
     QLabel* overrideBanner_{nullptr};
     widgets::ChainView* chainView_{nullptr};
 
