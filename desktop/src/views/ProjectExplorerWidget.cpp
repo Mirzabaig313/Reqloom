@@ -261,25 +261,43 @@ void ProjectExplorerWidget::onItemActivated(QTreeWidgetItem* item, int /*column*
 
 void ProjectExplorerWidget::onContextMenu(const QPoint& pos) {
     QTreeWidgetItem* item = tree_->itemAt(pos);
-    if (item == nullptr || !item->data(0, roles::kIsExample).toBool()) {
-        return;  // menu only applies to saved-example rows
+    if (item == nullptr) {
+        return;
     }
     const QString opId = item->data(0, roles::kOperationId).toString();
-    const QString name = item->data(0, roles::kExampleName).toString();
 
-    QMenu menu(this);
-    QAction* rename = menu.addAction(QStringLiteral("Rename"));
-    QAction* duplicate = menu.addAction(QStringLiteral("Duplicate"));
-    menu.addSeparator();
-    QAction* remove = menu.addAction(QStringLiteral("Delete"));
+    if (item->data(0, roles::kIsExample).toBool()) {
+        const QString name = item->data(0, roles::kExampleName).toString();
+        QMenu menu(this);
+        QAction* rename = menu.addAction(QStringLiteral("Rename"));
+        QAction* duplicate = menu.addAction(QStringLiteral("Duplicate"));
+        menu.addSeparator();
+        QAction* remove = menu.addAction(QStringLiteral("Delete"));
+        const QAction* chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
+        if (chosen == rename) {
+            emit exampleRenameRequested(opId, name);
+        } else if (chosen == duplicate) {
+            emit exampleDuplicateRequested(opId, name);
+        } else if (chosen == remove) {
+            emit exampleDeleteRequested(opId, name);
+        }
+        return;
+    }
 
-    const QAction* chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
-    if (chosen == rename) {
-        emit exampleRenameRequested(opId, name);
-    } else if (chosen == duplicate) {
-        emit exampleDuplicateRequested(opId, name);
-    } else if (chosen == remove) {
-        emit exampleDeleteRequested(opId, name);
+    if (item->data(0, roles::kIsOperation).toBool()) {
+        QMenu menu(this);
+        QAction* edit = menu.addAction(QStringLiteral("Edit"));
+        QAction* rename = menu.addAction(QStringLiteral("Rename"));
+        menu.addSeparator();
+        QAction* remove = menu.addAction(QStringLiteral("Delete"));
+        const QAction* chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
+        if (chosen == edit) {
+            emit operationEditRequested(opId);
+        } else if (chosen == rename) {
+            emit operationRenameRequested(opId);
+        } else if (chosen == remove) {
+            emit operationDeleteRequested(opId);
+        }
     }
 }
 

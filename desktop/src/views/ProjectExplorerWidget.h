@@ -61,6 +61,10 @@ signals:
     void exampleRenameRequested(QString operationId, QString exampleName);
     void exampleDuplicateRequested(QString operationId, QString exampleName);
     void exampleDeleteRequested(QString operationId, QString exampleName);
+    /// Context-menu actions on an operation (endpoint) row.
+    void operationEditRequested(QString operationId);
+    void operationRenameRequested(QString operationId);
+    void operationDeleteRequested(QString operationId);
 
 private:
     void onSelectionChanged();

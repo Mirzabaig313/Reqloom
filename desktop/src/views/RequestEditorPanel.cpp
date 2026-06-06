@@ -367,6 +367,12 @@ void RequestEditorPanel::wireConnections() {
 
 RequestEditorPanel::~RequestEditorPanel() = default;
 
+void RequestEditorPanel::beginEdit() {
+    if (!currentOp_.isEmpty()) {
+        overrideToggle_->setChecked(true);  // triggers setOverrideMode via toggled
+    }
+}
+
 void RequestEditorPanel::setOverrideMode(bool on) {
     overrideActive_ = on;
     overrideBanner_->setVisible(on);
