@@ -51,14 +51,17 @@ void MethodItemDelegate::paint(QPainter* painter,
 
     painter->save();
     const QRect rect = option.rect;
+    const bool selected = (option.state & QStyle::State_Selected) != 0;
 
     // Method badge — coloured, bold, uppercase. Measured to its actual width
     // so the name sits a small fixed gap to its right (Apidog-style read; no
-    // aligned column gutter, so a long verb still reads tight).
+    // aligned column gutter, so a long verb still reads tight). On a selected
+    // row the badge uses the highlighted-text colour so it stays AA-legible on
+    // the accent fill rather than bright-on-bright (NFR-5.3).
     QFont badgeFont = theme_.font(theming::TextStyle::Mono);
     badgeFont.setWeight(QFont::DemiBold);
     painter->setFont(badgeFont);
-    painter->setPen(methodColor);
+    painter->setPen(selected ? option.palette.highlightedText().color() : methodColor);
     const QFontMetrics badgeMetrics(badgeFont);
     const int badgeWidth = badgeMetrics.horizontalAdvance(method);
     const QRect badgeRect(rect.left() + kRowLeftPad, rect.top(), badgeWidth, rect.height());
@@ -66,7 +69,6 @@ void MethodItemDelegate::paint(QPainter* painter,
 
     // Operation name — primary text, follows the badge on the same line. The
     // selected row paints its text in the highlighted-text colour for contrast.
-    const bool selected = (option.state & QStyle::State_Selected) != 0;
     painter->setFont(option.font);
     painter->setPen(selected ? option.palette.highlightedText().color()
                              : theme_.palette().textPrimary);

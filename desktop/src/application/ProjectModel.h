@@ -66,6 +66,17 @@ public:
                                      const engine::Operation& updated,
                                      QString& error);
 
+    /// Rename operation `id` to `newName` (the part after the resource dot),
+    /// persist the project, and rebind. Fails if the name is empty, malformed,
+    /// or already used in the resource. Emits `saved` on success.
+    [[nodiscard]] bool renameOperation(const engine::OperationId& id,
+                                       const QString& newName,
+                                       QString& error);
+
+    /// Delete operation `id`, persist the project, and rebind. Emits `saved`
+    /// on success.
+    [[nodiscard]] bool deleteOperation(const engine::OperationId& id, QString& error);
+
 signals:
     void loaded();
     void loadFailed(QString code, QString detail);

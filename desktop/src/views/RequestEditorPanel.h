@@ -49,6 +49,10 @@ public:
     /// Show the operation identified by `operationId` from `project`.
     void showOperation(const ProjectModel& project, const QString& operationId);
 
+    /// Turn on Override/Edit mode for the currently shown operation (e.g. from
+    /// the explorer's "Edit" context action). No-op if nothing is shown.
+    void beginEdit();
+
     /// Reset to the empty state (no operation selected).
     void clearOperation();
 

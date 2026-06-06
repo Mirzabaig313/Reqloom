@@ -95,6 +95,11 @@ private:
     void onExampleDuplicate(const QString& operationId, const QString& name);
     void onExampleDelete(const QString& operationId, const QString& name);
 
+    /// Context-menu actions on an operation/endpoint (from the explorer).
+    void onOperationEdit(const QString& operationId);
+    void onOperationRename(const QString& operationId);
+    void onOperationDelete(const QString& operationId);
+
     void openCommandPalette();
     void onPaletteItemChosen(const widgets::PaletteItem& item);
     void runCurrentOperation(bool clean, bool dryRun);
@@ -116,6 +121,12 @@ private:
     /// the request editor the full remaining width. Persisted.
     void setResponseCollapsed(bool collapsed);
 
+    /// Arrange the request editor and response panel side-by-side
+    /// (Qt::Horizontal → "Split Vertically") or stacked (Qt::Vertical →
+    /// "Split Horizontally"). Expands the response if it was collapsed.
+    /// Persisted.
+    void setResponseSplitOrientation(Qt::Orientation orientation);
+
     ProjectModel& project_;
     RunController* runController_{nullptr};
     SecretManager* secretManager_{nullptr};
@@ -124,6 +135,7 @@ private:
     QStackedWidget* rootStack_{nullptr};
     widgets::EmptyState* emptyState_{nullptr};
     QSplitter* mainSplitter_{nullptr};
+    QSplitter* centerSplitter_{nullptr};
     QWidget* explorerRail_{nullptr};
     QWidget* responseRail_{nullptr};
     ProjectExplorerWidget* explorer_{nullptr};
@@ -135,6 +147,9 @@ private:
     QAction* manageSecretsAction_{nullptr};
     QAction* toggleExplorerAction_{nullptr};
     QAction* toggleResponseAction_{nullptr};
+    QAction* splitVerticalAction_{nullptr};
+    QAction* splitHorizontalAction_{nullptr};
+    QAction* noSplitAction_{nullptr};
     QMenu* viewMenu_{nullptr};
     widgets::CommandPalette* palette_{nullptr};
     QComboBox* envCombo_{nullptr};

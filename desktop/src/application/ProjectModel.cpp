@@ -111,6 +111,88 @@ bool ProjectModel::saveOperation(const engine::OperationId& id,
     return true;
 }
 
+bool ProjectModel::renameOperation(const engine::OperationId& id,
+                                   const QString& newName,
+                                   QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    const std::string trimmed = newName.trimmed().toStdString();
+    if (trimmed.empty()) {
+        error = QStringLiteral("Name cannot be empty.");
+        return false;
+    }
+    const auto dot = id.value.find('.');
+    if (dot == std::string::npos) {
+        error = QStringLiteral("Malformed operation id: %1").arg(QString::fromStdString(id.value));
+        return false;
+    }
+    const engine::ResourceId resId{id.value.substr(0, dot)};
+    const auto opName = id.value.substr(dot + 1);
+    if (trimmed == opName) {
+        return true;  // no change
+    }
+
+    engine::Project draft = *project_;
+    auto resIt = draft.resources.find(resId);
+    if (resIt == draft.resources.end() || !resIt->second.operations.contains(opName)) {
+        error = QStringLiteral("Operation not found: %1").arg(QString::fromStdString(id.value));
+        return false;
+    }
+    if (resIt->second.operations.contains(trimmed)) {
+        error = QStringLiteral("An operation named “%1” already exists in this resource.")
+                    .arg(QString::fromStdString(trimmed));
+        return false;
+    }
+
+    // Move the operation under its new name, updating its fully-qualified id.
+    engine::Operation moved = resIt->second.operations.at(opName);
+    moved.id = engine::OperationId{resId.value + "." + trimmed};
+    resIt->second.operations.erase(opName);
+    resIt->second.operations[trimmed] = std::move(moved);
+
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
+bool ProjectModel::deleteOperation(const engine::OperationId& id, QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    const auto dot = id.value.find('.');
+    if (dot == std::string::npos) {
+        error = QStringLiteral("Malformed operation id: %1").arg(QString::fromStdString(id.value));
+        return false;
+    }
+    const engine::ResourceId resId{id.value.substr(0, dot)};
+    const auto opName = id.value.substr(dot + 1);
+
+    engine::Project draft = *project_;
+    auto resIt = draft.resources.find(resId);
+    if (resIt == draft.resources.end() || !resIt->second.operations.contains(opName)) {
+        error = QStringLiteral("Operation not found: %1").arg(QString::fromStdString(id.value));
+        return false;
+    }
+    resIt->second.operations.erase(opName);
+
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
 const engine::Operation* ProjectModel::findOperation(const engine::OperationId& id) const noexcept {
     if (!project_) {
         return nullptr;
