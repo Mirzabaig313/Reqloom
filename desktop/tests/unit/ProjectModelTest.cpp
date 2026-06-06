@@ -49,6 +49,17 @@ ce::Project buildProject() {
     op.method = ce::HttpMethod::Get;
     op.pathTemplate = "/pay";
     res.operations["pay"] = std::move(op);
+
+    // A second op that depends on the first, to exercise depends_on integrity.
+    ce::Operation refund;
+    refund.id = ce::OperationId{"payment.refund"};
+    refund.resource = res.id;
+    refund.actor = ce::ActorId{"user"};
+    refund.method = ce::HttpMethod::Post;
+    refund.pathTemplate = "/refund";
+    refund.explicitDependencies = {ce::OperationId{"payment.pay"}};
+    res.operations["refund"] = std::move(refund);
+
     p.resources[res.id] = std::move(res);
     return p;
 }
@@ -132,6 +143,45 @@ TEST(ProjectModel, delete_operation_removes_it) {
     ASSERT_TRUE(model.deleteOperation(ce::OperationId{"payment.pay"}, error))
         << error.toStdString();
     EXPECT_EQ(model.findOperation(ce::OperationId{"payment.pay"}), nullptr);
+}
+
+TEST(ProjectModel, rename_operation_updates_dependents_depends_on) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+    // payment.refund depends on payment.pay.
+    QString error;
+    ASSERT_TRUE(
+        model.renameOperation(ce::OperationId{"payment.pay"}, QStringLiteral("charge"), error))
+        << error.toStdString();
+
+    const auto* refund = model.findOperation(ce::OperationId{"payment.refund"});
+    ASSERT_NE(refund, nullptr);
+    ASSERT_EQ(refund->explicitDependencies.size(), 1u);
+    EXPECT_EQ(refund->explicitDependencies[0].value, "payment.charge");
+
+    // The project still loads cleanly from disk (no dangling reference).
+    ProjectModel reloaded;
+    reloaded.loadFromDirectory(dir.path());
+    EXPECT_TRUE(reloaded.hasProject());
+}
+
+TEST(ProjectModel, delete_operation_drops_dangling_depends_on) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    QString error;
+    ASSERT_TRUE(model.deleteOperation(ce::OperationId{"payment.pay"}, error))
+        << error.toStdString();
+
+    const auto* refund = model.findOperation(ce::OperationId{"payment.refund"});
+    ASSERT_NE(refund, nullptr);
+    EXPECT_TRUE(refund->explicitDependencies.empty());
+
+    ProjectModel reloaded;
+    reloaded.loadFromDirectory(dir.path());
+    EXPECT_TRUE(reloaded.hasProject());
 }
 
 }  // namespace reqloom::desktop::tests
