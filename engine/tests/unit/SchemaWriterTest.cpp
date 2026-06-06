@@ -14,6 +14,7 @@
 
 #include <support/TempPath.h>
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -127,6 +128,33 @@ TEST(SchemaWriter, refuses_to_overwrite_existing_root) {
     // Same call with overwrite=true succeeds.
     auto third = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
     EXPECT_TRUE(third.has_value()) << (third ? "" : third.error().detail);
+}
+
+TEST(SchemaWriter, unchanged_files_are_not_rewritten_on_overwrite) {
+    // A re-write with identical content must leave untouched files alone, so a
+    // single edit doesn't churn every project file. Verified via mtime: stamp
+    // an unchanged resource file with an old sentinel, re-write, and confirm
+    // the sentinel survives (file skipped) — but a genuine change rewrites it.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+
+    const fs::path resourceFile = scratch.path() / "resources" / "payment.yaml";
+    ASSERT_TRUE(fs::exists(resourceFile));
+
+    const auto sentinel = fs::last_write_time(resourceFile) - std::chrono::hours{1};
+    fs::last_write_time(resourceFile, sentinel);
+    const auto stamped = fs::last_write_time(resourceFile);
+
+    // Re-write the identical project: the resource file must be skipped.
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+    EXPECT_EQ(fs::last_write_time(resourceFile), stamped);
+
+    // Now change that resource: the file must be rewritten (mtime moves off
+    // the sentinel).
+    project.resources.at(ce::ResourceId{"payment"}).description = "changed";
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+    EXPECT_NE(fs::last_write_time(resourceFile), stamped);
 }
 
 TEST(SchemaWriter, round_trips_actor_resource_environment) {
