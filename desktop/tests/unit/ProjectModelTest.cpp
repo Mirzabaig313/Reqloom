@@ -184,4 +184,28 @@ TEST(ProjectModel, delete_operation_drops_dangling_depends_on) {
     EXPECT_TRUE(reloaded.hasProject());
 }
 
+TEST(ProjectModel, rename_operation_rejects_id_breaking_name) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    // A '.' would split into a new resource id and recreate the dangling-ref
+    // bug; '/' and '\' would escape the resources/ directory on resource files.
+    QString error;
+    EXPECT_FALSE(model.renameOperation(ce::OperationId{"payment.pay"}, QStringLiteral("a.b"), error));
+    EXPECT_FALSE(error.isEmpty());
+    EXPECT_NE(model.findOperation(ce::OperationId{"payment.pay"}), nullptr);
+}
+
+TEST(ProjectModel, rename_resource_rejects_id_breaking_name) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    QString error;
+    EXPECT_FALSE(model.renameResource(ce::ResourceId{"payment"}, QStringLiteral("../escape"), error));
+    EXPECT_FALSE(error.isEmpty());
+    EXPECT_NE(model.findOperation(ce::OperationId{"payment.pay"}), nullptr);
+}
+
 }  // namespace reqloom::desktop::tests

@@ -6,18 +6,26 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <string>
 #include <system_error>
 #include <utility>
-#include <vector>
 
 namespace reqloom::desktop {
 
 namespace {
 
+/// Reject names that would break the dotted id scheme (ids are joined with '.'
+/// and parsed by the first dot) or escape the resources/ directory (a resource
+/// name also becomes a file name). Empty is checked separately by the caller.
+[[nodiscard]] bool hasIdBreakingChars(const std::string& name) {
+    return name.find('.') != std::string::npos || name.find('/') != std::string::npos ||
+           name.find('\\') != std::string::npos;
+}
+
 /// Rewrite every depends_on entry equal to `from` to `to` across all
-/// operations, so renaming an operation/resource keeps cross-references valid.
+/// operations, so renaming an operation keeps cross-references valid.
 void remapDependencies(engine::Project& draft, const std::string& from, const std::string& to) {
     for (auto& [resId, resource] : draft.resources) {
         for (auto& [opName, op] : resource.operations) {
@@ -30,6 +38,34 @@ void remapDependencies(engine::Project& draft, const std::string& from, const st
     }
 }
 
+/// Rewrite depends_on entries using an old-id → new-id map in a single pass
+/// (used when a resource rename re-qualifies many operation ids at once).
+void remapDependencies(engine::Project& draft, const std::map<std::string, std::string>& rename) {
+    for (auto& [resId, resource] : draft.resources) {
+        for (auto& [opName, op] : resource.operations) {
+            for (auto& dep : op.explicitDependencies) {
+                if (const auto it = rename.find(dep.value); it != rename.end()) {
+                    dep.value = it->second;
+                }
+            }
+        }
+    }
+}
+
+/// Re-qualify a resource's operations under `newId` (setting each op's resource
+/// and fully-qualified id) and return the old-id → new-id map for remapping
+/// cross-resource depends_on.
+[[nodiscard]] std::map<std::string, std::string> requalifyResourceOps(
+    engine::Resource& resource, const engine::ResourceId& oldId, const engine::ResourceId& newId) {
+    std::map<std::string, std::string> rename;
+    for (auto& [opName, op] : resource.operations) {
+        op.resource = newId;
+        op.id = engine::OperationId{newId.value + "." + opName};
+        rename.emplace(oldId.value + "." + opName, newId.value + "." + opName);
+    }
+    return rename;
+}
+
 /// Drop every depends_on entry whose target is in `removed`, so deleting an
 /// operation/resource doesn't leave dangling references that fail to parse.
 void dropDependencies(engine::Project& draft, const std::set<std::string>& removed) {
@@ -40,6 +76,23 @@ void dropDependencies(engine::Project& draft, const std::set<std::string>& remov
             });
         }
     }
+}
+
+/// Remove a resource's now-orphaned `resources/<id>.yaml`. writeProject only
+/// emits current resources, so a leftover file would resurrect the resource on
+/// reload. Returns an error string only on a genuine removal failure (a
+/// missing file is fine — `remove` reports that without setting `ec`).
+[[nodiscard]] QString removeResourceFile(const std::filesystem::path& root,
+                                         const std::string& resourceId) {
+    std::error_code ec;
+    const auto path = root / "resources" / (resourceId + ".yaml");
+    std::filesystem::remove(path, ec);
+    if (ec) {
+        return QStringLiteral("could not remove the old file %1 (%2) — delete it manually so the "
+                              "resource doesn't reappear on reload")
+            .arg(QString::fromStdString(path.string()), QString::fromStdString(ec.message()));
+    }
+    return {};
 }
 
 }  // namespace
@@ -159,6 +212,10 @@ bool ProjectModel::renameOperation(const engine::OperationId& id,
         error = QStringLiteral("Name cannot be empty.");
         return false;
     }
+    if (hasIdBreakingChars(trimmed)) {
+        error = QStringLiteral("Name can't contain '.', '/', or '\\'.");
+        return false;
+    }
     const auto dot = id.value.find('.');
     if (dot == std::string::npos) {
         error = QStringLiteral("Malformed operation id: %1").arg(QString::fromStdString(id.value));
@@ -245,6 +302,10 @@ bool ProjectModel::renameResource(const engine::ResourceId& id,
         error = QStringLiteral("Name cannot be empty.");
         return false;
     }
+    if (hasIdBreakingChars(trimmed)) {
+        error = QStringLiteral("Name can't contain '.', '/', or '\\'.");
+        return false;
+    }
     if (trimmed == id.value) {
         return true;  // no change
     }
@@ -262,38 +323,29 @@ bool ProjectModel::renameResource(const engine::ResourceId& id,
     }
 
     // Move the resource under its new id, re-qualifying every operation's id
-    // and resource reference (op map keys — the op-name parts — stay the same).
+    // and resource reference, then re-point cross-resource depends_on in one
+    // pass via the old-id → new-id map (op-name map keys stay the same).
     engine::Resource moved = resIt->second;
     moved.id = newId;
-    for (auto& [opName, op] : moved.operations) {
-        op.resource = newId;
-        op.id = engine::OperationId{newId.value + "." + opName};
-    }
-    // Collect the op-name parts so we can re-point cross-resource depends_on
-    // from "<old>.<op>" to "<new>.<op>" after the move.
-    std::vector<std::string> opNames;
-    opNames.reserve(moved.operations.size());
-    for (const auto& [opName, op] : moved.operations) {
-        opNames.push_back(opName);
-    }
+    const auto rename = requalifyResourceOps(moved, id, newId);
     draft.resources.erase(id);
     draft.resources[newId] = std::move(moved);
-    for (const auto& opName : opNames) {
-        remapDependencies(draft, id.value + "." + opName, newId.value + "." + opName);
-    }
+    remapDependencies(draft, rename);
 
     auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
     if (!written) {
         error = QString::fromStdString(written.error().detail);
         return false;
     }
-    // writeProject only emits current resources, so the old file lingers and
-    // would resurrect the resource on reload — remove it (best effort).
-    std::error_code ec;
-    std::filesystem::remove(root_ / "resources" / (id.value + ".yaml"), ec);
-
+    // Publish first so the UI reflects the rename, then surface any failure to
+    // remove the now-orphaned old file (which would resurrect on reload).
+    const QString removeError = removeResourceFile(root_, id.value);
     project_ = std::make_shared<const engine::Project>(std::move(draft));
     emit saved();
+    if (!removeError.isEmpty()) {
+        error = QStringLiteral("Renamed, but %1").arg(removeError);
+        return false;
+    }
     return true;
 }
 
@@ -322,12 +374,15 @@ bool ProjectModel::deleteResource(const engine::ResourceId& id, QString& error) 
         error = QString::fromStdString(written.error().detail);
         return false;
     }
-    // Remove the resource's now-orphaned file so it doesn't reappear on reload.
-    std::error_code ec;
-    std::filesystem::remove(root_ / "resources" / (id.value + ".yaml"), ec);
-
+    // Publish first so the UI reflects the delete, then surface any failure to
+    // remove the now-orphaned file (which would resurrect on reload).
+    const QString removeError = removeResourceFile(root_, id.value);
     project_ = std::make_shared<const engine::Project>(std::move(draft));
     emit saved();
+    if (!removeError.isEmpty()) {
+        error = QStringLiteral("Deleted, but %1").arg(removeError);
+        return false;
+    }
     return true;
 }
 
