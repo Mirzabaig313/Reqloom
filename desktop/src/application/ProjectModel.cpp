@@ -4,6 +4,8 @@
 
 #include <reqloom/engine/Factories.h>
 
+#include <filesystem>
+#include <system_error>
 #include <utility>
 
 namespace reqloom::desktop {
@@ -188,6 +190,85 @@ bool ProjectModel::deleteOperation(const engine::OperationId& id, QString& error
         error = QString::fromStdString(written.error().detail);
         return false;
     }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
+bool ProjectModel::renameResource(const engine::ResourceId& id,
+                                  const QString& newName,
+                                  QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    const std::string trimmed = newName.trimmed().toStdString();
+    if (trimmed.empty()) {
+        error = QStringLiteral("Name cannot be empty.");
+        return false;
+    }
+    if (trimmed == id.value) {
+        return true;  // no change
+    }
+    const engine::ResourceId newId{trimmed};
+
+    engine::Project draft = *project_;
+    auto resIt = draft.resources.find(id);
+    if (resIt == draft.resources.end()) {
+        error = QStringLiteral("Resource not found: %1").arg(QString::fromStdString(id.value));
+        return false;
+    }
+    if (draft.resources.contains(newId)) {
+        error = QStringLiteral("A resource named “%1” already exists.").arg(newName.trimmed());
+        return false;
+    }
+
+    // Move the resource under its new id, re-qualifying every operation's id
+    // and resource reference (op map keys — the op-name parts — stay the same).
+    engine::Resource moved = resIt->second;
+    moved.id = newId;
+    for (auto& [opName, op] : moved.operations) {
+        op.resource = newId;
+        op.id = engine::OperationId{newId.value + "." + opName};
+    }
+    draft.resources.erase(id);
+    draft.resources[newId] = std::move(moved);
+
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    // writeProject only emits current resources, so the old file lingers and
+    // would resurrect the resource on reload — remove it (best effort).
+    std::error_code ec;
+    std::filesystem::remove(root_ / "resources" / (id.value + ".yaml"), ec);
+
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
+bool ProjectModel::deleteResource(const engine::ResourceId& id, QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    engine::Project draft = *project_;
+    if (draft.resources.erase(id) == 0) {
+        error = QStringLiteral("Resource not found: %1").arg(QString::fromStdString(id.value));
+        return false;
+    }
+
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    // Remove the resource's now-orphaned file so it doesn't reappear on reload.
+    std::error_code ec;
+    std::filesystem::remove(root_ / "resources" / (id.value + ".yaml"), ec);
+
     project_ = std::make_shared<const engine::Project>(std::move(draft));
     emit saved();
     return true;

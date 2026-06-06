@@ -65,6 +65,9 @@ signals:
     void operationEditRequested(QString operationId);
     void operationRenameRequested(QString operationId);
     void operationDeleteRequested(QString operationId);
+    /// Context-menu actions on a resource (folder) row.
+    void resourceRenameRequested(QString resourceId);
+    void resourceDeleteRequested(QString resourceId);
 
 private:
     void onSelectionChanged();

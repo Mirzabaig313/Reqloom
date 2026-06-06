@@ -77,6 +77,17 @@ public:
     /// on success.
     [[nodiscard]] bool deleteOperation(const engine::OperationId& id, QString& error);
 
+    /// Rename resource `id` to `newName`, updating every operation's id and
+    /// resource reference, persisting, and removing the stale `<old>.yaml`
+    /// file. Fails on empty/duplicate names. Emits `saved` on success.
+    [[nodiscard]] bool renameResource(const engine::ResourceId& id,
+                                      const QString& newName,
+                                      QString& error);
+
+    /// Delete resource `id` (and all its operations), persist, and remove its
+    /// `<id>.yaml` file. Emits `saved` on success.
+    [[nodiscard]] bool deleteResource(const engine::ResourceId& id, QString& error);
+
 signals:
     void loaded();
     void loadFailed(QString code, QString detail);
