@@ -4,11 +4,45 @@
 
 #include <reqloom/engine/Factories.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <set>
+#include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace reqloom::desktop {
+
+namespace {
+
+/// Rewrite every depends_on entry equal to `from` to `to` across all
+/// operations, so renaming an operation/resource keeps cross-references valid.
+void remapDependencies(engine::Project& draft, const std::string& from, const std::string& to) {
+    for (auto& [resId, resource] : draft.resources) {
+        for (auto& [opName, op] : resource.operations) {
+            for (auto& dep : op.explicitDependencies) {
+                if (dep.value == from) {
+                    dep.value = to;
+                }
+            }
+        }
+    }
+}
+
+/// Drop every depends_on entry whose target is in `removed`, so deleting an
+/// operation/resource doesn't leave dangling references that fail to parse.
+void dropDependencies(engine::Project& draft, const std::set<std::string>& removed) {
+    for (auto& [resId, resource] : draft.resources) {
+        for (auto& [opName, op] : resource.operations) {
+            std::erase_if(op.explicitDependencies, [&removed](const engine::OperationId& dep) {
+                return removed.contains(dep.value);
+            });
+        }
+    }
+}
+
+}  // namespace
 
 ProjectModel::ProjectModel(QObject* parent) : QObject(parent) {}
 
@@ -153,6 +187,8 @@ bool ProjectModel::renameOperation(const engine::OperationId& id,
     moved.id = engine::OperationId{resId.value + "." + trimmed};
     resIt->second.operations.erase(opName);
     resIt->second.operations[trimmed] = std::move(moved);
+    // Keep other operations' depends_on pointing at the renamed operation.
+    remapDependencies(draft, id.value, resId.value + "." + trimmed);
 
     auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
     if (!written) {
@@ -184,6 +220,8 @@ bool ProjectModel::deleteOperation(const engine::OperationId& id, QString& error
         return false;
     }
     resIt->second.operations.erase(opName);
+    // Drop any other operation's now-dangling depends_on entry for it.
+    dropDependencies(draft, {id.value});
 
     auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
     if (!written) {
@@ -231,8 +269,18 @@ bool ProjectModel::renameResource(const engine::ResourceId& id,
         op.resource = newId;
         op.id = engine::OperationId{newId.value + "." + opName};
     }
+    // Collect the op-name parts so we can re-point cross-resource depends_on
+    // from "<old>.<op>" to "<new>.<op>" after the move.
+    std::vector<std::string> opNames;
+    opNames.reserve(moved.operations.size());
+    for (const auto& [opName, op] : moved.operations) {
+        opNames.push_back(opName);
+    }
     draft.resources.erase(id);
     draft.resources[newId] = std::move(moved);
+    for (const auto& opName : opNames) {
+        remapDependencies(draft, id.value + "." + opName, newId.value + "." + opName);
+    }
 
     auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
     if (!written) {
@@ -255,10 +303,19 @@ bool ProjectModel::deleteResource(const engine::ResourceId& id, QString& error) 
         return false;
     }
     engine::Project draft = *project_;
-    if (draft.resources.erase(id) == 0) {
+    auto resIt = draft.resources.find(id);
+    if (resIt == draft.resources.end()) {
         error = QStringLiteral("Resource not found: %1").arg(QString::fromStdString(id.value));
         return false;
     }
+    // Gather the resource's operation ids so cross-resource depends_on entries
+    // pointing into it can be dropped (they'd otherwise dangle on reload).
+    std::set<std::string> removedOps;
+    for (const auto& [opName, op] : resIt->second.operations) {
+        removedOps.insert(id.value + "." + opName);
+    }
+    draft.resources.erase(resIt);
+    dropDependencies(draft, removedOps);
 
     auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
     if (!written) {
