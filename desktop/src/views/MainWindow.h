@@ -5,6 +5,7 @@
 #pragma once
 
 #include "../application/LayoutSettings.h"
+#include "../application/SavedResponseStore.h"
 
 #include <QtCore/QList>
 #include <QtWidgets/QMainWindow>
@@ -83,6 +84,17 @@ private:
     void onRunningChanged(bool running);
     void onRunFinished(const RunReport& report);
 
+    /// Persist the response panel's current response as a named example for the
+    /// selected operation, then refresh the panel's examples list.
+    void onSaveResponse();
+    /// Push the saved examples for `operationId` into the response panel.
+    void refreshSavedExamples(const QString& operationId);
+
+    /// Context-menu actions on a saved example (from the explorer).
+    void onExampleRename(const QString& operationId, const QString& name);
+    void onExampleDuplicate(const QString& operationId, const QString& name);
+    void onExampleDelete(const QString& operationId, const QString& name);
+
     void openCommandPalette();
     void onPaletteItemChosen(const widgets::PaletteItem& item);
     void runCurrentOperation(bool clean, bool dryRun);
@@ -136,6 +148,9 @@ private:
     QList<int> responsePreCollapseSizes_;
     bool explorerCollapsed_{false};
     bool responseCollapsed_{false};
+
+    // Per-project saved example responses (Apidog "examples").
+    SavedResponseStore savedResponses_;
 
     // Set while programmatically restoring the saved environment on project
     // load, so the combo's change handler doesn't echo the value back to

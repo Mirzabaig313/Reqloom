@@ -29,7 +29,9 @@
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QHBoxLayout>
+#include <QtWidgets/QInputDialog>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QSplitter>
@@ -366,6 +368,31 @@ void MainWindow::connectSignals() {
         explorer_, &ProjectExplorerWidget::operationSelected, this, [this](const QString& opId) {
             requestEditor_->showOperation(project_, opId);
         });
+    connect(explorer_,
+            &ProjectExplorerWidget::exampleSelected,
+            this,
+            [this](const QString& opId, const QString& name) {
+                // Load the operation, then show the stored example response.
+                requestEditor_->showOperation(project_, opId);
+                for (const SavedResponse& ex : savedResponses_.list(opId)) {
+                    if (ex.name == name) {
+                        responseViewer_->showSavedResponse(ex);
+                        break;
+                    }
+                }
+            });
+    connect(explorer_,
+            &ProjectExplorerWidget::exampleRenameRequested,
+            this,
+            &MainWindow::onExampleRename);
+    connect(explorer_,
+            &ProjectExplorerWidget::exampleDuplicateRequested,
+            this,
+            &MainWindow::onExampleDuplicate);
+    connect(explorer_,
+            &ProjectExplorerWidget::exampleDeleteRequested,
+            this,
+            &MainWindow::onExampleDelete);
     connect(
         explorer_, &ProjectExplorerWidget::operationActivated, this, [this](const QString& opId) {
             requestEditor_->showOperation(project_, opId);
@@ -421,6 +448,10 @@ void MainWindow::connectSignals() {
             widgets::Toast::show(
                 this, themeManager_.theme(), QStringLiteral("Copied  %1").arg(path));
         });
+    connect(responseViewer_,
+            &ResponseViewerPanel::saveResponseRequested,
+            this,
+            &MainWindow::onSaveResponse);
 
     connect(runController_, &RunController::runningChanged, this, &MainWindow::onRunningChanged);
     connect(runController_, &RunController::runFinished, this, &MainWindow::onRunFinished);
@@ -636,6 +667,12 @@ void MainWindow::onProjectLoaded() {
     // Swap from the first-run empty state to the workbench (index 1).
     rootStack_->setCurrentIndex(1);
 
+    // Saved example responses live alongside the project on disk.
+    savedResponses_.setProjectRoot(project_.rootPath());
+    for (const QString& opId : savedResponses_.operationIds()) {
+        refreshSavedExamples(opId);
+    }
+
     envCombo_->clear();
     envCombo_->addItems(project_.environmentNames());
     envCombo_->setEnabled(true);
@@ -737,6 +774,83 @@ void MainWindow::onRunFinished(const RunReport& report) {
                                                                  : QStringLiteral("finished"))
             .arg(report.steps.size()),
         5000);
+}
+
+void MainWindow::onSaveResponse() {
+    const QString opId = requestEditor_->currentOperationId();
+    if (opId.isEmpty() || !responseViewer_->hasResponse()) {
+        return;
+    }
+    SavedResponse current = responseViewer_->currentResponse();
+    // Suggest a status-based default name (e.g. "Success" for 2xx).
+    const QString suggested = current.status >= 200 && current.status < 300
+                                  ? QStringLiteral("Success")
+                                  : QStringLiteral("HTTP %1").arg(current.status);
+    bool ok = false;
+    const QString name = QInputDialog::getText(this,
+                                               QStringLiteral("Save Response Example"),
+                                               QStringLiteral("Example name:"),
+                                               QLineEdit::Normal,
+                                               suggested,
+                                               &ok);
+    if (!ok || name.trimmed().isEmpty()) {
+        return;
+    }
+    current.name = name.trimmed();
+    if (savedResponses_.save(opId, current)) {
+        refreshSavedExamples(opId);
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Saved example “%1”").arg(current.name));
+    } else {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Open a project to save examples."), 4000);
+    }
+}
+
+void MainWindow::refreshSavedExamples(const QString& operationId) {
+    QStringList names;
+    for (const SavedResponse& ex : savedResponses_.list(operationId)) {
+        names.append(ex.name);
+    }
+    explorer_->setSavedExamples(operationId, names);
+}
+
+void MainWindow::onExampleRename(const QString& operationId, const QString& name) {
+    bool ok = false;
+    const QString newName = QInputDialog::getText(this,
+                                                  QStringLiteral("Rename Example"),
+                                                  QStringLiteral("New name:"),
+                                                  QLineEdit::Normal,
+                                                  name,
+                                                  &ok);
+    if (!ok || newName.trimmed() == name) {
+        return;
+    }
+    if (savedResponses_.rename(operationId, name, newName.trimmed())) {
+        refreshSavedExamples(operationId);
+        widgets::Toast::show(this, themeManager_.theme(), QStringLiteral("Renamed example"));
+    } else {
+        widgets::Toast::show(this,
+                             themeManager_.theme(),
+                             QStringLiteral("That name is empty or already in use."),
+                             4000);
+    }
+}
+
+void MainWindow::onExampleDuplicate(const QString& operationId, const QString& name) {
+    const QString created = savedResponses_.duplicate(operationId, name);
+    if (!created.isEmpty()) {
+        refreshSavedExamples(operationId);
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Duplicated to “%1”").arg(created));
+    }
+}
+
+void MainWindow::onExampleDelete(const QString& operationId, const QString& name) {
+    savedResponses_.remove(operationId, name);
+    refreshSavedExamples(operationId);
+    widgets::Toast::show(
+        this, themeManager_.theme(), QStringLiteral("Deleted example “%1”").arg(name));
 }
 
 QString MainWindow::loadSavedEnvironment() const {

@@ -20,6 +20,8 @@ constexpr int kOperationId = Qt::UserRole + 1;  ///< QString fully-qualified op 
 constexpr int kIsOperation = Qt::UserRole + 2;  ///< bool: operation row vs. group
 constexpr int kMethodText = Qt::UserRole + 3;   ///< QString verb, e.g. "POST"
 constexpr int kMethodColor = Qt::UserRole + 4;  ///< QColor resolved for the theme
+constexpr int kIsExample = Qt::UserRole + 5;    ///< bool: saved-example row under an op
+constexpr int kExampleName = Qt::UserRole + 6;  ///< QString saved-example name
 }  // namespace roles
 
 class MethodItemDelegate : public QStyledItemDelegate {

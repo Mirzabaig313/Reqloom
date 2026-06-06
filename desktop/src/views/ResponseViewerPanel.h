@@ -7,13 +7,16 @@
 // the body tabs explain why they're empty rather than showing a blank pane.
 #pragma once
 
+#include "../application/SavedResponseStore.h"
 #include "../theming/Theme.h"
 
 #include <QtWidgets/QWidget>
 
 class QJsonValue;
+class QComboBox;
 class QLabel;
 class QPlainTextEdit;
+class QPushButton;
 class QStackedWidget;
 class QTabWidget;
 class QTextEdit;
@@ -48,10 +51,23 @@ public slots:
     /// when a different project loads so diffs don't compare across projects.
     void clearHistory();
 
+    /// Render a saved example (status/headers/body) without a network run.
+    void showSavedResponse(const SavedResponse& example);
+
+    /// Whether a response is currently shown (so Save can be enabled).
+    [[nodiscard]] bool hasResponse() const noexcept;
+
+    /// The currently displayed response, for saving as an example. The `name`
+    /// is left empty for the caller to fill.
+    [[nodiscard]] SavedResponse currentResponse() const;
+
 signals:
     /// Emitted when the user clicks a tree value and its JSONPath is copied to
     /// the clipboard (FR-7.4). The shell surfaces a confirmation toast.
     void jsonPathCopied(QString path);
+
+    /// The user clicked "Save" to persist the current response as an example.
+    void saveResponseRequested();
 
 private:
     void renderBody(const QString& body);
@@ -63,6 +79,7 @@ private:
     [[nodiscard]] QColor statusColor(int httpStatus) const;
 
     QLabel* statusLabel_{nullptr};
+    QPushButton* saveButton_{nullptr};
     QStackedWidget* viewStack_{nullptr};
     widgets::EmptyState* emptyState_{nullptr};
     QTabWidget* tabs_{nullptr};
@@ -74,6 +91,12 @@ private:
     // Last HTTP status shown, so a runtime theme switch can re-resolve the
     // status-label colour (-1 = nothing shown yet).
     int lastStatus_{-1};
+    // The currently displayed response, captured so it can be saved as an
+    // example. headers/body mirror what's on screen.
+    QString currentHeaders_;
+    QString currentRawBody_;
+    int currentBodySize_{0};
+    qint64 currentElapsedMs_{0};
     // The body of the previous response (pretty-printed) so the Diff tab can
     // compare the current one against it. Empty until two bodies have arrived.
     QString previousBody_;
