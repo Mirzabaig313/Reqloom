@@ -7,6 +7,7 @@
 
 #include <reqloom/engine/Operation.h>
 
+#include <QtCore/QHash>
 #include <QtWidgets/QWidget>
 
 class QLineEdit;
@@ -37,6 +38,10 @@ public:
     /// Rebuild the tree from the loaded project.
     void populate(const ProjectModel& project);
 
+    /// Set the saved-example child rows under an operation (Apidog-style
+    /// examples nested below the endpoint). Replaces any existing example rows.
+    void setSavedExamples(const QString& operationId, const QStringList& exampleNames);
+
     /// Adopt a new theme: re-tint method chips and refresh fonts.
     void applyTheme(const theming::Theme& theme);
 
@@ -49,10 +54,18 @@ signals:
     /// The user clicked the header's collapse control; the shell hides this
     /// panel and shows the thin rail.
     void collapseRequested();
+    /// A saved-example row was selected; the shell loads the operation and
+    /// shows that stored response.
+    void exampleSelected(QString operationId, QString exampleName);
+    /// Context-menu actions on a saved-example row.
+    void exampleRenameRequested(QString operationId, QString exampleName);
+    void exampleDuplicateRequested(QString operationId, QString exampleName);
+    void exampleDeleteRequested(QString operationId, QString exampleName);
 
 private:
     void onSelectionChanged();
     void onItemActivated(QTreeWidgetItem* item, int column);
+    void onContextMenu(const QPoint& pos);
     void applyFilter(const QString& text);
     void recolorMethods();
 
@@ -60,6 +73,8 @@ private:
     QTreeWidget* tree_{nullptr};
     widgets::PanelHeader* header_{nullptr};
     widgets::MethodItemDelegate* methodDelegate_{nullptr};
+    // Operation id → its tree item, so saved-example children can be attached.
+    QHash<QString, QTreeWidgetItem*> opItems_;
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 

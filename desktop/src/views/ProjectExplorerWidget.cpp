@@ -10,9 +10,12 @@
 #include "Formatting.h"
 
 #include <QtCore/Qt>
+#include <QtGui/QAction>
+#include <QtGui/QBrush>
 #include <QtGui/QColor>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QToolButton>
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QTreeWidgetItem>
@@ -109,6 +112,13 @@ ProjectExplorerWidget::ProjectExplorerWidget(QWidget* parent) : QWidget(parent) 
             &ProjectExplorerWidget::onSelectionChanged);
     connect(tree_, &QTreeWidget::itemActivated, this, &ProjectExplorerWidget::onItemActivated);
     connect(filter_, &QLineEdit::textChanged, this, &ProjectExplorerWidget::applyFilter);
+
+    // Right-click menu for saved-example rows (Rename / Duplicate / Delete).
+    tree_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tree_,
+            &QTreeWidget::customContextMenuRequested,
+            this,
+            &ProjectExplorerWidget::onContextMenu);
 }
 
 ProjectExplorerWidget::~ProjectExplorerWidget() = default;
@@ -119,6 +129,7 @@ void ProjectExplorerWidget::clear() {
 
 void ProjectExplorerWidget::populate(const ProjectModel& project) {
     tree_->clear();
+    opItems_.clear();
     if (!project.hasProject()) {
         header_->setTitle(QStringLiteral("Explorer"));
         header_->setSubtitle(QStringLiteral("No project open"));
@@ -173,10 +184,34 @@ void ProjectExplorerWidget::populate(const ProjectModel& project) {
             opItem->setData(0, roles::kOperationId, QString::fromStdString(op.id.value));
             opItem->setData(0, roles::kMethodText, method);
             opItem->setData(0, roles::kMethodColor, theme_.method(format::methodColor(method)));
+            opItems_.insert(QString::fromStdString(op.id.value), opItem);
         }
     }
 
     tree_->expandAll();
+}
+
+void ProjectExplorerWidget::setSavedExamples(const QString& operationId,
+                                             const QStringList& exampleNames) {
+    const auto it = opItems_.constFind(operationId);
+    if (it == opItems_.constEnd()) {
+        return;
+    }
+    QTreeWidgetItem* opItem = it.value();
+    // Replace any existing example children.
+    while (opItem->childCount() > 0) {
+        delete opItem->takeChild(0);
+    }
+    for (const QString& name : exampleNames) {
+        auto* exItem = new QTreeWidgetItem(opItem);
+        exItem->setText(0, QStringLiteral("⚡  %1").arg(name));
+        exItem->setData(0, roles::kIsOperation, false);
+        exItem->setData(0, roles::kIsExample, true);
+        exItem->setData(0, roles::kExampleName, name);
+        exItem->setData(0, roles::kOperationId, operationId);
+        exItem->setForeground(0, QBrush(theme_.palette().textSecondary));
+        exItem->setToolTip(0, QStringLiteral("Saved example — click to load"));
+    }
 }
 
 void ProjectExplorerWidget::applyTheme(const theming::Theme& theme) {
@@ -200,14 +235,51 @@ void ProjectExplorerWidget::onSelectionChanged() {
         return;
     }
     auto* item = items.first();
+    if (item->data(0, roles::kIsExample).toBool()) {
+        emit exampleSelected(item->data(0, roles::kOperationId).toString(),
+                             item->data(0, roles::kExampleName).toString());
+        return;
+    }
     if (item->data(0, roles::kIsOperation).toBool()) {
         emit operationSelected(item->data(0, roles::kOperationId).toString());
     }
 }
 
 void ProjectExplorerWidget::onItemActivated(QTreeWidgetItem* item, int /*column*/) {
-    if (item != nullptr && item->data(0, roles::kIsOperation).toBool()) {
+    if (item == nullptr) {
+        return;
+    }
+    if (item->data(0, roles::kIsExample).toBool()) {
+        emit exampleSelected(item->data(0, roles::kOperationId).toString(),
+                             item->data(0, roles::kExampleName).toString());
+        return;
+    }
+    if (item->data(0, roles::kIsOperation).toBool()) {
         emit operationActivated(item->data(0, roles::kOperationId).toString());
+    }
+}
+
+void ProjectExplorerWidget::onContextMenu(const QPoint& pos) {
+    QTreeWidgetItem* item = tree_->itemAt(pos);
+    if (item == nullptr || !item->data(0, roles::kIsExample).toBool()) {
+        return;  // menu only applies to saved-example rows
+    }
+    const QString opId = item->data(0, roles::kOperationId).toString();
+    const QString name = item->data(0, roles::kExampleName).toString();
+
+    QMenu menu(this);
+    QAction* rename = menu.addAction(QStringLiteral("Rename"));
+    QAction* duplicate = menu.addAction(QStringLiteral("Duplicate"));
+    menu.addSeparator();
+    QAction* remove = menu.addAction(QStringLiteral("Delete"));
+
+    const QAction* chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
+    if (chosen == rename) {
+        emit exampleRenameRequested(opId, name);
+    } else if (chosen == duplicate) {
+        emit exampleDuplicateRequested(opId, name);
+    } else if (chosen == remove) {
+        emit exampleDeleteRequested(opId, name);
     }
 }
 

@@ -16,6 +16,8 @@ qt_add_executable(reqloom-desktop WIN32 MACOSX_BUNDLE
     src/application/SecretManager.h
     src/application/LayoutSettings.cpp
     src/application/LayoutSettings.h
+    src/application/SavedResponseStore.cpp
+    src/application/SavedResponseStore.h
     src/theming/Color.cpp
     src/theming/Color.h
     src/theming/Theme.cpp
