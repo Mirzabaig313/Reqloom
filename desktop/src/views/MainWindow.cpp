@@ -460,6 +460,14 @@ void MainWindow::connectSignals() {
             &ProjectExplorerWidget::operationDeleteRequested,
             this,
             &MainWindow::onOperationDelete);
+    connect(explorer_,
+            &ProjectExplorerWidget::resourceRenameRequested,
+            this,
+            &MainWindow::onResourceRename);
+    connect(explorer_,
+            &ProjectExplorerWidget::resourceDeleteRequested,
+            this,
+            &MainWindow::onResourceDelete);
     connect(
         explorer_, &ProjectExplorerWidget::operationActivated, this, [this](const QString& opId) {
             requestEditor_->showOperation(project_, opId);
@@ -1005,6 +1013,59 @@ void MainWindow::onOperationDelete(const QString& operationId) {
         }
         widgets::Toast::show(
             this, themeManager_.theme(), QStringLiteral("Deleted “%1”").arg(operationId));
+    } else {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Delete failed: %1").arg(error), 4000);
+    }
+}
+
+void MainWindow::onResourceRename(const QString& resourceId) {
+    if (runController_->isRunning()) {
+        return;
+    }
+    bool ok = false;
+    const QString newName = QInputDialog::getText(this,
+                                                  QStringLiteral("Rename Resource"),
+                                                  QStringLiteral("New name:"),
+                                                  QLineEdit::Normal,
+                                                  resourceId,
+                                                  &ok);
+    if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == resourceId) {
+        return;
+    }
+    QString error;
+    if (project_.renameResource(
+            engine::ResourceId{resourceId.toStdString()}, newName.trimmed(), error)) {
+        // The current operation (if any) may have been re-qualified; its id is
+        // now stale, so clear the editor to avoid showing a dangling op.
+        requestEditor_->clearOperation();
+        widgets::Toast::show(this, themeManager_.theme(), QStringLiteral("Renamed resource"));
+    } else {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Rename failed: %1").arg(error), 4000);
+    }
+}
+
+void MainWindow::onResourceDelete(const QString& resourceId) {
+    if (runController_->isRunning()) {
+        return;
+    }
+    const auto answer = QMessageBox::question(
+        this,
+        QStringLiteral("Delete Resource"),
+        QStringLiteral("Delete the “%1” resource and all its operations? This rewrites the "
+                       "project files on disk.")
+            .arg(resourceId),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+    QString error;
+    if (project_.deleteResource(engine::ResourceId{resourceId.toStdString()}, error)) {
+        requestEditor_->clearOperation();
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Deleted resource “%1”").arg(resourceId));
     } else {
         widgets::Toast::show(
             this, themeManager_.theme(), QStringLiteral("Delete failed: %1").arg(error), 4000);

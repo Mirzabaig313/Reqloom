@@ -100,6 +100,10 @@ private:
     void onOperationRename(const QString& operationId);
     void onOperationDelete(const QString& operationId);
 
+    /// Context-menu actions on a resource/folder (from the explorer).
+    void onResourceRename(const QString& resourceId);
+    void onResourceDelete(const QString& resourceId);
+
     void openCommandPalette();
     void onPaletteItemChosen(const widgets::PaletteItem& item);
     void runCurrentOperation(bool clean, bool dryRun);
