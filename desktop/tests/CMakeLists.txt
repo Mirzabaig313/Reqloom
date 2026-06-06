@@ -72,6 +72,7 @@ gtest_discover_tests(reqloom-desktop-ui-tests
 # because it links reqloom::engine.
 add_executable(reqloom-desktop-secret-tests
     unit/SecretManagerTest.cpp
+    unit/ProjectModelTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp

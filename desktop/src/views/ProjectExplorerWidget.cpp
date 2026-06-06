@@ -168,6 +168,7 @@ void ProjectExplorerWidget::populate(const ProjectModel& project) {
         resItem->setText(0, QStringLiteral("📂  %1").arg(resName));
         resItem->setToolTip(0, resName);
         resItem->setData(0, roles::kIsOperation, false);
+        resItem->setData(0, roles::kResourceId, resName);
         for (const auto& [opName, op] : resource.operations) {
             auto* opItem = new QTreeWidgetItem(resItem);
             const QString name = QString::fromStdString(opName);
@@ -297,6 +298,21 @@ void ProjectExplorerWidget::onContextMenu(const QPoint& pos) {
             emit operationRenameRequested(opId);
         } else if (chosen == remove) {
             emit operationDeleteRequested(opId);
+        }
+        return;
+    }
+
+    const QString resourceId = item->data(0, roles::kResourceId).toString();
+    if (!resourceId.isEmpty()) {
+        QMenu menu(this);
+        QAction* rename = menu.addAction(QStringLiteral("Rename"));
+        menu.addSeparator();
+        QAction* remove = menu.addAction(QStringLiteral("Delete"));
+        const QAction* chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
+        if (chosen == rename) {
+            emit resourceRenameRequested(resourceId);
+        } else if (chosen == remove) {
+            emit resourceDeleteRequested(resourceId);
         }
     }
 }
