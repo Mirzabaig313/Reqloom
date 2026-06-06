@@ -301,7 +301,7 @@ QMenu {
     padding: %7px;
 }
 QMenu::item { padding: %7px %6px; border-radius: 4px; }
-QMenu::item:selected { background-color: %11; color: %12; }
+QMenu::item:selected { background-color: %15; color: %12; }
 
 QStatusBar {
     background-color: %4;
@@ -347,6 +347,21 @@ QToolButton#railButton:hover {
     background-color: %8;
     border-color: %15;
     color: %2;
+}
+QToolButton#railButton:pressed,
+QToolButton#railButton:checked,
+QToolButton#railButton:on {
+    background-color: %8;
+    border-color: %3;
+    color: %2;
+}
+/* Drop the default dropdown arrow + its reserved column so the glyph stays
+   centred and the button doesn't render as a wide split-button. */
+QToolButton#railButton::menu-indicator,
+QToolButton#railButton::menu-button {
+    image: none;
+    width: 0;
+    border: none;
 }
 
 /* Request "address bar": method + path + Send, pinned to the top of the

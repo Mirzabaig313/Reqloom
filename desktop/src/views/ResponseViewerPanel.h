@@ -13,7 +13,6 @@
 #include <QtWidgets/QWidget>
 
 class QJsonValue;
-class QComboBox;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;

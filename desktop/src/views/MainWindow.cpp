@@ -34,6 +34,7 @@
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QMenuBar>
+#include <QtWidgets/QMessageBox>
 #include <QtWidgets/QSplitter>
 #include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QStatusBar>
@@ -68,6 +69,10 @@ MainWindow::MainWindow(engine::ExecutionEngine& engine,
     density_ = LayoutSettings::loadDensity(settings);
     applyDensity(density_);
     restoreSplitterSizes();
+    // Restore the request/response split orientation (default side-by-side).
+    const bool splitVertical =
+        settings.value(QStringLiteral("layout/responseSplitVertical"), false).toBool();
+    setResponseSplitOrientation(splitVertical ? Qt::Vertical : Qt::Horizontal);
     if (settings.value(QStringLiteral("layout/explorerCollapsed"), false).toBool()) {
         setExplorerCollapsed(true);
     }
@@ -105,9 +110,44 @@ void MainWindow::buildLayout() {
     rightTabs_->setMinimumWidth(260);
     rightTabs_->addTab(responseViewer_, QStringLiteral("Response"));
     rightTabs_->addTab(timeline_, QStringLiteral("Timeline"));
-    // A collapse chevron in the tab strip's top-right corner (collapses the
-    // response panel toward the right edge, giving the editor more room).
-    auto* collapseResponseBtn = new QToolButton(rightTabs_);
+
+    // Top-right corner controls: a split-layout menu and a collapse chevron.
+    auto* corner = new QWidget(rightTabs_);
+    auto* cornerLayout = new QHBoxLayout(corner);
+    cornerLayout->setContentsMargins(0, 0, theming::Theme::space(theming::Space::Xs), 0);
+    cornerLayout->setSpacing(theming::Theme::space(theming::Space::Xs));
+
+    auto* splitBtn = new QToolButton(corner);
+    splitBtn->setObjectName(QStringLiteral("railButton"));
+    splitBtn->setText(QStringLiteral("◫"));
+    splitBtn->setAutoRaise(true);
+    splitBtn->setToolTip(QStringLiteral("Split layout"));
+    splitBtn->setAccessibleName(QStringLiteral("Split layout"));
+    splitBtn->setPopupMode(QToolButton::InstantPopup);
+    auto* splitMenu = new QMenu(splitBtn);
+    splitVerticalAction_ = splitMenu->addAction(QStringLiteral("Split Vertically"));
+    splitHorizontalAction_ = splitMenu->addAction(QStringLiteral("Split Horizontally"));
+    splitMenu->addSeparator();
+    noSplitAction_ = splitMenu->addAction(QStringLiteral("No Split"));
+    splitVerticalAction_->setCheckable(true);
+    splitHorizontalAction_->setCheckable(true);
+    noSplitAction_->setCheckable(true);
+    auto* splitGroup = new QActionGroup(this);
+    splitGroup->setExclusive(true);
+    splitGroup->addAction(splitVerticalAction_);
+    splitGroup->addAction(splitHorizontalAction_);
+    splitGroup->addAction(noSplitAction_);
+    connect(splitVerticalAction_, &QAction::triggered, this, [this]() {
+        setResponseSplitOrientation(Qt::Horizontal);  // side-by-side
+    });
+    connect(splitHorizontalAction_, &QAction::triggered, this, [this]() {
+        setResponseSplitOrientation(Qt::Vertical);  // stacked
+    });
+    connect(noSplitAction_, &QAction::triggered, this, [this]() { setResponseCollapsed(true); });
+    splitBtn->setMenu(splitMenu);
+    cornerLayout->addWidget(splitBtn);
+
+    auto* collapseResponseBtn = new QToolButton(corner);
     collapseResponseBtn->setObjectName(QStringLiteral("railButton"));
     collapseResponseBtn->setText(QStringLiteral("›"));
     collapseResponseBtn->setAutoRaise(true);
@@ -115,19 +155,28 @@ void MainWindow::buildLayout() {
     collapseResponseBtn->setAccessibleName(QStringLiteral("Collapse response panel"));
     connect(
         collapseResponseBtn, &QToolButton::clicked, this, [this]() { setResponseCollapsed(true); });
-    rightTabs_->setCornerWidget(collapseResponseBtn, Qt::TopRightCorner);
+    cornerLayout->addWidget(collapseResponseBtn);
+    rightTabs_->setCornerWidget(corner, Qt::TopRightCorner);
 
-    // Three-pane workbench (DESIGN.md §5.2): explorer | request editor |
-    // response/timeline tabs. Default ratio 22 / 44 / 34; the user's drag is
+    // The request editor and response panel share a center splitter whose
+    // orientation the user toggles (Split Vertically = side-by-side =
+    // Qt::Horizontal; Split Horizontally = stacked = Qt::Vertical).
+    centerSplitter_ = new QSplitter(Qt::Horizontal, this);
+    centerSplitter_->setObjectName(QStringLiteral("centerSplitter"));
+    centerSplitter_->addWidget(requestEditor_);
+    centerSplitter_->addWidget(rightTabs_);
+    centerSplitter_->setStretchFactor(0, 56);
+    centerSplitter_->setStretchFactor(1, 44);
+    centerSplitter_->setChildrenCollapsible(false);
+
+    // Workbench: explorer | (request editor + response). The user's drags are
     // persisted to QSettings and restored on next launch.
     mainSplitter_ = new QSplitter(Qt::Horizontal, this);
     mainSplitter_->setObjectName(QStringLiteral("mainSplitter"));
     mainSplitter_->addWidget(explorer_);
-    mainSplitter_->addWidget(requestEditor_);
-    mainSplitter_->addWidget(rightTabs_);
+    mainSplitter_->addWidget(centerSplitter_);
     mainSplitter_->setStretchFactor(0, 22);
-    mainSplitter_->setStretchFactor(1, 44);
-    mainSplitter_->setStretchFactor(2, 34);
+    mainSplitter_->setStretchFactor(1, 78);
     mainSplitter_->setChildrenCollapsible(false);
 
     // Thin collapsed rails (hidden until a pane is collapsed): a single expand
@@ -360,9 +409,15 @@ void MainWindow::buildShortcuts() {
 void MainWindow::connectSignals() {
     connect(&project_, &ProjectModel::loaded, this, &MainWindow::onProjectLoaded);
     connect(&project_, &ProjectModel::loadFailed, this, &MainWindow::onProjectLoadFailed);
-    // A saved edit may change an operation's method/path, so refresh the
-    // explorer's rows (method chips) to match the persisted project.
-    connect(&project_, &ProjectModel::saved, this, [this]() { explorer_->populate(project_); });
+    // A saved edit (or rename/delete) rewrites the project, so rebuild the
+    // explorer rows and re-attach the saved-example children that populate()
+    // clears.
+    connect(&project_, &ProjectModel::saved, this, [this]() {
+        explorer_->populate(project_);
+        for (const QString& opId : savedResponses_.operationIds()) {
+            refreshSavedExamples(opId);
+        }
+    });
 
     connect(
         explorer_, &ProjectExplorerWidget::operationSelected, this, [this](const QString& opId) {
@@ -393,6 +448,18 @@ void MainWindow::connectSignals() {
             &ProjectExplorerWidget::exampleDeleteRequested,
             this,
             &MainWindow::onExampleDelete);
+    connect(explorer_,
+            &ProjectExplorerWidget::operationEditRequested,
+            this,
+            &MainWindow::onOperationEdit);
+    connect(explorer_,
+            &ProjectExplorerWidget::operationRenameRequested,
+            this,
+            &MainWindow::onOperationRename);
+    connect(explorer_,
+            &ProjectExplorerWidget::operationDeleteRequested,
+            this,
+            &MainWindow::onOperationDelete);
     connect(
         explorer_, &ProjectExplorerWidget::operationActivated, this, [this](const QString& opId) {
             requestEditor_->showOperation(project_, opId);
@@ -570,11 +637,18 @@ void MainWindow::restoreSplitterSizes() {
     if (sizes.size() == mainSplitter_->count()) {
         mainSplitter_->setSizes(sizes);
     }
+    const QList<int> centerSizes =
+        LayoutSettings::loadSplitter(settings, QStringLiteral("centerSplitter"));
+    if (centerSizes.size() == centerSplitter_->count()) {
+        centerSplitter_->setSizes(centerSizes);
+    }
 }
 
 void MainWindow::persistSplitterSizes() {
     QSettings settings;
     LayoutSettings::saveSplitter(settings, QStringLiteral("mainSplitter"), mainSplitter_->sizes());
+    LayoutSettings::saveSplitter(
+        settings, QStringLiteral("centerSplitter"), centerSplitter_->sizes());
 }
 
 void MainWindow::setExplorerCollapsed(bool collapsed) {
@@ -609,21 +683,40 @@ void MainWindow::setResponseCollapsed(bool collapsed) {
     }
     responseCollapsed_ = collapsed;
     if (collapsed) {
-        responsePreCollapseSizes_ = mainSplitter_->sizes();
+        responsePreCollapseSizes_ = centerSplitter_->sizes();
         rightTabs_->hide();
         responseRail_->setVisible(true);
     } else {
         responseRail_->setVisible(false);
         rightTabs_->show();
-        if (responsePreCollapseSizes_.size() == mainSplitter_->count()) {
-            mainSplitter_->setSizes(responsePreCollapseSizes_);
+        if (responsePreCollapseSizes_.size() == centerSplitter_->count()) {
+            centerSplitter_->setSizes(responsePreCollapseSizes_);
         }
     }
     if (toggleResponseAction_ != nullptr) {
         toggleResponseAction_->setChecked(!collapsed);
     }
+    if (noSplitAction_ != nullptr) {
+        noSplitAction_->setChecked(collapsed);
+    }
     QSettings settings;
     settings.setValue(QStringLiteral("layout/responseCollapsed"), collapsed);
+}
+
+void MainWindow::setResponseSplitOrientation(Qt::Orientation orientation) {
+    // Choosing a split implies the response is shown.
+    if (responseCollapsed_) {
+        setResponseCollapsed(false);
+    }
+    centerSplitter_->setOrientation(orientation);
+    if (splitVerticalAction_ != nullptr) {
+        splitVerticalAction_->setChecked(orientation == Qt::Horizontal);
+    }
+    if (splitHorizontalAction_ != nullptr) {
+        splitHorizontalAction_->setChecked(orientation == Qt::Vertical);
+    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("layout/responseSplitVertical"), orientation == Qt::Vertical);
 }
 
 void MainWindow::applyDensity(Density density) {
@@ -851,6 +944,71 @@ void MainWindow::onExampleDelete(const QString& operationId, const QString& name
     refreshSavedExamples(operationId);
     widgets::Toast::show(
         this, themeManager_.theme(), QStringLiteral("Deleted example “%1”").arg(name));
+}
+
+void MainWindow::onOperationEdit(const QString& operationId) {
+    requestEditor_->showOperation(project_, operationId);
+    requestEditor_->beginEdit();
+}
+
+void MainWindow::onOperationRename(const QString& operationId) {
+    if (runController_->isRunning()) {
+        return;
+    }
+    // Default the prompt to the current name (the part after the resource dot).
+    const qsizetype dot = operationId.indexOf(QLatin1Char('.'));
+    const QString currentName = dot >= 0 ? operationId.mid(dot + 1) : operationId;
+    bool ok = false;
+    const QString newName = QInputDialog::getText(this,
+                                                  QStringLiteral("Rename Operation"),
+                                                  QStringLiteral("New name:"),
+                                                  QLineEdit::Normal,
+                                                  currentName,
+                                                  &ok);
+    if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == currentName) {
+        return;
+    }
+    QString error;
+    const engine::OperationId id{operationId.toStdString()};
+    if (project_.renameOperation(id, newName.trimmed(), error)) {
+        // The saved() signal repopulates the explorer; show the renamed op.
+        const QString resId = dot >= 0 ? operationId.left(dot) : QString{};
+        const QString newId = QStringLiteral("%1.%2").arg(resId, newName.trimmed());
+        requestEditor_->showOperation(project_, newId);
+        widgets::Toast::show(this, themeManager_.theme(), QStringLiteral("Renamed operation"));
+    } else {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Rename failed: %1").arg(error), 4000);
+    }
+}
+
+void MainWindow::onOperationDelete(const QString& operationId) {
+    if (runController_->isRunning()) {
+        return;
+    }
+    // Deleting an operation rewrites the project YAML on disk — confirm first.
+    const auto answer = QMessageBox::question(
+        this,
+        QStringLiteral("Delete Operation"),
+        QStringLiteral("Delete “%1” from the project? This rewrites the project files on disk.")
+            .arg(operationId),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+    QString error;
+    const engine::OperationId id{operationId.toStdString()};
+    if (project_.deleteOperation(id, error)) {
+        if (requestEditor_->currentOperationId() == operationId) {
+            requestEditor_->clearOperation();
+        }
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Deleted “%1”").arg(operationId));
+    } else {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Delete failed: %1").arg(error), 4000);
+    }
 }
 
 QString MainWindow::loadSavedEnvironment() const {
