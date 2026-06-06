@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <string_view>
@@ -71,6 +72,23 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
 // ─── Atomic write helper ─────────────────────────────────────────────────────
 
 std::expected<void, ReqloomError> writeAtomic(const fs::path& target, const std::string& content) {
+    // Skip the write entirely if the file already holds exactly this content,
+    // so editing one operation doesn't churn (rewrite + bump the mtime of)
+    // every other project file. The read-and-compare is cheap next to the YAML
+    // emit we've already done, and it leaves untouched files — and their git
+    // status, comments, and timestamps — alone.
+    std::error_code existsEc;
+    if (fs::exists(target, existsEc) && !existsEc) {
+        std::ifstream in{target, std::ios::binary};
+        if (in) {
+            const std::string existing{std::istreambuf_iterator<char>(in),
+                                       std::istreambuf_iterator<char>()};
+            if (existing == content) {
+                return {};
+            }
+        }
+    }
+
     std::error_code ec;
     fs::create_directories(target.parent_path(), ec);
     if (ec) {
