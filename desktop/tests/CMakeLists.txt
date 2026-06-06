@@ -13,8 +13,11 @@ add_executable(reqloom-desktop-ui-tests
     unit/FuzzyMatchTest.cpp
     unit/LineDiffTest.cpp
     unit/KeyValueEditorTest.cpp
+    unit/SavedResponseStoreTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SavedResponseStore.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SavedResponseStore.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/EnvironmentSettings.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/EnvironmentSettings.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/LayoutSettings.cpp

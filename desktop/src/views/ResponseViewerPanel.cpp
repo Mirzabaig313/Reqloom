@@ -14,9 +14,11 @@
 #include <QtGui/QClipboard>
 #include <QtGui/QColor>
 #include <QtGui/QGuiApplication>
+#include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QTextEdit>
@@ -87,11 +89,30 @@ ResponseViewerPanel::ResponseViewerPanel(QWidget* parent) : QWidget(parent) {
     layout->setContentsMargins(gap, gap, gap, gap);
     layout->setSpacing(gap);
 
+    // Top bar: status line on the left, then the saved-examples dropdown and
+    // a Save button so a run's response can be kept and reloaded (Apidog
+    // "examples"). The combo/button stay hidden/disabled until relevant.
+    auto* topBar = new QHBoxLayout;
+    topBar->setContentsMargins(0, 0, 0, 0);
+    topBar->setSpacing(theming::Theme::space(theming::Space::Sm));
+
     statusLabel_ = new QLabel(this);
     statusLabel_->setObjectName(QStringLiteral("statusLabel"));
     statusLabel_->setFont(theme_.font(theming::TextStyle::Subtitle));
     statusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    layout->addWidget(statusLabel_);
+    topBar->addWidget(statusLabel_);
+    topBar->addStretch(1);
+
+    saveButton_ = new QPushButton(QStringLiteral("Save"), this);
+    saveButton_->setObjectName(QStringLiteral("ghostAction"));
+    saveButton_->setToolTip(
+        QStringLiteral("Save this response as a reusable example (shown under the operation in the "
+                       "Explorer)"));
+    saveButton_->setEnabled(false);
+    connect(saveButton_, &QPushButton::clicked, this, [this]() { emit saveResponseRequested(); });
+    topBar->addWidget(saveButton_);
+
+    layout->addLayout(topBar);
 
     tabs_ = new QTabWidget(this);
     tabs_->setObjectName(QStringLiteral("responseTabs"));
@@ -199,6 +220,9 @@ void ResponseViewerPanel::reset() {
     statusLabel_->setText(QStringLiteral("No response yet"));
     statusLabel_->setStyleSheet(QString{});
     statusLabel_->setVisible(false);
+    if (saveButton_ != nullptr) {
+        saveButton_->setEnabled(false);
+    }
     headersView_->clear();
     showBodyPlaceholder(QStringLiteral("No response yet."));
     // Show the centered teaching empty-state until a response arrives.
@@ -230,6 +254,12 @@ void ResponseViewerPanel::showBodyPlaceholder(const QString& message) {
 void ResponseViewerPanel::onResponseReceived(
     int /*index*/, int status, QString headers, int bodySize, qint64 elapsedMs, QString body) {
     lastStatus_ = status;
+    // Capture the response so it can be saved as an example.
+    currentHeaders_ = headers;
+    currentRawBody_ = body;
+    currentBodySize_ = bodySize;
+    currentElapsedMs_ = elapsedMs;
+    saveButton_->setEnabled(true);
     // A response arrived — swap from the empty-state to the tabbed view.
     statusLabel_->setVisible(true);
     if (viewStack_ != nullptr) {
@@ -383,6 +413,43 @@ void ResponseViewerPanel::populateTree(QTreeWidgetItem* parent,
         }
     } else {
         parent->setText(1, scalarText(value));
+    }
+}
+
+bool ResponseViewerPanel::hasResponse() const noexcept {
+    return lastStatus_ >= 0;
+}
+
+SavedResponse ResponseViewerPanel::currentResponse() const {
+    SavedResponse r;
+    r.status = lastStatus_;
+    r.headers = currentHeaders_;
+    r.body = currentRawBody_;
+    r.elapsedMs = currentElapsedMs_;
+    return r;
+}
+
+void ResponseViewerPanel::showSavedResponse(const SavedResponse& example) {
+    // Render a saved example like a fresh response, but it never overwrites the
+    // diff history (it's a recall, not a new run).
+    lastStatus_ = example.status;
+    currentHeaders_ = example.headers;
+    currentRawBody_ = example.body;
+    currentBodySize_ = static_cast<int>(example.body.toUtf8().size());
+    currentElapsedMs_ = example.elapsedMs;
+    saveButton_->setEnabled(true);
+
+    statusLabel_->setVisible(true);
+    viewStack_->setCurrentWidget(tabs_);
+    statusLabel_->setText(
+        QStringLiteral("%1  ·  HTTP %2  ·  saved example").arg(example.name).arg(example.status));
+    statusLabel_->setStyleSheet(
+        QStringLiteral("color: %1;").arg(statusColor(example.status).name(QColor::HexRgb)));
+    headersView_->setPlainText(example.headers);
+    if (example.body.isEmpty()) {
+        showBodyPlaceholder(QStringLiteral("This saved example has no captured body."));
+    } else {
+        renderBody(example.body);
     }
 }
 
