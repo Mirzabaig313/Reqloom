@@ -88,8 +88,9 @@ void dropDependencies(engine::Project& draft, const std::set<std::string>& remov
     const auto path = root / "resources" / (resourceId + ".yaml");
     std::filesystem::remove(path, ec);
     if (ec) {
-        return QStringLiteral("could not remove the old file %1 (%2) — delete it manually so the "
-                              "resource doesn't reappear on reload")
+        return QStringLiteral(
+                   "could not remove the old file %1 (%2) — delete it manually so the "
+                   "resource doesn't reappear on reload")
             .arg(QString::fromStdString(path.string()), QString::fromStdString(ec.message()));
     }
     return {};
@@ -384,6 +385,112 @@ bool ProjectModel::deleteResource(const engine::ResourceId& id, QString& error) 
         return false;
     }
     return true;
+}
+
+bool ProjectModel::createResource(const QString& name, const QString& description, QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    const std::string trimmed = name.trimmed().toStdString();
+    if (trimmed.empty()) {
+        error = QStringLiteral("Name cannot be empty.");
+        return false;
+    }
+    if (hasIdBreakingChars(trimmed)) {
+        error = QStringLiteral("Name can't contain '.', '/', or '\\'.");
+        return false;
+    }
+    const engine::ResourceId id{trimmed};
+
+    engine::Project draft = *project_;
+    if (draft.resources.contains(id)) {
+        error = QStringLiteral("A resource named “%1” already exists.").arg(name.trimmed());
+        return false;
+    }
+    engine::Resource res;
+    res.id = id;
+    res.description = description.trimmed().toStdString();
+    draft.resources[id] = std::move(res);
+
+    // An empty resource can't break the graph, but route every mutating path
+    // through the same validation gate so the invariant is uniform.
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return false;
+    }
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
+std::optional<engine::OperationId> ProjectModel::createOperation(
+    const engine::ResourceId& resourceId,
+    const QString& name,
+    engine::HttpMethod method,
+    const QString& pathTemplate,
+    const engine::ActorId& actor,
+    const std::vector<engine::OperationId>& dependencies,
+    const std::vector<engine::Extraction>& extractions,
+    QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return std::nullopt;
+    }
+    const std::string trimmed = name.trimmed().toStdString();
+    if (trimmed.empty()) {
+        error = QStringLiteral("Name cannot be empty.");
+        return std::nullopt;
+    }
+    if (hasIdBreakingChars(trimmed)) {
+        error = QStringLiteral("Name can't contain '.', '/', or '\\'.");
+        return std::nullopt;
+    }
+
+    engine::Project draft = *project_;
+    auto resIt = draft.resources.find(resourceId);
+    if (resIt == draft.resources.end()) {
+        error =
+            QStringLiteral("Resource not found: %1").arg(QString::fromStdString(resourceId.value));
+        return std::nullopt;
+    }
+    if (resIt->second.operations.contains(trimmed)) {
+        error = QStringLiteral("An operation named “%1” already exists in this resource.")
+                    .arg(QString::fromStdString(trimmed));
+        return std::nullopt;
+    }
+
+    engine::Operation op;
+    op.id = engine::OperationId{resourceId.value + "." + trimmed};
+    op.resource = resourceId;
+    op.actor = actor;
+    op.method = method;
+    op.pathTemplate = pathTemplate.trimmed().toStdString();
+    op.explicitDependencies = dependencies;
+    op.extractions = extractions;
+    resIt->second.operations[trimmed] = std::move(op);
+
+    // Validate the draft before writing: a dependency that forms a cycle (or an
+    // undefined reference from the path template) is caught here, so a bad
+    // create never lands a project that won't reload.
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return std::nullopt;
+    }
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return std::nullopt;
+    }
+    engine::OperationId newId{resourceId.value + "." + trimmed};
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return newId;
 }
 
 const engine::Operation* ProjectModel::findOperation(const engine::OperationId& id) const noexcept {
