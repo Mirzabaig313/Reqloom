@@ -360,4 +360,27 @@ TEST(ProjectModel, create_operation_rejects_dependency_cycle) {
     EXPECT_FALSE(error.isEmpty());
 }
 
+TEST(ProjectModel, save_operation_rejects_dependency_cycle) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    // payment.refund already depends_on payment.pay. Editing payment.pay to
+    // depend back on payment.refund closes the loop — validateProject must
+    // reject the save and leave disk untouched.
+    const auto* pay = model.findOperation(ce::OperationId{"payment.pay"});
+    ASSERT_NE(pay, nullptr);
+    ce::Operation edited = *pay;
+    edited.explicitDependencies = {ce::OperationId{"payment.refund"}};
+
+    QString error;
+    EXPECT_FALSE(model.saveOperation(ce::OperationId{"payment.pay"}, edited, error));
+    EXPECT_FALSE(error.isEmpty());
+
+    // The project still loads (the bad edit never reached disk).
+    ProjectModel reloaded;
+    reloaded.loadFromDirectory(dir.path());
+    EXPECT_TRUE(reloaded.hasProject());
+}
+
 }  // namespace reqloom::desktop::tests

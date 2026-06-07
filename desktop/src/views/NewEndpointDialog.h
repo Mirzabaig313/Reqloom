@@ -6,6 +6,8 @@
 
 #include <reqloom/engine/Operation.h>
 
+#include "../theming/Theme.h"
+
 #include <QtCore/QStringList>
 #include <QtWidgets/QDialog>
 
@@ -49,6 +51,9 @@ public:
     [[nodiscard]] engine::HttpMethod method() const;
     [[nodiscard]] QString pathTemplate() const;
     [[nodiscard]] QString actorId() const;
+
+    /// Apply the app theme to the embedded chain editors (mono fields, fonts).
+    void setTheme(const theming::Theme& theme);
 
     /// Chain wiring from the optional section (empty when collapsed/untouched).
     [[nodiscard]] std::vector<engine::OperationId> dependencies() const;

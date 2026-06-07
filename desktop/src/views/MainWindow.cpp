@@ -1128,6 +1128,7 @@ void MainWindow::onOperationCreate(const QString& resourceId) {
     }
 
     NewEndpointDialog dialog(resources, actors, depCandidates, resourceId, this);
+    dialog.setTheme(themeManager_.theme());
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
