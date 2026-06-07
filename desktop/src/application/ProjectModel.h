@@ -11,6 +11,8 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <vector>
 
 namespace reqloom::desktop {
 
@@ -87,6 +89,30 @@ public:
     /// Delete resource `id` (and all its operations), persist, and remove its
     /// `<id>.yaml` file. Emits `saved` on success.
     [[nodiscard]] bool deleteResource(const engine::ResourceId& id, QString& error);
+
+    /// Create an empty resource named `name` (optional `description`), persist,
+    /// and rebind. Fails if the name is empty, contains id-breaking characters
+    /// ('.', '/', '\'), or already exists. Emits `saved` on success.
+    [[nodiscard]] bool createResource(const QString& name,
+                                      const QString& description,
+                                      QString& error);
+
+    /// Create operation `name` under `resourceId` with the given method, path,
+    /// actor, and optional chain wiring (`dependencies` / `extractions`),
+    /// persist, and rebind. The draft is validated by the engine before
+    /// writing, so a dependency that would create a cycle (or an undefined
+    /// reference) is rejected and nothing changes on disk. On success returns
+    /// the new fully-qualified operation id so the caller can open it in the
+    /// editor; otherwise `error` carries a message. Emits `saved` on success.
+    [[nodiscard]] std::optional<engine::OperationId> createOperation(
+        const engine::ResourceId& resourceId,
+        const QString& name,
+        engine::HttpMethod method,
+        const QString& pathTemplate,
+        const engine::ActorId& actor,
+        const std::vector<engine::OperationId>& dependencies,
+        const std::vector<engine::Extraction>& extractions,
+        QString& error);
 
 signals:
     void loaded();

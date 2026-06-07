@@ -87,6 +87,10 @@ std::expected<Project, ReqloomError> parseProject(const std::filesystem::path& r
     return parser.parse(reqloomYaml);
 }
 
+std::expected<void, ReqloomError> validateProject(const Project& project) {
+    return DependencyResolver{}.validate(project);
+}
+
 std::vector<std::string> collectSecretReferences(const Project& project) {
     return DependencyResolver::collectSecretReferences(project);
 }

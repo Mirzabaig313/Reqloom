@@ -43,6 +43,14 @@ class LlmClient;
 [[nodiscard]] std::expected<Project, ReqloomError> parseProject(
     const std::filesystem::path& reqloomYaml);
 
+/// Run the same structural validation `parseProject` applies — cycle detection
+/// and undefined-reference checks over the full dependency graph (explicit
+/// `depends_on` plus implicit `{{resource.var}}` edges) — against an
+/// already-built Project. Lets callers (e.g. the desktop editor) reject an
+/// invalid in-memory edit before persisting it with `writeProject`, so a bad
+/// edit never reaches disk.
+[[nodiscard]] std::expected<void, ReqloomError> validateProject(const Project& project);
+
 /// Collect the distinct `{{secret.NAME}}` references declared anywhere in a
 /// project (operation templates, actor auth config, injected headers, etc.),
 /// sorted and de-duplicated. The desktop secret manager uses this to show
