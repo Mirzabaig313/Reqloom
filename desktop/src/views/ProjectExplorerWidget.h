@@ -68,6 +68,10 @@ signals:
     /// Context-menu actions on a resource (folder) row.
     void resourceRenameRequested(QString resourceId);
     void resourceDeleteRequested(QString resourceId);
+    /// Create actions. `operationCreateRequested` carries the resource to
+    /// create under, or an empty string to let the dialog pick.
+    void resourceCreateRequested();
+    void operationCreateRequested(QString resourceId);
 
 private:
     void onSelectionChanged();
