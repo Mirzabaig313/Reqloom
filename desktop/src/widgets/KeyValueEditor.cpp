@@ -42,6 +42,8 @@ KeyValueEditor::KeyValueEditor(QWidget* parent) : QWidget(parent) {
     keyCaption->setProperty("role", QStringLiteral("sectionHeading"));
     auto* valueCaption = new QLabel(QStringLiteral("Value"), captionsHost);
     valueCaption->setProperty("role", QStringLiteral("sectionHeading"));
+    keyCaption_ = keyCaption;
+    valueCaption_ = valueCaption;
     captions->addWidget(keyCaption, 1);
     captions->addWidget(valueCaption, 1);
 
@@ -68,6 +70,15 @@ void KeyValueEditor::setMode(Mode mode) {
     mode_ = mode;
     if (captionSpacer_ != nullptr) {
         captionSpacer_->setFixedWidth(mode == Mode::FileCapable ? 48 : 24);
+    }
+}
+
+void KeyValueEditor::setCaptions(const QString& keyCaption, const QString& valueCaption) {
+    if (keyCaption_ != nullptr) {
+        keyCaption_->setText(keyCaption);
+    }
+    if (valueCaption_ != nullptr) {
+        valueCaption_->setText(valueCaption);
     }
 }
 
