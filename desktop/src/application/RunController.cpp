@@ -213,6 +213,18 @@ void applyOverrideToOperation(ce::Operation& op, const RequestOverride& ov) {
         op.timeout.reset();
     }
     op.force = ov.forceReRun;
+
+    // Chain edits are opt-in: only touch depends_on / extract when the editor
+    // actually loaded and re-snapshotted them, so a request-only override
+    // leaves an operation's wiring intact.
+    if (ov.chainEdited) {
+        op.explicitDependencies.clear();
+        op.explicitDependencies.reserve(ov.dependencies.size());
+        for (const auto& dep : ov.dependencies) {
+            op.explicitDependencies.push_back(ce::OperationId{dep});
+        }
+        op.extractions = ov.extractions;
+    }
 }
 
 void RunController::runWithOverride(const QString& target,

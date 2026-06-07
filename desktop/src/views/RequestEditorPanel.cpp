@@ -6,7 +6,9 @@
 #include "../application/ProjectModel.h"
 #include "../application/RunController.h"  // RequestOverride
 #include "../widgets/ChainView.h"
+#include "../widgets/DependencyListEditor.h"
 #include "../widgets/EmptyState.h"
+#include "../widgets/ExtractionTableEditor.h"
 #include "../widgets/KeyValueEditor.h"
 #include "Formatting.h"
 
@@ -328,6 +330,27 @@ QWidget* RequestEditorPanel::buildEditPage() {
     optionsForm->addRow(QString{}, forceCheck_);
     editTabs_->addTab(optionsTab, QStringLiteral("Options"));
 
+    // Chain tab: depends_on pickers + extract table — the wiring that makes
+    // Reqloom a workflow runner rather than a request list.
+    auto* chainTab = new QWidget(editTabs_);
+    auto* chainLayout = new QVBoxLayout(chainTab);
+    chainLayout->setContentsMargins(theming::Theme::space(theming::Space::Sm),
+                                    theming::Theme::space(theming::Space::Md),
+                                    theming::Theme::space(theming::Space::Sm),
+                                    theming::Theme::space(theming::Space::Sm));
+    auto* dependsHeading = new QLabel(QStringLiteral("Depends on"), chainTab);
+    dependsHeading->setProperty("role", QStringLiteral("sectionHeading"));
+    chainLayout->addWidget(dependsHeading);
+    dependencyEditor_ = new widgets::DependencyListEditor(chainTab);
+    chainLayout->addWidget(dependencyEditor_);
+    auto* extractHeading = new QLabel(QStringLiteral("Extract"), chainTab);
+    extractHeading->setProperty("role", QStringLiteral("sectionHeading"));
+    chainLayout->addWidget(extractHeading);
+    extractionEditor_ = new widgets::ExtractionTableEditor(chainTab);
+    chainLayout->addWidget(extractionEditor_);
+    chainLayout->addStretch(1);
+    editTabs_->addTab(scrollWrap(chainTab), QStringLiteral("Chain"));
+
     return editTabs_;
 }
 
@@ -363,6 +386,12 @@ void RequestEditorPanel::wireConnections() {
         headersEditor_, &widgets::KeyValueEditor::changed, this, [this]() { refreshTabBadges(); });
     connect(formEditor_, &widgets::KeyValueEditor::changed, this, [this]() { refreshTabBadges(); });
     connect(bodyRawEdit_, &QPlainTextEdit::textChanged, this, [this]() { refreshTabBadges(); });
+    connect(dependencyEditor_, &widgets::DependencyListEditor::changed, this, [this]() {
+        refreshTabBadges();
+    });
+    connect(extractionEditor_, &widgets::ExtractionTableEditor::changed, this, [this]() {
+        refreshTabBadges();
+    });
 }
 
 RequestEditorPanel::~RequestEditorPanel() = default;
@@ -445,6 +474,8 @@ void RequestEditorPanel::applyTheme(const theming::Theme& theme) {
     headersEditor_->setTheme(theme);
     queryEditor_->setTheme(theme);
     formEditor_->setTheme(theme);
+    extractionEditor_->setTheme(theme);
+    dependencyEditor_->setTheme(theme);
     refreshMethodPill();
 }
 
@@ -477,6 +508,15 @@ RequestOverride RequestEditorPanel::buildOverride() const {
     } else {
         ov.body = bodyRawEdit_->toPlainText();
     }
+
+    // The Chain tab always loads from the operation, so re-snapshotting it is a
+    // faithful copy unless the user changed it — mark it edited so the save /
+    // run path applies the wiring.
+    ov.chainEdited = chainFieldsLoaded_;
+    for (const auto& dep : dependencyEditor_->dependencies()) {
+        ov.dependencies.push_back(dep);
+    }
+    ov.extractions = extractionEditor_->extractions();
     return ov;
 }
 
@@ -491,6 +531,7 @@ void RequestEditorPanel::setRunEnabled(bool enabled) {
 void RequestEditorPanel::clearOperation() {
     currentOp_.clear();
     currentMethod_.clear();
+    chainFieldsLoaded_ = false;
     overrideToggle_->setChecked(false);
     overrideToggle_->setEnabled(false);
     actorCaption_->clear();
@@ -619,6 +660,29 @@ void RequestEditorPanel::loadOverrideFields(const ProjectModel& project,
         formEditor_->clear();
     }
 
+    // Chain: candidates are every operation except this one (no self-dep), and
+    // the pickers/extract table seed from the operation's current wiring.
+    QStringList candidates;
+    if (project.hasProject()) {
+        for (const auto& [resId, resource] : project.project().resources) {
+            for (const auto& [opName, _] : resource.operations) {
+                const QString id = QString::fromStdString(resId.value + "." + opName);
+                if (id != QString::fromStdString(op.id.value)) {
+                    candidates.append(id);
+                }
+            }
+        }
+    }
+    dependencyEditor_->setCandidates(candidates);
+    std::vector<std::string> deps;
+    deps.reserve(op.explicitDependencies.size());
+    for (const auto& dep : op.explicitDependencies) {
+        deps.push_back(dep.value);
+    }
+    dependencyEditor_->setDependencies(deps);
+    extractionEditor_->setExtractions(op.extractions);
+    chainFieldsLoaded_ = true;
+
     refreshTabBadges();
 }
 
@@ -626,8 +690,8 @@ void RequestEditorPanel::refreshTabBadges() {
     if (editTabs_ == nullptr) {
         return;
     }
-    // Tab order: 0 Params, 1 Headers, 2 Body, 3 Options. Show a count when a
-    // section has content, Postman-style ("Headers 8"), and a dot on Body.
+    // Tab order: 0 Params, 1 Headers, 2 Body, 3 Options, 4 Chain. Show a count
+    // when a section has content, Postman-style ("Headers 8"), and a dot on Body.
     const auto withCount = [](const QString& base, std::size_t n) {
         return n > 0 ? QStringLiteral("%1  %2").arg(base).arg(n) : base;
     };
@@ -639,6 +703,10 @@ void RequestEditorPanel::refreshTabBadges() {
                              ? !formEditor_->toStdMap().empty()
                              : !bodyRawEdit_->toPlainText().trimmed().isEmpty();
     editTabs_->setTabText(2, hasBody ? QStringLiteral("Body  ●") : QStringLiteral("Body"));
+
+    const std::size_t chainCount =
+        dependencyEditor_->dependencies().size() + extractionEditor_->extractions().size();
+    editTabs_->setTabText(4, withCount(QStringLiteral("Chain"), chainCount));
 }
 
 void RequestEditorPanel::renderChainPreview(const ProjectModel& project,

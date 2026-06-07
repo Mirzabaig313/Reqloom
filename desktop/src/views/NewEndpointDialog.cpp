@@ -155,6 +155,11 @@ QString NewEndpointDialog::actorId() const {
     return actorCombo_->currentText();
 }
 
+void NewEndpointDialog::setTheme(const theming::Theme& theme) {
+    dependencyEditor_->setTheme(theme);
+    extractionEditor_->setTheme(theme);
+}
+
 std::vector<engine::OperationId> NewEndpointDialog::dependencies() const {
     std::vector<engine::OperationId> out;
     for (const auto& dep : dependencyEditor_->dependencies()) {

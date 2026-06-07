@@ -32,6 +32,8 @@ namespace widgets {
 class KeyValueEditor;
 class EmptyState;
 class ChainView;
+class DependencyListEditor;
+class ExtractionTableEditor;
 }  // namespace widgets
 
 class RequestEditorPanel : public QWidget {
@@ -134,6 +136,10 @@ private:
     QStackedWidget* bodyStack_{nullptr};
     QPlainTextEdit* bodyRawEdit_{nullptr};
 
+    // Chain tab: depends_on pickers + extract table (edit an op's wiring).
+    widgets::DependencyListEditor* dependencyEditor_{nullptr};
+    widgets::ExtractionTableEditor* extractionEditor_{nullptr};
+
     QPushButton* sendButton_{nullptr};
     QPushButton* sendCleanButton_{nullptr};
     QPushButton* dryRunButton_{nullptr};
@@ -142,6 +148,10 @@ private:
     QString currentOp_;
     QString currentMethod_;
     bool overrideActive_{false};
+    /// True once loadOverrideFields has seeded the Chain tab for the current
+    /// op, so buildOverride only stamps chainEdited when the wiring it captures
+    /// is a real snapshot — not a stale/empty default that would wipe it.
+    bool chainFieldsLoaded_{false};
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };
 

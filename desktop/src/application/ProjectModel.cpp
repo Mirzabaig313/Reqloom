@@ -190,6 +190,14 @@ bool ProjectModel::saveOperation(const engine::OperationId& id,
     }
     resIt->second.operations[opName] = updated;
 
+    // A saved chain edit (depends_on / extract) can introduce a cycle or an
+    // undefined reference; validate the draft before writing so a bad edit
+    // never lands an unloadable project.
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return false;
+    }
+
     auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
     if (!written) {
         error = QString::fromStdString(written.error().detail);
