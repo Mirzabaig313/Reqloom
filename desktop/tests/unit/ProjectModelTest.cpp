@@ -192,7 +192,8 @@ TEST(ProjectModel, rename_operation_rejects_id_breaking_name) {
     // A '.' would split into a new resource id and recreate the dangling-ref
     // bug; '/' and '\' would escape the resources/ directory on resource files.
     QString error;
-    EXPECT_FALSE(model.renameOperation(ce::OperationId{"payment.pay"}, QStringLiteral("a.b"), error));
+    EXPECT_FALSE(
+        model.renameOperation(ce::OperationId{"payment.pay"}, QStringLiteral("a.b"), error));
     EXPECT_FALSE(error.isEmpty());
     EXPECT_NE(model.findOperation(ce::OperationId{"payment.pay"}), nullptr);
 }
@@ -203,9 +204,160 @@ TEST(ProjectModel, rename_resource_rejects_id_breaking_name) {
     ASSERT_TRUE(loadFixture(dir, model));
 
     QString error;
-    EXPECT_FALSE(model.renameResource(ce::ResourceId{"payment"}, QStringLiteral("../escape"), error));
+    EXPECT_FALSE(
+        model.renameResource(ce::ResourceId{"payment"}, QStringLiteral("../escape"), error));
     EXPECT_FALSE(error.isEmpty());
     EXPECT_NE(model.findOperation(ce::OperationId{"payment.pay"}), nullptr);
+}
+
+TEST(ProjectModel, create_resource_writes_file_and_loads) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    QString error;
+    ASSERT_TRUE(model.createResource(QStringLiteral("billing"), QStringLiteral("Billing"), error))
+        << error.toStdString();
+
+    const fs::path root{dir.path().toStdString()};
+    EXPECT_TRUE(fs::exists(root / "resources" / "billing.yaml"));
+
+    // The empty resource round-trips through a fresh load.
+    ProjectModel reloaded;
+    reloaded.loadFromDirectory(dir.path());
+    ASSERT_TRUE(reloaded.hasProject());
+    EXPECT_TRUE(reloaded.project().resources.contains(ce::ResourceId{"billing"}));
+}
+
+TEST(ProjectModel, create_resource_rejects_empty_duplicate_and_id_breaking) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    QString error;
+    EXPECT_FALSE(model.createResource(QString{}, QString{}, error));
+    EXPECT_FALSE(model.createResource(QStringLiteral("payment"), QString{}, error));  // duplicate
+    EXPECT_FALSE(model.createResource(QStringLiteral("a.b"), QString{}, error));      // id-breaking
+}
+
+TEST(ProjectModel, create_operation_returns_id_and_reloads_clean) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    QString error;
+    const auto id = model.createOperation(ce::ResourceId{"payment"},
+                                          QStringLiteral("refund_all"),
+                                          ce::HttpMethod::Post,
+                                          QStringLiteral("/refund-all"),
+                                          ce::ActorId{"user"},
+                                          {},
+                                          {},
+                                          error);
+    ASSERT_TRUE(id.has_value()) << error.toStdString();
+    EXPECT_EQ(id->value, "payment.refund_all");
+    EXPECT_NE(model.findOperation(*id), nullptr);
+
+    ProjectModel reloaded;
+    reloaded.loadFromDirectory(dir.path());
+    ASSERT_TRUE(reloaded.hasProject());
+    EXPECT_NE(reloaded.findOperation(ce::OperationId{"payment.refund_all"}), nullptr);
+}
+
+TEST(ProjectModel, create_operation_rejects_duplicate_id_breaking_and_unknown_resource) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    QString error;
+    // Duplicate op name in the resource.
+    EXPECT_FALSE(model
+                     .createOperation(ce::ResourceId{"payment"},
+                                      QStringLiteral("pay"),
+                                      ce::HttpMethod::Get,
+                                      QStringLiteral("/pay"),
+                                      ce::ActorId{"user"},
+                                      {},
+                                      {},
+                                      error)
+                     .has_value());
+    // Id-breaking name.
+    EXPECT_FALSE(model
+                     .createOperation(ce::ResourceId{"payment"},
+                                      QStringLiteral("a.b"),
+                                      ce::HttpMethod::Get,
+                                      QStringLiteral("/x"),
+                                      ce::ActorId{"user"},
+                                      {},
+                                      {},
+                                      error)
+                     .has_value());
+    // Unknown resource.
+    EXPECT_FALSE(model
+                     .createOperation(ce::ResourceId{"nope"},
+                                      QStringLiteral("x"),
+                                      ce::HttpMethod::Get,
+                                      QStringLiteral("/x"),
+                                      ce::ActorId{"user"},
+                                      {},
+                                      {},
+                                      error)
+                     .has_value());
+}
+
+TEST(ProjectModel, create_operation_with_dependencies_and_extractions_reloads_clean) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    // New op depends on payment.pay and extracts a value others could consume.
+    std::vector<ce::Extraction> extractions{
+        {"receipt_id", "$.data.receiptId", ce::Extraction::Source::JsonPath}};
+    std::vector<ce::OperationId> deps{ce::OperationId{"payment.pay"}};
+
+    QString error;
+    const auto id = model.createOperation(ce::ResourceId{"payment"},
+                                          QStringLiteral("receipt"),
+                                          ce::HttpMethod::Get,
+                                          QStringLiteral("/receipt"),
+                                          ce::ActorId{"user"},
+                                          deps,
+                                          extractions,
+                                          error);
+    ASSERT_TRUE(id.has_value()) << error.toStdString();
+
+    const auto* created = model.findOperation(*id);
+    ASSERT_NE(created, nullptr);
+    ASSERT_EQ(created->explicitDependencies.size(), 1u);
+    EXPECT_EQ(created->explicitDependencies[0].value, "payment.pay");
+    ASSERT_EQ(created->extractions.size(), 1u);
+    EXPECT_EQ(created->extractions[0].variableName, "receipt_id");
+
+    ProjectModel reloaded;
+    reloaded.loadFromDirectory(dir.path());
+    EXPECT_TRUE(reloaded.hasProject());
+}
+
+TEST(ProjectModel, create_operation_rejects_dependency_cycle) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    // A self-dependency is the simplest back edge: the op depends on its own
+    // id, which Kahn's sort can never give in-degree 0. validateProject must
+    // reject it before anything is written.
+    QString error;
+    const auto selfId = ce::OperationId{"payment.selfloop"};
+    const auto id = model.createOperation(ce::ResourceId{"payment"},
+                                          QStringLiteral("selfloop"),
+                                          ce::HttpMethod::Get,
+                                          QStringLiteral("/x"),
+                                          ce::ActorId{"user"},
+                                          {selfId},
+                                          {},
+                                          error);
+    EXPECT_FALSE(id.has_value());
+    EXPECT_FALSE(error.isEmpty());
 }
 
 }  // namespace reqloom::desktop::tests

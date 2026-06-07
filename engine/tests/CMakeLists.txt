@@ -33,6 +33,7 @@ add_executable(reqloom-engine-unit-tests
     unit/SqliteHistoryStoreTest.cpp
     unit/SchemaValidationTest.cpp
     unit/SecretEnvTagTest.cpp
+    unit/ValidateProjectTest.cpp
 )
 target_include_directories(reqloom-engine-unit-tests
     PRIVATE
