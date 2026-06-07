@@ -47,6 +47,12 @@ struct RequestOverride {
     QString expectStatus;    ///< comma-separated codes, e.g. "200,201" (empty → unchanged)
     int timeoutMs{0};        ///< per-op timeout in ms (0 → unchanged)
     bool forceReRun{false};  ///< ignore the extraction cache for this op
+
+    /// Chain wiring. Only applied when `chainEdited` is set, so a request-only
+    /// override doesn't wipe an operation's depends_on / extract.
+    bool chainEdited{false};
+    std::vector<std::string> dependencies;        ///< replaces explicitDependencies
+    std::vector<engine::Extraction> extractions;  ///< replaces extractions
 };
 
 /// Apply a RequestOverride's fields onto an operation in place. Shared by the
