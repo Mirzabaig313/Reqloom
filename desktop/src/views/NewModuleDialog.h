@@ -3,6 +3,8 @@
 // and validates the name live (non-empty, no id-breaking '.', '/', '\').
 #pragma once
 
+#include "../theming/Theme.h"
+
 #include <QtWidgets/QDialog>
 
 class QDialogButtonBox;
@@ -15,7 +17,7 @@ class NewModuleDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit NewModuleDialog(QWidget* parent = nullptr);
+    explicit NewModuleDialog(const theming::Theme& theme, QWidget* parent = nullptr);
     ~NewModuleDialog() override;
 
     NewModuleDialog(const NewModuleDialog&) = delete;
@@ -29,6 +31,7 @@ public:
 private:
     void revalidate();
 
+    theming::Theme theme_;
     QLineEdit* nameEdit_{nullptr};
     QLineEdit* descriptionEdit_{nullptr};
     QLabel* errorLabel_{nullptr};
