@@ -1086,7 +1086,7 @@ void MainWindow::onResourceCreate() {
     if (runController_->isRunning() || !project_.hasProject()) {
         return;
     }
-    NewModuleDialog dialog(this);
+    NewModuleDialog dialog(themeManager_.theme(), this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
@@ -1127,8 +1127,8 @@ void MainWindow::onOperationCreate(const QString& resourceId) {
         }
     }
 
-    NewEndpointDialog dialog(resources, actors, depCandidates, resourceId, this);
-    dialog.setTheme(themeManager_.theme());
+    NewEndpointDialog dialog(
+        themeManager_.theme(), resources, actors, depCandidates, resourceId, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }

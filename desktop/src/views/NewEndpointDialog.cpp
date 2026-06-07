@@ -5,10 +5,12 @@
 #include "../widgets/DependencyListEditor.h"
 #include "../widgets/ExtractionTableEditor.h"
 
+#include <QtGui/QColor>
 #include <QtCore/QVariant>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDialogButtonBox>
 #include <QtWidgets/QFormLayout>
+#include <QtWidgets/QFrame>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
@@ -42,17 +44,44 @@ constexpr std::array<std::pair<const char*, engine::HttpMethod>, 7> kMethods{{
 
 }  // namespace
 
-NewEndpointDialog::NewEndpointDialog(const QStringList& resources,
+NewEndpointDialog::NewEndpointDialog(const theming::Theme& theme,
+                                     const QStringList& resources,
                                      const QStringList& actors,
                                      const QStringList& dependencyCandidates,
                                      const QString& preselectedResource,
                                      QWidget* parent)
-    : QDialog(parent) {
+    : QDialog(parent), theme_(theme) {
     setWindowTitle(QStringLiteral("New Endpoint"));
     setModal(true);
+    setMinimumWidth(520);
+
+    const int lg = theming::Theme::space(theming::Space::Lg);
+    const int md = theming::Theme::space(theming::Space::Md);
+    const int sm = theming::Theme::space(theming::Space::Sm);
 
     auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(lg, lg, lg, lg);
+    outer->setSpacing(md);
+
+    auto* heading = new QLabel(QStringLiteral("New endpoint"), this);
+    heading->setFont(theme_.font(theming::TextStyle::Subtitle));
+    outer->addWidget(heading);
+
+    auto* intro = new QLabel(
+        QStringLiteral("Define the request. You can wire its dependency chain now or later in "
+                       "the editor."),
+        this);
+    intro->setWordWrap(true);
+    intro->setFont(theme_.font(theming::TextStyle::Caption));
+    intro->setStyleSheet(
+        QStringLiteral("color: %1;").arg(theme_.palette().textSecondary.name(QColor::HexRgb)));
+    outer->addWidget(intro);
+
     auto* form = new QFormLayout();
+    form->setHorizontalSpacing(md);
+    form->setVerticalSpacing(sm);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form->setLabelAlignment(Qt::AlignLeft);
 
     resourceCombo_ = new QComboBox(this);
     resourceCombo_->addItems(resources);
@@ -77,6 +106,7 @@ NewEndpointDialog::NewEndpointDialog(const QStringList& resources,
 
     pathEdit_ = new QLineEdit(this);
     pathEdit_->setPlaceholderText(QStringLiteral("/api/v1/admin/orgs/{{id}}/verify"));
+    pathEdit_->setFont(theme_.font(theming::TextStyle::Mono));
     form->addRow(QStringLiteral("Path"), pathEdit_);
 
     actorCombo_ = new QComboBox(this);
@@ -84,45 +114,62 @@ NewEndpointDialog::NewEndpointDialog(const QStringList& resources,
     form->addRow(QStringLiteral("Actor"), actorCombo_);
     outer->addLayout(form);
 
-    // Optional, collapsed chain section: depends_on pickers + extract table.
+    errorLabel_ = new QLabel(this);
+    errorLabel_->setVisible(false);
+    errorLabel_->setWordWrap(true);
+    errorLabel_->setFont(theme_.font(theming::TextStyle::Caption));
+    errorLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(
+        theme_.status(theming::StatusToken::Error).name(QColor::HexRgb)));
+    outer->addWidget(errorLabel_);
+
+    // Optional, collapsed chain section: a divider, a disclosure toggle, then
+    // the depends_on pickers + extract table.
+    auto* divider = new QFrame(this);
+    divider->setFrameShape(QFrame::HLine);
+    divider->setStyleSheet(
+        QStringLiteral("color: %1;").arg(theme_.palette().borderSubtle.name(QColor::HexRgb)));
+    outer->addWidget(divider);
+
     chainToggle_ = new QToolButton(this);
-    chainToggle_->setText(QStringLiteral("▸ Chain (optional)"));
+    chainToggle_->setText(QStringLiteral("▸  Chain (optional)"));
     chainToggle_->setCheckable(true);
     chainToggle_->setAutoRaise(true);
     chainToggle_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    chainToggle_->setFont(theme_.font(theming::TextStyle::Label));
     outer->addWidget(chainToggle_);
 
     chainSection_ = new QWidget(this);
     auto* chainLayout = new QVBoxLayout(chainSection_);
     chainLayout->setContentsMargins(0, 0, 0, 0);
+    chainLayout->setSpacing(sm);
     auto* dependsLabel = new QLabel(QStringLiteral("Depends on"), chainSection_);
     dependsLabel->setProperty("role", QStringLiteral("sectionHeading"));
     chainLayout->addWidget(dependsLabel);
     dependencyEditor_ = new widgets::DependencyListEditor(chainSection_);
+    dependencyEditor_->setTheme(theme_);
     dependencyEditor_->setCandidates(dependencyCandidates);
     chainLayout->addWidget(dependencyEditor_);
     auto* extractLabel = new QLabel(QStringLiteral("Extract"), chainSection_);
     extractLabel->setProperty("role", QStringLiteral("sectionHeading"));
     chainLayout->addWidget(extractLabel);
     extractionEditor_ = new widgets::ExtractionTableEditor(chainSection_);
+    extractionEditor_->setTheme(theme_);
     chainLayout->addWidget(extractionEditor_);
     chainSection_->setVisible(false);
     outer->addWidget(chainSection_);
 
     connect(chainToggle_, &QToolButton::toggled, this, [this](bool on) {
-        chainToggle_->setText(on ? QStringLiteral("▾ Chain (optional)")
-                                 : QStringLiteral("▸ Chain (optional)"));
+        chainToggle_->setText(on ? QStringLiteral("▾  Chain (optional)")
+                                 : QStringLiteral("▸  Chain (optional)"));
         chainSection_->setVisible(on);
         adjustSize();
     });
 
-    errorLabel_ = new QLabel(this);
-    errorLabel_->setVisible(false);
-    errorLabel_->setWordWrap(true);
-    outer->addWidget(errorLabel_);
+    outer->addStretch(1);
 
     buttons_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    buttons_->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Create"));
+    buttons_->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Create endpoint"));
+    buttons_->button(QDialogButtonBox::Ok)->setDefault(true);
     outer->addWidget(buttons_);
 
     connect(buttons_, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -153,11 +200,6 @@ QString NewEndpointDialog::pathTemplate() const {
 
 QString NewEndpointDialog::actorId() const {
     return actorCombo_->currentText();
-}
-
-void NewEndpointDialog::setTheme(const theming::Theme& theme) {
-    dependencyEditor_->setTheme(theme);
-    extractionEditor_->setTheme(theme);
 }
 
 std::vector<engine::OperationId> NewEndpointDialog::dependencies() const {

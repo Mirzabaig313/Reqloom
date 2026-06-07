@@ -34,7 +34,8 @@ public:
     /// are the operation ids the optional Chain section may depend on.
     /// `preselectedResource` (when non-empty and present in `resources`) is
     /// selected — e.g. when launched from a resource folder.
-    NewEndpointDialog(const QStringList& resources,
+    NewEndpointDialog(const theming::Theme& theme,
+                      const QStringList& resources,
                       const QStringList& actors,
                       const QStringList& dependencyCandidates,
                       const QString& preselectedResource,
@@ -52,9 +53,6 @@ public:
     [[nodiscard]] QString pathTemplate() const;
     [[nodiscard]] QString actorId() const;
 
-    /// Apply the app theme to the embedded chain editors (mono fields, fonts).
-    void setTheme(const theming::Theme& theme);
-
     /// Chain wiring from the optional section (empty when collapsed/untouched).
     [[nodiscard]] std::vector<engine::OperationId> dependencies() const;
     [[nodiscard]] std::vector<engine::Extraction> extractions() const;
@@ -62,6 +60,7 @@ public:
 private:
     void revalidate();
 
+    theming::Theme theme_;
     QComboBox* resourceCombo_{nullptr};
     QLineEdit* nameEdit_{nullptr};
     QComboBox* methodCombo_{nullptr};
