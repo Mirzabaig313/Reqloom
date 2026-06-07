@@ -16,13 +16,14 @@ namespace reqloom::desktop::widgets {
 /// Item-data roles shared between the explorer (which writes them) and the
 /// delegate (which reads them). Kept in one place so the two never drift.
 namespace roles {
-constexpr int kOperationId = Qt::UserRole + 1;  ///< QString fully-qualified op id
-constexpr int kIsOperation = Qt::UserRole + 2;  ///< bool: operation row vs. group
-constexpr int kMethodText = Qt::UserRole + 3;   ///< QString verb, e.g. "POST"
-constexpr int kMethodColor = Qt::UserRole + 4;  ///< QColor resolved for the theme
-constexpr int kIsExample = Qt::UserRole + 5;    ///< bool: saved-example row under an op
-constexpr int kExampleName = Qt::UserRole + 6;  ///< QString saved-example name
-constexpr int kResourceId = Qt::UserRole + 7;   ///< QString resource id (folder rows)
+constexpr int kOperationId = Qt::UserRole + 1;      ///< QString fully-qualified op id
+constexpr int kIsOperation = Qt::UserRole + 2;      ///< bool: operation row vs. group
+constexpr int kMethodText = Qt::UserRole + 3;       ///< QString verb, e.g. "POST"
+constexpr int kMethodColor = Qt::UserRole + 4;      ///< QColor resolved for the theme
+constexpr int kIsExample = Qt::UserRole + 5;        ///< bool: saved-example row under an op
+constexpr int kExampleName = Qt::UserRole + 6;      ///< QString saved-example name
+constexpr int kResourceId = Qt::UserRole + 7;       ///< QString resource id (folder rows)
+constexpr int kIsResourcesRoot = Qt::UserRole + 8;  ///< bool: the "Resources" group row
 }  // namespace roles
 
 class MethodItemDelegate : public QStyledItemDelegate {

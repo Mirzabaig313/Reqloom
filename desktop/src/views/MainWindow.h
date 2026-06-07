@@ -104,6 +104,10 @@ private:
     void onResourceRename(const QString& resourceId);
     void onResourceDelete(const QString& resourceId);
 
+    /// Create flows (from the explorer's + menu / context menus).
+    void onResourceCreate();
+    void onOperationCreate(const QString& resourceId);
+
     void openCommandPalette();
     void onPaletteItemChosen(const widgets::PaletteItem& item);
     void runCurrentOperation(bool clean, bool dryRun);
