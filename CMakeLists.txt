@@ -81,7 +81,7 @@ find_package(Qt6Keychain CONFIG QUIET)
 
 # UI-only deps
 if(REQLOOM_BUILD_DESKTOP)
-    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Gui Quick QuickWidgets Concurrent)
+    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Gui Quick Qml QuickControls2 QuickWidgets Concurrent)
     # QScintilla is added later when the desktop module starts using it.
 endif()
 
