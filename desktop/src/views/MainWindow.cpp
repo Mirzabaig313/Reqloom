@@ -1119,8 +1119,15 @@ void MainWindow::onOperationCreate(const QString& resourceId) {
     for (const auto& [id, actor] : proj.actors) {
         actors.append(QString::fromStdString(id.value));
     }
+    // Every existing operation id is a candidate dependency for the new op.
+    QStringList depCandidates;
+    for (const auto& [resId, resource] : proj.resources) {
+        for (const auto& [opName, op] : resource.operations) {
+            depCandidates.append(QString::fromStdString(resId.value + "." + opName));
+        }
+    }
 
-    NewEndpointDialog dialog(resources, actors, resourceId, this);
+    NewEndpointDialog dialog(resources, actors, depCandidates, resourceId, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
@@ -1131,8 +1138,8 @@ void MainWindow::onOperationCreate(const QString& resourceId) {
                                  dialog.method(),
                                  dialog.pathTemplate(),
                                  engine::ActorId{dialog.actorId().toStdString()},
-                                 /*dependencies=*/{},
-                                 /*extractions=*/{},
+                                 dialog.dependencies(),
+                                 dialog.extractions(),
                                  error);
     if (newId) {
         // The saved() signal repopulated the explorer; open the new endpoint

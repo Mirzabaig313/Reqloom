@@ -9,22 +9,32 @@
 #include <QtCore/QStringList>
 #include <QtWidgets/QDialog>
 
+#include <vector>
+
 class QComboBox;
 class QDialogButtonBox;
 class QLabel;
 class QLineEdit;
+class QToolButton;
 
 namespace reqloom::desktop {
+
+namespace widgets {
+class DependencyListEditor;
+class ExtractionTableEditor;
+}  // namespace widgets
 
 class NewEndpointDialog : public QDialog {
     Q_OBJECT
 
 public:
-    /// `resources` and `actors` populate the pickers. `preselectedResource`
-    /// (when non-empty and present in `resources`) is selected and locked-in
-    /// as the default — e.g. when launched from a resource folder.
+    /// `resources` and `actors` populate the pickers. `dependencyCandidates`
+    /// are the operation ids the optional Chain section may depend on.
+    /// `preselectedResource` (when non-empty and present in `resources`) is
+    /// selected — e.g. when launched from a resource folder.
     NewEndpointDialog(const QStringList& resources,
                       const QStringList& actors,
+                      const QStringList& dependencyCandidates,
                       const QString& preselectedResource,
                       QWidget* parent = nullptr);
     ~NewEndpointDialog() override;
@@ -40,6 +50,10 @@ public:
     [[nodiscard]] QString pathTemplate() const;
     [[nodiscard]] QString actorId() const;
 
+    /// Chain wiring from the optional section (empty when collapsed/untouched).
+    [[nodiscard]] std::vector<engine::OperationId> dependencies() const;
+    [[nodiscard]] std::vector<engine::Extraction> extractions() const;
+
 private:
     void revalidate();
 
@@ -48,6 +62,10 @@ private:
     QComboBox* methodCombo_{nullptr};
     QLineEdit* pathEdit_{nullptr};
     QComboBox* actorCombo_{nullptr};
+    QToolButton* chainToggle_{nullptr};
+    QWidget* chainSection_{nullptr};
+    widgets::DependencyListEditor* dependencyEditor_{nullptr};
+    widgets::ExtractionTableEditor* extractionEditor_{nullptr};
     QLabel* errorLabel_{nullptr};
     QDialogButtonBox* buttons_{nullptr};
 };
