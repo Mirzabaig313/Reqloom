@@ -76,8 +76,9 @@ NewModuleDialog::NewModuleDialog(const theming::Theme& theme, QWidget* parent)
     errorLabel_->setVisible(false);
     errorLabel_->setWordWrap(true);
     errorLabel_->setFont(theme_.font(theming::TextStyle::Caption));
-    errorLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(
-        theme_.status(theming::StatusToken::Error).name(QColor::HexRgb)));
+    errorLabel_->setStyleSheet(
+        QStringLiteral("color: %1;")
+            .arg(theme_.status(theming::StatusToken::Error).name(QColor::HexRgb)));
     outer->addWidget(errorLabel_);
 
     outer->addStretch(1);

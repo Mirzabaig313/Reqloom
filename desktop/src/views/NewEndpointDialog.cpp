@@ -5,8 +5,8 @@
 #include "../widgets/DependencyListEditor.h"
 #include "../widgets/ExtractionTableEditor.h"
 
-#include <QtGui/QColor>
 #include <QtCore/QVariant>
+#include <QtGui/QColor>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDialogButtonBox>
 #include <QtWidgets/QFormLayout>
@@ -118,8 +118,9 @@ NewEndpointDialog::NewEndpointDialog(const theming::Theme& theme,
     errorLabel_->setVisible(false);
     errorLabel_->setWordWrap(true);
     errorLabel_->setFont(theme_.font(theming::TextStyle::Caption));
-    errorLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(
-        theme_.status(theming::StatusToken::Error).name(QColor::HexRgb)));
+    errorLabel_->setStyleSheet(
+        QStringLiteral("color: %1;")
+            .arg(theme_.status(theming::StatusToken::Error).name(QColor::HexRgb)));
     outer->addWidget(errorLabel_);
 
     // Optional, collapsed chain section: a divider, a disclosure toggle, then

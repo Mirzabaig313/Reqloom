@@ -91,6 +91,87 @@ set_target_properties(reqloom-desktop PROPERTIES
 reqloom_set_warnings(reqloom-desktop)
 reqloom_apply_sanitizers(reqloom-desktop)
 
+# ─── QML app (ADR-007) ────────────────────────────────────────────────────────
+# New QML/Qt Quick front-end, built alongside the Widgets app during migration.
+# Logic (engine, ProjectModel) is shared; presentation is QML. When QML reaches
+# parity the Widgets target above is removed and this becomes reqloom-desktop.
+qt_add_executable(reqloom-qml
+    qml/main.cpp
+    qml/DesignTokens.h
+    qml/ResourceListModel.cpp
+    qml/ResourceListModel.h
+    qml/OperationListModel.cpp
+    qml/OperationListModel.h
+    qml/KeyValueModel.cpp
+    qml/KeyValueModel.h
+    qml/ProjectTreeModel.cpp
+    qml/ProjectTreeModel.h
+    qml/ProjectTreeFilterModel.cpp
+    qml/ProjectTreeFilterModel.h
+    qml/DependencyEditModel.cpp
+    qml/DependencyEditModel.h
+    qml/EditableKeyValueModel.cpp
+    qml/EditableKeyValueModel.h
+    qml/AppController.cpp
+    qml/AppController.h
+    src/application/ProjectModel.cpp
+    src/application/ProjectModel.h
+    src/application/Bootstrapper.cpp
+    src/application/Bootstrapper.h
+    src/application/RunController.cpp
+    src/application/RunController.h
+    src/views/Formatting.cpp
+    src/views/Formatting.h
+    src/widgets/FuzzyMatch.cpp
+    src/widgets/FuzzyMatch.h
+)
+
+qt_add_qml_module(reqloom-qml
+    URI Reqloom
+    VERSION 1.0
+    QML_FILES
+        qml/Main.qml
+        qml/MethodBadge.qml
+        qml/PanelHeader.qml
+        qml/ExplorerPanel.qml
+        qml/NewModuleDialog.qml
+        qml/NewEndpointDialog.qml
+        qml/DependencyEditor.qml
+        qml/ExtractionEditor.qml
+        qml/RequestEditor.qml
+        qml/KeyValueList.qml
+        qml/ResponsePanel.qml
+)
+
+target_link_libraries(reqloom-qml
+    PRIVATE
+        reqloom::engine
+        Qt6::Core
+        Qt6::Concurrent
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2
+        # Widgets is linked so a non-replaceable Widgets-only control (e.g. a
+        # QScintilla code editor) can be shown as a standalone dialog window.
+        # QML-first; Widgets only as a fallback (ADR-007).
+        Qt6::Widgets
+)
+
+target_include_directories(reqloom-qml
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml
+)
+
+set_target_properties(reqloom-qml PROPERTIES
+    OUTPUT_NAME "ReqloomQml"
+    MACOSX_BUNDLE ON
+)
+
+reqloom_set_warnings(reqloom-qml)
+reqloom_apply_sanitizers(reqloom-qml)
+
 # No boundary guard here — desktop is the one place Qt UI libraries are
 # allowed (PRD §8.6 / Project Layout §2.5). The engine boundary is enforced
 # on the engine and CLI targets, not here.
