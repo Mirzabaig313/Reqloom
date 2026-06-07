@@ -19,6 +19,7 @@
 
 class QToolButton;
 class QVBoxLayout;
+class QLabel;
 
 namespace reqloom::desktop::widgets {
 
@@ -40,6 +41,11 @@ public:
 
     void setMode(Mode mode);
     void setTheme(const theming::Theme& theme);
+
+    /// Override the column captions (default "Key" / "Value"). Lets the same
+    /// widget back a Variable/Path extraction table without a second copy of
+    /// the ghost-row machinery.
+    void setCaptions(const QString& keyCaption, const QString& valueCaption);
 
     /// Replace all rows with `pairs` (insertion order preserved).
     void setPairs(const std::vector<std::pair<QString, QString>>& pairs);
@@ -64,6 +70,8 @@ private:
 
     QVBoxLayout* rows_{nullptr};
     QWidget* captionSpacer_{nullptr};
+    QLabel* keyCaption_{nullptr};
+    QLabel* valueCaption_{nullptr};
     Mode mode_{Mode::Plain};
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
 };

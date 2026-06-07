@@ -1,6 +1,10 @@
 // NewEndpointDialog — see header.
 #include "NewEndpointDialog.h"
 
+#include "../theming/Theme.h"
+#include "../widgets/DependencyListEditor.h"
+#include "../widgets/ExtractionTableEditor.h"
+
 #include <QtCore/QVariant>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDialogButtonBox>
@@ -8,6 +12,7 @@
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QToolButton>
 #include <QtWidgets/QVBoxLayout>
 
 #include <array>
@@ -39,6 +44,7 @@ constexpr std::array<std::pair<const char*, engine::HttpMethod>, 7> kMethods{{
 
 NewEndpointDialog::NewEndpointDialog(const QStringList& resources,
                                      const QStringList& actors,
+                                     const QStringList& dependencyCandidates,
                                      const QString& preselectedResource,
                                      QWidget* parent)
     : QDialog(parent) {
@@ -78,6 +84,38 @@ NewEndpointDialog::NewEndpointDialog(const QStringList& resources,
     form->addRow(QStringLiteral("Actor"), actorCombo_);
     outer->addLayout(form);
 
+    // Optional, collapsed chain section: depends_on pickers + extract table.
+    chainToggle_ = new QToolButton(this);
+    chainToggle_->setText(QStringLiteral("▸ Chain (optional)"));
+    chainToggle_->setCheckable(true);
+    chainToggle_->setAutoRaise(true);
+    chainToggle_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    outer->addWidget(chainToggle_);
+
+    chainSection_ = new QWidget(this);
+    auto* chainLayout = new QVBoxLayout(chainSection_);
+    chainLayout->setContentsMargins(0, 0, 0, 0);
+    auto* dependsLabel = new QLabel(QStringLiteral("Depends on"), chainSection_);
+    dependsLabel->setProperty("role", QStringLiteral("sectionHeading"));
+    chainLayout->addWidget(dependsLabel);
+    dependencyEditor_ = new widgets::DependencyListEditor(chainSection_);
+    dependencyEditor_->setCandidates(dependencyCandidates);
+    chainLayout->addWidget(dependencyEditor_);
+    auto* extractLabel = new QLabel(QStringLiteral("Extract"), chainSection_);
+    extractLabel->setProperty("role", QStringLiteral("sectionHeading"));
+    chainLayout->addWidget(extractLabel);
+    extractionEditor_ = new widgets::ExtractionTableEditor(chainSection_);
+    chainLayout->addWidget(extractionEditor_);
+    chainSection_->setVisible(false);
+    outer->addWidget(chainSection_);
+
+    connect(chainToggle_, &QToolButton::toggled, this, [this](bool on) {
+        chainToggle_->setText(on ? QStringLiteral("▾ Chain (optional)")
+                                 : QStringLiteral("▸ Chain (optional)"));
+        chainSection_->setVisible(on);
+        adjustSize();
+    });
+
     errorLabel_ = new QLabel(this);
     errorLabel_->setVisible(false);
     errorLabel_->setWordWrap(true);
@@ -115,6 +153,18 @@ QString NewEndpointDialog::pathTemplate() const {
 
 QString NewEndpointDialog::actorId() const {
     return actorCombo_->currentText();
+}
+
+std::vector<engine::OperationId> NewEndpointDialog::dependencies() const {
+    std::vector<engine::OperationId> out;
+    for (const auto& dep : dependencyEditor_->dependencies()) {
+        out.push_back(engine::OperationId{dep});
+    }
+    return out;
+}
+
+std::vector<engine::Extraction> NewEndpointDialog::extractions() const {
+    return extractionEditor_->extractions();
 }
 
 void NewEndpointDialog::revalidate() {
