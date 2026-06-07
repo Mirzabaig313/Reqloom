@@ -78,6 +78,24 @@ ProjectExplorerWidget::ProjectExplorerWidget(QWidget* parent) : QWidget(parent) 
 
     header_ = new widgets::PanelHeader(QStringLiteral("Explorer"), this);
     header_->setSubtitle(QStringLiteral("No project open"));
+
+    auto* addBtn = new QToolButton(this);
+    addBtn->setObjectName(QStringLiteral("railButton"));
+    addBtn->setText(QStringLiteral("+"));
+    addBtn->setAutoRaise(true);
+    addBtn->setToolTip(QStringLiteral("Add module or endpoint"));
+    addBtn->setAccessibleName(QStringLiteral("Add module or endpoint"));
+    addBtn->setPopupMode(QToolButton::InstantPopup);
+    auto* addMenu = new QMenu(addBtn);
+    QAction* newEndpoint = addMenu->addAction(QStringLiteral("New Endpoint…"));
+    QAction* newModule = addMenu->addAction(QStringLiteral("New Module…"));
+    connect(newEndpoint, &QAction::triggered, this, [this]() {
+        emit operationCreateRequested(QString{});
+    });
+    connect(newModule, &QAction::triggered, this, [this]() { emit resourceCreateRequested(); });
+    addBtn->setMenu(addMenu);
+    header_->addTrailingWidget(addBtn);
+
     auto* collapseBtn = new QToolButton(this);
     collapseBtn->setObjectName(QStringLiteral("railButton"));
     collapseBtn->setText(QStringLiteral("‹"));
@@ -162,6 +180,7 @@ void ProjectExplorerWidget::populate(const ProjectModel& project) {
     auto* resourcesRoot = new QTreeWidgetItem(tree_);
     resourcesRoot->setText(0, QStringLiteral("📁  Resources"));
     resourcesRoot->setData(0, roles::kIsOperation, false);
+    resourcesRoot->setData(0, roles::kIsResourcesRoot, true);
     for (const auto& [resId, resource] : proj.resources) {
         auto* resItem = new QTreeWidgetItem(resourcesRoot);
         const QString resName = QString::fromStdString(resId.value);
@@ -305,14 +324,31 @@ void ProjectExplorerWidget::onContextMenu(const QPoint& pos) {
     const QString resourceId = item->data(0, roles::kResourceId).toString();
     if (!resourceId.isEmpty()) {
         QMenu menu(this);
+        QAction* newEndpoint = menu.addAction(QStringLiteral("New Endpoint…"));
+        menu.addSeparator();
         QAction* rename = menu.addAction(QStringLiteral("Rename"));
         menu.addSeparator();
         QAction* remove = menu.addAction(QStringLiteral("Delete"));
         const QAction* chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
-        if (chosen == rename) {
+        if (chosen == newEndpoint) {
+            emit operationCreateRequested(resourceId);
+        } else if (chosen == rename) {
             emit resourceRenameRequested(resourceId);
         } else if (chosen == remove) {
             emit resourceDeleteRequested(resourceId);
+        }
+        return;
+    }
+
+    if (item->data(0, roles::kIsResourcesRoot).toBool()) {
+        QMenu menu(this);
+        QAction* newModule = menu.addAction(QStringLiteral("New Module…"));
+        QAction* newEndpoint = menu.addAction(QStringLiteral("New Endpoint…"));
+        const QAction* chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
+        if (chosen == newModule) {
+            emit resourceCreateRequested();
+        } else if (chosen == newEndpoint) {
+            emit operationCreateRequested(QString{});
         }
     }
 }

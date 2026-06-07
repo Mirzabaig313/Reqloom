@@ -11,6 +11,8 @@
 #include "../widgets/EmptyState.h"
 #include "../widgets/Toast.h"
 #include "Formatting.h"
+#include "NewEndpointDialog.h"
+#include "NewModuleDialog.h"
 #include "ProjectExplorerWidget.h"
 #include "RequestEditorPanel.h"
 #include "ResponseViewerPanel.h"
@@ -468,6 +470,14 @@ void MainWindow::connectSignals() {
             &ProjectExplorerWidget::resourceDeleteRequested,
             this,
             &MainWindow::onResourceDelete);
+    connect(explorer_,
+            &ProjectExplorerWidget::resourceCreateRequested,
+            this,
+            &MainWindow::onResourceCreate);
+    connect(explorer_,
+            &ProjectExplorerWidget::operationCreateRequested,
+            this,
+            &MainWindow::onOperationCreate);
     connect(
         explorer_, &ProjectExplorerWidget::operationActivated, this, [this](const QString& opId) {
             requestEditor_->showOperation(project_, opId);
@@ -1069,6 +1079,72 @@ void MainWindow::onResourceDelete(const QString& resourceId) {
     } else {
         widgets::Toast::show(
             this, themeManager_.theme(), QStringLiteral("Delete failed: %1").arg(error), 4000);
+    }
+}
+
+void MainWindow::onResourceCreate() {
+    if (runController_->isRunning() || !project_.hasProject()) {
+        return;
+    }
+    NewModuleDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    QString error;
+    if (project_.createResource(dialog.moduleName(), dialog.description(), error)) {
+        widgets::Toast::show(this,
+                             themeManager_.theme(),
+                             QStringLiteral("Created module “%1”").arg(dialog.moduleName()));
+    } else {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Create failed: %1").arg(error), 4000);
+    }
+}
+
+void MainWindow::onOperationCreate(const QString& resourceId) {
+    if (runController_->isRunning() || !project_.hasProject()) {
+        return;
+    }
+    const auto& proj = project_.project();
+    QStringList resources;
+    for (const auto& [id, resource] : proj.resources) {
+        resources.append(QString::fromStdString(id.value));
+    }
+    if (resources.isEmpty()) {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Create a module first."), 4000);
+        return;
+    }
+    QStringList actors;
+    for (const auto& [id, actor] : proj.actors) {
+        actors.append(QString::fromStdString(id.value));
+    }
+
+    NewEndpointDialog dialog(resources, actors, resourceId, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    QString error;
+    const auto newId =
+        project_.createOperation(engine::ResourceId{dialog.resourceId().toStdString()},
+                                 dialog.endpointName(),
+                                 dialog.method(),
+                                 dialog.pathTemplate(),
+                                 engine::ActorId{dialog.actorId().toStdString()},
+                                 /*dependencies=*/{},
+                                 /*extractions=*/{},
+                                 error);
+    if (newId) {
+        // The saved() signal repopulated the explorer; open the new endpoint
+        // in edit mode so the user can flesh out headers/body/chain next.
+        const QString opId = QString::fromStdString(newId->value);
+        requestEditor_->showOperation(project_, opId);
+        requestEditor_->beginEdit();
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Created endpoint “%1”").arg(opId));
+    } else {
+        widgets::Toast::show(
+            this, themeManager_.theme(), QStringLiteral("Create failed: %1").arg(error), 4000);
     }
 }
 

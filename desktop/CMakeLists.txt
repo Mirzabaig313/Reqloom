@@ -48,6 +48,10 @@ qt_add_executable(reqloom-desktop WIN32 MACOSX_BUNDLE
     src/views/Formatting.h
     src/views/MainWindow.cpp
     src/views/MainWindow.h
+    src/views/NewEndpointDialog.cpp
+    src/views/NewEndpointDialog.h
+    src/views/NewModuleDialog.cpp
+    src/views/NewModuleDialog.h
     src/views/ProjectExplorerWidget.cpp
     src/views/ProjectExplorerWidget.h
     src/views/RequestEditorPanel.cpp
