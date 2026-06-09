@@ -7,11 +7,11 @@
 
 #include "../../src/theming/Theme.h"
 
+#include <QtQml/qqmlregistration.h>
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QStyleHints>
-#include <QtQml/qqmlregistration.h>
 
 #include <cstdint>
 
@@ -59,7 +59,7 @@ private:
     void loadSettings();
     void saveSettings() const;
 
-    QString mode_{QStringLiteral("system")};    ///< "light" / "dark" / "system"
+    QString mode_{QStringLiteral("system")};          ///< "light" / "dark" / "system"
     QString density_{QStringLiteral("comfortable")};  ///< "comfortable" / "compact"
 };
 

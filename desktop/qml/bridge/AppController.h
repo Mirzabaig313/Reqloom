@@ -14,14 +14,14 @@
 #include "TimelineModel.h"
 
 #include "../../src/application/Bootstrapper.h"
+#include "../../src/application/EnvironmentSettings.h"
 #include "../../src/application/RunController.h"
 #include "../../src/application/SavedResponseStore.h"
-#include "../../src/application/EnvironmentSettings.h"
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractItemModel>
-#include <QtCore/QSettings>
 #include <QtCore/QObject>
+#include <QtCore/QSettings>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
 #include <QtCore/QUrl>
@@ -116,7 +116,8 @@ class AppController : public QObject {
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editExtractions READ editExtractions CONSTANT)
     Q_PROPERTY(DependencyEditModel* editDependencies READ editDependencies CONSTANT)
-    Q_PROPERTY(QStringList editDependencyCandidates READ editDependencyCandidates NOTIFY editChanged)
+    Q_PROPERTY(
+        QStringList editDependencyCandidates READ editDependencyCandidates NOTIFY editChanged)
     // Live per-tab count badges (Postman-style "Headers 8").
     Q_PROPERTY(int editParamsCount READ editParamsCount NOTIFY editChanged)
     Q_PROPERTY(int editHeadersCount READ editHeadersCount NOTIFY editChanged)
