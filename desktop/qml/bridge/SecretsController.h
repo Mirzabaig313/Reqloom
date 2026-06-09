@@ -5,10 +5,10 @@
 
 #include "../../src/application/SecretManager.h"
 
+#include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractListModel>
 #include <QtCore/QObject>
 #include <QtCore/QString>
-#include <QtQml/qqmlregistration.h>
 
 #include <memory>
 
@@ -64,9 +64,7 @@ public:
     }
 
     [[nodiscard]] SecretListModel* secrets() { return &list_; }
-    [[nodiscard]] bool backendAvailable() const noexcept {
-        return manager_.backendAvailable();
-    }
+    [[nodiscard]] bool backendAvailable() const noexcept { return manager_.backendAvailable(); }
 
     /// Refresh the list against `project`. Call when a project loads or the
     /// dialog opens.

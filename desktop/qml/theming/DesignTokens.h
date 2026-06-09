@@ -8,10 +8,10 @@
 
 #include "../../src/theming/Theme.h"
 
+#include <QtQml/qqmlregistration.h>
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtGui/QColor>
-#include <QtQml/qqmlregistration.h>
 
 class QQmlEngine;
 class QJSEngine;
