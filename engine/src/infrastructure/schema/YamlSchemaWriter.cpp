@@ -139,6 +139,27 @@ void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m
     e << YAML::EndMap;
 }
 
+// Emit a request `body`. The parser stores `body` as JSON text
+// (yamlNodeToJsonValue(node).dump()), so writing that text back as a plain
+// scalar makes the next load JSON-encode it again — adding a layer of quotes on
+// every save (the over-escaping bug). To round-trip, when the stored body is a
+// JSON object/array we re-parse it and emit a structured YAML node, which the
+// parser reproduces verbatim. Non-structural bodies fall back to a scalar.
+void emitBodyTemplate(YAML::Emitter& e, const std::string& bodyTemplate) {
+    if (!bodyTemplate.empty()) {
+        try {
+            const YAML::Node parsed = YAML::Load(bodyTemplate);
+            if (parsed && (parsed.IsMap() || parsed.IsSequence())) {
+                e << parsed;
+                return;
+            }
+        } catch (const YAML::Exception&) {
+            // Not parseable as YAML/JSON — emit the raw text as a scalar below.
+        }
+    }
+    e << bodyTemplate;
+}
+
 void emitExtractions(YAML::Emitter& e, const std::vector<Extraction>& extractions) {
     if (extractions.empty()) {
         return;
@@ -186,7 +207,8 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
         emitStringMap(e, op.queryParams);
     }
     if (op.bodyTemplate) {
-        e << YAML::Key << "body" << YAML::Value << *op.bodyTemplate;
+        e << YAML::Key << "body" << YAML::Value;
+        emitBodyTemplate(e, *op.bodyTemplate);
     }
     if (op.bodyForm) {
         e << YAML::Key << "body_form" << YAML::Value;
@@ -282,7 +304,8 @@ void emitAuthStep(YAML::Emitter& e, const AuthStep& step, bool isChainStep) {
         emitStringMap(e, step.headers);
     }
     if (step.bodyTemplate) {
-        e << YAML::Key << "body" << YAML::Value << *step.bodyTemplate;
+        e << YAML::Key << "body" << YAML::Value;
+        emitBodyTemplate(e, *step.bodyTemplate);
     }
     if (step.expectStatus) {
         e << YAML::Key << "expect_status" << YAML::Value << *step.expectStatus;
@@ -376,7 +399,8 @@ std::string emitActor(const Actor& actor) {
             emitStringMap(e, actor.refresh->headers);
         }
         if (actor.refresh->bodyTemplate) {
-            e << YAML::Key << "body" << YAML::Value << *actor.refresh->bodyTemplate;
+            e << YAML::Key << "body" << YAML::Value;
+            emitBodyTemplate(e, *actor.refresh->bodyTemplate);
         }
         // List form takes precedence over scalar — same convention as
         // operation-level expect_status.

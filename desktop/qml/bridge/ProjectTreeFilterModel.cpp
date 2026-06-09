@@ -3,7 +3,7 @@
 
 #include "ProjectTreeModel.h"
 
-#include "../src/widgets/FuzzyMatch.h"
+#include "../../src/widgets/FuzzyMatch.h"
 
 namespace reqloom::desktop::qml {
 

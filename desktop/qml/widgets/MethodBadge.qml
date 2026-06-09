@@ -9,14 +9,7 @@ Rectangle {
     required property string method
 
     function hue(m) {
-        switch (m) {
-        case "GET": return DesignTokens.methodGet
-        case "POST": return DesignTokens.methodPost
-        case "PUT": return DesignTokens.methodPut
-        case "PATCH": return DesignTokens.methodPatch
-        case "DELETE": return DesignTokens.methodDelete
-        default: return DesignTokens.textSecondary
-        }
+        return DesignTokens.methodColor(m)
     }
 
     implicitWidth: label.implicitWidth + DesignTokens.spaceSm * 2

@@ -212,6 +212,36 @@ TEST(SchemaWriter, round_trips_actor_resource_environment) {
     EXPECT_EQ(payOut.extractions[0].sourcePath, "$.id");
 }
 
+TEST(SchemaWriter, json_object_body_survives_repeated_saves_without_escaping) {
+    // Regression: the writer used to emit `body` as a raw scalar, so each parse
+    // re-JSON-encoded it, adding a layer of quotes on every save (the
+    // over-escaping bug seen in actor auth bodies). A JSON object body must
+    // round-trip unchanged across repeated write → parse cycles.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    const std::string canonical = R"({"email":"a@b.test"})";
+    project.resources.at(ce::ResourceId{"payment"}).operations.at("pay").bodyTemplate = canonical;
+
+    auto written1 = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written1.has_value()) << written1.error().detail;
+    auto parsed1 = ce::parseProject(*written1);
+    ASSERT_TRUE(parsed1.has_value()) << parsed1.error().detail;
+    const auto& body1 =
+        parsed1->resources.at(ce::ResourceId{"payment"}).operations.at("pay").bodyTemplate;
+    ASSERT_TRUE(body1.has_value());
+    EXPECT_EQ(*body1, canonical);
+
+    // Second cycle from the reloaded project: still canonical, not re-escaped.
+    auto written2 = ce::writeProject(scratch.path(), *parsed1, /*overwrite=*/true);
+    ASSERT_TRUE(written2.has_value()) << written2.error().detail;
+    auto parsed2 = ce::parseProject(*written2);
+    ASSERT_TRUE(parsed2.has_value()) << parsed2.error().detail;
+    const auto& body2 =
+        parsed2->resources.at(ce::ResourceId{"payment"}).operations.at("pay").bodyTemplate;
+    ASSERT_TRUE(body2.has_value());
+    EXPECT_EQ(*body2, canonical);
+}
+
 TEST(SchemaWriter, provenance_round_trips_unaffected_by_runtime) {
     // Provenance is what 6c will write for AI-imported ops. Round-tripping
     // it cleanly is the prerequisite for §10.3.4 runtime diagnostics.
