@@ -41,6 +41,16 @@ void DependencyEditModel::setCandidates(const QStringList& operationIds) {
     emit candidatesChanged();
 }
 
+void DependencyEditModel::setDependencies(const std::vector<std::string>& dependencies) {
+    beginResetModel();
+    rows_.clear();
+    for (const auto& dep : dependencies) {
+        rows_.emplace_back(QString::fromStdString(dep));
+    }
+    rows_.emplace_back(QString{});
+    endResetModel();
+}
+
 void DependencyEditModel::ensureTrailingGhost() {
     if (rows_.empty() || !rows_.back().isEmpty()) {
         const int at = static_cast<int>(rows_.size());
