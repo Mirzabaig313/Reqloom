@@ -1,8 +1,8 @@
 // AppController — see header.
 #include "AppController.h"
 
-#include "../../src/application/ProjectModel.h"
 #include "../../src/application/EnvironmentSettings.h"
+#include "../../src/application/ProjectModel.h"
 #include "../../src/widgets/LineDiff.h"
 
 #include <QtCore/QCoreApplication>
@@ -185,12 +185,13 @@ AppController::AppController(QObject* parent)
     // Any change to an edit model re-evaluates the live tab counts + banner,
     // and the dependency model also re-renders the chain preview. Receiver-
     // bound, function-pointer form (auto-disconnect on destruction).
-    const auto onEditModelChanged = [this]() { emit editChanged(); };
-    for (QAbstractItemModel* model :
-         {static_cast<QAbstractItemModel*>(&editHeaders_),
-          static_cast<QAbstractItemModel*>(&editQuery_),
-          static_cast<QAbstractItemModel*>(&editForm_),
-          static_cast<QAbstractItemModel*>(&editExtractions_)}) {
+    const auto onEditModelChanged = [this]() {
+        emit editChanged();
+    };
+    for (QAbstractItemModel* model : {static_cast<QAbstractItemModel*>(&editHeaders_),
+                                      static_cast<QAbstractItemModel*>(&editQuery_),
+                                      static_cast<QAbstractItemModel*>(&editForm_),
+                                      static_cast<QAbstractItemModel*>(&editExtractions_)}) {
         connect(model, &QAbstractItemModel::dataChanged, this, onEditModelChanged);
         connect(model, &QAbstractItemModel::rowsInserted, this, onEditModelChanged);
         connect(model, &QAbstractItemModel::rowsRemoved, this, onEditModelChanged);
@@ -473,7 +474,8 @@ bool AppController::editBodyFilled() const {
 }
 
 int AppController::editChainCount() const {
-    return static_cast<int>(editDependencies_.dependencies().size() + editExtractions_.pairs().size());
+    return static_cast<int>(editDependencies_.dependencies().size() +
+                            editExtractions_.pairs().size());
 }
 
 QVariantList AppController::chainNodes() const {
@@ -510,7 +512,8 @@ QVariantList AppController::chainNodes() const {
         QVariantMap node;
         node.insert(QStringLiteral("operationId"), id);
         const auto* depOp = project_->findOperation(engine::OperationId{id.toStdString()});
-        node.insert(QStringLiteral("method"), depOp != nullptr ? methodLabel(depOp->method) : QString{});
+        node.insert(QStringLiteral("method"),
+                    depOp != nullptr ? methodLabel(depOp->method) : QString{});
         node.insert(QStringLiteral("isTarget"), isTarget);
         return node;
     };
@@ -525,7 +528,8 @@ void AppController::beginEdit() {
     if (!hasOperation_ || !project_->hasProject()) {
         return;
     }
-    const auto* op = project_->findOperation(engine::OperationId{currentOperationId().toStdString()});
+    const auto* op =
+        project_->findOperation(engine::OperationId{currentOperationId().toStdString()});
     if (op == nullptr) {
         return;
     }
@@ -757,7 +761,8 @@ QVariantList AppController::lineDiff(const QString& oldText, const QString& newT
         } else if (line.kind == Kind::Removed) {
             sign = QStringLiteral("-");
         }
-        rows.append(QVariantMap{{QStringLiteral("sign"), sign}, {QStringLiteral("text"), line.text}});
+        rows.append(
+            QVariantMap{{QStringLiteral("sign"), sign}, {QStringLiteral("text"), line.text}});
     }
     return rows;
 }
