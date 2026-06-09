@@ -374,6 +374,50 @@ resources:
 
 // ─── retry: block ────────────────────────────────────────────────────────────
 
+// ─── body: quoted scalar type preservation ───────────────────────────────────
+
+TEST(SchemaParserOperationFields, quoted_body_values_keep_string_type) {
+    // A quoted value in a YAML map body must stay a JSON string — never get
+    // retyped to a number/bool — so a zip code "01234" or a flag-shaped string
+    // "true" survives. Unquoted scalars still resolve to their natural type.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: QuotedBody
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+    inject: { headers: { Authorization: "Bearer {{user.token}}" } }
+
+resources:
+  account:
+    operations:
+      create:
+        method: POST
+        path: /api/v1/accounts
+        actor: user
+        expect_status: 201
+        body:
+          zip: "01234"
+          flag: "true"
+          qty: 5
+          enabled: true
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& create = result->resources.at(ce::ResourceId{"account"}).operations.at("create");
+    ASSERT_TRUE(create.bodyTemplate.has_value());
+    // Quoted values stay strings; unquoted scalars keep their natural JSON type.
+    EXPECT_EQ(*create.bodyTemplate, R"({"enabled":true,"flag":"true","qty":5,"zip":"01234"})");
+}
+
 TEST(SchemaParserOperationFields, retry_block_sets_max_attempts_and_backoff) {
     ScratchDir scratch;
     const auto yaml = scratch.write("reqloom.yaml", R"YAML(

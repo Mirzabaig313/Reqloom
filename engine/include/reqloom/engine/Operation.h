@@ -154,9 +154,16 @@ struct Operation {
     /// Explicit dependencies declared by the user.
     std::vector<OperationId> explicitDependencies;
 
-    /// Optional inline JS hook scripts.
+    /// Optional inline JS hook scripts (resolved content; a file reference is
+    /// loaded into these at parse time).
     std::optional<std::string> preRequestScript;
     std::optional<std::string> postResponseScript;
+
+    /// When a hook came from a file reference (e.g. "./hooks/x.js"), the
+    /// original path. The writer re-emits the reference instead of inlining the
+    /// resolved content, so the sidecar file isn't orphaned on save.
+    std::optional<std::string> preRequestScriptRef;
+    std::optional<std::string> postResponseScriptRef;
 
     RetryPolicy retry;
     std::optional<std::chrono::milliseconds> timeout;
