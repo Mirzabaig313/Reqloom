@@ -5,17 +5,16 @@
 // parents hidden), select-to-preview, activate-to-run (double-click/Enter),
 // per-row-type context menus, truncation tooltips, and a project-name header
 // with "N operations · M actors". Presentation only; logic is in AppController.
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import Reqloom
 
-pragma ComponentBehavior: Bound
-
 Rectangle {
     id: panel
 
-    signal collapseRequested()
+    signal collapseRequested
 
     radius: DesignTokens.radius
     color: DesignTokens.surfaceRaised
@@ -34,12 +33,8 @@ Rectangle {
 
         PanelHeader {
             Layout.fillWidth: true
-            title: AppController.projectName.length > 0 ? AppController.projectName
-                                                        : qsTr("Explorer")
-            subtitle: AppController.projectName.length > 0
-                      ? qsTr("%1 operations · %2 actors").arg(AppController.operationCount)
-                                                         .arg(AppController.actorCount)
-                      : qsTr("No project open")
+            title: AppController.projectName.length > 0 ? AppController.projectName : qsTr("Explorer")
+            subtitle: AppController.projectName.length > 0 ? qsTr("%1 operations · %2 actors").arg(AppController.operationCount).arg(AppController.actorCount) : qsTr("No project open")
 
             ToolButton {
                 id: addBtn
@@ -96,7 +91,11 @@ Rectangle {
                 anchors.leftMargin: DesignTokens.spaceSm
                 anchors.rightMargin: DesignTokens.spaceSm
                 spacing: DesignTokens.spaceXs
-                Label { text: "🔍"; font.pixelSize: 12; opacity: 0.6 }
+                Label {
+                    text: "🔍"
+                    font.pixelSize: 12
+                    opacity: 0.6
+                }
                 TextField {
                     id: filterField
                     Layout.fillWidth: true
@@ -118,24 +117,35 @@ Rectangle {
             clip: true
             focus: true
             model: AppController.explorerModel
-            selectionModel: ItemSelectionModel { model: tree.model }
+            selectionModel: ItemSelectionModel {
+                model: tree.model
+            }
 
-            // Re-expand after the filter or project rebuilds the model.
+            // Re-expand after the model rebuilds (project load OR example-row
+            // updates both reset the model, which collapses the TreeView).
             Connections {
                 target: AppController
-                function onProjectChanged() { Qt.callLater(tree.expandRecursively) }
+                function onProjectChanged() {
+                    Qt.callLater(tree.expandRecursively);
+                }
+            }
+            Connections {
+                target: tree.model
+                function onModelReset() {
+                    Qt.callLater(tree.expandRecursively);
+                }
             }
             Component.onCompleted: Qt.callLater(expandRecursively)
 
             // Enter / Return activates (runs) the current operation row.
             Keys.onReturnPressed: {
                 if (panel.currentOperationId.length > 0) {
-                    AppController.activateOperationById(panel.currentOperationId)
+                    AppController.activateOperationById(panel.currentOperationId);
                 }
             }
             Keys.onEnterPressed: {
                 if (panel.currentOperationId.length > 0) {
-                    AppController.activateOperationById(panel.currentOperationId)
+                    AppController.activateOperationById(panel.currentOperationId);
                 }
             }
 
@@ -159,14 +169,13 @@ Rectangle {
 
                 onCurrentChanged: {
                     if (del.current) {
-                        panel.currentOperationId = del.isOperation ? del.operationId : ""
+                        panel.currentOperationId = del.isOperation ? del.operationId : "";
                     }
                 }
 
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
-                    color: del.current ? DesignTokens.accentMuted
-                           : del.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
+                    color: del.current ? DesignTokens.accentMuted : del.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
                 }
 
                 contentItem: RowLayout {
@@ -174,9 +183,7 @@ Rectangle {
 
                     Label {
                         visible: !del.isOperation
-                        text: del.kind === "actorGroup" || del.kind === "resourceGroup" ? "📁"
-                              : del.kind === "resource" ? "📂"
-                              : del.kind === "example" ? "⚡" : ""
+                        text: del.kind === "actorGroup" || del.kind === "resourceGroup" ? "📁" : del.kind === "resource" ? "📂" : del.kind === "example" ? "⚡" : ""
                         font.pixelSize: 12
                         opacity: 0.8
                     }
@@ -187,24 +194,25 @@ Rectangle {
                     Label {
                         Layout.fillWidth: true
                         text: del.name
-                        color: del.isExample ? DesignTokens.textSecondary
-                                             : DesignTokens.textPrimary
+                        color: del.isExample ? DesignTokens.textSecondary : DesignTokens.textPrimary
                         font.pixelSize: 13
                         font.weight: del.current ? Font.DemiBold : Font.Normal
                         elide: Text.ElideRight
                         ToolTip.visible: hoverHandler.hovered && del.tooltip.length > 0
                         ToolTip.text: del.tooltip
-                        HoverHandler { id: hoverHandler }
+                        HoverHandler {
+                            id: hoverHandler
+                        }
                     }
                 }
 
                 onClicked: {
                     if (del.isOperation) {
-                        AppController.selectOperationById(del.operationId)
+                        AppController.selectOperationById(del.operationId);
                     } else if (del.isExample) {
-                        AppController.selectExample(del.operationId, del.exampleName)
+                        AppController.selectExample(del.operationId, del.exampleName);
                     } else {
-                        tree.toggleExpanded(del.row)
+                        tree.toggleExpanded(del.row);
                     }
                 }
 
@@ -212,7 +220,7 @@ Rectangle {
                     acceptedButtons: Qt.LeftButton
                     onDoubleTapped: {
                         if (del.isOperation) {
-                            AppController.activateOperationById(del.operationId)
+                            AppController.activateOperationById(del.operationId);
                         }
                     }
                 }
@@ -220,17 +228,17 @@ Rectangle {
                 TapHandler {
                     acceptedButtons: Qt.RightButton
                     onTapped: {
-                        panel.ctxOperationId = del.operationId
-                        panel.ctxResourceId = del.resourceId
-                        panel.ctxExampleName = del.exampleName
+                        panel.ctxOperationId = del.operationId;
+                        panel.ctxResourceId = del.resourceId;
+                        panel.ctxExampleName = del.exampleName;
                         if (del.isExample) {
-                            exampleMenu.popup()
+                            exampleMenu.popup();
                         } else if (del.isOperation) {
-                            operationMenu.popup()
+                            operationMenu.popup();
                         } else if (del.isResource) {
-                            resourceMenu.popup()
+                            resourceMenu.popup();
                         } else if (del.isResourcesRoot) {
-                            rootMenu.popup()
+                            rootMenu.popup();
                         }
                     }
                 }
@@ -303,7 +311,7 @@ Rectangle {
         id: exampleMenu
         MenuItem {
             text: qsTr("Rename")
-            onTriggered: AppController.renameExample(panel.ctxOperationId, panel.ctxExampleName)
+            onTriggered: exampleRenameDialog.openFor(panel.ctxOperationId, panel.ctxExampleName)
         }
         MenuItem {
             text: qsTr("Duplicate")
@@ -317,8 +325,12 @@ Rectangle {
     }
 
     // ── Dialogs ──────────────────────────────────────────────────────────────
-    NewModuleDialog { id: newModuleDialog }
-    NewEndpointDialog { id: newEndpointDialog }
+    NewModuleDialog {
+        id: newModuleDialog
+    }
+    NewEndpointDialog {
+        id: newEndpointDialog
+    }
 
     Dialog {
         id: renameDialog
@@ -332,14 +344,14 @@ Rectangle {
         property string targetId: ""
 
         function openFor(kind, id) {
-            targetKind = kind
-            targetId = id
+            targetKind = kind;
+            targetId = id;
             // Seed with the short name (part after the last dot for ops).
-            const dot = id.lastIndexOf(".")
-            renameField.text = (kind === "operation" && dot >= 0) ? id.substring(dot + 1) : id
-            open()
-            renameField.forceActiveFocus()
-            renameField.selectAll()
+            const dot = id.lastIndexOf(".");
+            renameField.text = (kind === "operation" && dot >= 0) ? id.substring(dot + 1) : id;
+            open();
+            renameField.forceActiveFocus();
+            renameField.selectAll();
         }
 
         background: Rectangle {
@@ -361,17 +373,16 @@ Rectangle {
                 Layout.fillWidth: true
                 color: DesignTokens.textPrimary
                 onTextChanged: {
-                    const okBtn = renameButtons.standardButton(Dialog.Ok)
+                    const okBtn = renameButtons.standardButton(Dialog.Ok);
                     if (okBtn) {
-                        okBtn.enabled = AppController.isValidName(text)
+                        okBtn.enabled = AppController.isValidName(text);
                     }
                 }
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
                     color: DesignTokens.surfaceSunken
                     border.width: 1
-                    border.color: renameField.activeFocus ? DesignTokens.accent
-                                                           : DesignTokens.borderSubtle
+                    border.color: renameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
                 }
             }
         }
@@ -383,9 +394,9 @@ Rectangle {
 
         onAccepted: {
             if (targetKind === "operation") {
-                AppController.renameOperation(targetId, renameField.text.trim())
+                AppController.renameOperation(targetId, renameField.text.trim());
             } else if (targetKind === "resource") {
-                AppController.renameResource(targetId, renameField.text.trim())
+                AppController.renameResource(targetId, renameField.text.trim());
             }
         }
     }
@@ -402,9 +413,9 @@ Rectangle {
         property string targetId: ""
 
         function openFor(kind, id) {
-            targetKind = kind
-            targetId = id
-            open()
+            targetKind = kind;
+            targetId = id;
+            open();
         }
 
         background: Rectangle {
@@ -415,9 +426,7 @@ Rectangle {
         }
 
         contentItem: Label {
-            text: deleteDialog.targetKind === "resource"
-                  ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId)
-                  : qsTr("Delete endpoint “%1”?").arg(deleteDialog.targetId)
+            text: deleteDialog.targetKind === "resource" ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId) : qsTr("Delete endpoint “%1”?").arg(deleteDialog.targetId)
             color: DesignTokens.textPrimary
             font.pixelSize: 13
             wrapMode: Text.WordWrap
@@ -429,10 +438,73 @@ Rectangle {
 
         onAccepted: {
             if (targetKind === "operation") {
-                AppController.deleteOperation(targetId)
+                AppController.deleteOperation(targetId);
             } else if (targetKind === "resource") {
-                AppController.deleteResource(targetId)
+                AppController.deleteResource(targetId);
             }
         }
+    }
+
+    // Rename a saved example — needs a fresh name, so it prompts (unlike
+    // duplicate/delete which act immediately).
+    Dialog {
+        id: exampleRenameDialog
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: 380
+        padding: DesignTokens.spaceLg
+        title: qsTr("Rename example")
+
+        property string targetOperationId: ""
+        property string targetName: ""
+
+        function openFor(operationId, name) {
+            targetOperationId = operationId;
+            targetName = name;
+            exampleRenameField.text = name;
+            open();
+            exampleRenameField.forceActiveFocus();
+            exampleRenameField.selectAll();
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radius
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.borderSubtle
+        }
+
+        contentItem: ColumnLayout {
+            spacing: DesignTokens.spaceSm
+            Label {
+                text: qsTr("New name")
+                color: DesignTokens.textSecondary
+                font.pixelSize: 12
+            }
+            TextField {
+                id: exampleRenameField
+                Layout.fillWidth: true
+                color: DesignTokens.textPrimary
+                onTextChanged: {
+                    const okBtn = exampleRenameButtons.standardButton(Dialog.Ok);
+                    if (okBtn) {
+                        okBtn.enabled = text.trim().length > 0;
+                    }
+                }
+                background: Rectangle {
+                    radius: DesignTokens.radiusSm
+                    color: DesignTokens.surfaceSunken
+                    border.width: 1
+                    border.color: exampleRenameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                }
+            }
+        }
+
+        footer: DialogButtonBox {
+            id: exampleRenameButtons
+            standardButtons: Dialog.Ok | Dialog.Cancel
+        }
+
+        onAccepted: AppController.renameExample(targetOperationId, targetName, exampleRenameField.text.trim())
     }
 }

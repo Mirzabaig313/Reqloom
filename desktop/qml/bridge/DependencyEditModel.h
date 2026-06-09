@@ -35,6 +35,10 @@ public:
     /// Replace the pickable operation ids and reset rows to a single blank one.
     void setCandidates(const QStringList& operationIds);
 
+    /// Seed the picker rows from an existing operation's dependencies, then
+    /// append the trailing blank ghost row. Used when opening an op for edit.
+    void setDependencies(const std::vector<std::string>& dependencies);
+
     /// Set the selection of `row` (empty string clears it). Appends a fresh
     /// blank row when the last row is first filled.
     Q_INVOKABLE void setSelection(int row, const QString& value);

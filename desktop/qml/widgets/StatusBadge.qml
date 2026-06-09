@@ -1,0 +1,45 @@
+// StatusBadge — a small status pill (glyph + optional label) coloured from the
+// status vocabulary (QML Migration Roadmap WS-C). Mirrors the C++ StatusBadge
+// (DESIGN.md §6.1): colour is always paired with a glyph, never colour alone,
+// so colour-blind users can still distinguish states. The glyph + colour come
+// from DesignTokens so QML and C++ share one vocabulary.
+import QtQuick
+import Reqloom
+
+Rectangle {
+    id: badge
+
+    // Status vocabulary token: "running", "success", "warning", "error",
+    // "skipped", "cancelled", "blocked", "idle", "neutral".
+    required property string token
+    // Optional trailing label (e.g. "HTTP 200"). Empty → glyph only.
+    property string label: ""
+
+    readonly property color hue: DesignTokens.statusColor(token)
+
+    implicitWidth: row.implicitWidth + DesignTokens.spaceSm * 2
+    implicitHeight: 20
+    radius: DesignTokens.radiusSm
+    color: Qt.rgba(hue.r, hue.g, hue.b, 0.16)
+
+    Row {
+        id: row
+        anchors.centerIn: parent
+        spacing: 4
+        Text {
+            text: DesignTokens.statusGlyph(badge.token)
+            color: badge.hue
+            font.pixelSize: 11
+            font.weight: Font.Bold
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Text {
+            visible: badge.label.length > 0
+            text: badge.label
+            color: badge.hue
+            font.pixelSize: 11
+            font.weight: Font.DemiBold
+            anchors.verticalCenter: parent.verticalCenter
+        }
+    }
+}

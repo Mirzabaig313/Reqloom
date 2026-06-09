@@ -97,50 +97,78 @@ reqloom_apply_sanitizers(reqloom-desktop)
 # parity the Widgets target above is removed and this becomes reqloom-desktop.
 qt_add_executable(reqloom-qml
     qml/main.cpp
-    qml/DesignTokens.h
-    qml/ResourceListModel.cpp
-    qml/ResourceListModel.h
-    qml/OperationListModel.cpp
-    qml/OperationListModel.h
-    qml/KeyValueModel.cpp
-    qml/KeyValueModel.h
-    qml/ProjectTreeModel.cpp
-    qml/ProjectTreeModel.h
-    qml/ProjectTreeFilterModel.cpp
-    qml/ProjectTreeFilterModel.h
-    qml/DependencyEditModel.cpp
-    qml/DependencyEditModel.h
-    qml/EditableKeyValueModel.cpp
-    qml/EditableKeyValueModel.h
-    qml/AppController.cpp
-    qml/AppController.h
+    qml/theming/DesignTokens.h
+    qml/theming/DesignTokens.cpp
+    qml/bridge/ThemeController.h
+    qml/bridge/ThemeController.cpp
+    qml/bridge/SecretsController.h
+    qml/bridge/SecretsController.cpp
+    qml/bridge/ResourceListModel.cpp
+    qml/bridge/ResourceListModel.h
+    qml/bridge/OperationListModel.cpp
+    qml/bridge/OperationListModel.h
+    qml/bridge/KeyValueModel.cpp
+    qml/bridge/KeyValueModel.h
+    qml/bridge/ProjectTreeModel.cpp
+    qml/bridge/ProjectTreeModel.h
+    qml/bridge/ProjectTreeFilterModel.cpp
+    qml/bridge/ProjectTreeFilterModel.h
+    qml/bridge/DependencyEditModel.cpp
+    qml/bridge/DependencyEditModel.h
+    qml/bridge/EditableKeyValueModel.cpp
+    qml/bridge/EditableKeyValueModel.h
+    qml/bridge/TimelineModel.cpp
+    qml/bridge/TimelineModel.h
+    qml/bridge/ExampleListModel.cpp
+    qml/bridge/ExampleListModel.h
+    qml/bridge/AppController.cpp
+    qml/bridge/AppController.h
     src/application/ProjectModel.cpp
     src/application/ProjectModel.h
     src/application/Bootstrapper.cpp
     src/application/Bootstrapper.h
     src/application/RunController.cpp
     src/application/RunController.h
+    src/application/SavedResponseStore.cpp
+    src/application/SavedResponseStore.h
+    src/application/EnvironmentSettings.cpp
+    src/application/EnvironmentSettings.h
+    src/application/SecretManager.cpp
+    src/application/SecretManager.h
     src/views/Formatting.cpp
     src/views/Formatting.h
     src/widgets/FuzzyMatch.cpp
     src/widgets/FuzzyMatch.h
+    src/widgets/LineDiff.cpp
+    src/widgets/LineDiff.h
+    src/theming/Color.cpp
+    src/theming/Color.h
+    src/theming/Theme.cpp
+    src/theming/Theme.h
 )
 
 qt_add_qml_module(reqloom-qml
     URI Reqloom
     VERSION 1.0
     QML_FILES
-        qml/Main.qml
-        qml/MethodBadge.qml
-        qml/PanelHeader.qml
-        qml/ExplorerPanel.qml
-        qml/NewModuleDialog.qml
-        qml/NewEndpointDialog.qml
-        qml/DependencyEditor.qml
-        qml/ExtractionEditor.qml
-        qml/RequestEditor.qml
-        qml/KeyValueList.qml
-        qml/ResponsePanel.qml
+        qml/views/Main.qml
+        qml/views/ExplorerPanel.qml
+        qml/views/RequestEditor.qml
+        qml/views/ResponsePanel.qml
+        qml/views/TimelinePanel.qml
+        qml/views/NewModuleDialog.qml
+        qml/views/NewEndpointDialog.qml
+        qml/widgets/MethodBadge.qml
+        qml/widgets/PanelHeader.qml
+        qml/widgets/KeyValueList.qml
+        qml/widgets/KeyValueEditorView.qml
+        qml/widgets/ChainView.qml
+        qml/widgets/StatusBadge.qml
+        qml/widgets/DependencyEditor.qml
+        qml/widgets/ExtractionEditor.qml
+        qml/views/SecretsDialog.qml
+        qml/widgets/Toast.qml
+        qml/widgets/EmptyState.qml
 )
 
 target_link_libraries(reqloom-qml
@@ -161,7 +189,9 @@ target_link_libraries(reqloom-qml
 target_include_directories(reqloom-qml
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/theming
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 set_target_properties(reqloom-qml PROPERTIES
