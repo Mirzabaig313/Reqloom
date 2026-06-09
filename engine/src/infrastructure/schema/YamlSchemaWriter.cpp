@@ -6,9 +6,11 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -71,24 +73,28 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
 
 // ─── Atomic write helper ─────────────────────────────────────────────────────
 
-std::expected<void, ReqloomError> writeAtomic(const fs::path& target, const std::string& content) {
-    // Skip the write entirely if the file already holds exactly this content,
-    // so editing one operation doesn't churn (rewrite + bump the mtime of)
-    // every other project file. The read-and-compare is cheap next to the YAML
-    // emit we've already done, and it leaves untouched files — and their git
-    // status, comments, and timestamps — alone.
-    std::error_code existsEc;
-    if (fs::exists(target, existsEc) && !existsEc) {
-        std::ifstream in{target, std::ios::binary};
-        if (in) {
-            const std::string existing{std::istreambuf_iterator<char>(in),
-                                       std::istreambuf_iterator<char>()};
-            if (existing == content) {
-                return {};
-            }
-        }
+// True when `target` already holds exactly `content` — lets the writer skip
+// unchanged files so editing one operation doesn't churn (and bump the mtime
+// of) every other project file, leaving their git status and comments alone.
+[[nodiscard]] bool fileHasContent(const fs::path& target, const std::string& content) {
+    std::error_code ec;
+    if (!fs::exists(target, ec) || ec) {
+        return false;
     }
+    std::ifstream in{target, std::ios::binary};
+    if (!in) {
+        return false;
+    }
+    const std::string existing{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+    return existing == content;
+}
 
+// Write `content` to a `.tmp` sibling of `target` (creating parent dirs). The
+// caller commits by renaming the temp onto the target. Two-phase staging makes
+// a multi-file save near-atomic: if any file fails to stage, none is committed.
+[[nodiscard]] std::expected<fs::path, ReqloomError> stageTemp(const fs::path& target,
+                                                              const std::string& content) {
     std::error_code ec;
     fs::create_directories(target.parent_path(), ec);
     if (ec) {
@@ -97,7 +103,6 @@ std::expected<void, ReqloomError> writeAtomic(const fs::path& target, const std:
             ErrorClass::Schema,
             "writer: cannot create dir " + target.parent_path().string() + ": " + ec.message()});
     }
-
     auto temp = target;
     temp += ".tmp";
     {
@@ -115,20 +120,35 @@ std::expected<void, ReqloomError> writeAtomic(const fs::path& target, const std:
                              "writer: failed writing temp file " + temp.string()});
         }
     }
-
-    fs::rename(temp, target, ec);
-    if (ec) {
-        std::error_code _;
-        fs::remove(temp, _);
-        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
-                                            ErrorClass::Schema,
-                                            "writer: cannot rename " + temp.string() + " → " +
-                                                target.string() + ": " + ec.message()});
-    }
-    return {};
+    return temp;
 }
 
 // ─── Emitter helpers ─────────────────────────────────────────────────────────
+
+// Remove stale `*.yaml` files in a managed sub-directory (actors/, resources/,
+// environments/) whose stem is no longer a current entity. Without this, a
+// rename or delete leaves the old file on disk and it reloads as a ghost
+// entity on the next parse. Only `.yaml` files are touched; unrelated files
+// are left alone.
+void pruneStaleFiles(const fs::path& dir, const std::set<std::string>& keepStems) {
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) {
+        return;
+    }
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (ec) {
+            break;
+        }
+        const auto& path = entry.path();
+        if (!entry.is_regular_file() || path.extension() != ".yaml") {
+            continue;
+        }
+        if (!keepStems.contains(path.stem().string())) {
+            std::error_code rmEc;
+            fs::remove(path, rmEc);
+        }
+    }
+}
 
 void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m) {
     e << YAML::BeginMap;
@@ -139,25 +159,48 @@ void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m
     e << YAML::EndMap;
 }
 
-// Emit a request `body`. The parser stores `body` as JSON text
-// (yamlNodeToJsonValue(node).dump()), so writing that text back as a plain
-// scalar makes the next load JSON-encode it again — adding a layer of quotes on
-// every save (the over-escaping bug). To round-trip, when the stored body is a
-// JSON object/array we re-parse it and emit a structured YAML node, which the
-// parser reproduces verbatim. Non-structural bodies fall back to a scalar.
+// Emit a request `body`. The parser stores `body` verbatim for scalars and as
+// JSON text for structured (map/sequence) bodies, and never re-encodes a
+// scalar on load. So emitting the stored body as a single scalar round-trips
+// exactly: yaml-cpp escapes it once for YAML, the parser unescapes it once, and
+// repeated saves are idempotent (this is what fixed the over-escaping bug).
 void emitBodyTemplate(YAML::Emitter& e, const std::string& bodyTemplate) {
-    if (!bodyTemplate.empty()) {
-        try {
-            const YAML::Node parsed = YAML::Load(bodyTemplate);
-            if (parsed && (parsed.IsMap() || parsed.IsSequence())) {
-                e << parsed;
-                return;
-            }
-        } catch (const YAML::Exception&) {
-            // Not parseable as YAML/JSON — emit the raw text as a scalar below.
-        }
-    }
     e << bodyTemplate;
+}
+
+// String form of an extraction source for the explicit map form below.
+constexpr std::string_view extractionSourceToString(Extraction::Source s) {
+    switch (s) {
+        case Extraction::Source::JsonPath:
+            return "jsonpath";
+        case Extraction::Source::XPath:
+            return "xpath";
+        case Extraction::Source::Header:
+            return "header";
+        case Extraction::Source::StatusCode:
+            return "status_code";
+        case Extraction::Source::Regex:
+            return "regex";
+        case Extraction::Source::Cookie:
+            return "cookie";
+    }
+    return "jsonpath";
+}
+
+// The source the parser would auto-detect from a path prefix. When the actual
+// source matches this, the compact scalar form is safe; otherwise the explicit
+// map form is required so the source survives the round-trip.
+constexpr Extraction::Source autoDetectExtractionSource(std::string_view path) {
+    if (path.starts_with("$.headers.")) {
+        return Extraction::Source::Header;
+    }
+    if (path.starts_with("$.cookies.")) {
+        return Extraction::Source::Cookie;
+    }
+    if (path == "$.status_code") {
+        return Extraction::Source::StatusCode;
+    }
+    return Extraction::Source::JsonPath;
 }
 
 void emitExtractions(YAML::Emitter& e, const std::vector<Extraction>& extractions) {
@@ -166,7 +209,16 @@ void emitExtractions(YAML::Emitter& e, const std::vector<Extraction>& extraction
     }
     e << YAML::Key << "extract" << YAML::Value << YAML::BeginMap;
     for (const auto& ext : extractions) {
-        e << YAML::Key << ext.variableName << YAML::Value << ext.sourcePath;
+        // Compact `var: path` when the source is re-derivable from the path;
+        // otherwise the explicit `var: { path, source }` map form so XPath /
+        // Regex (which have no detectable prefix) don't degrade to JsonPath.
+        if (ext.source == autoDetectExtractionSource(ext.sourcePath)) {
+            e << YAML::Key << ext.variableName << YAML::Value << ext.sourcePath;
+        } else {
+            e << YAML::Key << ext.variableName << YAML::Value << YAML::BeginMap << YAML::Key
+              << "path" << YAML::Value << ext.sourcePath << YAML::Key << "source" << YAML::Value
+              << std::string{extractionSourceToString(ext.source)} << YAML::EndMap;
+        }
     }
     e << YAML::EndMap;
 }
@@ -230,10 +282,14 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
         }
         e << YAML::EndSeq;
     }
-    if (op.preRequestScript) {
+    if (op.preRequestScriptRef) {
+        e << YAML::Key << "pre_request" << YAML::Value << *op.preRequestScriptRef;
+    } else if (op.preRequestScript) {
         e << YAML::Key << "pre_request" << YAML::Value << YAML::Literal << *op.preRequestScript;
     }
-    if (op.postResponseScript) {
+    if (op.postResponseScriptRef) {
+        e << YAML::Key << "post_response" << YAML::Value << *op.postResponseScriptRef;
+    } else if (op.postResponseScript) {
         e << YAML::Key << "post_response" << YAML::Value << YAML::Literal << *op.postResponseScript;
     }
     if (op.timeout) {
@@ -241,6 +297,15 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
     }
     if (op.force) {
         e << YAML::Key << "force" << YAML::Value << true;
+    }
+    // Emit `retry` only when it diverges from the defaults (max 3, backoff
+    // 500ms), so a default-retry op doesn't acquire a stray block. The parser
+    // reads `max` + `backoff`; emit both so the policy round-trips.
+    if (op.retry.maxAttempts != RetryPolicy{}.maxAttempts ||
+        op.retry.baseBackoff != RetryPolicy{}.baseBackoff) {
+        e << YAML::Key << "retry" << YAML::Value << YAML::BeginMap << YAML::Key << "max"
+          << YAML::Value << op.retry.maxAttempts << YAML::Key << "backoff" << YAML::Value
+          << static_cast<int>(op.retry.baseBackoff.count()) << YAML::EndMap;
     }
     if (op.pollUntil) {
         const auto& p = *op.pollUntil;
@@ -504,33 +569,86 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
                          "writer: cannot create " + targetDir.string() + ": " + ec.message()});
     }
 
-    if (auto r = writeAtomic(targetDir / "reqloom.yaml", emitRoot(project)); !r) {
-        return std::unexpected(r.error());
-    }
-
+    // Build the full (target, content) plan up front, then stage + commit in
+    // two phases so a multi-file save is near-atomic: if any file fails to
+    // stage, nothing is committed and no target file is touched.
+    std::vector<std::pair<fs::path, std::string>> plan;
+    plan.emplace_back(targetDir / "reqloom.yaml", emitRoot(project));
     for (const auto& [id, actor] : project.actors) {
-        const auto path = targetDir / "actors" / (id.value + ".yaml");
-        if (auto r = writeAtomic(path, emitActor(actor)); !r) {
-            return std::unexpected(r.error());
-        }
+        plan.emplace_back(targetDir / "actors" / (id.value + ".yaml"), emitActor(actor));
     }
-
     for (const auto& [id, resource] : project.resources) {
-        const auto path = targetDir / "resources" / (id.value + ".yaml");
-        if (auto r = writeAtomic(path, emitResource(resource)); !r) {
-            return std::unexpected(r.error());
-        }
+        plan.emplace_back(targetDir / "resources" / (id.value + ".yaml"), emitResource(resource));
     }
-
     for (const auto& [name, vars] : project.environments) {
-        const auto path = targetDir / "environments" / (name + ".yaml");
         std::optional<TransportConfig> transport;
         if (auto it = project.transport.find(name); it != project.transport.end()) {
             transport = it->second;
         }
-        if (auto r = writeAtomic(path, emitEnvironment(name, vars, transport)); !r) {
-            return std::unexpected(r.error());
+        plan.emplace_back(targetDir / "environments" / (name + ".yaml"),
+                          emitEnvironment(name, vars, transport));
+    }
+
+    // Phase 1 — stage: write a .tmp for each changed file. Skip unchanged
+    // files. On any failure, remove every staged temp and abort untouched.
+    struct Staged {
+        fs::path target;
+        fs::path temp;
+    };
+    std::vector<Staged> staged;
+    const auto removeStaged = [&staged]() {
+        for (const auto& s : staged) {
+            std::error_code rmEc;
+            fs::remove(s.temp, rmEc);
         }
+    };
+    for (const auto& [target, content] : plan) {
+        if (fileHasContent(target, content)) {
+            continue;
+        }
+        auto temp = stageTemp(target, content);
+        if (!temp) {
+            removeStaged();
+            return std::unexpected(temp.error());
+        }
+        staged.push_back({target, *temp});
+    }
+
+    // Phase 2 — commit: rename each staged temp onto its target.
+    for (const auto& s : staged) {
+        fs::rename(s.temp, s.target, ec);
+        if (ec) {
+            removeStaged();
+            return std::unexpected(
+                ReqloomError{ErrorCode::SchemaInvalid,
+                             ErrorClass::Schema,
+                             "writer: cannot commit " + s.target.string() + ": " + ec.message()});
+        }
+    }
+
+    // Prune files for entities that no longer exist (rename/delete), so a
+    // stale actor/resource/environment .yaml doesn't reload as a ghost. Gated
+    // on overwrite — the in-place "save the project" path — so the slot-into-
+    // an-existing-directory case (overwrite=false) never deletes pre-existing
+    // files the writer didn't create this run.
+    if (overwrite) {
+        std::set<std::string> actorStems;
+        for (const auto& [id, _] : project.actors) {
+            actorStems.insert(id.value);
+        }
+        pruneStaleFiles(targetDir / "actors", actorStems);
+
+        std::set<std::string> resourceStems;
+        for (const auto& [id, _] : project.resources) {
+            resourceStems.insert(id.value);
+        }
+        pruneStaleFiles(targetDir / "resources", resourceStems);
+
+        std::set<std::string> environmentStems;
+        for (const auto& [name, _] : project.environments) {
+            environmentStems.insert(name);
+        }
+        pruneStaleFiles(targetDir / "environments", environmentStems);
     }
 
     return targetDir / "reqloom.yaml";
