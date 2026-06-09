@@ -60,7 +60,11 @@ std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     }
     for (const auto& kv : node) {
         auto key = kv.first.as<std::string>();
-        if (kv.second.IsScalar()) {
+        if (kv.second.IsNull()) {
+            // `key:` with no value (or `key: ~`) is an empty string, not the
+            // literal "~" that emitting a null node would round-trip to.
+            result[key] = "";
+        } else if (kv.second.IsScalar()) {
             result[key] = kv.second.as<std::string>();
         } else {
             YAML::Emitter emitter;
@@ -95,6 +99,13 @@ nlohmann::json yamlNodeToJsonValue(const YAML::Node& node, int depth);
 
 nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
     const auto raw = scalar.as<std::string>();
+    // A quoted scalar (yaml-cpp reports the non-specific "!" tag) is always a
+    // string — never coerce it to a number/bool. This preserves values like a
+    // zip code "01234" or a flag-shaped string "true" inside a JSON body
+    // instead of silently retyping them on parse.
+    if (scalar.Tag() == "!") {
+        return nlohmann::json(raw);
+    }
     // Use parens, not braces — nlohmann::json{x} treats braces as an
     // initializer-list and produces a one-element array.
     if (raw == "true") {
@@ -164,7 +175,48 @@ std::string nodeToJsonString(const YAML::Node& node) {
     if (!node || node.IsNull()) {
         return "";
     }
+    // A scalar body is the raw request body verbatim — do NOT JSON-encode it.
+    // Re-encoding a scalar was the over-escaping bug: the writer emits the
+    // stored body as a scalar, so encoding it here would add a layer of quotes
+    // on every save. Structured (map/sequence) bodies are serialized to JSON.
+    if (node.IsScalar()) {
+        return node.as<std::string>();
+    }
     return yamlNodeToJsonValue(node, 0).dump();
+}
+
+Extraction::Source extractionSourceFromString(const std::string& s) {
+    if (s == "xpath") {
+        return Extraction::Source::XPath;
+    }
+    if (s == "header") {
+        return Extraction::Source::Header;
+    }
+    if (s == "status_code") {
+        return Extraction::Source::StatusCode;
+    }
+    if (s == "regex") {
+        return Extraction::Source::Regex;
+    }
+    if (s == "cookie") {
+        return Extraction::Source::Cookie;
+    }
+    return Extraction::Source::JsonPath;
+}
+
+// Source implied by the path prefix when no explicit `source:` is present.
+// XPath/Regex are NOT auto-detectable — they require the explicit map form.
+Extraction::Source autoDetectExtractionSource(const std::string& path) {
+    if (path.starts_with("$.headers.")) {
+        return Extraction::Source::Header;
+    }
+    if (path.starts_with("$.cookies.")) {
+        return Extraction::Source::Cookie;
+    }
+    if (path == "$.status_code") {
+        return Extraction::Source::StatusCode;
+    }
+    return Extraction::Source::JsonPath;
 }
 
 std::vector<Extraction> parseExtractions(const YAML::Node& node) {
@@ -175,24 +227,21 @@ std::vector<Extraction> parseExtractions(const YAML::Node& node) {
     for (const auto& kv : node) {
         Extraction ext;
         ext.variableName = kv.first.as<std::string>();
-        ext.sourcePath = kv.second.as<std::string>();
-
-        // Auto-detect the extraction source from the path prefix. Users
-        // can override by setting `source:` explicitly when the YAML
-        // shape doesn't fit (post-MVP — once we support map-form
-        // extractions). Convention:
-        //   $.headers.X     → Source::Header   (header X, case-insensitive)
-        //   $.cookies.X     → Source::Cookie   (Set-Cookie X)
-        //   $.status_code   → Source::StatusCode
-        //   $... else        → Source::JsonPath (default)
-        // Regex / XPath are not auto-detected — they require an
-        // explicit annotation that hand-written schemas don't carry yet.
-        if (ext.sourcePath.starts_with("$.headers.")) {
-            ext.source = Extraction::Source::Header;
-        } else if (ext.sourcePath.starts_with("$.cookies.")) {
-            ext.source = Extraction::Source::Cookie;
-        } else if (ext.sourcePath == "$.status_code") {
-            ext.source = Extraction::Source::StatusCode;
+        const auto& value = kv.second;
+        // Two shapes: a bare scalar path (source auto-detected from the prefix)
+        // or a map `{ path: ..., source: ... }` carrying an explicit source for
+        // cases the prefix can't express (XPath, Regex). The map form lets
+        // those survive a parse → write → parse round-trip.
+        if (value.IsMap()) {
+            ext.sourcePath = value["path"].as<std::string>("");
+            if (value["source"]) {
+                ext.source = extractionSourceFromString(value["source"].as<std::string>(""));
+            } else {
+                ext.source = autoDetectExtractionSource(ext.sourcePath);
+            }
+        } else {
+            ext.sourcePath = value.as<std::string>("");
+            ext.source = autoDetectExtractionSource(ext.sourcePath);
         }
         result.push_back(std::move(ext));
     }
@@ -316,6 +365,28 @@ TransportConfig parseTransport(const YAML::Node& node) {
     return out;
 }
 
+// A hook value is a file reference (not inline JS) when it looks like a
+// relative path to a .js/.mjs file. Single-sourced so the parser can both load
+// the referenced file and remember the reference for a faithful round-trip.
+[[nodiscard]] bool hookValueIsFileRef(std::string_view s) {
+    if (s.starts_with("./") || s.starts_with("../")) {
+        return true;
+    }
+    if (s.find('\n') != std::string_view::npos) {
+        return false;
+    }
+    if (s.find('{') != std::string_view::npos) {
+        return false;
+    }
+    if (s.find('(') != std::string_view::npos) {
+        return false;
+    }
+    if (s.find('=') != std::string_view::npos) {
+        return false;
+    }
+    return s.ends_with(".js") || s.ends_with(".mjs");
+}
+
 // Resolve a hook-script value: if it looks like a relative path to a .js/.mjs
 // file, load the file content; otherwise treat as inline JS. Paths are
 // canonicalised via weakly_canonical against baseDir and rejected if outside
@@ -326,25 +397,7 @@ TransportConfig parseTransport(const YAML::Node& node) {
         return value;
     }
 
-    const auto looksLikeRelativePath = [](std::string_view s) {
-        if (s.starts_with("./") || s.starts_with("../")) {
-            return true;
-        }
-        if (s.find('\n') != std::string_view::npos) {
-            return false;
-        }
-        if (s.find('{') != std::string_view::npos) {
-            return false;
-        }
-        if (s.find('(') != std::string_view::npos) {
-            return false;
-        }
-        if (s.find('=') != std::string_view::npos) {
-            return false;
-        }
-        return s.ends_with(".js") || s.ends_with(".mjs");
-    };
-    if (!looksLikeRelativePath(value)) {
+    if (!hookValueIsFileRef(value)) {
         return value;
     }
 
@@ -605,6 +658,73 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
 
 // ─── Resource/Operation parsing ──────────────────────────────────────────────
 
+Provenance::Source provenanceSourceFromString(const std::string& s) {
+    if (s == "openapi_import") {
+        return Provenance::Source::OpenApiImport;
+    }
+    if (s == "postman_import") {
+        return Provenance::Source::PostmanImport;
+    }
+    if (s == "bruno_import") {
+        return Provenance::Source::BrunoImport;
+    }
+    if (s == "insomnia_import") {
+        return Provenance::Source::InsomniaImport;
+    }
+    if (s == "har_import") {
+        return Provenance::Source::HarImport;
+    }
+    if (s == "ai_import") {
+        return Provenance::Source::AiImport;
+    }
+    return Provenance::Source::HandWritten;
+}
+
+Provenance::VerifiedAgainst verifiedAgainstFromString(const std::string& s) {
+    if (s == "openapi_example") {
+        return Provenance::VerifiedAgainst::OpenApiExample;
+    }
+    if (s == "postman_response") {
+        return Provenance::VerifiedAgainst::PostmanResponse;
+    }
+    if (s == "insomnia_response") {
+        return Provenance::VerifiedAgainst::InsomniaResponse;
+    }
+    if (s == "har_entry") {
+        return Provenance::VerifiedAgainst::HarEntry;
+    }
+    if (s == "synthetic") {
+        return Provenance::VerifiedAgainst::Synthetic;
+    }
+    if (s == "live_capture") {
+        return Provenance::VerifiedAgainst::LiveCapture;
+    }
+    return Provenance::VerifiedAgainst::None;
+}
+
+// Parse the `_provenance` block written by the importer/writer. Pure metadata
+// — the runtime ignores it — but it must survive parse→write→parse so an app
+// save doesn't strip an AI-imported op's audit trail.
+Provenance parseProvenance(const YAML::Node& node) {
+    Provenance prov;
+    if (!node || !node.IsMap()) {
+        return prov;
+    }
+    prov.source = provenanceSourceFromString(node["source"].as<std::string>("hand_written"));
+    if (node["verified_against"]) {
+        prov.verifiedAgainst =
+            verifiedAgainstFromString(node["verified_against"].as<std::string>("none"));
+    }
+    if (node["model"]) {
+        prov.model = node["model"].as<std::string>("");
+    }
+    if (node["imported_at"]) {
+        prov.importedAt = node["imported_at"].as<std::string>("");
+    }
+    prov.evidence = parseStringMap(node["evidence"]);
+    return prov;
+}
+
 std::expected<Resource, ReqloomError> parseResource(const std::string& resourceId,
                                                     const YAML::Node& node,
                                                     const fs::path& baseDir) {
@@ -705,18 +825,26 @@ std::expected<Resource, ReqloomError> parseResource(const std::string& resourceI
         // else is treated as inline JS. See `resolveHookScript` for the
         // heuristic and security checks.
         if (opNode["pre_request"]) {
-            auto resolved = resolveHookScript(opNode["pre_request"].as<std::string>(), baseDir);
+            const auto raw = opNode["pre_request"].as<std::string>();
+            auto resolved = resolveHookScript(raw, baseDir);
             if (!resolved) {
                 return std::unexpected(resolved.error());
             }
             op.preRequestScript = std::move(*resolved);
+            if (hookValueIsFileRef(raw)) {
+                op.preRequestScriptRef = raw;
+            }
         }
         if (opNode["post_response"]) {
-            auto resolved = resolveHookScript(opNode["post_response"].as<std::string>(), baseDir);
+            const auto raw = opNode["post_response"].as<std::string>();
+            auto resolved = resolveHookScript(raw, baseDir);
             if (!resolved) {
                 return std::unexpected(resolved.error());
             }
             op.postResponseScript = std::move(*resolved);
+            if (hookValueIsFileRef(raw)) {
+                op.postResponseScriptRef = raw;
+            }
         }
 
         if (opNode["retry"]) {
@@ -734,6 +862,10 @@ std::expected<Resource, ReqloomError> parseResource(const std::string& resourceI
         }
 
         op.force = opNode["force"].as<bool>(false);
+
+        if (opNode["_provenance"]) {
+            op.provenance = parseProvenance(opNode["_provenance"]);
+        }
 
         resource.operations[opName] = std::move(op);
     }

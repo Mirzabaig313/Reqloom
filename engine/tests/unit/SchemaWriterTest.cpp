@@ -242,6 +242,103 @@ TEST(SchemaWriter, json_object_body_survives_repeated_saves_without_escaping) {
     EXPECT_EQ(*body2, canonical);
 }
 
+TEST(SchemaWriter, prunes_orphaned_files_on_overwrite) {
+    // Deleting a resource must remove its file, not leave it to reload as a
+    // ghost on the next parse.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+    const auto resFile = scratch.path() / "resources" / "payment.yaml";
+    ASSERT_TRUE(fs::exists(resFile));
+
+    project.resources.erase(ce::ResourceId{"payment"});
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+    EXPECT_FALSE(fs::exists(resFile));
+
+    auto reloaded = ce::parseProject(scratch.path() / "reqloom.yaml");
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    EXPECT_FALSE(reloaded->resources.contains(ce::ResourceId{"payment"}));
+}
+
+TEST(SchemaWriter, retry_policy_round_trips) {
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& pay = project.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    pay.retry.maxAttempts = 7;
+    pay.retry.baseBackoff = std::chrono::milliseconds{1234};
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& out = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    EXPECT_EQ(out.retry.maxAttempts, 7);
+    EXPECT_EQ(out.retry.baseBackoff, std::chrono::milliseconds{1234});
+}
+
+TEST(SchemaWriter, provenance_round_trips_through_parser) {
+    // makeRoundTripProject stamps the pay op with AI-import provenance. A save
+    // must not strip it — the parser now reads `_provenance` back.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& out = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    ASSERT_TRUE(out.provenance.has_value());
+    EXPECT_EQ(out.provenance->source, ce::Provenance::Source::AiImport);
+    EXPECT_EQ(out.provenance->verifiedAgainst, ce::Provenance::VerifiedAgainst::OpenApiExample);
+    ASSERT_TRUE(out.provenance->model.has_value());
+    EXPECT_EQ(*out.provenance->model, "gpt-4o");
+    EXPECT_EQ(out.provenance->evidence.at("actor"), "inferred from BearerAuth security scheme");
+}
+
+TEST(SchemaWriter, xpath_extraction_source_round_trips) {
+    // XPath has no detectable path prefix; without the explicit map form it
+    // would silently degrade to JsonPath on reload.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& pay = project.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    pay.extractions.push_back({"node", "//book/title", ce::Extraction::Source::XPath});
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& out = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    bool found = false;
+    for (const auto& ext : out.extractions) {
+        if (ext.variableName == "node") {
+            found = true;
+            EXPECT_EQ(ext.source, ce::Extraction::Source::XPath);
+            EXPECT_EQ(ext.sourcePath, "//book/title");
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST(SchemaWriter, hook_file_reference_is_preserved_not_inlined) {
+    // A hook loaded from "./hooks/pre.js" must be re-emitted as the path, not
+    // inlined — inlining orphans the sidecar and loses the indirection.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& pay = project.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    pay.preRequestScript = "console.log('inlined content that must NOT be written');";
+    pay.preRequestScriptRef = "./hooks/pre.js";
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    std::string content;
+    {
+        std::ifstream in(scratch.path() / "resources" / "payment.yaml", std::ios::binary);
+        ASSERT_TRUE(in.good());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_NE(content.find("./hooks/pre.js"), std::string::npos);
+    EXPECT_EQ(content.find("inlined content that must NOT be written"), std::string::npos);
+}
+
 TEST(SchemaWriter, provenance_round_trips_unaffected_by_runtime) {
     // Provenance is what 6c will write for AI-imported ops. Round-tripping
     // it cleanly is the prerequisite for §10.3.4 runtime diagnostics.
