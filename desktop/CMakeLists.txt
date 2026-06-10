@@ -168,6 +168,7 @@ qt_add_qml_module(reqloom-qml
         qml/widgets/GlassTextField.qml
         qml/widgets/FieldLabel.qml
         qml/widgets/DialogHeader.qml
+        qml/widgets/AppIcon.qml
         qml/widgets/PanelHeader.qml
         qml/widgets/KeyValueList.qml
         qml/widgets/KeyValueEditorView.qml
@@ -178,6 +179,24 @@ qt_add_qml_module(reqloom-qml
         qml/views/SecretsDialog.qml
         qml/widgets/Toast.qml
         qml/widgets/EmptyState.qml
+    RESOURCES
+        qml/icons/chevron-left.svg
+        qml/icons/chevron-right.svg
+        qml/icons/chevron-up.svg
+        qml/icons/chevron-down.svg
+        qml/icons/columns.svg
+        qml/icons/rows.svg
+        qml/icons/x.svg
+        qml/icons/search.svg
+        qml/icons/sun.svg
+        qml/icons/moon.svg
+        qml/icons/monitor.svg
+        qml/icons/plus.svg
+        qml/icons/user.svg
+        qml/icons/folder.svg
+        qml/icons/folder-open.svg
+        qml/icons/zap.svg
+        qml/icons/arrow-down.svg
 )
 
 target_link_libraries(reqloom-qml

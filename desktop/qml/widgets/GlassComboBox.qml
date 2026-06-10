@@ -29,12 +29,11 @@ ComboBox {
         elide: Text.ElideRight
     }
 
-    indicator: Text {
+    indicator: AppIcon {
+        name: "chevron-down"
+        size: 14
         x: control.width - width - DesignTokens.spaceMd
         y: (control.height - height) / 2
-        text: "\u25BE"
-        color: DesignTokens.textSecondary
-        font.pixelSize: DesignTokens.fontCaption
     }
 
     popup: Popup {

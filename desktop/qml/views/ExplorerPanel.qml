@@ -40,16 +40,13 @@ Rectangle {
                 id: addBtn
                 implicitWidth: 28
                 implicitHeight: 28
-                text: "＋"
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Add module or endpoint")
                 onClicked: addMenu.popup()
-                contentItem: Text {
-                    text: addBtn.text
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontSubtitle
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                contentItem: AppIcon {
+                    name: "plus"
+                    size: 16
+                    anchors.centerIn: parent
                 }
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
@@ -60,16 +57,13 @@ Rectangle {
                 id: collapseBtn
                 implicitWidth: 28
                 implicitHeight: 28
-                text: "‹"
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Collapse sidebar")
                 onClicked: panel.collapseRequested()
-                contentItem: Text {
-                    text: collapseBtn.text
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontSubtitle
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                contentItem: AppIcon {
+                    name: "chevron-left"
+                    size: 16
+                    anchors.centerIn: parent
                 }
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
@@ -178,21 +172,36 @@ Rectangle {
                     color: del.current ? DesignTokens.accentMuted : del.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
                 }
 
+                indicator: Item {
+                    implicitWidth: 18
+                    implicitHeight: del.height
+                    AppIcon {
+                        anchors.centerIn: parent
+                        visible: del.hasChildren
+                        name: del.expanded ? "chevron-down" : "chevron-right"
+                        size: 14
+                        color: del.current ? DesignTokens.accent : DesignTokens.textSecondary
+                    }
+                }
+
                 contentItem: RowLayout {
                     spacing: DesignTokens.spaceXs
 
-                    Label {
+                    AppIcon {
                         visible: !del.isOperation
-                        text: del.kind === "actorGroup" || del.kind === "resourceGroup" ? "📁" : del.kind === "resource" ? "📂" : del.kind === "example" ? "⚡" : ""
-                        font.pixelSize: DesignTokens.fontLabel
-                        opacity: 0.8
+                        Layout.alignment: Qt.AlignVCenter
+                        size: 15
+                        opacity: 0.85
+                        name: del.kind === "example" ? "zap" : (del.expanded ? "folder-open" : "folder")
                     }
                     MethodBadge {
                         visible: del.isOperation
+                        Layout.alignment: Qt.AlignVCenter
                         method: del.isOperation ? del.method : "GET"
                     }
                     Label {
                         Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
                         text: del.name
                         color: del.isExample ? DesignTokens.textSecondary : DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontBody

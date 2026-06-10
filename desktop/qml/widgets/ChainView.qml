@@ -2,12 +2,11 @@
 // nodes (method pill + id) with ↓ connectors and a target marker (mirrors the
 // old Widgets ChainView; DESIGN.md §6.3, the product's hero surface). Fed a
 // list of {operationId, method, isTarget} nodes; shows a muted line when empty.
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import Reqloom
-
-pragma ComponentBehavior: Bound
 
 Rectangle {
     id: root
@@ -60,8 +59,7 @@ Rectangle {
                     Label {
                         Layout.fillWidth: true
                         text: nodeCol.modelData.operationId
-                        color: nodeCol.modelData.isTarget ? DesignTokens.textPrimary
-                                                          : DesignTokens.textSecondary
+                        color: nodeCol.modelData.isTarget ? DesignTokens.textPrimary : DesignTokens.textSecondary
                         font.pixelSize: 12
                         font.family: "monospace"
                         font.weight: nodeCol.modelData.isTarget ? Font.DemiBold : Font.Normal
@@ -75,13 +73,13 @@ Rectangle {
                     }
                 }
 
-                // ↓ connector between steps (not after the last node).
-                Label {
+                // arrow connector between steps (not after the last node).
+                AppIcon {
                     visible: nodeCol.index < root.nodes.length - 1
-                    text: "\u2193"
+                    name: "arrow-down"
+                    size: 16
                     color: DesignTokens.borderStrong
-                    font.pixelSize: 12
-                    leftPadding: DesignTokens.spaceMd
+                    Layout.leftMargin: DesignTokens.spaceMd
                 }
             }
         }

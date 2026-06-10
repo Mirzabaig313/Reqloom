@@ -6,7 +6,7 @@ import Reqloom
 
 ColumnLayout {
     id: root
-    property string icon: "⚡"
+    property string iconName: "zap"
     property string heading: qsTr("No project open")
     property string body: qsTr("Open a project to start building and running API chains.")
 
@@ -14,25 +14,24 @@ ColumnLayout {
     spacing: DesignTokens.spaceMd
     width: 320
 
-    Text {
+    AppIcon {
         Layout.alignment: Qt.AlignHCenter
-        text: root.icon
-        font.pixelSize: 40
-        color: DesignTokens.textSecondary
+        name: root.iconName
+        size: 40
     }
     Text {
         Layout.alignment: Qt.AlignHCenter
         text: root.heading
         color: DesignTokens.textPrimary
-        font.pixelSize: 18
-        font.weight: Font.DemiBold
+        font.pixelSize: DesignTokens.fontSubtitle
+        font.weight: DesignTokens.weightSemiBold
         horizontalAlignment: Text.AlignHCenter
     }
     Text {
         Layout.fillWidth: true
         text: root.body
         color: DesignTokens.textSecondary
-        font.pixelSize: 13
+        font.pixelSize: DesignTokens.fontBody
         wrapMode: Text.WordWrap
         horizontalAlignment: Text.AlignHCenter
     }
