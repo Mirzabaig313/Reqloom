@@ -380,26 +380,9 @@ ColumnLayout {
                 model: AppController.opQuery
                 emptyText: qsTr("No query parameters.")
             }
-            Rectangle {
-                radius: DesignTokens.radiusSm
-                color: DesignTokens.surfaceSunken
-                border.width: 1
-                border.color: DesignTokens.borderSubtle
-                Flickable {
-                    anchors.fill: parent
-                    anchors.margins: DesignTokens.spaceMd
-                    contentHeight: bodyText.implicitHeight
-                    clip: true
-                    Text {
-                        id: bodyText
-                        width: parent.width
-                        text: AppController.opBody.length > 0 ? AppController.opBody : qsTr("No request body.")
-                        color: AppController.opBody.length > 0 ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
-                        font.family: DesignTokens.fontMono
-                        wrapMode: Text.WrapAnywhere
-                    }
-                }
+            SelectableTextBox {
+                text: AppController.opBody
+                placeholder: qsTr("No request body.")
             }
             KeyValueList {
                 model: AppController.opExtractions
@@ -446,27 +429,154 @@ ColumnLayout {
                     kvModel: AppController.editHeaders
                 }
             }
-            // Body: raw ↔ form switch.
+            // Body: type selector (none / form-data / x-www-form-urlencoded /
+            // JSON / XML / Text / GraphQL) + the matching editor.
             ColumnLayout {
+                id: bodyBox
                 spacing: DesignTokens.spaceSm
-                RowLayout {
-                    Layout.fillWidth: true
-                    GlassComboBox {
-                        id: bodyKind
-                        Layout.preferredWidth: 150
-                        model: [qsTr("Raw / JSON"), qsTr("Form data")]
-                        currentIndex: AppController.editBodyIsForm ? 1 : 0
-                        onActivated: AppController.editBodyIsForm = (currentIndex === 1)
-                    }
-                    Item {
-                        Layout.fillWidth: true
+
+                // GraphQL is stored as a JSON body {query, variables}; these
+                // hold the split halves while the GraphQL editor is shown.
+                property string gqlQuery: ""
+                property string gqlVars: ""
+
+                function bodyPageIndex(t) {
+                    if (t === "none")
+                        return 0;
+                    if (t === "form-data" || t === "x-www-form-urlencoded")
+                        return 1;
+                    if (t === "graphql")
+                        return 3;
+                    return 2;
+                }
+                function rawPlaceholder(t) {
+                    if (t === "xml")
+                        return "<root>\n</root>";
+                    if (t === "text")
+                        return qsTr("plain text body");
+                    return "{ }";
+                }
+                function loadGraphql() {
+                    try {
+                        const o = JSON.parse(AppController.editBody);
+                        bodyBox.gqlQuery = o.query || "";
+                        bodyBox.gqlVars = o.variables ? JSON.stringify(o.variables, null, 2) : "";
+                    } catch (e) {
+                        bodyBox.gqlQuery = AppController.editBody;
+                        bodyBox.gqlVars = "";
                     }
                 }
+                function syncGraphql() {
+                    let vars = {};
+                    try {
+                        vars = bodyBox.gqlVars.trim().length > 0 ? JSON.parse(bodyBox.gqlVars) : {};
+                    } catch (e) {
+                        vars = {};
+                    }
+                    AppController.editBody = JSON.stringify({
+                        query: bodyBox.gqlQuery,
+                        variables: vars
+                    });
+                }
+
+                // Body-type pills.
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: DesignTokens.spaceXs
+                    Repeater {
+                        model: [
+                            {
+                                id: "none",
+                                label: qsTr("none")
+                            },
+                            {
+                                id: "form-data",
+                                label: qsTr("form-data")
+                            },
+                            {
+                                id: "x-www-form-urlencoded",
+                                label: qsTr("x-www-form-urlencoded")
+                            },
+                            {
+                                id: "json",
+                                label: qsTr("JSON")
+                            },
+                            {
+                                id: "xml",
+                                label: qsTr("XML")
+                            },
+                            {
+                                id: "text",
+                                label: qsTr("Text")
+                            },
+                            {
+                                id: "graphql",
+                                label: qsTr("GraphQL")
+                            }
+                        ]
+                        delegate: Button {
+                            id: bodyPill
+                            required property var modelData
+                            text: bodyPill.modelData.label
+                            checkable: true
+                            checked: AppController.editBodyType === bodyPill.modelData.id
+                            implicitHeight: 26
+                            leftPadding: DesignTokens.spaceMd
+                            rightPadding: DesignTokens.spaceMd
+                            onClicked: {
+                                AppController.editBodyType = bodyPill.modelData.id;
+                                if (bodyPill.modelData.id === "graphql") {
+                                    bodyBox.loadGraphql();
+                                }
+                            }
+                            background: Rectangle {
+                                radius: DesignTokens.radiusPill
+                                color: bodyPill.checked ? DesignTokens.accent : (bodyPill.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
+                                border.width: 1
+                                border.color: bodyPill.checked ? DesignTokens.accent : DesignTokens.borderSubtle
+                            }
+                            contentItem: Text {
+                                text: bodyPill.text
+                                color: bodyPill.checked ? DesignTokens.textInverse : DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.weight: bodyPill.checked ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                    }
+                }
+
                 StackLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    currentIndex: AppController.editBodyIsForm ? 1 : 0
-                    // Raw
+                    currentIndex: bodyBox.bodyPageIndex(AppController.editBodyType)
+
+                    // 0 — none
+                    Item {
+                        Label {
+                            anchors.centerIn: parent
+                            text: qsTr("This request does not have a body.")
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontBody
+                        }
+                    }
+
+                    // 1 — form-data / x-www-form-urlencoded
+                    ScrollView {
+                        id: formScroll
+                        clip: true
+                        contentWidth: availableWidth
+                        KeyValueEditorView {
+                            width: formScroll.availableWidth
+                            kvModel: AppController.editForm
+                            allowFiles: AppController.editBodyType === "form-data"
+                            keyPlaceholder: qsTr("field")
+                            valuePlaceholder: AppController.editBodyType === "form-data" ? qsTr("value  (or attach a file)") : qsTr("value")
+                        }
+                    }
+
+                    // 2 — raw (JSON / XML / Text)
                     Rectangle {
                         radius: DesignTokens.radiusSm
                         color: DesignTokens.surfaceSunken
@@ -479,7 +589,7 @@ ColumnLayout {
                             TextArea {
                                 id: rawBody
                                 text: AppController.editBody
-                                placeholderText: qsTr("{ }")
+                                placeholderText: bodyBox.rawPlaceholder(AppController.editBodyType)
                                 color: DesignTokens.textPrimary
                                 placeholderTextColor: DesignTokens.textSecondary
                                 font.pixelSize: DesignTokens.fontLabel
@@ -492,17 +602,70 @@ ColumnLayout {
                             }
                         }
                     }
-                    // Form data
-                    ScrollView {
-                        id: formScroll
-                        clip: true
-                        contentWidth: availableWidth
-                        KeyValueEditorView {
-                            width: formScroll.availableWidth
-                            kvModel: AppController.editForm
-                            allowFiles: true
-                            keyPlaceholder: qsTr("field")
-                            valuePlaceholder: qsTr("value  (or attach a file)")
+
+                    // 3 — GraphQL (query + variables → JSON body)
+                    ColumnLayout {
+                        spacing: DesignTokens.spaceXs
+                        Component.onCompleted: bodyBox.loadGraphql()
+                        FieldLabel {
+                            text: qsTr("Query")
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.surfaceSunken
+                            border.width: 1
+                            border.color: DesignTokens.borderSubtle
+                            ScrollView {
+                                anchors.fill: parent
+                                anchors.margins: DesignTokens.spaceXs
+                                clip: true
+                                TextArea {
+                                    text: bodyBox.gqlQuery
+                                    placeholderText: qsTr("query { … }")
+                                    color: DesignTokens.textPrimary
+                                    placeholderTextColor: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.family: DesignTokens.fontMono
+                                    wrapMode: TextEdit.WrapAnywhere
+                                    onTextChanged: if (text !== bodyBox.gqlQuery) {
+                                        bodyBox.gqlQuery = text;
+                                        bodyBox.syncGraphql();
+                                    }
+                                    background: null
+                                }
+                            }
+                        }
+                        FieldLabel {
+                            text: qsTr("Variables (JSON)")
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 96
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.surfaceSunken
+                            border.width: 1
+                            border.color: DesignTokens.borderSubtle
+                            ScrollView {
+                                anchors.fill: parent
+                                anchors.margins: DesignTokens.spaceXs
+                                clip: true
+                                TextArea {
+                                    text: bodyBox.gqlVars
+                                    placeholderText: "{ }"
+                                    color: DesignTokens.textPrimary
+                                    placeholderTextColor: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.family: DesignTokens.fontMono
+                                    wrapMode: TextEdit.WrapAnywhere
+                                    onTextChanged: if (text !== bodyBox.gqlVars) {
+                                        bodyBox.gqlVars = text;
+                                        bodyBox.syncGraphql();
+                                    }
+                                    background: null
+                                }
+                            }
                         }
                     }
                 }
