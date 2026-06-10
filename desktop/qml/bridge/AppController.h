@@ -278,6 +278,11 @@ public:
     /// click-to-copy-JSONPath affordance.
     Q_INVOKABLE void copyToClipboard(const QString& text, const QString& label);
 
+    /// Convert a file picker URL (e.g. from a QML FileDialog) to a local
+    /// filesystem path. Used by the form-data editor to fill a file field
+    /// with the engine's `@<path>` upload convention.
+    Q_INVOKABLE [[nodiscard]] QString localFileFromUrl(const QUrl& url) const;
+
     // ── Explorer selection / activation by fully-qualified id ──────────────
     /// Select an operation row ("<resource>.<op>") and open it in the editor
     /// (select-to-preview). Resolves the module + endpoint.

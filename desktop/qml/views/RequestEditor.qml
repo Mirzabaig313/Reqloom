@@ -500,8 +500,9 @@ ColumnLayout {
                         KeyValueEditorView {
                             width: formScroll.availableWidth
                             kvModel: AppController.editForm
+                            allowFiles: true
                             keyPlaceholder: qsTr("field")
-                            valuePlaceholder: qsTr("value  (use @/path for a file)")
+                            valuePlaceholder: qsTr("value  (or attach a file)")
                         }
                     }
                 }
