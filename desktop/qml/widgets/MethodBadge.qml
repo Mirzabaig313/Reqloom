@@ -22,8 +22,8 @@ Rectangle {
         anchors.centerIn: parent
         text: badge.method
         color: badge.hue(badge.method)
-        font.pixelSize: 10
-        font.weight: Font.Bold
+        font.pixelSize: DesignTokens.fontCaption
+        font.weight: DesignTokens.weightBold
         font.letterSpacing: 0.5
     }
 }

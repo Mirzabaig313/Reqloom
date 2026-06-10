@@ -28,8 +28,8 @@ Rectangle {
             Label {
                 text: qsTr("TIMELINE")
                 color: DesignTokens.textSecondary
-                font.pixelSize: 10
-                font.weight: Font.DemiBold
+                font.pixelSize: DesignTokens.fontCaption
+                font.weight: DesignTokens.weightSemiBold
                 font.letterSpacing: 1.2
             }
             Item { Layout.fillWidth: true }
@@ -42,8 +42,8 @@ Rectangle {
                 contentItem: Text {
                     text: cancelBtn.text
                     color: DesignTokens.statusError
-                    font.pixelSize: 12
-                    font.weight: Font.DemiBold
+                    font.pixelSize: DesignTokens.fontLabel
+                    font.weight: DesignTokens.weightSemiBold
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -62,7 +62,7 @@ Rectangle {
                 contentItem: Text {
                     text: resetBtn.text
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: DesignTokens.fontLabel
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -116,9 +116,9 @@ Rectangle {
                         text: row.title
                         color: row.isChild ? DesignTokens.textSecondary : DesignTokens.textPrimary
                         font.pixelSize: row.isHeader ? 13 : 12
-                        font.weight: row.isHeader ? Font.DemiBold
-                                     : row.kind === "step" ? Font.Medium : Font.Normal
-                        font.family: row.kind === "extraction" ? "monospace" : "sans-serif"
+                        font.weight: row.isHeader ? DesignTokens.weightSemiBold
+                                     : row.kind === "step" ? DesignTokens.weightMedium : DesignTokens.weightRegular
+                        font.family: row.kind === "extraction" ? DesignTokens.fontMono : DesignTokens.fontSans
                         elide: Text.ElideRight
                     }
 
@@ -136,8 +136,8 @@ Rectangle {
                                : row.statusToken === "success" && row.kind === "extraction"
                                  ? DesignTokens.statusSuccess
                                : DesignTokens.textSecondary
-                        font.pixelSize: 11
-                        font.family: "monospace"
+                        font.pixelSize: DesignTokens.fontCaption
+                        font.family: DesignTokens.fontMono
                         elide: Text.ElideRight
                         horizontalAlignment: Text.AlignRight
                         ToolTip.visible: row.value.length > 0 && hover.hovered
@@ -157,8 +157,8 @@ Rectangle {
                     Layout.alignment: Qt.AlignHCenter
                     text: qsTr("No run yet")
                     color: DesignTokens.textPrimary
-                    font.pixelSize: 13
-                    font.weight: Font.Medium
+                    font.pixelSize: DesignTokens.fontBody
+                    font.weight: DesignTokens.weightMedium
                 }
                 Label {
                     Layout.alignment: Qt.AlignHCenter
@@ -166,7 +166,7 @@ Rectangle {
                     horizontalAlignment: Text.AlignHCenter
                     text: qsTr("Send or Dry Run an endpoint to watch each step, request, response, and extraction stream in here.")
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 11
+                    font.pixelSize: DesignTokens.fontCaption
                     wrapMode: Text.WordWrap
                 }
             }

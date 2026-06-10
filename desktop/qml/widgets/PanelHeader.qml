@@ -23,8 +23,8 @@ RowLayout {
         Label {
             text: root.title
             color: DesignTokens.textPrimary
-            font.pixelSize: 15
-            font.weight: Font.DemiBold
+            font.pixelSize: DesignTokens.fontSubtitle
+            font.weight: DesignTokens.weightSemiBold
             elide: Text.ElideRight
             Layout.fillWidth: true
         }
@@ -32,7 +32,7 @@ RowLayout {
             text: root.subtitle
             visible: root.subtitle.length > 0
             color: DesignTokens.textSecondary
-            font.pixelSize: 11
+            font.pixelSize: DesignTokens.fontCaption
             elide: Text.ElideRight
             Layout.fillWidth: true
         }

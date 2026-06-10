@@ -205,7 +205,7 @@ Rectangle {
                         text: del.name
                         color: del.isExample ? DesignTokens.textSecondary : DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontBody
-                        font.weight: del.current ? Font.DemiBold : Font.Normal
+                        font.weight: del.current ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                         elide: Text.ElideRight
                         ToolTip.visible: hoverHandler.hovered && del.tooltip.length > 0
                         ToolTip.text: del.tooltip

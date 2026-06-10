@@ -410,7 +410,7 @@ ApplicationWindow {
                         text: "✓"
                         color: DesignTokens.textInverse
                         font.pixelSize: DesignTokens.fontCaption
-                        font.weight: Font.Bold
+                        font.weight: DesignTokens.weightBold
                     }
                 }
             }
@@ -545,7 +545,7 @@ ApplicationWindow {
                             text: AppController.selectedModule.length > 0 ? AppController.selectedModule : qsTr("Select a module")
                             color: DesignTokens.textPrimary
                             font.pixelSize: DesignTokens.fontTitle
-                            font.weight: Font.DemiBold
+                            font.weight: DesignTokens.weightSemiBold
                         }
                         Label {
                             id: epCountLabel
@@ -588,7 +588,7 @@ ApplicationWindow {
                                         text: opRow.name
                                         color: DesignTokens.textPrimary
                                         font.pixelSize: DesignTokens.fontBody
-                                        font.weight: Font.Medium
+                                        font.weight: DesignTokens.weightMedium
                                     }
                                     Label {
                                         Layout.fillWidth: true
@@ -621,7 +621,7 @@ ApplicationWindow {
                 // Request editor.
                 RequestEditor {
                     anchors.fill: parent
-                    anchors.margins: DesignTokens.spaceXl
+                    anchors.margins: DesignTokens.spaceMd
                     visible: AppController.hasOperation
                 }
             }
