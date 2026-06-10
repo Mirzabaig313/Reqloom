@@ -146,11 +146,18 @@ Dialog {
             checkable: true
             implicitHeight: 24
             Layout.fillWidth: true
-            contentItem: Label {
-                text: (chainToggle.checked ? "▾  " : "▸  ") + qsTr("Chain (optional)")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
+            contentItem: RowLayout {
+                spacing: DesignTokens.spaceXs
+                AppIcon {
+                    name: chainToggle.checked ? "chevron-down" : "chevron-right"
+                    size: 14
+                }
+                Label {
+                    text: qsTr("Chain (optional)")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    font.weight: DesignTokens.weightSemiBold
+                }
             }
         }
 
