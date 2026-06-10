@@ -198,6 +198,7 @@ qt_add_qml_module(reqloom-qml
         qml/icons/folder-open.svg
         qml/icons/zap.svg
         qml/icons/arrow-down.svg
+        qml/icons/paperclip.svg
 )
 
 target_link_libraries(reqloom-qml

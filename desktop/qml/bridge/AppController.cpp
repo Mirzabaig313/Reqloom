@@ -775,6 +775,10 @@ void AppController::copyToClipboard(const QString& text, const QString& label) {
     emit notify(QStringLiteral("Copied %1").arg(what), false);
 }
 
+QString AppController::localFileFromUrl(const QUrl& url) const {
+    return url.isLocalFile() ? url.toLocalFile() : url.toString();
+}
+
 void AppController::refreshExamples() {
     refreshOpenOpExamples();
     // The explorer's example child rows: opId → ordered example names. This
