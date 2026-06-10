@@ -1,101 +1,11 @@
 qt_standard_project_setup(REQUIRES 6.8)
 
-qt_add_executable(reqloom-desktop WIN32 MACOSX_BUNDLE
-    src/main.cpp
-    src/application/App.cpp
-    src/application/App.h
-    src/application/Bootstrapper.cpp
-    src/application/Bootstrapper.h
-    src/application/ProjectModel.cpp
-    src/application/ProjectModel.h
-    src/application/RunController.cpp
-    src/application/RunController.h
-    src/application/EnvironmentSettings.cpp
-    src/application/EnvironmentSettings.h
-    src/application/SecretManager.cpp
-    src/application/SecretManager.h
-    src/application/LayoutSettings.cpp
-    src/application/LayoutSettings.h
-    src/application/SavedResponseStore.cpp
-    src/application/SavedResponseStore.h
-    src/theming/Color.cpp
-    src/theming/Color.h
-    src/theming/Theme.cpp
-    src/theming/Theme.h
-    src/theming/ThemeManager.cpp
-    src/theming/ThemeManager.h
-    src/widgets/StatusBadge.cpp
-    src/widgets/StatusBadge.h
-    src/widgets/PanelHeader.cpp
-    src/widgets/PanelHeader.h
-    src/widgets/EmptyState.cpp
-    src/widgets/EmptyState.h
-    src/widgets/FuzzyMatch.cpp
-    src/widgets/FuzzyMatch.h
-    src/widgets/CommandPalette.cpp
-    src/widgets/CommandPalette.h
-    src/widgets/Toast.cpp
-    src/widgets/Toast.h
-    src/widgets/LineDiff.cpp
-    src/widgets/LineDiff.h
-    src/widgets/KeyValueEditor.cpp
-    src/widgets/KeyValueEditor.h
-    src/widgets/DependencyListEditor.cpp
-    src/widgets/DependencyListEditor.h
-    src/widgets/ExtractionTableEditor.cpp
-    src/widgets/ExtractionTableEditor.h
-    src/widgets/ChainView.cpp
-    src/widgets/ChainView.h
-    src/widgets/MethodItemDelegate.cpp
-    src/widgets/MethodItemDelegate.h
-    src/views/Formatting.cpp
-    src/views/Formatting.h
-    src/views/MainWindow.cpp
-    src/views/MainWindow.h
-    src/views/NewEndpointDialog.cpp
-    src/views/NewEndpointDialog.h
-    src/views/NewModuleDialog.cpp
-    src/views/NewModuleDialog.h
-    src/views/ProjectExplorerWidget.cpp
-    src/views/ProjectExplorerWidget.h
-    src/views/RequestEditorPanel.cpp
-    src/views/RequestEditorPanel.h
-    src/views/ResponseViewerPanel.cpp
-    src/views/ResponseViewerPanel.h
-    src/views/SecretsDialog.cpp
-    src/views/SecretsDialog.h
-    src/views/TimelinePanel.cpp
-    src/views/TimelinePanel.h
-)
-
-target_link_libraries(reqloom-desktop
-    PRIVATE
-        reqloom::engine
-        Qt6::Core
-        Qt6::Concurrent
-        Qt6::Gui
-        Qt6::Widgets
-)
-
-target_include_directories(reqloom-desktop
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-set_target_properties(reqloom-desktop PROPERTIES
-    OUTPUT_NAME "Reqloom"
-    AUTOMOC ON
-    AUTORCC ON
-    AUTOUIC ON
-)
-
-reqloom_set_warnings(reqloom-desktop)
-reqloom_apply_sanitizers(reqloom-desktop)
-
-# ─── QML app (ADR-007) ────────────────────────────────────────────────────────
-# New QML/Qt Quick front-end, built alongside the Widgets app during migration.
-# Logic (engine, ProjectModel) is shared; presentation is QML. When QML reaches
-# parity the Widgets target above is removed and this becomes reqloom-desktop.
-qt_add_executable(reqloom-qml
+# ─── Desktop app (ADR-007, QML/Qt Quick) ──────────────────────────────────────
+# The QML/Qt Quick front-end is the desktop app. Logic (engine, ProjectModel,
+# RunController, settings, …) is shared C++ under src/ and reused unchanged;
+# presentation is QML under qml/. The old Qt Widgets app was retired in Phase 5
+# of the QML Migration Roadmap — this is now the sole desktop target.
+qt_add_executable(reqloom-desktop
     qml/main.cpp
     qml/theming/DesignTokens.h
     qml/theming/DesignTokens.cpp
@@ -147,7 +57,7 @@ qt_add_executable(reqloom-qml
     src/theming/Theme.h
 )
 
-qt_add_qml_module(reqloom-qml
+qt_add_qml_module(reqloom-desktop
     URI Reqloom
     VERSION 1.0
     QML_FILES
@@ -202,7 +112,7 @@ qt_add_qml_module(reqloom-qml
         qml/icons/paperclip.svg
 )
 
-target_link_libraries(reqloom-qml
+target_link_libraries(reqloom-desktop
     PRIVATE
         reqloom::engine
         Qt6::Core
@@ -213,11 +123,11 @@ target_link_libraries(reqloom-qml
         Qt6::QuickControls2
         # Widgets is linked so a non-replaceable Widgets-only control (e.g. a
         # QScintilla code editor) can be shown as a standalone dialog window.
-        # QML-first; Widgets only as a fallback (ADR-007).
+        # QML-first; Widgets only as a fallback (ADR-007 / Roadmap Phase 5 §7).
         Qt6::Widgets
 )
 
-target_include_directories(reqloom-qml
+target_include_directories(reqloom-desktop
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge
@@ -225,18 +135,18 @@ target_include_directories(reqloom-qml
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-set_target_properties(reqloom-qml PROPERTIES
-    OUTPUT_NAME "ReqloomQml"
+set_target_properties(reqloom-desktop PROPERTIES
+    OUTPUT_NAME "Reqloom"
     MACOSX_BUNDLE ON
 )
 
-reqloom_set_warnings(reqloom-qml)
-reqloom_apply_sanitizers(reqloom-qml)
+reqloom_set_warnings(reqloom-desktop)
+reqloom_apply_sanitizers(reqloom-desktop)
 
 # Point the runtime font loader at the repo's desktop/fonts during development
 # so dropping Geist / Noto Sans JP .ttf files there registers them with no
 # rebuild of resources. A shipped app loads from its bundle Resources/fonts.
-target_compile_definitions(reqloom-qml
+target_compile_definitions(reqloom-desktop
     PRIVATE REQLOOM_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts")
 
 # No boundary guard here — desktop is the one place Qt UI libraries are

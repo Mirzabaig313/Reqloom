@@ -1,21 +1,18 @@
 find_package(GTest CONFIG REQUIRED)
 include(GoogleTest)
 
-# View-level tests. ResponseViewerPanel is self-contained (Qt-only, no engine
-# dependency), so we compile it straight into the test binary rather than
-# exposing the desktop sources as a library. AUTOMOC handles its Q_OBJECT.
+# Logic + reused-component tests. These compile only the survivable C++ logic
+# (settings, Color/Theme, FuzzyMatch, LineDiff, SavedResponseStore) straight
+# into the test binary. The Widgets-bound UI tests (StatusBadge, KeyValueEditor,
+# ResponseViewerPanel) were retired with the Widgets app in Phase 5.
 add_executable(reqloom-desktop-ui-tests
-    ui/ResponseViewerPanelTest.cpp
+    TestMain.cpp
     ui/EnvironmentSettingsTest.cpp
     unit/ColorTest.cpp
-    unit/StatusBadgeTest.cpp
     unit/LayoutSettingsTest.cpp
     unit/FuzzyMatchTest.cpp
     unit/LineDiffTest.cpp
-    unit/KeyValueEditorTest.cpp
     unit/SavedResponseStoreTest.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/ResponseViewerPanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SavedResponseStore.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SavedResponseStore.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/EnvironmentSettings.cpp
@@ -26,16 +23,10 @@ add_executable(reqloom-desktop-ui-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Color.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Theme.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/theming/Theme.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/StatusBadge.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/StatusBadge.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/FuzzyMatch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/FuzzyMatch.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LineDiff.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LineDiff.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/KeyValueEditor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/KeyValueEditor.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/EmptyState.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/EmptyState.h
 )
 target_include_directories(reqloom-desktop-ui-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
