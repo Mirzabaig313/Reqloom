@@ -456,8 +456,8 @@ void AppController::setEditBodyType(const QString& type) {
         return;
     }
     editBodyType_ = type;
-    editBodyIsForm_ = (type == QStringLiteral("form-data") ||
-                       type == QStringLiteral("x-www-form-urlencoded"));
+    editBodyIsForm_ =
+        (type == QStringLiteral("form-data") || type == QStringLiteral("x-www-form-urlencoded"));
 
     QString desired;
     if (type == QStringLiteral("json") || type == QStringLiteral("graphql")) {
@@ -495,9 +495,10 @@ void AppController::setManagedContentType(const QString& desired) {
     }
     // Preserve a custom Content-Type — only overwrite empty or canonical ones.
     const QString base = current.section(';', 0, 0).trimmed();
-    const bool isManaged = current.isEmpty() || std::ranges::any_of(kManaged, [&](const QString& m) {
-        return base.compare(m, Qt::CaseInsensitive) == 0;
-    });
+    const bool isManaged =
+        current.isEmpty() || std::ranges::any_of(kManaged, [&](const QString& m) {
+            return base.compare(m, Qt::CaseInsensitive) == 0;
+        });
     if (!isManaged) {
         return;
     }
@@ -632,8 +633,8 @@ void AppController::beginEdit() {
     // vs urlencoded form bodies.
     QString contentType;
     for (const auto& [k, v] : op->headers) {
-        if (QString::fromStdString(k).compare(QStringLiteral("Content-Type"), Qt::CaseInsensitive) ==
-            0) {
+        if (QString::fromStdString(k).compare(QStringLiteral("Content-Type"),
+                                              Qt::CaseInsensitive) == 0) {
             contentType = QString::fromStdString(v);
             break;
         }
@@ -647,12 +648,11 @@ void AppController::beginEdit() {
         const bool anyFile = std::ranges::any_of(*op->bodyForm, [](const auto& kv) {
             return QString::fromStdString(kv.second).startsWith(QLatin1Char('@'));
         });
-        const bool multipart =
-            anyFile || ctypeBase.compare(QStringLiteral("multipart/form-data"), Qt::CaseInsensitive) == 0;
-        editBodyType_ = multipart ? QStringLiteral("form-data")
-                                  : QStringLiteral("x-www-form-urlencoded");
-    } else if (op->bodyTemplate &&
-               !QString::fromStdString(*op->bodyTemplate).trimmed().isEmpty()) {
+        const bool multipart = anyFile || ctypeBase.compare(QStringLiteral("multipart/form-data"),
+                                                            Qt::CaseInsensitive) == 0;
+        editBodyType_ =
+            multipart ? QStringLiteral("form-data") : QStringLiteral("x-www-form-urlencoded");
+    } else if (op->bodyTemplate && !QString::fromStdString(*op->bodyTemplate).trimmed().isEmpty()) {
         editBodyIsForm_ = false;
         editBody_ = QString::fromStdString(*op->bodyTemplate);
         editForm_.clearRows();
