@@ -20,7 +20,7 @@ ColumnLayout {
     component Field: TextField {
         color: DesignTokens.textPrimary
         placeholderTextColor: DesignTokens.textSecondary
-        font.pixelSize: 12
+        font.pixelSize: DesignTokens.fontLabel
         implicitHeight: 32
         background: Rectangle {
             radius: DesignTokens.radiusSm
@@ -64,7 +64,7 @@ ColumnLayout {
                 contentItem: Text {
                     text: extRemove.text
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: DesignTokens.fontLabel
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -80,7 +80,7 @@ ColumnLayout {
         Layout.fillWidth: true
         text: qsTr("$.headers.X · $.cookies.X · $.status_code · anything else is a JSON path")
         color: DesignTokens.textSecondary
-        font.pixelSize: 11
+        font.pixelSize: DesignTokens.fontCaption
         wrapMode: Text.WordWrap
     }
 }

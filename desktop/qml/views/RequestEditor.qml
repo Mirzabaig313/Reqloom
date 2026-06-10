@@ -12,7 +12,7 @@ import Reqloom
 
 ColumnLayout {
     id: editor
-    spacing: DesignTokens.spaceLg
+    spacing: DesignTokens.spaceMd
 
     readonly property bool editing: AppController.editing
 
@@ -77,7 +77,7 @@ ColumnLayout {
             text: AppController.opName
             color: DesignTokens.textPrimary
             font.pixelSize: DesignTokens.fontBody
-            font.weight: Font.DemiBold
+            font.weight: DesignTokens.weightSemiBold
         }
         Item {
             Layout.fillWidth: true
@@ -192,7 +192,7 @@ ColumnLayout {
                 text: sendButton.text
                 color: DesignTokens.textInverse
                 font.pixelSize: DesignTokens.fontBody
-                font.weight: Font.DemiBold
+                font.weight: DesignTokens.weightSemiBold
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
@@ -247,7 +247,7 @@ ColumnLayout {
                 text: saveButton.text
                 color: DesignTokens.textInverse
                 font.pixelSize: DesignTokens.fontBody
-                font.weight: Font.DemiBold
+                font.weight: DesignTokens.weightSemiBold
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
@@ -343,7 +343,7 @@ ColumnLayout {
             text: qsTr("EXECUTION CHAIN")
             color: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontCaption
-            font.weight: Font.DemiBold
+            font.weight: DesignTokens.weightSemiBold
             font.letterSpacing: 1.2
         }
         ChainView {
@@ -361,36 +361,10 @@ ColumnLayout {
         visible: !editor.editing
         spacing: DesignTokens.spaceSm
 
-        TabBar {
+        LineTabBar {
             id: readTabs
             Layout.fillWidth: true
-            background: Rectangle {
-                color: "transparent"
-            }
-            Repeater {
-                model: [qsTr("Headers"), qsTr("Params"), qsTr("Body"), qsTr("Chain")]
-                delegate: TabButton {
-                    required property string modelData
-                    required property int index
-                    contentItem: Text {
-                        text: modelData
-                        color: readTabs.currentIndex === index ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontBody
-                        font.weight: readTabs.currentIndex === index ? Font.DemiBold : Font.Normal
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        color: "transparent"
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            width: parent.width
-                            height: 2
-                            color: readTabs.currentIndex === index ? DesignTokens.accent : "transparent"
-                        }
-                    }
-                }
-            }
+            model: [qsTr("Headers"), qsTr("Params"), qsTr("Body"), qsTr("Chain")]
         }
 
         StackLayout {
@@ -441,33 +415,10 @@ ColumnLayout {
         visible: editor.editing
         spacing: DesignTokens.spaceSm
 
-        TabBar {
+        LineTabBar {
             id: editTabs
             Layout.fillWidth: true
-            background: Rectangle {
-                color: "transparent"
-            }
-
-            EditTab {
-                tabIndex: 0
-                label: AppController.editParamsCount > 0 ? qsTr("Params  %1").arg(AppController.editParamsCount) : qsTr("Params")
-            }
-            EditTab {
-                tabIndex: 1
-                label: AppController.editHeadersCount > 0 ? qsTr("Headers  %1").arg(AppController.editHeadersCount) : qsTr("Headers")
-            }
-            EditTab {
-                tabIndex: 2
-                label: AppController.editBodyFilled ? qsTr("Body  ●") : qsTr("Body")
-            }
-            EditTab {
-                tabIndex: 3
-                label: qsTr("Options")
-            }
-            EditTab {
-                tabIndex: 4
-                label: AppController.editChainCount > 0 ? qsTr("Chain  %1").arg(AppController.editChainCount) : qsTr("Chain")
-            }
+            model: [AppController.editParamsCount > 0 ? qsTr("Params  %1").arg(AppController.editParamsCount) : qsTr("Params"), AppController.editHeadersCount > 0 ? qsTr("Headers  %1").arg(AppController.editHeadersCount) : qsTr("Headers"), AppController.editBodyFilled ? qsTr("Body  ●") : qsTr("Body"), qsTr("Options"), AppController.editChainCount > 0 ? qsTr("Chain  %1").arg(AppController.editChainCount) : qsTr("Chain")]
         }
 
         StackLayout {
@@ -687,7 +638,7 @@ ColumnLayout {
                                     text: "\u2713"
                                     color: DesignTokens.textInverse
                                     font.pixelSize: DesignTokens.fontLabel
-                                    font.weight: Font.Bold
+                                    font.weight: DesignTokens.weightBold
                                 }
                             }
                             contentItem: Text {
@@ -713,7 +664,7 @@ ColumnLayout {
                         text: qsTr("Depends on")
                         color: DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontLabel
-                        font.weight: Font.DemiBold
+                        font.weight: DesignTokens.weightSemiBold
                     }
                     DependencyEditor {
                         Layout.fillWidth: true
@@ -724,36 +675,13 @@ ColumnLayout {
                         text: qsTr("Extract")
                         color: DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontLabel
-                        font.weight: Font.DemiBold
+                        font.weight: DesignTokens.weightSemiBold
                     }
                     ExtractionEditor {
                         Layout.fillWidth: true
                         extractModel: AppController.editExtractions
                     }
                 }
-            }
-        }
-    }
-
-    component EditTab: TabButton {
-        id: editTab
-        required property int tabIndex
-        property string label: ""
-        contentItem: Text {
-            text: editTab.label
-            color: editTabs.currentIndex === editTab.tabIndex ? DesignTokens.textPrimary : DesignTokens.textSecondary
-            font.pixelSize: DesignTokens.fontBody
-            font.weight: editTabs.currentIndex === editTab.tabIndex ? Font.DemiBold : Font.Normal
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            color: "transparent"
-            Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 2
-                color: editTabs.currentIndex === editTab.tabIndex ? DesignTokens.accent : "transparent"
             }
         }
     }

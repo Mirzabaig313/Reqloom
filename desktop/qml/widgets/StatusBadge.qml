@@ -29,16 +29,16 @@ Rectangle {
         Text {
             text: DesignTokens.statusGlyph(badge.token)
             color: badge.hue
-            font.pixelSize: 11
-            font.weight: Font.Bold
+            font.pixelSize: DesignTokens.fontCaption
+            font.weight: DesignTokens.weightBold
             anchors.verticalCenter: parent.verticalCenter
         }
         Text {
             visible: badge.label.length > 0
             text: badge.label
             color: badge.hue
-            font.pixelSize: 11
-            font.weight: Font.DemiBold
+            font.pixelSize: DesignTokens.fontCaption
+            font.weight: DesignTokens.weightSemiBold
             anchors.verticalCenter: parent.verticalCenter
         }
     }

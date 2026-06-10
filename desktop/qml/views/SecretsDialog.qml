@@ -36,7 +36,7 @@ Dialog {
             Layout.fillWidth: true
             text: qsTr("Secrets referenced by this project via {{secret.NAME}}. Values are " + "stored in your OS keychain and never shown here.")
             color: DesignTokens.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: DesignTokens.fontLabel
             wrapMode: Text.WordWrap
         }
 
@@ -55,7 +55,7 @@ Dialog {
                 anchors.margins: DesignTokens.spaceSm
                 text: qsTr("Keychain backend unavailable — secret writes are not persisted.")
                 color: DesignTokens.statusError
-                font.pixelSize: 12
+                font.pixelSize: DesignTokens.fontLabel
                 wrapMode: Text.WordWrap
                 verticalAlignment: Text.AlignVCenter
             }
@@ -86,14 +86,14 @@ Dialog {
                         Layout.fillWidth: true
                         text: "{{secret." + name + "}}"
                         color: DesignTokens.textPrimary
-                        font.pixelSize: 13
-                        font.family: "monospace"
+                        font.pixelSize: DesignTokens.fontBody
+                        font.family: DesignTokens.fontMono
                         elide: Text.ElideRight
                     }
                     Label {
                         text: status === "set" ? "✓  set" : status
                         color: status === "set" ? DesignTokens.statusSuccess : DesignTokens.statusError
-                        font.pixelSize: 12
+                        font.pixelSize: DesignTokens.fontLabel
                     }
 
                     Button {
@@ -110,7 +110,7 @@ Dialog {
                         contentItem: Text {
                             text: parent.text
                             color: DesignTokens.textSecondary
-                            font.pixelSize: 12
+                            font.pixelSize: DesignTokens.fontLabel
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
@@ -132,7 +132,7 @@ Dialog {
                         contentItem: Text {
                             text: parent.text
                             color: DesignTokens.statusError
-                            font.pixelSize: 12
+                            font.pixelSize: DesignTokens.fontLabel
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }

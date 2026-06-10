@@ -27,7 +27,7 @@ Rectangle {
         visible: root.nodes.length === 0
         text: root.emptyText
         color: DesignTokens.textSecondary
-        font.pixelSize: 12
+        font.pixelSize: DesignTokens.fontLabel
         wrapMode: Text.WordWrap
         verticalAlignment: Text.AlignVCenter
     }
@@ -60,16 +60,16 @@ Rectangle {
                         Layout.fillWidth: true
                         text: nodeCol.modelData.operationId
                         color: nodeCol.modelData.isTarget ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                        font.pixelSize: 12
-                        font.family: "monospace"
-                        font.weight: nodeCol.modelData.isTarget ? Font.DemiBold : Font.Normal
+                        font.pixelSize: DesignTokens.fontLabel
+                        font.family: DesignTokens.fontMono
+                        font.weight: nodeCol.modelData.isTarget ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                         elide: Text.ElideRight
                     }
                     Label {
                         visible: nodeCol.modelData.isTarget
                         text: qsTr("target")
                         color: DesignTokens.accent
-                        font.pixelSize: 11
+                        font.pixelSize: DesignTokens.fontCaption
                     }
                 }
 

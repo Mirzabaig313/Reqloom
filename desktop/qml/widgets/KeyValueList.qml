@@ -38,16 +38,16 @@ Rectangle {
                     Layout.preferredWidth: parent.width * 0.34
                     text: key
                     color: DesignTokens.textPrimary
-                    font.pixelSize: 12
-                    font.family: "monospace"
+                    font.pixelSize: DesignTokens.fontLabel
+                    font.family: DesignTokens.fontMono
                     elide: Text.ElideRight
                 }
                 Label {
                     Layout.fillWidth: true
                     text: value
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 12
-                    font.family: "monospace"
+                    font.pixelSize: DesignTokens.fontLabel
+                    font.family: DesignTokens.fontMono
                     elide: Text.ElideRight
                 }
             }
@@ -65,7 +65,7 @@ Rectangle {
             visible: list.count === 0
             text: root.emptyText
             color: DesignTokens.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: DesignTokens.fontLabel
         }
     }
 }

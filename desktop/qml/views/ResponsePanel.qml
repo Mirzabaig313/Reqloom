@@ -222,7 +222,7 @@ Rectangle {
                             text: topTabButton.modelData
                             color: topTabs.currentIndex === topTabButton.index ? DesignTokens.textPrimary : DesignTokens.textSecondary
                             font.pixelSize: DesignTokens.fontBody
-                            font.weight: topTabs.currentIndex === topTabButton.index ? Font.DemiBold : Font.Normal
+                            font.weight: topTabs.currentIndex === topTabButton.index ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
@@ -292,7 +292,7 @@ Rectangle {
                         text: AppController.respStatus > 0 ? ("HTTP " + AppController.respStatus) : AppController.runOutcome
                         color: panel.statusColor(AppController.respStatus)
                         font.pixelSize: DesignTokens.fontSubtitle
-                        font.weight: Font.DemiBold
+                        font.weight: DesignTokens.weightSemiBold
                     }
                     Label {
                         visible: AppController.shownExample.length > 0
@@ -322,7 +322,7 @@ Rectangle {
                             text: saveExampleBtn.text
                             color: DesignTokens.accent
                             font.pixelSize: DesignTokens.fontLabel
-                            font.weight: Font.DemiBold
+                            font.weight: DesignTokens.weightSemiBold
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
@@ -376,7 +376,7 @@ Rectangle {
                                     text: respTabButton.modelData
                                     color: respTabs.currentIndex === respTabButton.index ? DesignTokens.textPrimary : DesignTokens.textSecondary
                                     font.pixelSize: DesignTokens.fontBody
-                                    font.weight: respTabs.currentIndex === respTabButton.index ? Font.DemiBold : Font.Normal
+                                    font.weight: respTabs.currentIndex === respTabButton.index ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                 }
@@ -491,7 +491,7 @@ Rectangle {
                                         color: treeRow.modelData.isLeaf ? DesignTokens.textPrimary : DesignTokens.textSecondary
                                         font.pixelSize: DesignTokens.fontLabel
                                         font.family: DesignTokens.fontMono
-                                        font.weight: treeRow.modelData.isLeaf ? Font.Normal : Font.DemiBold
+                                        font.weight: treeRow.modelData.isLeaf ? DesignTokens.weightRegular : DesignTokens.weightSemiBold
                                         elide: Text.ElideRight
                                     }
                                     Text {
@@ -611,7 +611,7 @@ Rectangle {
                         text: qsTr("No response yet")
                         color: DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontBody
-                        font.weight: Font.Medium
+                        font.weight: DesignTokens.weightMedium
                     }
                     Label {
                         Layout.alignment: Qt.AlignHCenter
