@@ -9,6 +9,9 @@ import Reqloom
 Dialog {
     id: dialog
     title: qsTr("Manage Secrets")
+    header: DialogHeader {
+        title: qsTr("Manage Secrets")
+    }
     modal: true
     anchors.centerIn: Overlay.overlay
     width: 560
@@ -20,19 +23,10 @@ Dialog {
     }
 
     background: Rectangle {
-        radius: DesignTokens.radius
+        radius: DesignTokens.radiusLg
         color: DesignTokens.surfaceRaised
         border.width: 1
-        border.color: DesignTokens.borderSubtle
-    }
-
-    header: Label {
-        text: qsTr("Manage Secrets")
-        color: DesignTokens.textPrimary
-        font.pixelSize: 17
-        font.weight: Font.DemiBold
-        padding: DesignTokens.spaceLg
-        bottomPadding: 0
+        border.color: DesignTokens.glassBorder
     }
 
     contentItem: ColumnLayout {
@@ -158,8 +152,11 @@ Dialog {
         }
     }
 
-    footer: DialogButtonBox {
-        standardButtons: Dialog.Close
+    footer: DialogButtons {
+        showCancel: false
+        okText: qsTr("Close")
+        okPrimary: false
+        onAccepted: dialog.close()
     }
 
     // Set-value sub-dialog.
@@ -170,6 +167,9 @@ Dialog {
         width: 380
         padding: DesignTokens.spaceLg
         property string secretName: ""
+        header: DialogHeader {
+            title: qsTr("Set secret")
+        }
 
         function openFor(name) {
             secretName = name;
@@ -179,37 +179,30 @@ Dialog {
         }
 
         background: Rectangle {
-            radius: DesignTokens.radius
+            radius: DesignTokens.radiusLg
             color: DesignTokens.surfaceRaised
             border.width: 1
-            border.color: DesignTokens.borderSubtle
+            border.color: DesignTokens.glassBorder
         }
 
         contentItem: ColumnLayout {
             spacing: DesignTokens.spaceSm
-            Label {
+            FieldLabel {
+                Layout.fillWidth: true
                 text: qsTr("Value for {{secret.%1}} (stored in the OS keychain):").arg(setDialog.secretName)
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
                 wrapMode: Text.WordWrap
             }
-            TextField {
+            GlassTextField {
                 id: valueField
                 Layout.fillWidth: true
                 echoMode: TextInput.Password
-                color: DesignTokens.textPrimary
                 placeholderText: qsTr("value (not shown)")
-                placeholderTextColor: DesignTokens.textSecondary
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: valueField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                }
             }
         }
-        footer: DialogButtonBox {
-            standardButtons: Dialog.Ok | Dialog.Cancel
+        footer: DialogButtons {
+            okText: qsTr("Save")
+            onAccepted: setDialog.accept()
+            onRejected: setDialog.reject()
         }
         onAccepted: SecretsController.store(secretName, valueField.text)
     }

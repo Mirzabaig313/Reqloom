@@ -59,7 +59,7 @@ private:
     void loadSettings();
     void saveSettings() const;
 
-    QString mode_{QStringLiteral("system")};          ///< "light" / "dark" / "system"
+    QString mode_{QStringLiteral("light")};           ///< "light" / "dark" / "system"
     QString density_{QStringLiteral("comfortable")};  ///< "comfortable" / "compact"
 };
 
