@@ -19,60 +19,45 @@ Dialog {
     padding: DesignTokens.spaceLg
 
     function openFor(preselectedResource) {
-        AppController.prepareNewEndpoint(preselectedResource)
-        nameField.text = ""
-        pathField.text = ""
-        methodCombo.currentIndex = 0
-        chainToggle.checked = false
-        const idx = moduleCombo.find(preselectedResource)
-        moduleCombo.currentIndex = idx >= 0 ? idx : 0
-        actorCombo.currentIndex = 0
-        revalidate()
-        open()
-        nameField.forceActiveFocus()
+        AppController.prepareNewEndpoint(preselectedResource);
+        nameField.text = "";
+        pathField.text = "";
+        methodCombo.currentIndex = 0;
+        chainToggle.checked = false;
+        const idx = moduleCombo.find(preselectedResource);
+        moduleCombo.currentIndex = idx >= 0 ? idx : 0;
+        actorCombo.currentIndex = 0;
+        revalidate();
+        open();
+        nameField.forceActiveFocus();
     }
 
     property string errorText: ""
+    property bool canSubmit: false
 
     function revalidate() {
-        const name = nameField.text.trim()
+        const name = nameField.text.trim();
         if (AppController.moduleNames.length === 0) {
-            errorText = qsTr("Create a module first.")
+            errorText = qsTr("Create a module first.");
         } else if (name.length === 0) {
-            errorText = qsTr("Name cannot be empty.")
+            errorText = qsTr("Name cannot be empty.");
         } else if (!AppController.isValidName(name)) {
-            errorText = qsTr("Name can't contain '.', '/', or '\\'.")
+            errorText = qsTr("Name can't contain '.', '/', or '\\'.");
         } else {
-            errorText = ""
+            errorText = "";
         }
-        const okBtn = footerButtons.standardButton(Dialog.Ok)
-        if (okBtn) {
-            okBtn.enabled = errorText.length === 0
-        }
+        canSubmit = errorText.length === 0;
     }
 
     background: Rectangle {
-        radius: DesignTokens.radius
+        radius: DesignTokens.radiusLg
         color: DesignTokens.surfaceRaised
         border.width: 1
-        border.color: DesignTokens.borderSubtle
+        border.color: DesignTokens.glassBorder
     }
 
-    header: Label {
-        text: qsTr("New endpoint")
-        color: DesignTokens.textPrimary
-        font.pixelSize: 17
-        font.weight: Font.DemiBold
-        padding: DesignTokens.spaceLg
-        bottomPadding: 0
-    }
-
-    component FieldBox: Rectangle {
-        radius: DesignTokens.radiusSm
-        color: DesignTokens.surfaceSunken
-        border.width: 1
-        border.color: DesignTokens.borderSubtle
-        implicitHeight: 32
+    header: DialogHeader {
+        title: qsTr("New endpoint")
     }
 
     contentItem: ColumnLayout {
@@ -80,11 +65,10 @@ Dialog {
 
         Label {
             Layout.fillWidth: true
-            text: qsTr("Define the request. You can wire its dependency chain now or later in "
-                       + "the editor.")
+            text: qsTr("Define the request. You can wire its dependency chain now or later in " + "the editor.")
             wrapMode: Text.WordWrap
             color: DesignTokens.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: DesignTokens.fontLabel
         }
 
         GridLayout {
@@ -93,111 +77,51 @@ Dialog {
             rowSpacing: DesignTokens.spaceSm
             Layout.fillWidth: true
 
-            Label {
+            FieldLabel {
                 text: qsTr("Module")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            ComboBox {
+            GlassComboBox {
                 id: moduleCombo
                 Layout.fillWidth: true
-                implicitHeight: 32
                 model: AppController.moduleNames
-                background: FieldBox {
-                    border.color: moduleCombo.activeFocus ? DesignTokens.accent
-                                                          : DesignTokens.borderSubtle
-                }
-                contentItem: Text {
-                    leftPadding: DesignTokens.spaceSm
-                    text: moduleCombo.displayText
-                    color: DesignTokens.textPrimary
-                    font.pixelSize: 12
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                }
             }
 
-            Label {
+            FieldLabel {
                 text: qsTr("Name")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            TextField {
+            GlassTextField {
                 id: nameField
                 Layout.fillWidth: true
                 placeholderText: qsTr("verify")
-                color: DesignTokens.textPrimary
-                placeholderTextColor: DesignTokens.textSecondary
                 onTextChanged: dialog.revalidate()
-                background: FieldBox {
-                    border.color: nameField.activeFocus ? DesignTokens.accent
-                                                        : DesignTokens.borderSubtle
-                }
             }
 
-            Label {
+            FieldLabel {
                 text: qsTr("Method")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            ComboBox {
+            GlassComboBox {
                 id: methodCombo
                 Layout.fillWidth: true
-                implicitHeight: 32
                 model: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-                background: FieldBox {
-                    border.color: methodCombo.activeFocus ? DesignTokens.accent
-                                                          : DesignTokens.borderSubtle
-                }
-                contentItem: Text {
-                    leftPadding: DesignTokens.spaceSm
-                    text: methodCombo.displayText
-                    color: DesignTokens.textPrimary
-                    font.pixelSize: 12
-                    verticalAlignment: Text.AlignVCenter
-                }
             }
 
-            Label {
+            FieldLabel {
                 text: qsTr("Path")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            TextField {
+            GlassTextField {
                 id: pathField
                 Layout.fillWidth: true
+                mono: true
                 placeholderText: qsTr("/api/v1/admin/orgs/{{id}}/verify")
-                color: DesignTokens.textPrimary
-                placeholderTextColor: DesignTokens.textSecondary
-                font.family: "monospace"
-                background: FieldBox {
-                    border.color: pathField.activeFocus ? DesignTokens.accent
-                                                        : DesignTokens.borderSubtle
-                }
             }
 
-            Label {
+            FieldLabel {
                 text: qsTr("Actor")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            ComboBox {
+            GlassComboBox {
                 id: actorCombo
                 Layout.fillWidth: true
-                implicitHeight: 32
                 model: AppController.actorNames
-                background: FieldBox {
-                    border.color: actorCombo.activeFocus ? DesignTokens.accent
-                                                         : DesignTokens.borderSubtle
-                }
-                contentItem: Text {
-                    leftPadding: DesignTokens.spaceSm
-                    text: actorCombo.displayText
-                    color: DesignTokens.textPrimary
-                    font.pixelSize: 12
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                }
             }
         }
 
@@ -205,8 +129,8 @@ Dialog {
             Layout.fillWidth: true
             visible: dialog.errorText.length > 0
             text: dialog.errorText
-            color: DesignTokens.methodDelete
-            font.pixelSize: 12
+            color: DesignTokens.statusError
+            font.pixelSize: DesignTokens.fontLabel
             wrapMode: Text.WordWrap
         }
 
@@ -259,14 +183,27 @@ Dialog {
         }
     }
 
-    footer: DialogButtonBox {
-        id: footerButtons
-        standardButtons: Dialog.Ok | Dialog.Cancel
+    footer: Item {
+        implicitHeight: 60
+        RowLayout {
+            anchors.fill: parent
+            anchors.margins: DesignTokens.spaceLg
+            spacing: DesignTokens.spaceSm
+            Item {
+                Layout.fillWidth: true
+            }
+            GlassButton {
+                text: qsTr("Cancel")
+                onClicked: dialog.reject()
+            }
+            GlassButton {
+                text: qsTr("Create endpoint")
+                primary: true
+                enabled: dialog.canSubmit
+                onClicked: dialog.accept()
+            }
+        }
     }
 
-    onAccepted: AppController.createOperation(moduleCombo.currentText,
-                                              nameField.text.trim(),
-                                              methodCombo.currentText,
-                                              pathField.text.trim(),
-                                              actorCombo.currentText)
+    onAccepted: AppController.createOperation(moduleCombo.currentText, nameField.text.trim(), methodCombo.currentText, pathField.text.trim(), actorCombo.currentText)
 }

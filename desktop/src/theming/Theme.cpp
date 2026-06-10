@@ -11,37 +11,39 @@ namespace reqloom::desktop::theming {
 
 namespace {
 
-// All neutrals are tinted toward the accent hue (DESIGN.md §2.3): indigo-violet.
-constexpr double kAccentHue = 285.0;
+// Neutrals are tinted toward the marine identity (Morphous Abalone, theme.json):
+// a cool teal-graphite hue ties the pearl surfaces to the iridescent-teal accent.
+constexpr double kAccentHue = 200.0;
 
 [[nodiscard]] Palette resolveLight() {
     Palette p;
-    // DESIGN.md §2.6 — light theme values.
-    p.surfaceBase = oklch(0.985, 0.003, kAccentHue);
-    p.surfaceRaised = oklch(0.995, 0.002, kAccentHue);
-    p.surfaceSunken = oklch(0.960, 0.004, kAccentHue);
-    p.surfaceOverlay = oklch(0.995, 0.002, kAccentHue);
-    p.borderSubtle = oklch(0.900, 0.005, kAccentHue);
-    p.borderStrong = oklch(0.780, 0.008, kAccentHue);
-    p.textPrimary = oklch(0.240, 0.010, kAccentHue);
-    p.textSecondary = oklch(0.470, 0.009, kAccentHue);
-    p.textDisabled = oklch(0.680, 0.006, kAccentHue);
-    p.textInverse = oklch(0.985, 0.002, kAccentHue);
-    p.accentBase = oklch(0.550, 0.190, kAccentHue);
-    p.accentHover = oklch(0.480, 0.200, kAccentHue);
-    p.accentMuted = oklch(0.950, 0.030, kAccentHue);
+    // theme.json "Morphous Abalone" — light. Pearl-grey canvas with near-white
+    // raised cards (panels lift via lightness), iridescent-teal accent.
+    p.surfaceBase = oklch(0.933, 0.007, 260.7);    // Pearl Grey canvas
+    p.surfaceRaised = oklch(0.985, 0.003, 264.5);  // Shell Pearl cards
+    p.surfaceSunken = oklch(0.952, 0.006, 264.5);  // inputs within cards
+    p.surfaceOverlay = oklch(0.989, 0.006, 75.4);  // Opal White popovers
+    p.borderSubtle = oklch(0.880, 0.008, 232.4);
+    p.borderStrong = oklch(0.722, 0.015, 207.9);  // Weathered Shell
+    p.textPrimary = oklch(0.209, 0.017, 216.6);   // Graphite Nacre
+    p.textSecondary = oklch(0.540, 0.016, 210.0);
+    p.textDisabled = oklch(0.760, 0.010, 210.0);
+    p.textInverse = oklch(0.985, 0.003, 264.5);
+    p.accentBase = oklch(0.654, 0.110, 193.2);  // Iridescent Teal
+    p.accentHover = oklch(0.580, 0.115, 193.2);
+    p.accentMuted = oklch(0.910, 0.030, 195.0);  // light teal selection tint
 
-    p.statusIdle = oklch(0.680, 0.006, kAccentHue);
+    p.statusIdle = oklch(0.722, 0.012, kAccentHue);
     p.statusRunning = oklch(0.600, 0.140, 230.0);
     p.statusSuccess = oklch(0.560, 0.150, 150.0);
     p.statusWarning = oklch(0.700, 0.150, 75.0);
-    p.statusError = oklch(0.560, 0.200, 27.0);
+    p.statusError = oklch(0.636, 0.208, 25.3);  // theme.json destructive
     p.statusCancelled = oklch(0.550, 0.010, kAccentHue);
     p.statusBlocked = oklch(0.560, 0.150, 320.0);
 
-    // Tint tokens (§2.9): accent hue, surface-level lightness, opaque.
-    p.tintCache = oklch(0.955, 0.020, kAccentHue);
-    p.tintSubstituted = oklch(0.945, 0.035, kAccentHue);
+    // Tint tokens (§2.9): teal-leaning surface tints, opaque.
+    p.tintCache = oklch(0.945, 0.020, 195.0);
+    p.tintSubstituted = oklch(0.910, 0.035, 5.7);  // Blush Pearl accent tint
     // Diff tints: success/error hue at a light, low-saturation surface
     // lightness so text stays readable on top (§2.9 / §6.4).
     p.tintDiffAdd = oklch(0.930, 0.040, 150.0);
@@ -60,31 +62,32 @@ constexpr double kAccentHue = 285.0;
 
 [[nodiscard]] Palette resolveDark() {
     Palette p;
-    // DESIGN.md §2.7 — dark theme values (brighter accents/status for 4.5:1).
-    p.surfaceBase = oklch(0.180, 0.006, kAccentHue);
-    p.surfaceRaised = oklch(0.220, 0.007, kAccentHue);
-    p.surfaceSunken = oklch(0.140, 0.006, kAccentHue);
-    p.surfaceOverlay = oklch(0.260, 0.008, kAccentHue);
-    p.borderSubtle = oklch(0.300, 0.008, kAccentHue);
-    p.borderStrong = oklch(0.420, 0.010, kAccentHue);
-    p.textPrimary = oklch(0.940, 0.004, kAccentHue);
-    p.textSecondary = oklch(0.680, 0.006, kAccentHue);
-    p.textDisabled = oklch(0.480, 0.006, kAccentHue);
-    p.textInverse = oklch(0.180, 0.006, kAccentHue);
-    p.accentBase = oklch(0.680, 0.170, kAccentHue);
-    p.accentHover = oklch(0.750, 0.160, kAccentHue);
-    p.accentMuted = oklch(0.300, 0.060, kAccentHue);
+    // theme.json "Morphous Abalone" — dark. Deep tidepool-graphite canvas with
+    // slightly lighter dark-pearl cards, luminous seafoam-teal accent.
+    p.surfaceBase = oklch(0.191, 0.022, 205.9);    // Tidepool Shadow
+    p.surfaceRaised = oklch(0.230, 0.020, 207.3);  // dark pearl cards (lift)
+    p.surfaceSunken = oklch(0.165, 0.020, 206.0);  // inputs darker
+    p.surfaceOverlay = oklch(0.260, 0.020, 207.0);
+    p.borderSubtle = oklch(0.320, 0.018, 206.0);
+    p.borderStrong = oklch(0.440, 0.020, 208.0);
+    p.textPrimary = oklch(0.979, 0.003, 264.5);
+    p.textSecondary = oklch(0.720, 0.012, 210.0);
+    p.textDisabled = oklch(0.480, 0.012, 210.0);
+    p.textInverse = oklch(0.209, 0.017, 216.6);
+    p.accentBase = oklch(0.797, 0.095, 185.2);  // Seafoam Nacre
+    p.accentHover = oklch(0.850, 0.090, 185.2);
+    p.accentMuted = oklch(0.324, 0.045, 200.0);
 
-    p.statusIdle = oklch(0.480, 0.006, kAccentHue);
+    p.statusIdle = oklch(0.480, 0.012, 210.0);
     p.statusRunning = oklch(0.750, 0.130, 230.0);
     p.statusSuccess = oklch(0.780, 0.160, 150.0);
     p.statusWarning = oklch(0.800, 0.150, 75.0);
-    p.statusError = oklch(0.700, 0.180, 27.0);
-    p.statusCancelled = oklch(0.680, 0.010, kAccentHue);
+    p.statusError = oklch(0.704, 0.191, 22.2);  // theme.json destructive (dark)
+    p.statusCancelled = oklch(0.680, 0.010, 210.0);
     p.statusBlocked = oklch(0.720, 0.160, 320.0);
 
-    p.tintCache = oklch(0.280, 0.040, kAccentHue);
-    p.tintSubstituted = oklch(0.300, 0.055, kAccentHue);
+    p.tintCache = oklch(0.300, 0.040, 195.0);
+    p.tintSubstituted = oklch(0.320, 0.045, 5.7);  // Blush Pearl accent tint
     // Diff tints: success/error hue at a low, low-saturation surface lightness
     // so light text stays readable on top in dark mode (§2.9 / §6.4).
     p.tintDiffAdd = oklch(0.300, 0.050, 150.0);

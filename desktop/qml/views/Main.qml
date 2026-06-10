@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtQuick.Effects
 import Reqloom
 
 ApplicationWindow {
@@ -19,7 +20,67 @@ ApplicationWindow {
         const p = AppController.projectName;
         return p.length > 0 ? (p + " — Reqloom") : qsTr("Reqloom");
     }
-    color: DesignTokens.surfaceBase
+    color: DesignTokens.canvasBottom
+
+    // ── Frosted backdrop ─────────────────────────────────────────────────────
+    // An iridescent gradient with soft nacre glow-blobs, blurred so the
+    // translucent glass panels above reveal a smooth abalone wash. The source
+    // is drawn off-screen and shown only through the MultiEffect blur.
+    Item {
+        id: glassBackdrop
+        anchors.fill: parent
+        z: -10
+
+        Rectangle {
+            id: backdropSource
+            anchors.fill: parent
+            visible: false
+            layer.enabled: true
+            gradient: Gradient {
+                GradientStop {
+                    position: 0.0
+                    color: DesignTokens.canvasTop
+                }
+                GradientStop {
+                    position: 1.0
+                    color: DesignTokens.canvasBottom
+                }
+            }
+            Rectangle {
+                width: 520
+                height: 520
+                radius: width / 2
+                x: parent.width * 0.10 - width / 2
+                y: parent.height * 0.08
+                color: DesignTokens.glowTeal
+            }
+            Rectangle {
+                width: 460
+                height: 460
+                radius: width / 2
+                x: parent.width * 0.78
+                y: parent.height * 0.62
+                color: DesignTokens.glowSeafoam
+            }
+            Rectangle {
+                width: 380
+                height: 380
+                radius: width / 2
+                x: parent.width * 0.55
+                y: parent.height * 0.05 - height / 2
+                color: DesignTokens.glowBlush
+            }
+        }
+
+        MultiEffect {
+            anchors.fill: parent
+            source: backdropSource
+            blurEnabled: true
+            blur: 1.0
+            blurMax: 64
+            autoPaddingEnabled: false
+        }
+    }
 
     // ── Native menu bar (macOS menu bar is automatic in Qt 6.8) ──────────────
     menuBar: MenuBar {
@@ -30,7 +91,7 @@ ApplicationWindow {
             contentItem: Text {
                 text: parent.text
                 color: DesignTokens.textPrimary
-                font.pixelSize: 13
+                font.pixelSize: DesignTokens.fontBody
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
@@ -148,8 +209,8 @@ ApplicationWindow {
 
     // ── Top toolbar ────────────────────────────────────────────────────────
     header: Rectangle {
-        implicitHeight: 52
-        color: DesignTokens.surfaceRaised
+        implicitHeight: 60
+        color: DesignTokens.glassFill
         Rectangle {
             anchors.bottom: parent.bottom
             width: parent.width
@@ -177,7 +238,7 @@ ApplicationWindow {
                 contentItem: Text {
                     text: parent.text
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: DesignTokens.fontLabel
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -200,7 +261,7 @@ ApplicationWindow {
                 contentItem: Text {
                     text: parent.text
                     color: parent.enabled ? DesignTokens.textSecondary : DesignTokens.borderStrong
-                    font.pixelSize: 12
+                    font.pixelSize: DesignTokens.fontLabel
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -209,10 +270,59 @@ ApplicationWindow {
 
             Item {
                 Layout.fillWidth: true
+                Layout.maximumWidth: 200
             }
 
-            // Appearance switch (reliable toolbar control — drives the theme
-            // directly; the Appearance menu does the same).
+            // Global filter — a pill search that narrows the explorer tree,
+            // the prominent control the layout is built around.
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.maximumWidth: 460
+                implicitHeight: 36
+                radius: DesignTokens.radiusPill
+                color: DesignTokens.surfaceSunken
+                border.width: 1
+                border.color: headerSearch.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: DesignTokens.spaceMd
+                    anchors.rightMargin: DesignTokens.spaceSm
+                    spacing: DesignTokens.spaceSm
+                    Label {
+                        text: "\u2315"
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontSubtitle
+                    }
+                    TextField {
+                        id: headerSearch
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("Search operations")
+                        color: DesignTokens.textPrimary
+                        placeholderTextColor: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontBody
+                        background: null
+                        leftPadding: 0
+                        onTextChanged: AppController.setExplorerFilter(text)
+                    }
+                    Label {
+                        visible: headerSearch.text.length > 0
+                        text: "\u2715"
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontLabel
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -6
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: headerSearch.clear()
+                        }
+                    }
+                }
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.maximumWidth: 200
+            }
             Row {
                 spacing: 0
                 Repeater {
@@ -245,7 +355,7 @@ ApplicationWindow {
                         contentItem: Text {
                             text: apBtn.modelData.lbl
                             color: ThemeController.mode === apBtn.modelData.m ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: 13
+                            font.pixelSize: DesignTokens.fontBody
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
@@ -254,38 +364,18 @@ ApplicationWindow {
                 }
             }
 
-            // Split-orientation toggle for the editor/response arrangement.
-            Button {
-                id: splitBtn
-                implicitWidth: 32
-                implicitHeight: 30
-                ToolTip.visible: hovered
-                ToolTip.text: window.responseStacked ? qsTr("Stacked — click for side-by-side") : qsTr("Side by side — click to stack")
-                background: Rectangle {
-                    color: splitBtn.hovered ? Qt.rgba(1, 1, 1, 0.05) : "transparent"
-                    border.width: 1
-                    border.color: DesignTokens.borderSubtle
-                }
-                contentItem: Text {
-                    text: window.responseStacked ? "⬓" : "◫"
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: 14
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                onClicked: window.responseStacked = !window.responseStacked
-            }
+            // Split-orientation toggle for the editor/response arrangement now
+            // lives in the Response panel header (more contextual).
 
             Label {
                 text: qsTr("Environment")
                 color: DesignTokens.textSecondary
-                font.pixelSize: 12
+                font.pixelSize: DesignTokens.fontLabel
             }
-            ComboBox {
+            GlassComboBox {
                 id: envCombo
                 model: AppController.environments
                 implicitWidth: 160
-                implicitHeight: 32
                 enabled: AppController.environments.length > 0
                 onActivated: AppController.environment = currentText
                 Component.onCompleted: currentIndex = Math.max(0, find(AppController.environment))
@@ -294,20 +384,6 @@ ApplicationWindow {
                     function onEnvironmentChanged() {
                         envCombo.currentIndex = Math.max(0, envCombo.find(AppController.environment));
                     }
-                }
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: DesignTokens.borderSubtle
-                }
-                contentItem: Text {
-                    leftPadding: DesignTokens.spaceSm
-                    text: envCombo.displayText
-                    color: DesignTokens.textPrimary
-                    font.pixelSize: 12
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
                 }
             }
 
@@ -319,7 +395,7 @@ ApplicationWindow {
                 contentItem: Text {
                     text: captureCheck.text
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: DesignTokens.fontLabel
                     leftPadding: captureCheck.indicator.width + DesignTokens.spaceSm
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -336,7 +412,7 @@ ApplicationWindow {
                         visible: captureCheck.checked
                         text: "✓"
                         color: DesignTokens.textInverse
-                        font.pixelSize: 11
+                        font.pixelSize: DesignTokens.fontCaption
                         font.weight: Font.Bold
                     }
                 }
@@ -348,9 +424,20 @@ ApplicationWindow {
     SplitView {
         id: mainSplit
         anchors.fill: parent
-        anchors.margins: DesignTokens.spaceSm
-        spacing: DesignTokens.spaceSm
+        anchors.margins: 0
+        spacing: 0
         orientation: Qt.Horizontal
+        handle: Rectangle {
+            implicitWidth: 6
+            implicitHeight: 6
+            color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
+            opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: 120
+                }
+            }
+        }
 
         // Left: Explorer panel or collapsed rail.
         Rectangle {
@@ -369,30 +456,45 @@ ApplicationWindow {
 
             // Collapsed rail: single expand chevron.
             Rectangle {
+                id: explorerRail
                 anchors.fill: parent
                 visible: explorerCollapsed
-                radius: DesignTokens.radius
-                color: DesignTokens.surfaceRaised
+                radius: 0
+                color: explorerRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
                 border.width: 1
-                border.color: DesignTokens.borderSubtle
-                Button {
-                    anchors.centerIn: parent
+                border.color: DesignTokens.glassBorder
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 120
+                    }
+                }
+
+                Label {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: parent.top
+                    anchors.topMargin: DesignTokens.spaceLg
                     text: "›"
-                    implicitWidth: 28
-                    implicitHeight: 28
-                    background: Rectangle {
-                        radius: DesignTokens.radiusSm
-                        color: parent.hovered ? DesignTokens.accentMuted : "transparent"
-                    }
-                    contentItem: Text {
-                        text: parent.text
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: 16
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
+                    color: explorerRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontSubtitle
+                    font.weight: DesignTokens.weightSemiBold
+                }
+                Label {
+                    anchors.centerIn: parent
+                    text: qsTr("Explorer")
+                    rotation: -90
+                    color: explorerRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    font.weight: DesignTokens.weightMedium
+                }
+                MouseArea {
+                    id: explorerRailArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
                     onClicked: explorerCollapsed = false
                 }
+                ToolTip.visible: explorerRailArea.containsMouse
+                ToolTip.text: qsTr("Show Explorer")
             }
         }
 
@@ -402,7 +504,18 @@ ApplicationWindow {
             id: centerSplit
             SplitView.fillWidth: true
             orientation: window.responseStacked ? Qt.Vertical : Qt.Horizontal
-            spacing: DesignTokens.spaceSm
+            spacing: 0
+            handle: Rectangle {
+                implicitWidth: 6
+                implicitHeight: 6
+                color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
+                opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: 120
+                    }
+                }
+            }
 
             // Centre: endpoint list or request editor (or empty state).
             Rectangle {
@@ -411,10 +524,10 @@ ApplicationWindow {
                 SplitView.fillHeight: true
                 SplitView.minimumWidth: 320
                 SplitView.minimumHeight: 200
-                radius: DesignTokens.radius
-                color: DesignTokens.surfaceRaised
+                radius: 0
+                color: DesignTokens.glassFill
                 border.width: 1
-                border.color: DesignTokens.borderSubtle
+                border.color: DesignTokens.glassBorder
 
                 // Empty state when no project loaded.
                 EmptyState {
@@ -435,13 +548,13 @@ ApplicationWindow {
                         Label {
                             text: AppController.selectedModule.length > 0 ? AppController.selectedModule : qsTr("Select a module")
                             color: DesignTokens.textPrimary
-                            font.pixelSize: 22
+                            font.pixelSize: DesignTokens.fontTitle
                             font.weight: Font.DemiBold
                         }
                         Label {
                             id: epCountLabel
                             color: DesignTokens.textSecondary
-                            font.pixelSize: 13
+                            font.pixelSize: DesignTokens.fontBody
                         }
                     }
                     ListView {
@@ -478,22 +591,22 @@ ApplicationWindow {
                                     Label {
                                         text: opRow.name
                                         color: DesignTokens.textPrimary
-                                        font.pixelSize: 14
+                                        font.pixelSize: DesignTokens.fontBody
                                         font.weight: Font.Medium
                                     }
                                     Label {
                                         Layout.fillWidth: true
                                         text: opRow.path
                                         color: DesignTokens.textSecondary
-                                        font.pixelSize: 12
-                                        font.family: "monospace"
+                                        font.pixelSize: DesignTokens.fontLabel
+                                        font.family: DesignTokens.fontMono
                                         elide: Text.ElideRight
                                     }
                                 }
                                 Label {
                                     text: "›"
                                     color: DesignTokens.textSecondary
-                                    font.pixelSize: 18
+                                    font.pixelSize: DesignTokens.fontSubtitle
                                     opacity: opRow.hovered ? 1.0 : 0.4
                                 }
                             }
@@ -504,7 +617,7 @@ ApplicationWindow {
                             visible: endpointList.count === 0 && AppController.resourceCount > 0
                             text: qsTr("No endpoints in this module yet.")
                             color: DesignTokens.textSecondary
-                            font.pixelSize: 13
+                            font.pixelSize: DesignTokens.fontBody
                         }
                     }
                 }
@@ -531,34 +644,73 @@ ApplicationWindow {
                 ResponsePanel {
                     anchors.fill: parent
                     visible: !responseCollapsed
+                    stacked: window.responseStacked
                     onCloseRequested: responseCollapsed = true
+                    onToggleStackRequested: window.responseStacked = !window.responseStacked
                 }
 
                 Rectangle {
                     anchors.fill: parent
                     visible: responseCollapsed
-                    radius: DesignTokens.radius
-                    color: DesignTokens.surfaceRaised
+                    radius: 0
+                    color: responseRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
                     border.width: 1
-                    border.color: DesignTokens.borderSubtle
-                    Button {
+                    border.color: DesignTokens.glassBorder
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 120
+                        }
+                    }
+
+                    // Side-by-side: vertical strip — chevron on top, rotated label.
+                    Item {
+                        anchors.fill: parent
+                        visible: !window.responseStacked
+                        Label {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: DesignTokens.spaceLg
+                            text: "‹"
+                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontSubtitle
+                            font.weight: DesignTokens.weightSemiBold
+                        }
+                        Label {
+                            anchors.centerIn: parent
+                            text: qsTr("Response")
+                            rotation: -90
+                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            font.weight: DesignTokens.weightMedium
+                        }
+                    }
+                    // Stacked: horizontal bar — chevron + label in a row.
+                    RowLayout {
                         anchors.centerIn: parent
-                        text: "‹"
-                        implicitWidth: 28
-                        implicitHeight: 28
-                        background: Rectangle {
-                            radius: DesignTokens.radiusSm
-                            color: parent.hovered ? DesignTokens.accentMuted : "transparent"
+                        visible: window.responseStacked
+                        spacing: DesignTokens.spaceSm
+                        Label {
+                            text: "⌃"
+                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontSubtitle
+                            font.weight: DesignTokens.weightSemiBold
                         }
-                        contentItem: Text {
-                            text: parent.text
-                            color: DesignTokens.textSecondary
-                            font.pixelSize: 16
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
+                        Label {
+                            text: qsTr("Response")
+                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            font.weight: DesignTokens.weightMedium
                         }
+                    }
+                    MouseArea {
+                        id: responseRailArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
                         onClicked: responseCollapsed = false
                     }
+                    ToolTip.visible: responseRailArea.containsMouse
+                    ToolTip.text: qsTr("Show Response")
                 }
             }
         }
@@ -610,7 +762,7 @@ ApplicationWindow {
                 placeholderText: qsTr("Search commands…")
                 color: DesignTokens.textPrimary
                 placeholderTextColor: DesignTokens.textSecondary
-                font.pixelSize: 14
+                font.pixelSize: DesignTokens.fontBody
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
                     color: DesignTokens.surfaceSunken
@@ -694,7 +846,7 @@ ApplicationWindow {
                     contentItem: Text {
                         text: itemLabel
                         color: DesignTokens.textPrimary
-                        font.pixelSize: 13
+                        font.pixelSize: DesignTokens.fontBody
                         verticalAlignment: Text.AlignVCenter
                     }
                     onClicked: {

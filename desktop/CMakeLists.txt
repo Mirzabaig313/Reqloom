@@ -159,6 +159,15 @@ qt_add_qml_module(reqloom-qml
         qml/views/NewModuleDialog.qml
         qml/views/NewEndpointDialog.qml
         qml/widgets/MethodBadge.qml
+        qml/widgets/Card.qml
+        qml/widgets/GlassComboBox.qml
+        qml/widgets/GlassButton.qml
+        qml/widgets/GlassMenu.qml
+        qml/widgets/GlassMenuItem.qml
+        qml/widgets/DialogButtons.qml
+        qml/widgets/GlassTextField.qml
+        qml/widgets/FieldLabel.qml
+        qml/widgets/DialogHeader.qml
         qml/widgets/PanelHeader.qml
         qml/widgets/KeyValueList.qml
         qml/widgets/KeyValueEditorView.qml

@@ -29,6 +29,7 @@ class DesignTokens : public QObject {
     Q_PROPERTY(QColor surfaceBase READ surfaceBase NOTIFY tokensChanged)
     Q_PROPERTY(QColor surfaceRaised READ surfaceRaised NOTIFY tokensChanged)
     Q_PROPERTY(QColor surfaceSunken READ surfaceSunken NOTIFY tokensChanged)
+    Q_PROPERTY(QColor surfaceOverlay READ surfaceOverlay NOTIFY tokensChanged)
     Q_PROPERTY(QColor borderSubtle READ borderSubtle NOTIFY tokensChanged)
     Q_PROPERTY(QColor borderStrong READ borderStrong NOTIFY tokensChanged)
     // Text
@@ -65,6 +66,35 @@ class DesignTokens : public QObject {
     Q_PROPERTY(int spaceXxl READ spaceXxl CONSTANT)
     Q_PROPERTY(int radius READ radius CONSTANT)
     Q_PROPERTY(int radiusSm READ radiusSm CONSTANT)
+    Q_PROPERTY(int radiusLg READ radiusLg CONSTANT)
+    Q_PROPERTY(int radiusPill READ radiusPill CONSTANT)
+    // Typography — one type scale + the two font families. Change here to
+    // re-skin every label/field/button across the app.
+    Q_PROPERTY(QString fontSans READ fontSans CONSTANT)
+    Q_PROPERTY(QString fontMono READ fontMono CONSTANT)
+    Q_PROPERTY(int fontTitle READ fontTitle CONSTANT)
+    Q_PROPERTY(int fontSubtitle READ fontSubtitle CONSTANT)
+    Q_PROPERTY(int fontBody READ fontBody CONSTANT)
+    Q_PROPERTY(int fontLabel READ fontLabel CONSTANT)
+    Q_PROPERTY(int fontCaption READ fontCaption CONSTANT)
+    Q_PROPERTY(int weightRegular READ weightRegular CONSTANT)
+    Q_PROPERTY(int weightMedium READ weightMedium CONSTANT)
+    Q_PROPERTY(int weightSemiBold READ weightSemiBold CONSTANT)
+    // Control sizing.
+    Q_PROPERTY(int controlHeight READ controlHeight CONSTANT)
+    Q_PROPERTY(int controlHeightLg READ controlHeightLg CONSTANT)
+    Q_PROPERTY(int iconSize READ iconSize CONSTANT)
+    // Soft elevation shadow colour (translucent), appearance-aware.
+    Q_PROPERTY(QColor shadow READ shadow NOTIFY tokensChanged)
+    // Glassmorphism: translucent panel fill + highlight border, the iridescent
+    // backdrop gradient stops, and three nacre glow-blob colours.
+    Q_PROPERTY(QColor glassFill READ glassFill NOTIFY tokensChanged)
+    Q_PROPERTY(QColor glassBorder READ glassBorder NOTIFY tokensChanged)
+    Q_PROPERTY(QColor canvasTop READ canvasTop NOTIFY tokensChanged)
+    Q_PROPERTY(QColor canvasBottom READ canvasBottom NOTIFY tokensChanged)
+    Q_PROPERTY(QColor glowTeal READ glowTeal NOTIFY tokensChanged)
+    Q_PROPERTY(QColor glowSeafoam READ glowSeafoam NOTIFY tokensChanged)
+    Q_PROPERTY(QColor glowBlush READ glowBlush NOTIFY tokensChanged)
     // Derived from ThemeController
     Q_PROPERTY(bool isDark READ isDark NOTIFY tokensChanged)
 
@@ -78,6 +108,7 @@ public:
     [[nodiscard]] QColor surfaceBase() const { return p().surfaceBase; }
     [[nodiscard]] QColor surfaceRaised() const { return p().surfaceRaised; }
     [[nodiscard]] QColor surfaceSunken() const { return p().surfaceSunken; }
+    [[nodiscard]] QColor surfaceOverlay() const { return p().surfaceOverlay; }
     [[nodiscard]] QColor borderSubtle() const { return p().borderSubtle; }
     [[nodiscard]] QColor borderStrong() const { return p().borderStrong; }
     // Text
@@ -111,7 +142,32 @@ public:
     [[nodiscard]] int spaceXl() const { return 24; }
     [[nodiscard]] int spaceXxl() const { return 32; }
     [[nodiscard]] int radius() const { return 8; }
-    [[nodiscard]] int radiusSm() const { return 5; }
+    [[nodiscard]] int radiusSm() const { return 6; }
+    [[nodiscard]] int radiusLg() const { return 12; }
+    [[nodiscard]] int radiusPill() const { return 999; }
+    // Typography (theme.json: Geist UI, mono for code). Families fall back via
+    // Qt font substitution when not installed.
+    [[nodiscard]] QString fontSans() const { return QStringLiteral("Geist"); }
+    [[nodiscard]] QString fontMono() const { return QStringLiteral("Menlo"); }
+    [[nodiscard]] int fontTitle() const { return 22; }
+    [[nodiscard]] int fontSubtitle() const { return 16; }
+    [[nodiscard]] int fontBody() const { return 13; }
+    [[nodiscard]] int fontLabel() const { return 12; }
+    [[nodiscard]] int fontCaption() const { return 11; }
+    [[nodiscard]] int weightRegular() const { return 400; }
+    [[nodiscard]] int weightMedium() const { return 500; }
+    [[nodiscard]] int weightSemiBold() const { return 600; }
+    [[nodiscard]] int controlHeight() const { return 34; }
+    [[nodiscard]] int controlHeightLg() const { return 36; }
+    [[nodiscard]] int iconSize() const { return 16; }
+    [[nodiscard]] QColor shadow() const;
+    [[nodiscard]] QColor glassFill() const;
+    [[nodiscard]] QColor glassBorder() const;
+    [[nodiscard]] QColor canvasTop() const;
+    [[nodiscard]] QColor canvasBottom() const;
+    [[nodiscard]] QColor glowTeal() const;
+    [[nodiscard]] QColor glowSeafoam() const;
+    [[nodiscard]] QColor glowBlush() const;
     [[nodiscard]] bool isDark() const;
 
     /// HTTP method hue — single QML source (dedupes MethodBadge/ChainView).
