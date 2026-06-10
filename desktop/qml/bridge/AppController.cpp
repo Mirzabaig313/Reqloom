@@ -8,9 +8,11 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
+#include <QtCore/QStringList>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <utility>
@@ -449,6 +451,70 @@ void AppController::setEditBodyIsForm(bool isForm) {
     emit editChanged();
 }
 
+void AppController::setEditBodyType(const QString& type) {
+    if (type == editBodyType_) {
+        return;
+    }
+    editBodyType_ = type;
+    editBodyIsForm_ = (type == QStringLiteral("form-data") ||
+                       type == QStringLiteral("x-www-form-urlencoded"));
+
+    QString desired;
+    if (type == QStringLiteral("json") || type == QStringLiteral("graphql")) {
+        desired = QStringLiteral("application/json");
+    } else if (type == QStringLiteral("xml")) {
+        desired = QStringLiteral("application/xml");
+    } else if (type == QStringLiteral("text")) {
+        desired = QStringLiteral("text/plain");
+    } else if (type == QStringLiteral("form-data")) {
+        desired = QStringLiteral("multipart/form-data");
+    } else if (type == QStringLiteral("x-www-form-urlencoded")) {
+        desired = QStringLiteral("application/x-www-form-urlencoded");
+    }
+    if (!desired.isEmpty()) {
+        setManagedContentType(desired);
+    }
+    emit editChanged();
+}
+
+void AppController::setManagedContentType(const QString& desired) {
+    static const QStringList kManaged = {
+        QStringLiteral("application/json"),
+        QStringLiteral("application/xml"),
+        QStringLiteral("text/plain"),
+        QStringLiteral("multipart/form-data"),
+        QStringLiteral("application/x-www-form-urlencoded"),
+    };
+    auto pairs = editHeaders_.pairs();
+    QString current;
+    for (const auto& [k, v] : pairs) {
+        if (k.compare(QStringLiteral("Content-Type"), Qt::CaseInsensitive) == 0) {
+            current = v;
+            break;
+        }
+    }
+    // Preserve a custom Content-Type — only overwrite empty or canonical ones.
+    const QString base = current.section(';', 0, 0).trimmed();
+    const bool isManaged = current.isEmpty() || std::ranges::any_of(kManaged, [&](const QString& m) {
+        return base.compare(m, Qt::CaseInsensitive) == 0;
+    });
+    if (!isManaged) {
+        return;
+    }
+    bool found = false;
+    for (auto& [k, v] : pairs) {
+        if (k.compare(QStringLiteral("Content-Type"), Qt::CaseInsensitive) == 0) {
+            v = desired;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        pairs.emplace_back(QStringLiteral("Content-Type"), desired);
+    }
+    editHeaders_.setPairs(std::move(pairs));
+}
+
 QStringList AppController::editDependencyCandidates() const {
     // Every operation except the open one (no self-dependency).
     const QString self = currentOperationId();
@@ -470,6 +536,9 @@ int AppController::editHeadersCount() const {
 }
 
 bool AppController::editBodyFilled() const {
+    if (editBodyType_ == QStringLiteral("none")) {
+        return false;
+    }
     return editBodyIsForm_ ? !editForm_.pairs().empty() : !editBody_.trimmed().isEmpty();
 }
 
@@ -558,14 +627,47 @@ void AppController::beginEdit() {
     editHeaders_.setPairs(toEditPairs(op->headers));
     editQuery_.setPairs(toEditPairs(op->queryParams));
 
+    // Infer the body kind so the selector lands on the right tab. The
+    // Content-Type header disambiguates raw kinds (json/xml/text) and multipart
+    // vs urlencoded form bodies.
+    QString contentType;
+    for (const auto& [k, v] : op->headers) {
+        if (QString::fromStdString(k).compare(QStringLiteral("Content-Type"), Qt::CaseInsensitive) ==
+            0) {
+            contentType = QString::fromStdString(v);
+            break;
+        }
+    }
+    const QString ctypeBase = contentType.section(QLatin1Char(';'), 0, 0).trimmed();
+
     if (op->bodyForm) {
         editBodyIsForm_ = true;
         editForm_.setPairs(toEditPairs(*op->bodyForm));
         editBody_.clear();
+        const bool anyFile = std::ranges::any_of(*op->bodyForm, [](const auto& kv) {
+            return QString::fromStdString(kv.second).startsWith(QLatin1Char('@'));
+        });
+        const bool multipart =
+            anyFile || ctypeBase.compare(QStringLiteral("multipart/form-data"), Qt::CaseInsensitive) == 0;
+        editBodyType_ = multipart ? QStringLiteral("form-data")
+                                  : QStringLiteral("x-www-form-urlencoded");
+    } else if (op->bodyTemplate &&
+               !QString::fromStdString(*op->bodyTemplate).trimmed().isEmpty()) {
+        editBodyIsForm_ = false;
+        editBody_ = QString::fromStdString(*op->bodyTemplate);
+        editForm_.clearRows();
+        if (ctypeBase.contains(QStringLiteral("xml"), Qt::CaseInsensitive)) {
+            editBodyType_ = QStringLiteral("xml");
+        } else if (ctypeBase.startsWith(QStringLiteral("text/"), Qt::CaseInsensitive)) {
+            editBodyType_ = QStringLiteral("text");
+        } else {
+            editBodyType_ = QStringLiteral("json");
+        }
     } else {
         editBodyIsForm_ = false;
-        editBody_ = op->bodyTemplate ? QString::fromStdString(*op->bodyTemplate) : QString{};
+        editBody_.clear();
         editForm_.clearRows();
+        editBodyType_ = QStringLiteral("none");
     }
 
     editDependencies_.setCandidates(editDependencyCandidates());

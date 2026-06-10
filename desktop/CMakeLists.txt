@@ -171,6 +171,7 @@ qt_add_qml_module(reqloom-qml
         qml/widgets/AppIcon.qml
         qml/widgets/PanelHeader.qml
         qml/widgets/LineTabBar.qml
+        qml/widgets/SelectableTextBox.qml
         qml/widgets/KeyValueList.qml
         qml/widgets/KeyValueEditorView.qml
         qml/widgets/ChainView.qml
