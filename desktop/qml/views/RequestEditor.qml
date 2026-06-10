@@ -82,18 +82,27 @@ ColumnLayout {
         Item {
             Layout.fillWidth: true
         }
-        Label {
-            text: AppController.opActor.length > 0 ? "👤  " + AppController.opActor : "⊘  No actor"
-            color: DesignTokens.textSecondary
-            font.pixelSize: DesignTokens.fontLabel
-            padding: 6
-            leftPadding: 10
-            rightPadding: 10
-            background: Rectangle {
-                radius: 11
-                color: DesignTokens.surfaceSunken
-                border.width: 1
-                border.color: DesignTokens.borderSubtle
+        Rectangle {
+            implicitHeight: 26
+            implicitWidth: actorRow.implicitWidth + DesignTokens.spaceMd * 2
+            radius: DesignTokens.radiusPill
+            color: DesignTokens.surfaceSunken
+            border.width: 1
+            border.color: DesignTokens.borderSubtle
+            RowLayout {
+                id: actorRow
+                anchors.centerIn: parent
+                spacing: DesignTokens.spaceXs
+                AppIcon {
+                    name: "user"
+                    size: 14
+                    opacity: AppController.opActor.length > 0 ? 1.0 : 0.5
+                }
+                Label {
+                    text: AppController.opActor.length > 0 ? AppController.opActor : qsTr("No actor")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                }
             }
         }
     }
@@ -128,17 +137,25 @@ ColumnLayout {
             color: DesignTokens.surfaceSunken
             border.width: 1
             border.color: DesignTokens.borderSubtle
-            Text {
+            clip: true
+            Flickable {
                 anchors.fill: parent
                 anchors.leftMargin: DesignTokens.spaceMd
                 anchors.rightMargin: DesignTokens.spaceMd
-                verticalAlignment: Text.AlignVCenter
-                textFormat: Text.RichText
-                text: editor.highlightPath(AppController.opPath)
-                color: DesignTokens.textPrimary
-                font.pixelSize: DesignTokens.fontBody
-                font.family: DesignTokens.fontMono
-                elide: Text.ElideRight
+                contentWidth: pathPreview.implicitWidth
+                contentHeight: height
+                flickableDirection: Flickable.HorizontalFlick
+                clip: true
+                Text {
+                    id: pathPreview
+                    height: parent.height
+                    verticalAlignment: Text.AlignVCenter
+                    textFormat: Text.RichText
+                    text: editor.highlightPath(AppController.opPath)
+                    color: DesignTokens.textPrimary
+                    font.pixelSize: DesignTokens.fontBody
+                    font.family: DesignTokens.fontMono
+                }
             }
         }
         TextField {

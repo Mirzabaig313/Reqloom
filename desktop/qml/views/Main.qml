@@ -288,10 +288,9 @@ ApplicationWindow {
                     anchors.leftMargin: DesignTokens.spaceMd
                     anchors.rightMargin: DesignTokens.spaceSm
                     spacing: DesignTokens.spaceSm
-                    Label {
-                        text: "\u2315"
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontSubtitle
+                    AppIcon {
+                        name: "search"
+                        size: 16
                     }
                     TextField {
                         id: headerSearch
@@ -304,11 +303,10 @@ ApplicationWindow {
                         leftPadding: 0
                         onTextChanged: AppController.setExplorerFilter(text)
                     }
-                    Label {
+                    AppIcon {
                         visible: headerSearch.text.length > 0
-                        text: "\u2715"
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
+                        name: "x"
+                        size: 14
                         MouseArea {
                             anchors.fill: parent
                             anchors.margins: -6
@@ -328,15 +326,15 @@ ApplicationWindow {
                 Repeater {
                     model: [
                         {
-                            lbl: "☀",
+                            ic: "sun",
                             m: "light"
                         },
                         {
-                            lbl: "🌙",
+                            ic: "moon",
                             m: "dark"
                         },
                         {
-                            lbl: "A",
+                            ic: "monitor",
                             m: "system"
                         }
                     ]
@@ -352,12 +350,11 @@ ApplicationWindow {
                             border.width: 1
                             border.color: DesignTokens.borderSubtle
                         }
-                        contentItem: Text {
-                            text: apBtn.modelData.lbl
+                        contentItem: AppIcon {
+                            name: apBtn.modelData.ic
+                            size: 16
+                            anchors.centerIn: parent
                             color: ThemeController.mode === apBtn.modelData.m ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontBody
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
                         }
                         onClicked: ThemeController.mode = apBtn.modelData.m
                     }
@@ -469,14 +466,13 @@ ApplicationWindow {
                     }
                 }
 
-                Label {
+                AppIcon {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: parent.top
                     anchors.topMargin: DesignTokens.spaceLg
-                    text: "›"
+                    name: "chevron-right"
+                    size: 18
                     color: explorerRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontSubtitle
-                    font.weight: DesignTokens.weightSemiBold
                 }
                 Label {
                     anchors.centerIn: parent
@@ -666,14 +662,13 @@ ApplicationWindow {
                     Item {
                         anchors.fill: parent
                         visible: !window.responseStacked
-                        Label {
+                        AppIcon {
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.top: parent.top
                             anchors.topMargin: DesignTokens.spaceLg
-                            text: "‹"
+                            name: "chevron-left"
+                            size: 18
                             color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontSubtitle
-                            font.weight: DesignTokens.weightSemiBold
                         }
                         Label {
                             anchors.centerIn: parent
@@ -689,11 +684,10 @@ ApplicationWindow {
                         anchors.centerIn: parent
                         visible: window.responseStacked
                         spacing: DesignTokens.spaceSm
-                        Label {
-                            text: "⌃"
+                        AppIcon {
+                            name: "chevron-up"
+                            size: 18
                             color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontSubtitle
-                            font.weight: DesignTokens.weightSemiBold
                         }
                         Label {
                             text: qsTr("Response")

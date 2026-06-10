@@ -44,8 +44,7 @@ QColor DesignTokens::glassFill() const {
 
 QColor DesignTokens::glassBorder() const {
     // A faint light highlight along the glass edge (the wet-shell rim).
-    return isDark() ? QColor::fromRgbF(1.0, 1.0, 1.0, 0.10)
-                    : QColor::fromRgbF(1.0, 1.0, 1.0, 0.55);
+    return isDark() ? QColor::fromRgbF(1.0, 1.0, 1.0, 0.10) : QColor::fromRgbF(1.0, 1.0, 1.0, 0.55);
 }
 
 QColor DesignTokens::canvasTop() const {

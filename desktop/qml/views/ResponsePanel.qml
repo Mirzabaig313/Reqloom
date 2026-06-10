@@ -266,12 +266,10 @@ Rectangle {
                     radius: DesignTokens.radiusSm
                     color: closeBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
                 }
-                contentItem: Text {
-                    text: "\u2715"
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontBody
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                contentItem: AppIcon {
+                    name: "x"
+                    size: 16
+                    anchors.centerIn: parent
                 }
             }
         }
