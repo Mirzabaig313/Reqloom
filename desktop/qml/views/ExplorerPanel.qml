@@ -16,10 +16,10 @@ Rectangle {
 
     signal collapseRequested
 
-    radius: DesignTokens.radius
-    color: DesignTokens.surfaceRaised
+    radius: 0
+    color: DesignTokens.glassFill
     border.width: 1
-    border.color: DesignTokens.borderSubtle
+    border.color: DesignTokens.glassBorder
 
     // Context target captured when a row's menu opens.
     property string ctxOperationId: ""
@@ -47,7 +47,7 @@ Rectangle {
                 contentItem: Text {
                     text: addBtn.text
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 15
+                    font.pixelSize: DesignTokens.fontSubtitle
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -67,7 +67,7 @@ Rectangle {
                 contentItem: Text {
                     text: collapseBtn.text
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 16
+                    font.pixelSize: DesignTokens.fontSubtitle
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -93,7 +93,7 @@ Rectangle {
                 spacing: DesignTokens.spaceXs
                 Label {
                     text: "🔍"
-                    font.pixelSize: 12
+                    font.pixelSize: DesignTokens.fontLabel
                     opacity: 0.6
                 }
                 TextField {
@@ -102,7 +102,7 @@ Rectangle {
                     placeholderText: qsTr("Filter operations…")
                     color: DesignTokens.textPrimary
                     placeholderTextColor: DesignTokens.textSecondary
-                    font.pixelSize: 13
+                    font.pixelSize: DesignTokens.fontBody
                     background: null
                     verticalAlignment: TextInput.AlignVCenter
                     onTextChanged: AppController.setExplorerFilter(text)
@@ -184,7 +184,7 @@ Rectangle {
                     Label {
                         visible: !del.isOperation
                         text: del.kind === "actorGroup" || del.kind === "resourceGroup" ? "📁" : del.kind === "resource" ? "📂" : del.kind === "example" ? "⚡" : ""
-                        font.pixelSize: 12
+                        font.pixelSize: DesignTokens.fontLabel
                         opacity: 0.8
                     }
                     MethodBadge {
@@ -195,7 +195,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: del.name
                         color: del.isExample ? DesignTokens.textSecondary : DesignTokens.textPrimary
-                        font.pixelSize: 13
+                        font.pixelSize: DesignTokens.fontBody
                         font.weight: del.current ? Font.DemiBold : Font.Normal
                         elide: Text.ElideRight
                         ToolTip.visible: hoverHandler.hovered && del.tooltip.length > 0
@@ -250,75 +250,75 @@ Rectangle {
     property string currentOperationId: ""
 
     // ── Add menu (header "+") ────────────────────────────────────────────────
-    Menu {
+    GlassMenu {
         id: addMenu
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("New Endpoint…")
             onTriggered: newEndpointDialog.openFor("")
         }
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("New Module…")
             onTriggered: newModuleDialog.openDialog()
         }
     }
 
     // ── Per-row-type context menus ───────────────────────────────────────────
-    Menu {
+    GlassMenu {
         id: operationMenu
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("Edit")
             onTriggered: AppController.selectOperationById(panel.ctxOperationId)
         }
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("Rename")
             onTriggered: renameDialog.openFor("operation", panel.ctxOperationId)
         }
         MenuSeparator {}
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("Delete")
             onTriggered: deleteDialog.openFor("operation", panel.ctxOperationId)
         }
     }
-    Menu {
+    GlassMenu {
         id: resourceMenu
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("New Endpoint…")
             onTriggered: newEndpointDialog.openFor(panel.ctxResourceId)
         }
         MenuSeparator {}
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("Rename")
             onTriggered: renameDialog.openFor("resource", panel.ctxResourceId)
         }
         MenuSeparator {}
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("Delete")
             onTriggered: deleteDialog.openFor("resource", panel.ctxResourceId)
         }
     }
-    Menu {
+    GlassMenu {
         id: rootMenu
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("New Module…")
             onTriggered: newModuleDialog.openDialog()
         }
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("New Endpoint…")
             onTriggered: newEndpointDialog.openFor("")
         }
     }
-    Menu {
+    GlassMenu {
         id: exampleMenu
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("Rename")
             onTriggered: exampleRenameDialog.openFor(panel.ctxOperationId, panel.ctxExampleName)
         }
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("Duplicate")
             onTriggered: AppController.duplicateExample(panel.ctxOperationId, panel.ctxExampleName)
         }
         MenuSeparator {}
-        MenuItem {
+        GlassMenuItem {
             text: qsTr("Delete")
             onTriggered: AppController.deleteExample(panel.ctxOperationId, panel.ctxExampleName)
         }
@@ -339,6 +339,9 @@ Rectangle {
         width: 380
         padding: DesignTokens.spaceLg
         title: qsTr("Rename")
+        header: DialogHeader {
+            title: qsTr("Rename")
+        }
 
         property string targetKind: ""
         property string targetId: ""
@@ -355,41 +358,28 @@ Rectangle {
         }
 
         background: Rectangle {
-            radius: DesignTokens.radius
+            radius: DesignTokens.radiusLg
             color: DesignTokens.surfaceRaised
             border.width: 1
-            border.color: DesignTokens.borderSubtle
+            border.color: DesignTokens.glassBorder
         }
 
         contentItem: ColumnLayout {
             spacing: DesignTokens.spaceSm
-            Label {
+            FieldLabel {
                 text: qsTr("New name")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            TextField {
+            GlassTextField {
                 id: renameField
                 Layout.fillWidth: true
-                color: DesignTokens.textPrimary
-                onTextChanged: {
-                    const okBtn = renameButtons.standardButton(Dialog.Ok);
-                    if (okBtn) {
-                        okBtn.enabled = AppController.isValidName(text);
-                    }
-                }
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: renameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                }
             }
         }
 
-        footer: DialogButtonBox {
-            id: renameButtons
-            standardButtons: Dialog.Ok | Dialog.Cancel
+        footer: DialogButtons {
+            okText: qsTr("Rename")
+            okEnabled: AppController.isValidName(renameField.text)
+            onAccepted: renameDialog.accept()
+            onRejected: renameDialog.reject()
         }
 
         onAccepted: {
@@ -408,6 +398,9 @@ Rectangle {
         width: 380
         padding: DesignTokens.spaceLg
         title: qsTr("Delete")
+        header: DialogHeader {
+            title: qsTr("Delete")
+        }
 
         property string targetKind: ""
         property string targetId: ""
@@ -419,21 +412,23 @@ Rectangle {
         }
 
         background: Rectangle {
-            radius: DesignTokens.radius
+            radius: DesignTokens.radiusLg
             color: DesignTokens.surfaceRaised
             border.width: 1
-            border.color: DesignTokens.borderSubtle
+            border.color: DesignTokens.glassBorder
         }
 
         contentItem: Label {
             text: deleteDialog.targetKind === "resource" ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId) : qsTr("Delete endpoint “%1”?").arg(deleteDialog.targetId)
             color: DesignTokens.textPrimary
-            font.pixelSize: 13
+            font.pixelSize: DesignTokens.fontBody
             wrapMode: Text.WordWrap
         }
 
-        footer: DialogButtonBox {
-            standardButtons: Dialog.Ok | Dialog.Cancel
+        footer: DialogButtons {
+            okText: qsTr("Delete")
+            onAccepted: deleteDialog.accept()
+            onRejected: deleteDialog.reject()
         }
 
         onAccepted: {
@@ -454,6 +449,9 @@ Rectangle {
         width: 380
         padding: DesignTokens.spaceLg
         title: qsTr("Rename example")
+        header: DialogHeader {
+            title: qsTr("Rename example")
+        }
 
         property string targetOperationId: ""
         property string targetName: ""
@@ -468,41 +466,28 @@ Rectangle {
         }
 
         background: Rectangle {
-            radius: DesignTokens.radius
+            radius: DesignTokens.radiusLg
             color: DesignTokens.surfaceRaised
             border.width: 1
-            border.color: DesignTokens.borderSubtle
+            border.color: DesignTokens.glassBorder
         }
 
         contentItem: ColumnLayout {
             spacing: DesignTokens.spaceSm
-            Label {
+            FieldLabel {
                 text: qsTr("New name")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            TextField {
+            GlassTextField {
                 id: exampleRenameField
                 Layout.fillWidth: true
-                color: DesignTokens.textPrimary
-                onTextChanged: {
-                    const okBtn = exampleRenameButtons.standardButton(Dialog.Ok);
-                    if (okBtn) {
-                        okBtn.enabled = text.trim().length > 0;
-                    }
-                }
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: exampleRenameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                }
             }
         }
 
-        footer: DialogButtonBox {
-            id: exampleRenameButtons
-            standardButtons: Dialog.Ok | Dialog.Cancel
+        footer: DialogButtons {
+            okText: qsTr("Rename")
+            okEnabled: exampleRenameField.text.trim().length > 0
+            onAccepted: exampleRenameDialog.accept()
+            onRejected: exampleRenameDialog.reject()
         }
 
         onAccepted: AppController.renameExample(targetOperationId, targetName, exampleRenameField.text.trim())

@@ -3,12 +3,11 @@
 // DependencyListEditor). A dependency can never name something undefined, and
 // an always-present trailing blank row grows the list. Backed by a
 // DependencyEditModel (C++ owns state).
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import Reqloom
-
-pragma ComponentBehavior: Bound
 
 ColumnLayout {
     id: root
@@ -30,29 +29,13 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: DesignTokens.spaceXs
 
-            ComboBox {
+            GlassComboBox {
                 id: combo
                 Layout.fillWidth: true
-                implicitHeight: 32
                 model: [qsTr("+ add dependency…")].concat(root.candidates)
                 currentIndex: row.value.length === 0 ? 0 : Math.max(0, find(row.value))
                 onActivated: function (i) {
-                    root.depModel.setSelection(row.index, i === 0 ? "" : textAt(i))
-                }
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: combo.activeFocus ? DesignTokens.accent
-                                                     : DesignTokens.borderSubtle
-                }
-                contentItem: Text {
-                    leftPadding: DesignTokens.spaceSm
-                    text: combo.displayText
-                    color: row.isGhost ? DesignTokens.textSecondary : DesignTokens.textPrimary
-                    font.pixelSize: 12
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
+                    root.depModel.setSelection(row.index, i === 0 ? "" : textAt(i));
                 }
             }
 

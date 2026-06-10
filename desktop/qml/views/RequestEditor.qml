@@ -62,7 +62,7 @@ ColumnLayout {
             contentItem: Text {
                 text: parent.text
                 color: DesignTokens.textSecondary
-                font.pixelSize: 16
+                font.pixelSize: DesignTokens.fontSubtitle
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
@@ -71,12 +71,12 @@ ColumnLayout {
         Label {
             text: AppController.selectedModule + " /"
             color: DesignTokens.textSecondary
-            font.pixelSize: 13
+            font.pixelSize: DesignTokens.fontBody
         }
         Label {
             text: AppController.opName
             color: DesignTokens.textPrimary
-            font.pixelSize: 13
+            font.pixelSize: DesignTokens.fontBody
             font.weight: Font.DemiBold
         }
         Item {
@@ -85,7 +85,7 @@ ColumnLayout {
         Label {
             text: AppController.opActor.length > 0 ? "👤  " + AppController.opActor : "⊘  No actor"
             color: DesignTokens.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: DesignTokens.fontLabel
             padding: 6
             leftPadding: 10
             rightPadding: 10
@@ -109,7 +109,7 @@ ColumnLayout {
             implicitHeight: 38
             Layout.preferredWidth: 64
         }
-        ComboBox {
+        GlassComboBox {
             id: methodCombo
             visible: editor.editing
             implicitHeight: 38
@@ -117,20 +117,6 @@ ColumnLayout {
             model: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
             currentIndex: Math.max(0, find(AppController.editMethod))
             onActivated: AppController.editMethod = currentText
-            background: Rectangle {
-                radius: DesignTokens.radiusSm
-                color: DesignTokens.surfaceSunken
-                border.width: 1
-                border.color: methodCombo.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-            }
-            contentItem: Text {
-                leftPadding: DesignTokens.spaceSm
-                text: methodCombo.displayText
-                color: DesignTokens.textPrimary
-                font.pixelSize: 13
-                font.weight: Font.DemiBold
-                verticalAlignment: Text.AlignVCenter
-            }
         }
 
         // Path: highlighted preview (read) ↔ editable field (edit).
@@ -150,8 +136,8 @@ ColumnLayout {
                 textFormat: Text.RichText
                 text: editor.highlightPath(AppController.opPath)
                 color: DesignTokens.textPrimary
-                font.pixelSize: 13
-                font.family: "monospace"
+                font.pixelSize: DesignTokens.fontBody
+                font.family: DesignTokens.fontMono
                 elide: Text.ElideRight
             }
         }
@@ -164,8 +150,8 @@ ColumnLayout {
             placeholderText: qsTr("/api/v1/…")
             color: DesignTokens.textPrimary
             placeholderTextColor: DesignTokens.textSecondary
-            font.pixelSize: 13
-            font.family: "monospace"
+            font.pixelSize: DesignTokens.fontBody
+            font.family: DesignTokens.fontMono
             onTextEdited: AppController.editPath = text
             background: Rectangle {
                 radius: DesignTokens.radiusSm
@@ -188,7 +174,7 @@ ColumnLayout {
             contentItem: Text {
                 text: sendButton.text
                 color: DesignTokens.textInverse
-                font.pixelSize: 13
+                font.pixelSize: DesignTokens.fontBody
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -219,7 +205,7 @@ ColumnLayout {
             contentItem: Text {
                 text: editButton.text
                 color: DesignTokens.textSecondary
-                font.pixelSize: 13
+                font.pixelSize: DesignTokens.fontBody
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
@@ -243,7 +229,7 @@ ColumnLayout {
             contentItem: Text {
                 text: saveButton.text
                 color: DesignTokens.textInverse
-                font.pixelSize: 13
+                font.pixelSize: DesignTokens.fontBody
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -267,7 +253,7 @@ ColumnLayout {
             contentItem: Text {
                 text: cancelButton.text
                 color: DesignTokens.textSecondary
-                font.pixelSize: 13
+                font.pixelSize: DesignTokens.fontBody
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
@@ -303,7 +289,7 @@ ColumnLayout {
         contentItem: Text {
             text: secondary.text
             color: secondary.enabled ? DesignTokens.textSecondary : DesignTokens.borderStrong
-            font.pixelSize: 13
+            font.pixelSize: DesignTokens.fontBody
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
@@ -326,7 +312,7 @@ ColumnLayout {
             verticalAlignment: Text.AlignVCenter
             text: qsTr("Editing — Send applies changes to the next run; Save writes them to the project.")
             color: DesignTokens.statusWarning
-            font.pixelSize: 12
+            font.pixelSize: DesignTokens.fontLabel
             wrapMode: Text.WordWrap
         }
     }
@@ -339,7 +325,7 @@ ColumnLayout {
         Label {
             text: qsTr("EXECUTION CHAIN")
             color: DesignTokens.textSecondary
-            font.pixelSize: 10
+            font.pixelSize: DesignTokens.fontCaption
             font.weight: Font.DemiBold
             font.letterSpacing: 1.2
         }
@@ -372,7 +358,7 @@ ColumnLayout {
                     contentItem: Text {
                         text: modelData
                         color: readTabs.currentIndex === index ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                        font.pixelSize: 13
+                        font.pixelSize: DesignTokens.fontBody
                         font.weight: readTabs.currentIndex === index ? Font.DemiBold : Font.Normal
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
@@ -418,8 +404,8 @@ ColumnLayout {
                         width: parent.width
                         text: AppController.opBody.length > 0 ? AppController.opBody : qsTr("No request body.")
                         color: AppController.opBody.length > 0 ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                        font.pixelSize: 12
-                        font.family: "monospace"
+                        font.pixelSize: DesignTokens.fontLabel
+                        font.family: DesignTokens.fontMono
                         wrapMode: Text.WrapAnywhere
                     }
                 }
@@ -497,26 +483,12 @@ ColumnLayout {
                 spacing: DesignTokens.spaceSm
                 RowLayout {
                     Layout.fillWidth: true
-                    ComboBox {
+                    GlassComboBox {
                         id: bodyKind
-                        implicitHeight: 30
                         Layout.preferredWidth: 150
                         model: [qsTr("Raw / JSON"), qsTr("Form data")]
                         currentIndex: AppController.editBodyIsForm ? 1 : 0
                         onActivated: AppController.editBodyIsForm = (currentIndex === 1)
-                        background: Rectangle {
-                            radius: DesignTokens.radiusSm
-                            color: DesignTokens.surfaceSunken
-                            border.width: 1
-                            border.color: bodyKind.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                        }
-                        contentItem: Text {
-                            leftPadding: DesignTokens.spaceSm
-                            text: bodyKind.displayText
-                            color: DesignTokens.textPrimary
-                            font.pixelSize: 12
-                            verticalAlignment: Text.AlignVCenter
-                        }
                     }
                     Item {
                         Layout.fillWidth: true
@@ -542,8 +514,8 @@ ColumnLayout {
                                 placeholderText: qsTr("{ }")
                                 color: DesignTokens.textPrimary
                                 placeholderTextColor: DesignTokens.textSecondary
-                                font.pixelSize: 12
-                                font.family: "monospace"
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.family: DesignTokens.fontMono
                                 wrapMode: TextEdit.WrapAnywhere
                                 onTextChanged: if (text !== AppController.editBody) {
                                     AppController.editBody = text;
@@ -577,69 +549,12 @@ ColumnLayout {
 
                     OptionRow {
                         label: qsTr("Actor")
-                        ComboBox {
+                        GlassComboBox {
                             id: actorCombo
                             width: parent.width
-                            implicitHeight: 34
                             model: [qsTr("(none)")].concat(AppController.actorNames)
                             currentIndex: AppController.editActor.length === 0 ? 0 : Math.max(0, find(AppController.editActor))
                             onActivated: AppController.editActor = (currentIndex === 0 ? "" : currentText)
-                            background: Rectangle {
-                                radius: DesignTokens.radiusSm
-                                color: DesignTokens.surfaceSunken
-                                border.width: 1
-                                border.color: actorCombo.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                            }
-                            contentItem: Text {
-                                leftPadding: DesignTokens.spaceSm
-                                rightPadding: 28
-                                text: actorCombo.displayText
-                                color: DesignTokens.textPrimary
-                                font.pixelSize: 12
-                                verticalAlignment: Text.AlignVCenter
-                                elide: Text.ElideRight
-                            }
-                            indicator: Text {
-                                x: actorCombo.width - width - DesignTokens.spaceSm
-                                y: (actorCombo.height - height) / 2
-                                text: "\u25BE"
-                                color: DesignTokens.textSecondary
-                                font.pixelSize: 12
-                            }
-                            popup: Popup {
-                                y: actorCombo.height + 2
-                                width: actorCombo.width
-                                implicitHeight: Math.min(contentItem.implicitHeight + 2, 220)
-                                padding: 1
-                                background: Rectangle {
-                                    radius: DesignTokens.radiusSm
-                                    color: DesignTokens.surfaceRaised
-                                    border.width: 1
-                                    border.color: DesignTokens.borderSubtle
-                                }
-                                contentItem: ListView {
-                                    clip: true
-                                    implicitHeight: contentHeight
-                                    model: actorCombo.popup.visible ? actorCombo.delegateModel : null
-                                    currentIndex: actorCombo.highlightedIndex
-                                    ScrollBar.vertical: ScrollBar {}
-                                }
-                            }
-                            delegate: ItemDelegate {
-                                width: actorCombo.width
-                                height: 30
-                                contentItem: Text {
-                                    leftPadding: DesignTokens.spaceSm
-                                    text: modelData
-                                    color: DesignTokens.textPrimary
-                                    font.pixelSize: 12
-                                    verticalAlignment: Text.AlignVCenter
-                                    elide: Text.ElideRight
-                                }
-                                background: Rectangle {
-                                    color: actorCombo.highlightedIndex === index ? DesignTokens.accentMuted : "transparent"
-                                }
-                            }
                         }
                     }
                     OptionRow {
@@ -652,7 +567,7 @@ ColumnLayout {
                             placeholderText: qsTr("e.g. 200,201")
                             color: DesignTokens.textPrimary
                             placeholderTextColor: DesignTokens.textSecondary
-                            font.pixelSize: 12
+                            font.pixelSize: DesignTokens.fontLabel
                             onTextEdited: AppController.editExpectStatus = text
                             background: Rectangle {
                                 radius: DesignTokens.radiusSm
@@ -692,7 +607,7 @@ ColumnLayout {
                                 rightPadding: 40
                                 text: timeoutSpin.displayText
                                 color: DesignTokens.textPrimary
-                                font.pixelSize: 12
+                                font.pixelSize: DesignTokens.fontLabel
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                                 readOnly: !timeoutSpin.editable
@@ -712,7 +627,7 @@ ColumnLayout {
                                     anchors.centerIn: parent
                                     text: "\u2212"
                                     color: DesignTokens.textSecondary
-                                    font.pixelSize: 16
+                                    font.pixelSize: DesignTokens.fontSubtitle
                                 }
                             }
                             up.indicator: Rectangle {
@@ -728,7 +643,7 @@ ColumnLayout {
                                     anchors.centerIn: parent
                                     text: "+"
                                     color: DesignTokens.textSecondary
-                                    font.pixelSize: 16
+                                    font.pixelSize: DesignTokens.fontSubtitle
                                 }
                             }
                         }
@@ -754,7 +669,7 @@ ColumnLayout {
                                     visible: forceCheck.checked
                                     text: "\u2713"
                                     color: DesignTokens.textInverse
-                                    font.pixelSize: 12
+                                    font.pixelSize: DesignTokens.fontLabel
                                     font.weight: Font.Bold
                                 }
                             }
@@ -762,7 +677,7 @@ ColumnLayout {
                                 leftPadding: forceCheck.indicator.width + DesignTokens.spaceSm
                                 text: forceCheck.text
                                 color: DesignTokens.textPrimary
-                                font.pixelSize: 12
+                                font.pixelSize: DesignTokens.fontLabel
                                 verticalAlignment: Text.AlignVCenter
                             }
                         }
@@ -780,7 +695,7 @@ ColumnLayout {
                     Label {
                         text: qsTr("Depends on")
                         color: DesignTokens.textPrimary
-                        font.pixelSize: 12
+                        font.pixelSize: DesignTokens.fontLabel
                         font.weight: Font.DemiBold
                     }
                     DependencyEditor {
@@ -791,7 +706,7 @@ ColumnLayout {
                     Label {
                         text: qsTr("Extract")
                         color: DesignTokens.textPrimary
-                        font.pixelSize: 12
+                        font.pixelSize: DesignTokens.fontLabel
                         font.weight: Font.DemiBold
                     }
                     ExtractionEditor {
@@ -810,7 +725,7 @@ ColumnLayout {
         contentItem: Text {
             text: editTab.label
             color: editTabs.currentIndex === editTab.tabIndex ? DesignTokens.textPrimary : DesignTokens.textSecondary
-            font.pixelSize: 13
+            font.pixelSize: DesignTokens.fontBody
             font.weight: editTabs.currentIndex === editTab.tabIndex ? Font.DemiBold : Font.Normal
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -835,7 +750,7 @@ ColumnLayout {
             Layout.preferredWidth: 110
             text: parent.label
             color: DesignTokens.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: DesignTokens.fontLabel
         }
         Item {
             id: holder

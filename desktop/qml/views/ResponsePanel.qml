@@ -18,10 +18,10 @@ import Reqloom
 
 Rectangle {
     id: panel
-    radius: DesignTokens.radius
-    color: DesignTokens.surfaceRaised
+    radius: 0
+    color: DesignTokens.glassFill
     border.width: 1
-    border.color: DesignTokens.borderSubtle
+    border.color: DesignTokens.glassBorder
 
     function statusColor(code) {
         if (code >= 200 && code < 300)
@@ -35,6 +35,11 @@ Rectangle {
 
     /// Emitted when the user closes the response panel; Main collapses it.
     signal closeRequested
+
+    /// Whether the editor/response are stacked (true) or side-by-side (false),
+    /// and a request to flip it — driven from Main's window.responseStacked.
+    property bool stacked: false
+    signal toggleStackRequested
 
     /// Pretty-print the Body (Raw) view (indented JSON) vs show it verbatim.
     property bool prettyRaw: true
@@ -216,7 +221,7 @@ Rectangle {
                         contentItem: Text {
                             text: topTabButton.modelData
                             color: topTabs.currentIndex === topTabButton.index ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                            font.pixelSize: 13
+                            font.pixelSize: DesignTokens.fontBody
                             font.weight: topTabs.currentIndex === topTabButton.index ? Font.DemiBold : Font.Normal
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
@@ -234,6 +239,23 @@ Rectangle {
                 }
             }
             Button {
+                id: stackBtn
+                implicitWidth: 28
+                implicitHeight: 28
+                ToolTip.visible: hovered
+                ToolTip.text: panel.stacked ? qsTr("Stacked — switch to side-by-side") : qsTr("Side-by-side — switch to stacked")
+                onClicked: panel.toggleStackRequested()
+                background: Rectangle {
+                    radius: DesignTokens.radiusSm
+                    color: stackBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                }
+                contentItem: AppIcon {
+                    name: panel.stacked ? "rows" : "columns"
+                    size: 16
+                    anchors.centerIn: parent
+                }
+            }
+            Button {
                 id: closeBtn
                 implicitWidth: 28
                 implicitHeight: 28
@@ -247,7 +269,7 @@ Rectangle {
                 contentItem: Text {
                     text: "\u2715"
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 14
+                    font.pixelSize: DesignTokens.fontBody
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -271,25 +293,25 @@ Rectangle {
                     Label {
                         text: AppController.respStatus > 0 ? ("HTTP " + AppController.respStatus) : AppController.runOutcome
                         color: panel.statusColor(AppController.respStatus)
-                        font.pixelSize: 15
+                        font.pixelSize: DesignTokens.fontSubtitle
                         font.weight: Font.DemiBold
                     }
                     Label {
                         visible: AppController.shownExample.length > 0
                         text: "· " + AppController.shownExample
                         color: DesignTokens.textSecondary
-                        font.pixelSize: 12
+                        font.pixelSize: DesignTokens.fontLabel
                         elide: Text.ElideRight
                     }
                     Label {
                         text: AppController.respElapsedMs + " ms"
                         color: DesignTokens.textSecondary
-                        font.pixelSize: 12
+                        font.pixelSize: DesignTokens.fontLabel
                     }
                     Label {
                         text: AppController.respBodySize + " B"
                         color: DesignTokens.textSecondary
-                        font.pixelSize: 12
+                        font.pixelSize: DesignTokens.fontLabel
                     }
                     Item {
                         Layout.fillWidth: true
@@ -301,7 +323,7 @@ Rectangle {
                         contentItem: Text {
                             text: saveExampleBtn.text
                             color: DesignTokens.accent
-                            font.pixelSize: 12
+                            font.pixelSize: DesignTokens.fontLabel
                             font.weight: Font.DemiBold
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
@@ -323,29 +345,14 @@ Rectangle {
                     Label {
                         text: qsTr("Examples")
                         color: DesignTokens.textSecondary
-                        font.pixelSize: 12
+                        font.pixelSize: DesignTokens.fontLabel
                     }
-                    ComboBox {
+                    GlassComboBox {
                         id: examplesCombo
                         Layout.fillWidth: true
-                        implicitHeight: 30
                         model: AppController.examples
                         textRole: "name"
                         onActivated: AppController.showExample(currentText)
-                        background: Rectangle {
-                            radius: DesignTokens.radiusSm
-                            color: DesignTokens.surfaceSunken
-                            border.width: 1
-                            border.color: DesignTokens.borderSubtle
-                        }
-                        contentItem: Text {
-                            leftPadding: DesignTokens.spaceSm
-                            text: examplesCombo.displayText
-                            color: DesignTokens.textPrimary
-                            font.pixelSize: 12
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                        }
                     }
                 }
 
@@ -370,7 +377,7 @@ Rectangle {
                                 contentItem: Text {
                                     text: respTabButton.modelData
                                     color: respTabs.currentIndex === respTabButton.index ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                                    font.pixelSize: 13
+                                    font.pixelSize: DesignTokens.fontBody
                                     font.weight: respTabs.currentIndex === respTabButton.index ? Font.DemiBold : Font.Normal
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
@@ -410,7 +417,7 @@ Rectangle {
                         contentItem: Text {
                             text: qsTr("Pretty")
                             color: prettyBtn.checked ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: 12
+                            font.pixelSize: DesignTokens.fontLabel
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
@@ -471,21 +478,21 @@ Rectangle {
                                         Layout.preferredWidth: 12
                                         text: treeRow.modelData.hasChildren ? (panel.collapsedNodes[treeRow.modelData.id] ? "\u25B8" : "\u25BE") : ""
                                         color: DesignTokens.textSecondary
-                                        font.pixelSize: 10
+                                        font.pixelSize: DesignTokens.fontCaption
                                         horizontalAlignment: Text.AlignHCenter
                                     }
                                     Text {
                                         text: treeRow.modelData.field
                                         color: DesignTokens.textSecondary
-                                        font.pixelSize: 12
-                                        font.family: "monospace"
+                                        font.pixelSize: DesignTokens.fontLabel
+                                        font.family: DesignTokens.fontMono
                                     }
                                     Text {
                                         Layout.fillWidth: true
                                         text: treeRow.modelData.value
                                         color: treeRow.modelData.isLeaf ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                                        font.pixelSize: 12
-                                        font.family: "monospace"
+                                        font.pixelSize: DesignTokens.fontLabel
+                                        font.family: DesignTokens.fontMono
                                         font.weight: treeRow.modelData.isLeaf ? Font.Normal : Font.DemiBold
                                         elide: Text.ElideRight
                                     }
@@ -493,7 +500,7 @@ Rectangle {
                                         visible: rowMouse.containsMouse && treeRow.modelData.isLeaf
                                         text: qsTr("copy path")
                                         color: DesignTokens.accent
-                                        font.pixelSize: 10
+                                        font.pixelSize: DesignTokens.fontCaption
                                     }
                                 }
                             }
@@ -516,8 +523,8 @@ Rectangle {
                                 width: parent.width
                                 text: AppController.respBody.length > 0 ? (panel.prettyRaw ? panel.prettyJson(AppController.respBody) : AppController.respBody) : qsTr("(body not captured — enable “Capture bodies”)")
                                 color: AppController.respBody.length > 0 ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                                font.pixelSize: 12
-                                font.family: "monospace"
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.family: DesignTokens.fontMono
                                 wrapMode: Text.WrapAnywhere
                             }
                         }
@@ -539,8 +546,8 @@ Rectangle {
                                 width: parent.width
                                 text: AppController.respHeaders
                                 color: DesignTokens.textSecondary
-                                font.pixelSize: 12
-                                font.family: "monospace"
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.family: DesignTokens.fontMono
                                 wrapMode: Text.WrapAnywhere
                             }
                         }
@@ -555,28 +562,13 @@ Rectangle {
                             Label {
                                 text: qsTr("Compare with")
                                 color: DesignTokens.textSecondary
-                                font.pixelSize: 12
+                                font.pixelSize: DesignTokens.fontLabel
                             }
-                            ComboBox {
+                            GlassComboBox {
                                 id: diffCombo
                                 Layout.fillWidth: true
-                                implicitHeight: 30
                                 model: AppController.examples
                                 textRole: "name"
-                                background: Rectangle {
-                                    radius: DesignTokens.radiusSm
-                                    color: DesignTokens.surfaceSunken
-                                    border.width: 1
-                                    border.color: DesignTokens.borderSubtle
-                                }
-                                contentItem: Text {
-                                    leftPadding: DesignTokens.spaceSm
-                                    text: diffCombo.count > 0 ? diffCombo.displayText : qsTr("(no saved examples)")
-                                    color: diffCombo.count > 0 ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                                    font.pixelSize: 12
-                                    verticalAlignment: Text.AlignVCenter
-                                    elide: Text.ElideRight
-                                }
                             }
                         }
                         Rectangle {
@@ -599,8 +591,8 @@ Rectangle {
                                     width: ListView.view.width
                                     text: diffRow.modelData.sign + " " + diffRow.modelData.text
                                     color: diffRow.modelData.sign === "+" ? DesignTokens.statusSuccess : (diffRow.modelData.sign === "-" ? DesignTokens.statusError : DesignTokens.textSecondary)
-                                    font.pixelSize: 12
-                                    font.family: "monospace"
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.family: DesignTokens.fontMono
                                     wrapMode: Text.WrapAnywhere
                                 }
                             }
@@ -620,14 +612,14 @@ Rectangle {
                         Layout.alignment: Qt.AlignHCenter
                         text: qsTr("No response yet")
                         color: DesignTokens.textPrimary
-                        font.pixelSize: 14
+                        font.pixelSize: DesignTokens.fontBody
                         font.weight: Font.Medium
                     }
                     Label {
                         Layout.alignment: Qt.AlignHCenter
                         text: qsTr("Press Send to run this endpoint's chain.")
                         color: DesignTokens.textSecondary
-                        font.pixelSize: 12
+                        font.pixelSize: DesignTokens.fontLabel
                     }
                     Item {
                         Layout.fillHeight: true
@@ -652,6 +644,9 @@ Rectangle {
         width: 380
         padding: DesignTokens.spaceLg
         title: qsTr("Save response as example")
+        header: DialogHeader {
+            title: qsTr("Save response as example")
+        }
 
         onOpened: {
             exampleNameField.text = "HTTP " + AppController.respStatus;
@@ -660,41 +655,28 @@ Rectangle {
         }
 
         background: Rectangle {
-            radius: DesignTokens.radius
+            radius: DesignTokens.radiusLg
             color: DesignTokens.surfaceRaised
             border.width: 1
-            border.color: DesignTokens.borderSubtle
+            border.color: DesignTokens.glassBorder
         }
 
         contentItem: ColumnLayout {
             spacing: DesignTokens.spaceSm
-            Label {
+            FieldLabel {
                 text: qsTr("Example name")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            TextField {
+            GlassTextField {
                 id: exampleNameField
                 Layout.fillWidth: true
-                color: DesignTokens.textPrimary
-                onTextChanged: {
-                    const okBtn = saveExampleButtons.standardButton(Dialog.Ok);
-                    if (okBtn) {
-                        okBtn.enabled = text.trim().length > 0;
-                    }
-                }
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: exampleNameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                }
             }
         }
 
-        footer: DialogButtonBox {
-            id: saveExampleButtons
-            standardButtons: Dialog.Ok | Dialog.Cancel
+        footer: DialogButtons {
+            okText: qsTr("Save Response")
+            okEnabled: exampleNameField.text.trim().length > 0
+            onAccepted: saveExampleDialog.accept()
+            onRejected: saveExampleDialog.reject()
         }
 
         onAccepted: AppController.saveResponse(exampleNameField.text.trim())

@@ -17,43 +17,34 @@ Dialog {
     padding: DesignTokens.spaceLg
 
     function openDialog() {
-        nameField.text = ""
-        descField.text = ""
-        revalidate()
-        open()
-        nameField.forceActiveFocus()
+        nameField.text = "";
+        descField.text = "";
+        revalidate();
+        open();
+        nameField.forceActiveFocus();
     }
 
     property string errorText: ""
     readonly property bool nameValid: AppController.isValidName(nameField.text)
 
     function revalidate() {
-        const name = nameField.text.trim()
+        const name = nameField.text.trim();
         if (name.length > 0 && !AppController.isValidName(name)) {
-            errorText = qsTr("Name can't contain '.', '/', or '\\'.")
+            errorText = qsTr("Name can't contain '.', '/', or '\\'.");
         } else {
-            errorText = ""
-        }
-        const okBtn = footerButtons.standardButton(Dialog.Ok)
-        if (okBtn) {
-            okBtn.enabled = nameValid
+            errorText = "";
         }
     }
 
     background: Rectangle {
-        radius: DesignTokens.radius
+        radius: DesignTokens.radiusLg
         color: DesignTokens.surfaceRaised
         border.width: 1
-        border.color: DesignTokens.borderSubtle
+        border.color: DesignTokens.glassBorder
     }
 
-    header: Label {
-        text: qsTr("New module")
-        color: DesignTokens.textPrimary
-        font.pixelSize: 17
-        font.weight: Font.DemiBold
-        padding: DesignTokens.spaceLg
-        bottomPadding: 0
+    header: DialogHeader {
+        title: qsTr("New module")
     }
 
     contentItem: ColumnLayout {
@@ -61,8 +52,7 @@ Dialog {
 
         Label {
             Layout.fillWidth: true
-            text: qsTr("A module groups related endpoints (for example admin_organization). "
-                       + "It is saved as resources/<name>.yaml.")
+            text: qsTr("A module groups related endpoints (for example admin_organization). " + "It is saved as resources/<name>.yaml.")
             wrapMode: Text.WordWrap
             color: DesignTokens.textSecondary
             font.pixelSize: 12
@@ -74,53 +64,30 @@ Dialog {
             rowSpacing: DesignTokens.spaceSm
             Layout.fillWidth: true
 
-            Label {
+            FieldLabel {
                 text: qsTr("Name")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            TextField {
+            GlassTextField {
                 id: nameField
                 Layout.fillWidth: true
                 placeholderText: qsTr("admin_organization")
-                color: DesignTokens.textPrimary
-                placeholderTextColor: DesignTokens.textSecondary
                 onTextChanged: dialog.revalidate()
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: nameField.activeFocus ? DesignTokens.accent
-                                                         : DesignTokens.borderSubtle
-                }
             }
 
-            Label {
+            FieldLabel {
                 text: qsTr("Description")
-                color: DesignTokens.textSecondary
-                font.pixelSize: 12
             }
-            TextField {
+            GlassTextField {
                 id: descField
                 Layout.fillWidth: true
                 placeholderText: qsTr("Org-level admin actions (optional)")
-                color: DesignTokens.textPrimary
-                placeholderTextColor: DesignTokens.textSecondary
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: descField.activeFocus ? DesignTokens.accent
-                                                         : DesignTokens.borderSubtle
-                }
             }
         }
 
         Label {
             Layout.fillWidth: true
             visible: dialog.errorText.length === 0
-            text: dialog.nameValid ? qsTr("Creates resources/%1.yaml").arg(nameField.text.trim())
-                                    : qsTr("Enter a name to create the module.")
+            text: dialog.nameValid ? qsTr("Creates resources/%1.yaml").arg(nameField.text.trim()) : qsTr("Enter a name to create the module.")
             color: DesignTokens.textSecondary
             font.pixelSize: 12
             wrapMode: Text.WordWrap
@@ -135,9 +102,26 @@ Dialog {
         }
     }
 
-    footer: DialogButtonBox {
-        id: footerButtons
-        standardButtons: Dialog.Ok | Dialog.Cancel
+    footer: Item {
+        implicitHeight: 60
+        RowLayout {
+            anchors.fill: parent
+            anchors.margins: DesignTokens.spaceLg
+            spacing: DesignTokens.spaceSm
+            Item {
+                Layout.fillWidth: true
+            }
+            GlassButton {
+                text: qsTr("Cancel")
+                onClicked: dialog.reject()
+            }
+            GlassButton {
+                text: qsTr("Create module")
+                primary: true
+                enabled: dialog.nameValid
+                onClicked: dialog.accept()
+            }
+        }
     }
 
     onAccepted: AppController.createResource(nameField.text.trim(), descField.text.trim())
