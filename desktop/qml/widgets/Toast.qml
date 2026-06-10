@@ -31,7 +31,7 @@ Rectangle {
         anchors.margins: DesignTokens.spaceMd
         text: toast.message
         color: toast.isError ? DesignTokens.statusError : DesignTokens.textPrimary
-        font.pixelSize: 13
+        font.pixelSize: DesignTokens.fontBody
         wrapMode: Text.WordWrap
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter

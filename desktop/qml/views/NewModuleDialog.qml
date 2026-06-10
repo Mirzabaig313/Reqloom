@@ -55,7 +55,7 @@ Dialog {
             text: qsTr("A module groups related endpoints (for example admin_organization). " + "It is saved as resources/<name>.yaml.")
             wrapMode: Text.WordWrap
             color: DesignTokens.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: DesignTokens.fontLabel
         }
 
         GridLayout {
@@ -89,7 +89,7 @@ Dialog {
             visible: dialog.errorText.length === 0
             text: dialog.nameValid ? qsTr("Creates resources/%1.yaml").arg(nameField.text.trim()) : qsTr("Enter a name to create the module.")
             color: DesignTokens.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: DesignTokens.fontLabel
             wrapMode: Text.WordWrap
         }
         Label {
@@ -97,7 +97,7 @@ Dialog {
             visible: dialog.errorText.length > 0
             text: dialog.errorText
             color: DesignTokens.methodDelete
-            font.pixelSize: 12
+            font.pixelSize: DesignTokens.fontLabel
             wrapMode: Text.WordWrap
         }
     }

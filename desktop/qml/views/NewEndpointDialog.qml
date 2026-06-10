@@ -169,8 +169,8 @@ Dialog {
             Label {
                 text: qsTr("Depends on")
                 color: DesignTokens.textPrimary
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
+                font.pixelSize: DesignTokens.fontLabel
+                font.weight: DesignTokens.weightSemiBold
             }
             DependencyEditor {
                 Layout.fillWidth: true
@@ -180,8 +180,8 @@ Dialog {
             Label {
                 text: qsTr("Extract")
                 color: DesignTokens.textPrimary
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
+                font.pixelSize: DesignTokens.fontLabel
+                font.weight: DesignTokens.weightSemiBold
             }
             ExtractionEditor {
                 Layout.fillWidth: true

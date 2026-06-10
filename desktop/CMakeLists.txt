@@ -170,6 +170,7 @@ qt_add_qml_module(reqloom-qml
         qml/widgets/DialogHeader.qml
         qml/widgets/AppIcon.qml
         qml/widgets/PanelHeader.qml
+        qml/widgets/LineTabBar.qml
         qml/widgets/KeyValueList.qml
         qml/widgets/KeyValueEditorView.qml
         qml/widgets/ChainView.qml
@@ -229,6 +230,12 @@ set_target_properties(reqloom-qml PROPERTIES
 
 reqloom_set_warnings(reqloom-qml)
 reqloom_apply_sanitizers(reqloom-qml)
+
+# Point the runtime font loader at the repo's desktop/fonts during development
+# so dropping Geist / Noto Sans JP .ttf files there registers them with no
+# rebuild of resources. A shipped app loads from its bundle Resources/fonts.
+target_compile_definitions(reqloom-qml
+    PRIVATE REQLOOM_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts")
 
 # No boundary guard here — desktop is the one place Qt UI libraries are
 # allowed (PRD §8.6 / Project Layout §2.5). The engine boundary is enforced

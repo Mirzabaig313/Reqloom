@@ -80,6 +80,7 @@ class DesignTokens : public QObject {
     Q_PROPERTY(int weightRegular READ weightRegular CONSTANT)
     Q_PROPERTY(int weightMedium READ weightMedium CONSTANT)
     Q_PROPERTY(int weightSemiBold READ weightSemiBold CONSTANT)
+    Q_PROPERTY(int weightBold READ weightBold CONSTANT)
     // Control sizing.
     Q_PROPERTY(int controlHeight READ controlHeight CONSTANT)
     Q_PROPERTY(int controlHeightLg READ controlHeightLg CONSTANT)
@@ -148,7 +149,7 @@ public:
     // Typography (theme.json: Geist UI, mono for code). Families fall back via
     // Qt font substitution when not installed.
     [[nodiscard]] QString fontSans() const { return QStringLiteral("Geist"); }
-    [[nodiscard]] QString fontMono() const { return QStringLiteral("Menlo"); }
+    [[nodiscard]] QString fontMono() const { return QStringLiteral("Geist Mono"); }
     [[nodiscard]] int fontTitle() const { return 22; }
     [[nodiscard]] int fontSubtitle() const { return 16; }
     [[nodiscard]] int fontBody() const { return 13; }
@@ -157,6 +158,7 @@ public:
     [[nodiscard]] int weightRegular() const { return 400; }
     [[nodiscard]] int weightMedium() const { return 500; }
     [[nodiscard]] int weightSemiBold() const { return 600; }
+    [[nodiscard]] int weightBold() const { return 700; }
     [[nodiscard]] int controlHeight() const { return 34; }
     [[nodiscard]] int controlHeightLg() const { return 36; }
     [[nodiscard]] int iconSize() const { return 16; }

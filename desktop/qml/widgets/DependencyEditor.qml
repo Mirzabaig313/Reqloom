@@ -49,7 +49,7 @@ ColumnLayout {
                 contentItem: Text {
                     text: depRemove.text
                     color: DesignTokens.textSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: DesignTokens.fontLabel
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
