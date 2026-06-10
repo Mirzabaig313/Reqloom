@@ -459,7 +459,7 @@ Rectangle {
                                         if (treeRow.modelData.hasChildren) {
                                             panel.toggleCollapse(treeRow.modelData.id);
                                         } else {
-                                            AppController.copyToClipboard(treeRow.modelData.path, treeRow.modelData.path);
+                                            AppController.copyToClipboard(treeRow.modelData.value, qsTr("value"));
                                         }
                                     }
                                 }
@@ -480,10 +480,20 @@ Rectangle {
                                         horizontalAlignment: Text.AlignHCenter
                                     }
                                     Text {
+                                        id: fieldText
                                         text: treeRow.modelData.field
-                                        color: DesignTokens.textSecondary
+                                        color: fieldMouse.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
                                         font.pixelSize: DesignTokens.fontLabel
                                         font.family: DesignTokens.fontMono
+                                        // Clicking the key copies its JSONPath
+                                        // (the value is copied by clicking the row).
+                                        MouseArea {
+                                            id: fieldMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: AppController.copyToClipboard(treeRow.modelData.path, treeRow.modelData.path)
+                                        }
                                     }
                                     Text {
                                         Layout.fillWidth: true
@@ -495,8 +505,14 @@ Rectangle {
                                         elide: Text.ElideRight
                                     }
                                     Text {
-                                        visible: rowMouse.containsMouse && treeRow.modelData.isLeaf
+                                        visible: fieldMouse.containsMouse
                                         text: qsTr("copy path")
+                                        color: DesignTokens.accent
+                                        font.pixelSize: DesignTokens.fontCaption
+                                    }
+                                    Text {
+                                        visible: rowMouse.containsMouse && !fieldMouse.containsMouse && treeRow.modelData.isLeaf
+                                        text: qsTr("copy value")
                                         color: DesignTokens.accent
                                         font.pixelSize: DesignTokens.fontCaption
                                     }
@@ -506,49 +522,14 @@ Rectangle {
                     }
 
                     // Body (Raw)
-                    Rectangle {
-                        radius: DesignTokens.radiusSm
-                        color: DesignTokens.surfaceSunken
-                        border.width: 1
-                        border.color: DesignTokens.borderSubtle
-                        Flickable {
-                            anchors.fill: parent
-                            anchors.margins: DesignTokens.spaceSm
-                            contentHeight: respBody.implicitHeight
-                            clip: true
-                            Text {
-                                id: respBody
-                                width: parent.width
-                                text: AppController.respBody.length > 0 ? (panel.prettyRaw ? panel.prettyJson(AppController.respBody) : AppController.respBody) : qsTr("(body not captured — enable “Capture bodies”)")
-                                color: AppController.respBody.length > 0 ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontLabel
-                                font.family: DesignTokens.fontMono
-                                wrapMode: Text.WrapAnywhere
-                            }
-                        }
+                    SelectableTextBox {
+                        text: AppController.respBody.length > 0 ? (panel.prettyRaw ? panel.prettyJson(AppController.respBody) : AppController.respBody) : ""
+                        placeholder: qsTr("(body not captured — enable “Capture bodies”)")
                     }
 
                     // Headers
-                    Rectangle {
-                        radius: DesignTokens.radiusSm
-                        color: DesignTokens.surfaceSunken
-                        border.width: 1
-                        border.color: DesignTokens.borderSubtle
-                        Flickable {
-                            anchors.fill: parent
-                            anchors.margins: DesignTokens.spaceSm
-                            contentHeight: respHeaders.implicitHeight
-                            clip: true
-                            Text {
-                                id: respHeaders
-                                width: parent.width
-                                text: AppController.respHeaders
-                                color: DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontLabel
-                                font.family: DesignTokens.fontMono
-                                wrapMode: Text.WrapAnywhere
-                            }
-                        }
+                    SelectableTextBox {
+                        text: AppController.respHeaders
                     }
 
                     // Diff — compare the live body against a saved example.

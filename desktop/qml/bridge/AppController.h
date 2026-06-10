@@ -111,6 +111,7 @@ class AppController : public QObject {
     Q_PROPERTY(bool editForce READ editForce WRITE setEditForce NOTIFY editChanged)
     Q_PROPERTY(QString editBody READ editBody WRITE setEditBody NOTIFY editChanged)
     Q_PROPERTY(bool editBodyIsForm READ editBodyIsForm WRITE setEditBodyIsForm NOTIFY editChanged)
+    Q_PROPERTY(QString editBodyType READ editBodyType WRITE setEditBodyType NOTIFY editChanged)
     Q_PROPERTY(EditableKeyValueModel* editHeaders READ editHeaders CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editQuery READ editQuery CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
@@ -198,6 +199,7 @@ public:
     [[nodiscard]] bool editForce() const { return editForce_; }
     [[nodiscard]] QString editBody() const { return editBody_; }
     [[nodiscard]] bool editBodyIsForm() const { return editBodyIsForm_; }
+    [[nodiscard]] QString editBodyType() const { return editBodyType_; }
     void setEditMethod(const QString& method);
     void setEditPath(const QString& path);
     void setEditActor(const QString& actor);
@@ -206,6 +208,11 @@ public:
     void setEditForce(bool force);
     void setEditBody(const QString& body);
     void setEditBodyIsForm(bool isForm);
+    /// Body kind selector: "none", "form-data", "x-www-form-urlencoded",
+    /// "json", "xml", "text", or "graphql". Keeps editBodyIsForm in sync and
+    /// politely sets the Content-Type header to the kind's canonical type
+    /// (preserving a custom Content-Type the user set themselves).
+    void setEditBodyType(const QString& type);
     [[nodiscard]] EditableKeyValueModel* editHeaders() { return &editHeaders_; }
     [[nodiscard]] EditableKeyValueModel* editQuery() { return &editQuery_; }
     [[nodiscard]] EditableKeyValueModel* editForm() { return &editForm_; }
@@ -368,6 +375,11 @@ private:
     /// the old RequestEditorPanel::buildOverride (chainEdited tracks the guard).
     [[nodiscard]] RequestOverride buildOverride() const;
 
+    /// Set the Content-Type header in editHeaders_ to `desired`, but only when
+    /// the current Content-Type is empty or a canonical type we manage — never
+    /// clobber a custom Content-Type the user typed.
+    void setManagedContentType(const QString& desired);
+
     std::unique_ptr<ProjectModel> project_;
     std::unique_ptr<Bootstrapper> bootstrapper_;
     std::unique_ptr<RunController> runController_;
@@ -400,6 +412,7 @@ private:
     bool editForce_{false};
     QString editBody_;
     bool editBodyIsForm_{false};
+    QString editBodyType_{QStringLiteral("none")};
     /// True once the Chain tab has been seeded for the open op, so the override
     /// only stamps chainEdited when the wiring it captures is a real snapshot.
     bool chainFieldsLoaded_{false};
