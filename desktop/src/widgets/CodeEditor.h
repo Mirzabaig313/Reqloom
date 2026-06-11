@@ -40,8 +40,14 @@ private:
     /// Re-tokenise the whole buffer and push style bytes to Scintilla. Cheap
     /// for hook-sized scripts; driven from the content-changed signal.
     void styleDocument();
+    /// Defer styling to the next event-loop tick. Styling must NOT run inside
+    /// Scintilla's modification notification (re-entrancy crash), so we never
+    /// call styleDocument() directly from a notify handler or right after
+    /// SCI_SETTEXT — we post it instead.
+    void scheduleStyling();
 
     Language language_{Language::JavaScript};
+    bool stylingScheduled_{false};
 };
 
 }  // namespace reqloom::desktop
