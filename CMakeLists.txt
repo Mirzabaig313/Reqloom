@@ -81,8 +81,9 @@ find_package(Qt6Keychain CONFIG QUIET)
 
 # UI-only deps
 if(REQLOOM_BUILD_DESKTOP)
-    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Gui Quick Qml QuickControls2 QuickWidgets Concurrent)
-    # QScintilla is added later when the desktop module starts using it.
+    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Gui Quick Qml QuickControls2 QuickWidgets Concurrent Core5Compat)
+    # Core5Compat provides QTextCodec, which the vendored Scintilla Qt platform
+    # layer (third_party) still uses under Qt6.
 endif()
 
 # ─── Subdirectories ───────────────────────────────────────────────────────────

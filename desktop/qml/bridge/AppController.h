@@ -256,6 +256,12 @@ public:
     /// undefined op is rejected with a notify() and nothing is written).
     Q_INVOKABLE void saveOperation();
 
+    /// Open the standalone hook-script editor (a Widgets dialog — the QML
+    /// Migration Roadmap's sanctioned fallback) for the current operation.
+    /// Edits to the pre-request / post-response JavaScript are persisted on
+    /// Save; file-referenced hooks are written back to their `.js` file.
+    Q_INVOKABLE void openHookEditor();
+
     /// Cancel the in-flight run, if any.
     Q_INVOKABLE void cancelRun();
     /// Reset the run context's session + extraction caches (refused mid-run).
