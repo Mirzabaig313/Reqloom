@@ -3,14 +3,18 @@
 
 #include "../../src/application/EnvironmentSettings.h"
 #include "../../src/application/ProjectModel.h"
+#include "../../src/views/HookEditorDialog.h"
 #include "../../src/widgets/LineDiff.h"
+#include "ThemeController.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
+#include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QStringList>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
+#include <QtWidgets/QDialog>
 
 #include <algorithm>
 #include <map>
@@ -786,6 +790,84 @@ void AppController::saveOperation() {
 
 void AppController::cancelRun() {
     runController_->cancelRun();
+}
+
+void AppController::openHookEditor() {
+    const QString opId = currentOperationId();
+    if (opId.isEmpty()) {
+        emit notify(QStringLiteral("Open an operation before editing hooks"), true);
+        return;
+    }
+    const engine::OperationId id{opId.toStdString()};
+    const auto* op = project_->findOperation(id);
+    if (op == nullptr) {
+        emit notify(QStringLiteral("No operation to edit hooks for"), true);
+        return;
+    }
+
+    const auto toQ = [](const std::optional<std::string>& s) {
+        return s ? QString::fromStdString(*s) : QString{};
+    };
+    const QString preRef = toQ(op->preRequestScriptRef);
+    const QString postRef = toQ(op->postResponseScriptRef);
+
+    const auto appearance = ThemeController::create(nullptr, nullptr)->resolvedAppearance();
+    const auto theme = theming::Theme::resolve(appearance);
+
+    HookEditorDialog dialog(opId,
+                            toQ(op->preRequestScript),
+                            preRef,
+                            toQ(op->postResponseScript),
+                            postRef,
+                            theme.palette());
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    // Persist. A file-referenced hook is written back to its `.js` file (the
+    // writer keeps the reference); an inline hook is stored on the operation
+    // and saved as YAML. Empty inline content clears the hook.
+    const QString root = project_->rootPath();
+    const auto applyHook = [&](std::optional<std::string>& script,
+                               const QString& edited,
+                               const QString& refPath) -> bool {
+        if (!refPath.isEmpty()) {
+            const QString abs = QDir(root).filePath(refPath);
+            QFileInfo(abs).dir().mkpath(QStringLiteral("."));
+            QFile file(abs);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                return false;
+            }
+            file.write(edited.toUtf8());
+            file.close();
+            script = edited.toStdString();
+            return true;
+        }
+        if (edited.trimmed().isEmpty()) {
+            script.reset();
+        } else {
+            script = edited.toStdString();
+        }
+        return true;
+    };
+
+    engine::Operation updated = *op;
+    if (!applyHook(updated.preRequestScript, dialog.preScript(), preRef) ||
+        !applyHook(updated.postResponseScript, dialog.postScript(), postRef)) {
+        emit notify(QStringLiteral("Couldn't write a referenced hook file"), true);
+        return;
+    }
+
+    QString error;
+    if (project_->saveOperation(id, updated, error)) {
+        // saveOperation rebinds the project (its `saved` signal resets the
+        // selection to the endpoint list), so reopen the operation to keep the
+        // user where they were.
+        selectOperationById(opId);
+        emit notify(QStringLiteral("Saved hooks for “%1”").arg(opId), false);
+    } else {
+        emit notify(error, true);
+    }
 }
 
 void AppController::resetCaches() {

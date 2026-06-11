@@ -47,10 +47,14 @@ qt_add_executable(reqloom-desktop
     src/application/SecretManager.h
     src/views/Formatting.cpp
     src/views/Formatting.h
+    src/views/HookEditorDialog.cpp
+    src/views/HookEditorDialog.h
     src/widgets/FuzzyMatch.cpp
     src/widgets/FuzzyMatch.h
     src/widgets/LineDiff.cpp
     src/widgets/LineDiff.h
+    src/widgets/CodeEditor.cpp
+    src/widgets/CodeEditor.h
     src/theming/Color.cpp
     src/theming/Color.h
     src/theming/Theme.cpp
@@ -115,6 +119,7 @@ qt_add_qml_module(reqloom-desktop
 target_link_libraries(reqloom-desktop
     PRIVATE
         reqloom::engine
+        scintilla
         Qt6::Core
         Qt6::Concurrent
         Qt6::Gui

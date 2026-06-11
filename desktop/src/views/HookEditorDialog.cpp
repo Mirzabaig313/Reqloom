@@ -1,0 +1,119 @@
+// HookEditorDialog — see header.
+#include "HookEditorDialog.h"
+
+#include "../theming/Theme.h"
+#include "../widgets/CodeEditor.h"
+
+#include <QtGui/QColor>
+#include <QtWidgets/QDialogButtonBox>
+#include <QtWidgets/QLabel>
+#include <QtWidgets/QTabWidget>
+#include <QtWidgets/QVBoxLayout>
+#include <QtWidgets/QWidget>
+
+namespace reqloom::desktop {
+
+namespace {
+
+// Build one tab: an optional "from file" hint above a themed CodeEditor seeded
+// with `script`. Returns the editor so the dialog can read it back on accept.
+[[nodiscard]] CodeEditor* buildTab(QTabWidget* tabs,
+                                   const QString& title,
+                                   const QString& script,
+                                   const QString& ref,
+                                   const theming::Palette& palette) {
+    auto* page = new QWidget(tabs);
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(6);
+
+    if (!ref.isEmpty()) {
+        auto* hint = new QLabel(QObject::tr("Saved to file: %1").arg(ref), page);
+        hint->setStyleSheet(
+            QStringLiteral("color: %1; padding: 4px 2px;").arg(palette.textSecondary.name()));
+        layout->addWidget(hint);
+    }
+
+    auto* editor = new CodeEditor(page);
+    editor->applyTheme(palette, CodeEditor::Language::JavaScript);
+    editor->setPlainText(script);
+    layout->addWidget(editor, 1);
+
+    tabs->addTab(page, title);
+    return editor;
+}
+
+}  // namespace
+
+HookEditorDialog::HookEditorDialog(const QString& operationId,
+                                   const QString& preScript,
+                                   const QString& preRef,
+                                   const QString& postScript,
+                                   const QString& postRef,
+                                   const theming::Palette& palette,
+                                   QWidget* parent)
+    : QDialog(parent) {
+    setWindowTitle(tr("Edit Hooks — %1").arg(operationId));
+    resize(720, 560);
+
+    const QString sheet = "QDialog { background: " + palette.surfaceBase.name() +
+                          "; }"
+                          "QLabel { color: " +
+                          palette.textSecondary.name() +
+                          "; }"
+                          "QTabBar::tab { background: " +
+                          palette.surfaceSunken.name() +
+                          "; color: " + palette.textSecondary.name() +
+                          "; padding: 6px 14px; }"
+                          "QTabBar::tab:selected { color: " +
+                          palette.textPrimary.name() +
+                          "; }"
+                          "QTabWidget::pane { border: 1px solid " +
+                          palette.surfaceSunken.name() +
+                          "; }"
+                          "QPushButton { background: " +
+                          palette.surfaceRaised.name() + "; color: " + palette.textPrimary.name() +
+                          "; border: 1px solid " + palette.borderStrong.name() +
+                          "; border-radius: 6px; padding: 6px 18px; min-width: 76px; }"
+                          "QPushButton:hover { border-color: " +
+                          palette.accentBase.name() +
+                          "; }"
+                          "QPushButton:default { background: " +
+                          palette.accentBase.name() + "; color: " + palette.textInverse.name() +
+                          "; border: 1px solid " + palette.accentBase.name() +
+                          "; }"
+                          "QPushButton:default:hover { background: " +
+                          palette.accentHover.name() + "; }";
+    setStyleSheet(sheet);
+
+    auto* layout = new QVBoxLayout(this);
+
+    auto* intro = new QLabel(
+        tr("JavaScript runs in the QuickJS sandbox. Use ctx.request / ctx.env / ctx.actors; "
+           "helpers: hmac, jwt, base64."),
+        this);
+    intro->setWordWrap(true);
+    layout->addWidget(intro);
+
+    auto* tabs = new QTabWidget(this);
+    preEditor_ = buildTab(tabs, tr("Pre-request"), preScript, preRef, palette);
+    postEditor_ = buildTab(tabs, tr("Post-response"), postScript, postRef, palette);
+    layout->addWidget(tabs, 1);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+}
+
+HookEditorDialog::~HookEditorDialog() = default;
+
+QString HookEditorDialog::preScript() const {
+    return preEditor_->toPlainText();
+}
+
+QString HookEditorDialog::postScript() const {
+    return postEditor_->toPlainText();
+}
+
+}  // namespace reqloom::desktop
