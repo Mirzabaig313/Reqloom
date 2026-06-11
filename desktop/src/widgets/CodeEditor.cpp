@@ -4,6 +4,7 @@
 #include "../theming/Theme.h"
 
 #include <QtCore/QByteArray>
+#include <QtCore/QTimer>
 #include <QtGui/QColor>
 
 #include <array>
@@ -77,7 +78,7 @@ CodeEditor::CodeEditor(QWidget* parent) : ScintillaEditBase(parent) {
     send(SCI_SETWRAPMODE, 0);
     // Null lexer: we own styling and re-push it on every content change.
     send(SCI_SETILEXER, 0, 0);
-    connect(this, &ScintillaEditBase::notifyChange, this, [this]() { styleDocument(); });
+    connect(this, &ScintillaEditBase::notifyChange, this, [this]() { scheduleStyling(); });
 }
 
 CodeEditor::~CodeEditor() = default;
@@ -110,13 +111,13 @@ void CodeEditor::applyTheme(const theming::Palette& palette, Language language) 
     send(SCI_SETELEMENTCOLOUR, SC_ELEMENT_CARET_LINE_BACK, sciColorAlpha(palette.surfaceRaised));
     send(SCI_SETELEMENTCOLOUR, SC_ELEMENT_SELECTION_BACK, sciColorAlpha(palette.accentMuted));
 
-    styleDocument();
+    scheduleStyling();
 }
 
 void CodeEditor::setPlainText(const QString& text) {
     const QByteArray utf8 = text.toUtf8();
     sends(SCI_SETTEXT, 0, utf8.constData());
-    styleDocument();
+    scheduleStyling();
 }
 
 QString CodeEditor::toPlainText() const {
@@ -127,6 +128,19 @@ QString CodeEditor::toPlainText() const {
     QByteArray buf(static_cast<int>(len) + 1, '\0');
     send(SCI_GETTEXT, static_cast<uptr_t>(len + 1), reinterpret_cast<sptr_t>(buf.data()));
     return QString::fromUtf8(buf.constData(), static_cast<int>(len));
+}
+
+void CodeEditor::scheduleStyling() {
+    // Coalesce bursts and, crucially, run styling outside any Scintilla
+    // modification notification (calling SCI_SETSTYLING re-entrantly crashes).
+    if (stylingScheduled_) {
+        return;
+    }
+    stylingScheduled_ = true;
+    QTimer::singleShot(0, this, [this]() {
+        stylingScheduled_ = false;
+        styleDocument();
+    });
 }
 
 void CodeEditor::styleDocument() {
