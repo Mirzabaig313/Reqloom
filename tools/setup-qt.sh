@@ -59,6 +59,7 @@ else
     fi
     aqt install-qt "$qt_platform" desktop "$QT_VERSION" "$qt_arch" \
         --outputdir "$QT_DIR" \
+        --modules qt5compat \
         --archives qtbase qtdeclarative qtsvg "${extra_archives[@]}"
 fi
 

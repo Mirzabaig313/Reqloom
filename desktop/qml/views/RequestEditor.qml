@@ -282,6 +282,10 @@ ColumnLayout {
         }
 
         SecondaryButton {
+            text: qsTr("Hooks…")
+            onClicked: AppController.openHookEditor()
+        }
+        SecondaryButton {
             text: qsTr("Dry Run")
             onClicked: editor.editing ? AppController.applyAndRun(false, true) : AppController.runSelected(false, true)
         }

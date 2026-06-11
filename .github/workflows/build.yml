@@ -118,6 +118,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           archives: qtbase qtdeclarative qtsvg icu
+          modules: qt5compat
           cache: true
 
       - name: Install Qt (Windows / macOS)
@@ -126,6 +127,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           archives: qtbase qtdeclarative qtsvg
+          modules: qt5compat
           cache: true
 
       - name: Export CMAKE_PREFIX_PATH for Qt
