@@ -17,6 +17,7 @@
 #include <QtWidgets/QDialog>
 
 #include <algorithm>
+#include <filesystem>
 #include <map>
 #include <string>
 #include <utility>
@@ -832,14 +833,32 @@ void AppController::openHookEditor() {
                                const QString& edited,
                                const QString& refPath) -> bool {
         if (!refPath.isEmpty()) {
-            const QString abs = QDir(root).filePath(refPath);
+            // Defence-in-depth: resolve the ref under the project root and
+            // reject any path that escapes it .
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            const fs::path rootDir = fs::weakly_canonical(fs::path(root.toStdString()), ec);
+            const fs::path target =
+                fs::weakly_canonical(fs::path(root.toStdString()) / refPath.toStdString(), ec);
+            if (ec) {
+                return false;
+            }
+            const fs::path rel = target.lexically_relative(rootDir);
+            if (rel.empty() || rel.string().starts_with("..")) {
+                return false;  // escapes the project root
+            }
+            const QString abs = QString::fromStdString(target.string());
             QFileInfo(abs).dir().mkpath(QStringLiteral("."));
             QFile file(abs);
             if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
                 return false;
             }
-            file.write(edited.toUtf8());
+            const QByteArray bytes = edited.toUtf8();
+            const bool ok = file.write(bytes) == bytes.size() && file.flush();
             file.close();
+            if (!ok || file.error() != QFileDevice::NoError) {
+                return false;
+            }
             script = edited.toStdString();
             return true;
         }
@@ -1038,6 +1057,294 @@ QStringList AppController::actorNames() const {
         }
     }
     return names;
+}
+
+QString AppController::actorAuthLabel(const QString& actorName) const {
+    if (actorName.isEmpty()) {
+        return QStringLiteral("No authentication");
+    }
+    if (!project_->hasProject()) {
+        return {};
+    }
+    const auto& actors = project_->project().actors;
+    const auto it = actors.find(engine::ActorId{actorName.toStdString()});
+    if (it == actors.end()) {
+        return {};
+    }
+    switch (it->second.strategy) {
+        case engine::AuthStrategy::Simple:
+            return QStringLiteral("Single-step login");
+        case engine::AuthStrategy::Chain:
+            return QStringLiteral("Multi-step login chain");
+        case engine::AuthStrategy::Basic:
+            return QStringLiteral("Basic Auth");
+        case engine::AuthStrategy::ApiKey:
+            return QStringLiteral("API Key");
+        case engine::AuthStrategy::OAuth2ClientCredentials:
+            return QStringLiteral("OAuth 2.0 (Client Credentials)");
+        case engine::AuthStrategy::OAuth2Password:
+            return QStringLiteral("OAuth 2.0 (Password)");
+        case engine::AuthStrategy::OAuth1:
+            return QStringLiteral("OAuth 1.0 (HMAC-SHA1)");
+        case engine::AuthStrategy::AwsSigV4:
+            return QStringLiteral("AWS Signature v4");
+    }
+    return QStringLiteral("Custom");
+}
+
+namespace {
+
+[[nodiscard]] engine::AuthStrategy authStrategyFromLabel(const QString& label) {
+    if (label == QStringLiteral("Multi-step login chain")) {
+        return engine::AuthStrategy::Chain;
+    }
+    if (label == QStringLiteral("Basic Auth")) {
+        return engine::AuthStrategy::Basic;
+    }
+    if (label == QStringLiteral("API Key")) {
+        return engine::AuthStrategy::ApiKey;
+    }
+    if (label == QStringLiteral("OAuth 2.0 (Client Credentials)")) {
+        return engine::AuthStrategy::OAuth2ClientCredentials;
+    }
+    if (label == QStringLiteral("OAuth 2.0 (Password)")) {
+        return engine::AuthStrategy::OAuth2Password;
+    }
+    if (label == QStringLiteral("OAuth 1.0 (HMAC-SHA1)")) {
+        return engine::AuthStrategy::OAuth1;
+    }
+    if (label == QStringLiteral("AWS Signature v4")) {
+        return engine::AuthStrategy::AwsSigV4;
+    }
+    return engine::AuthStrategy::Simple;
+}
+
+[[nodiscard]] engine::HttpMethod httpMethodFromLabel(const QString& method) {
+    const QString upper = method.trimmed().toUpper();
+    if (upper == QStringLiteral("GET")) {
+        return engine::HttpMethod::Get;
+    }
+    if (upper == QStringLiteral("PUT")) {
+        return engine::HttpMethod::Put;
+    }
+    if (upper == QStringLiteral("PATCH")) {
+        return engine::HttpMethod::Patch;
+    }
+    if (upper == QStringLiteral("DELETE")) {
+        return engine::HttpMethod::Delete;
+    }
+    if (upper == QStringLiteral("HEAD")) {
+        return engine::HttpMethod::Head;
+    }
+    if (upper == QStringLiteral("OPTIONS")) {
+        return engine::HttpMethod::Options;
+    }
+    return engine::HttpMethod::Post;
+}
+
+[[nodiscard]] std::vector<engine::Extraction> extractionsFromPairs(
+    const std::vector<std::pair<QString, QString>>& pairs) {
+    std::vector<engine::Extraction> out;
+    for (const auto& [key, value] : pairs) {
+        if (key.isEmpty()) {
+            continue;
+        }
+        engine::Extraction ext;
+        ext.variableName = key.toStdString();
+        ext.sourcePath = value.toStdString();
+        ext.source = engine::Extraction::Source::JsonPath;
+        out.push_back(std::move(ext));
+    }
+    return out;
+}
+
+}  // namespace
+
+QStringList AppController::actorStrategies() const {
+    return {QStringLiteral("Basic Auth"),
+            QStringLiteral("API Key"),
+            QStringLiteral("OAuth 2.0 (Client Credentials)"),
+            QStringLiteral("OAuth 2.0 (Password)"),
+            QStringLiteral("OAuth 1.0 (HMAC-SHA1)"),
+            QStringLiteral("AWS Signature v4"),
+            QStringLiteral("Single-step login"),
+            QStringLiteral("Multi-step login chain")};
+}
+
+QString AppController::actorDescription(const QString& actorId) const {
+    if (!project_->hasProject()) {
+        return {};
+    }
+    const auto& actors = project_->project().actors;
+    const auto it = actors.find(engine::ActorId{actorId.toStdString()});
+    return it == actors.end() ? QString{} : QString::fromStdString(it->second.description);
+}
+
+void AppController::prepareNewActor() {
+    actorAuthMethod_ = QStringLiteral("POST");
+    actorAuthPath_.clear();
+    actorAuthBody_.clear();
+    actorAuthExpect_.clear();
+    actorHasRefresh_ = false;
+    actorRefreshMethod_ = QStringLiteral("POST");
+    actorRefreshPath_.clear();
+    actorRefreshBody_.clear();
+    actorConfig_.clearRows();
+    actorAuthExtract_.clearRows();
+    actorRefreshExtract_.clearRows();
+    emit actorEditChanged();
+}
+
+void AppController::prepareEditActor(const QString& actorId) {
+    actorAuthMethod_ = QStringLiteral("POST");
+    actorAuthPath_.clear();
+    actorAuthBody_.clear();
+    actorAuthExpect_.clear();
+    actorHasRefresh_ = false;
+    actorRefreshMethod_ = QStringLiteral("POST");
+    actorRefreshPath_.clear();
+    actorRefreshBody_.clear();
+
+    std::vector<std::pair<QString, QString>> config;
+    std::vector<std::pair<QString, QString>> authEx;
+    std::vector<std::pair<QString, QString>> refreshEx;
+
+    if (project_->hasProject()) {
+        const auto& actors = project_->project().actors;
+        const auto it = actors.find(engine::ActorId{actorId.toStdString()});
+        if (it != actors.end()) {
+            const engine::Actor& actor = it->second;
+            for (const auto& [key, value] : actor.authConfig) {
+                config.emplace_back(QString::fromStdString(key), QString::fromStdString(value));
+            }
+            if (!actor.authSteps.empty()) {
+                const engine::AuthStep& step = actor.authSteps.front();
+                actorAuthMethod_ = methodLabel(step.method);
+                actorAuthPath_ = QString::fromStdString(step.pathTemplate);
+                actorAuthBody_ =
+                    step.bodyTemplate ? QString::fromStdString(*step.bodyTemplate) : QString{};
+                actorAuthExpect_ =
+                    step.expectStatus ? QString::number(*step.expectStatus) : QString{};
+                for (const auto& ext : step.extractions) {
+                    authEx.emplace_back(QString::fromStdString(ext.variableName),
+                                        QString::fromStdString(ext.sourcePath));
+                }
+            }
+            if (actor.refresh) {
+                actorHasRefresh_ = true;
+                actorRefreshMethod_ = methodLabel(actor.refresh->method);
+                actorRefreshPath_ = QString::fromStdString(actor.refresh->pathTemplate);
+                actorRefreshBody_ = actor.refresh->bodyTemplate
+                                        ? QString::fromStdString(*actor.refresh->bodyTemplate)
+                                        : QString{};
+                for (const auto& ext : actor.refresh->extractions) {
+                    refreshEx.emplace_back(QString::fromStdString(ext.variableName),
+                                           QString::fromStdString(ext.sourcePath));
+                }
+            }
+        }
+    }
+    actorConfig_.setPairs(std::move(config));
+    actorAuthExtract_.setPairs(std::move(authEx));
+    actorRefreshExtract_.setPairs(std::move(refreshEx));
+    emit actorEditChanged();
+}
+
+bool AppController::saveActorEdits(const QString& originalId,
+                                   const QString& name,
+                                   const QString& strategyLabel,
+                                   const QString& description,
+                                   const QString& authMethod,
+                                   const QString& authPath,
+                                   const QString& authBody,
+                                   const QString& authExpect,
+                                   bool refreshEnabled,
+                                   const QString& refreshMethod,
+                                   const QString& refreshPath,
+                                   const QString& refreshBody) {
+    // Start from the existing actor (preserving inject headers, session TTL and
+    // any chain steps beyond the first) when editing.
+    engine::Actor actor;
+    if (!originalId.isEmpty() && project_->hasProject()) {
+        const auto& actors = project_->project().actors;
+        const auto it = actors.find(engine::ActorId{originalId.toStdString()});
+        if (it != actors.end()) {
+            actor = it->second;
+        }
+    }
+    actor.id = engine::ActorId{name.trimmed().toStdString()};
+    actor.description = description.trimmed().toStdString();
+    const engine::AuthStrategy strategy = authStrategyFromLabel(strategyLabel);
+    actor.strategy = strategy;
+
+    std::map<std::string, std::string> config;
+    for (const auto& [key, value] : actorConfig_.pairs()) {
+        if (!key.isEmpty()) {
+            config.insert_or_assign(key.toStdString(), value.toStdString());
+        }
+    }
+    actor.authConfig = std::move(config);
+
+    const bool stepBased =
+        (strategy == engine::AuthStrategy::Simple || strategy == engine::AuthStrategy::Chain);
+    if (stepBased) {
+        engine::AuthStep step;
+        if (!actor.authSteps.empty()) {
+            step = actor.authSteps.front();  // keep id + headers
+        }
+        if (step.id.empty()) {
+            step.id = "login";
+        }
+        step.method = httpMethodFromLabel(authMethod);
+        step.pathTemplate = authPath.trimmed().toStdString();
+        const QString body = authBody.trimmed();
+        step.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
+                                           : std::optional<std::string>{body.toStdString()};
+        bool okExpect = false;
+        const int expect = authExpect.trimmed().toInt(&okExpect);
+        step.expectStatus = okExpect ? std::optional<int>{expect} : std::optional<int>{};
+        step.extractions = extractionsFromPairs(actorAuthExtract_.pairs());
+        if (actor.authSteps.empty()) {
+            actor.authSteps.push_back(std::move(step));
+        } else {
+            actor.authSteps.front() = std::move(step);
+        }
+    } else {
+        actor.authSteps.clear();
+    }
+
+    if (refreshEnabled) {
+        engine::SessionRefresh refresh;
+        if (actor.refresh) {
+            refresh = *actor.refresh;
+        }
+        refresh.method = httpMethodFromLabel(refreshMethod);
+        refresh.pathTemplate = refreshPath.trimmed().toStdString();
+        const QString body = refreshBody.trimmed();
+        refresh.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
+                                              : std::optional<std::string>{body.toStdString()};
+        refresh.extractions = extractionsFromPairs(actorRefreshExtract_.pairs());
+        actor.refresh = std::move(refresh);
+    } else {
+        actor.refresh.reset();
+    }
+
+    QString error;
+    if (project_->saveActor(originalId, actor, error)) {
+        emit notify(QStringLiteral("Saved actor “%1”").arg(name.trimmed()), false);
+        return true;
+    }
+    emit notify(error, true);
+    return false;
+}
+
+void AppController::deleteActor(const QString& actorId) {
+    QString error;
+    if (project_->deleteActor(engine::ActorId{actorId.toStdString()}, error)) {
+        emit notify(QStringLiteral("Deleted actor “%1”").arg(actorId), false);
+    } else {
+        emit notify(error, true);
+    }
 }
 
 QStringList AppController::operationIds() const {

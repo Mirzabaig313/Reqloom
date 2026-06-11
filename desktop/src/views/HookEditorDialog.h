@@ -40,8 +40,8 @@ public:
     [[nodiscard]] QString postScript() const;
 
 private:
-    CodeEditor* preEditor_;
-    CodeEditor* postEditor_;
+    CodeEditor* preEditor_{};
+    CodeEditor* postEditor_{};
 };
 
 }  // namespace reqloom::desktop

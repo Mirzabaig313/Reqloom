@@ -107,7 +107,7 @@ void CodeEditor::applyTheme(const theming::Palette& palette, Language language) 
     send(SCI_STYLESETBACK, STYLE_LINENUMBER, sciColor(palette.surfaceSunken));
 
     // Caret, current line, selection.
-    send(SCI_SETCARETFORE, sciColor(palette.textPrimary));
+    send(SCI_SETCARETFORE, static_cast<uptr_t>(sciColor(palette.textPrimary)));
     send(SCI_SETELEMENTCOLOUR, SC_ELEMENT_CARET_LINE_BACK, sciColorAlpha(palette.surfaceRaised));
     send(SCI_SETELEMENTCOLOUR, SC_ELEMENT_SELECTION_BACK, sciColorAlpha(palette.accentMuted));
 
@@ -125,9 +125,9 @@ QString CodeEditor::toPlainText() const {
     if (len <= 0) {
         return {};
     }
-    QByteArray buf(static_cast<int>(len) + 1, '\0');
+    QByteArray buf(static_cast<qsizetype>(len) + 1, '\0');
     send(SCI_GETTEXT, static_cast<uptr_t>(len + 1), reinterpret_cast<sptr_t>(buf.data()));
-    return QString::fromUtf8(buf.constData(), static_cast<int>(len));
+    return QString::fromUtf8(buf.constData(), static_cast<qsizetype>(len));
 }
 
 void CodeEditor::scheduleStyling() {
@@ -148,7 +148,7 @@ void CodeEditor::styleDocument() {
     if (length <= 0) {
         return;
     }
-    QByteArray buf(static_cast<int>(length) + 1, '\0');
+    QByteArray buf(static_cast<qsizetype>(length) + 1, '\0');
     send(SCI_GETTEXT, static_cast<uptr_t>(length + 1), reinterpret_cast<sptr_t>(buf.data()));
     const std::string_view text(buf.constData(), static_cast<std::size_t>(length));
 

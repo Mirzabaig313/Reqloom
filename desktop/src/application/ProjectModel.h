@@ -10,8 +10,10 @@
 #include <QtCore/QStringList>
 
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace reqloom::desktop {
@@ -89,6 +91,20 @@ public:
     /// Delete resource `id` (and all its operations), persist, and remove its
     /// `<id>.yaml` file. Emits `saved` on success.
     [[nodiscard]] bool deleteResource(const engine::ResourceId& id, QString& error);
+
+    /// Create or update an actor. `originalId` empty → create a new actor;
+    /// otherwise update that actor (renaming to `actor.id` if different,
+    /// remapping operations that referenced it). The caller supplies the fully
+    /// built actor (the bridge preserves fields the editor doesn't touch).
+    /// Validates + persists; emits `saved` on success.
+    [[nodiscard]] bool saveActor(const QString& originalId,
+                                 const engine::Actor& actor,
+                                 QString& error);
+
+    /// Delete actor `id`, clear it from any operation that referenced it,
+    /// persist (the writer prunes the stale `actors/<id>.yaml`), and rebind.
+    /// Emits `saved` on success.
+    [[nodiscard]] bool deleteActor(const engine::ActorId& id, QString& error);
 
     /// Create an empty resource named `name` (optional `description`), persist,
     /// and rebind. Fails if the name is empty, contains id-breaking characters

@@ -2,6 +2,8 @@
 #include "DesignTokens.h"
 #include "../bridge/ThemeController.h"
 
+#include <QtQml/QQmlEngine>
+
 namespace reqloom::desktop::qml {
 
 DesignTokens::DesignTokens(QObject* parent) : QObject(parent) {
@@ -18,6 +20,9 @@ DesignTokens* DesignTokens::create(QQmlEngine*, QJSEngine*) {
     // Single-TU instance (see ThemeController::create for the rationale): an
     // inline header definition emitted one static per translation unit.
     static DesignTokens instance;
+    // CppOwnership: the QML engine must not delete this static-storage
+    // singleton at teardown (see ThemeController::create).
+    QQmlEngine::setObjectOwnership(&instance, QQmlEngine::CppOwnership);
     return &instance;
 }
 

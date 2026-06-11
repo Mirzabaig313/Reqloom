@@ -72,6 +72,7 @@ qt_add_qml_module(reqloom-desktop
         qml/views/TimelinePanel.qml
         qml/views/NewModuleDialog.qml
         qml/views/NewEndpointDialog.qml
+        qml/views/ActorDialog.qml
         qml/widgets/MethodBadge.qml
         qml/widgets/Card.qml
         qml/widgets/GlassComboBox.qml
