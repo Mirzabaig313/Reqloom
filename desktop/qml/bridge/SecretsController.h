@@ -9,6 +9,7 @@
 #include <QtCore/QAbstractListModel>
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtQml/QQmlEngine>
 
 #include <memory>
 
@@ -60,6 +61,9 @@ public:
 
     static SecretsController* create(QQmlEngine*, QJSEngine*) {
         static SecretsController instance;
+        // CppOwnership: don't let the QML engine delete this static singleton
+        // at teardown (would be a free of non-heap memory).
+        QQmlEngine::setObjectOwnership(&instance, QQmlEngine::CppOwnership);
         return &instance;
     }
 

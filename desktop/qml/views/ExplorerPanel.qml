@@ -25,6 +25,7 @@ Rectangle {
     property string ctxOperationId: ""
     property string ctxResourceId: ""
     property string ctxExampleName: ""
+    property string ctxActorId: ""
 
     ColumnLayout {
         anchors.fill: parent
@@ -160,6 +161,8 @@ Rectangle {
                 readonly property bool isExample: kind === "example"
                 readonly property bool isResource: kind === "resource"
                 readonly property bool isResourcesRoot: kind === "resourceGroup"
+                readonly property bool isActor: kind === "actor"
+                readonly property bool isActorsRoot: kind === "actorGroup"
 
                 onCurrentChanged: {
                     if (del.current) {
@@ -240,6 +243,7 @@ Rectangle {
                         panel.ctxOperationId = del.operationId;
                         panel.ctxResourceId = del.resourceId;
                         panel.ctxExampleName = del.exampleName;
+                        panel.ctxActorId = del.isActor ? del.name : "";
                         if (del.isExample) {
                             exampleMenu.popup();
                         } else if (del.isOperation) {
@@ -248,6 +252,10 @@ Rectangle {
                             resourceMenu.popup();
                         } else if (del.isResourcesRoot) {
                             rootMenu.popup();
+                        } else if (del.isActor) {
+                            actorMenu.popup();
+                        } else if (del.isActorsRoot) {
+                            actorsRootMenu.popup();
                         }
                     }
                 }
@@ -268,6 +276,10 @@ Rectangle {
         GlassMenuItem {
             text: qsTr("New Module…")
             onTriggered: newModuleDialog.openDialog()
+        }
+        GlassMenuItem {
+            text: qsTr("New Actor…")
+            onTriggered: actorDialog.openFor("")
         }
     }
 
@@ -332,6 +344,25 @@ Rectangle {
             onTriggered: AppController.deleteExample(panel.ctxOperationId, panel.ctxExampleName)
         }
     }
+    GlassMenu {
+        id: actorsRootMenu
+        GlassMenuItem {
+            text: qsTr("New Actor…")
+            onTriggered: actorDialog.openFor("")
+        }
+    }
+    GlassMenu {
+        id: actorMenu
+        GlassMenuItem {
+            text: qsTr("Edit…")
+            onTriggered: actorDialog.openFor(panel.ctxActorId)
+        }
+        MenuSeparator {}
+        GlassMenuItem {
+            text: qsTr("Delete")
+            onTriggered: deleteDialog.openFor("actor", panel.ctxActorId)
+        }
+    }
 
     // ── Dialogs ──────────────────────────────────────────────────────────────
     NewModuleDialog {
@@ -339,6 +370,9 @@ Rectangle {
     }
     NewEndpointDialog {
         id: newEndpointDialog
+    }
+    ActorDialog {
+        id: actorDialog
     }
 
     Dialog {
@@ -428,7 +462,7 @@ Rectangle {
         }
 
         contentItem: Label {
-            text: deleteDialog.targetKind === "resource" ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId) : qsTr("Delete endpoint “%1”?").arg(deleteDialog.targetId)
+            text: deleteDialog.targetKind === "resource" ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId) : (deleteDialog.targetKind === "actor" ? qsTr("Delete actor “%1”? Operations using it will become unauthenticated.").arg(deleteDialog.targetId) : qsTr("Delete endpoint “%1”?").arg(deleteDialog.targetId))
             color: DesignTokens.textPrimary
             font.pixelSize: DesignTokens.fontBody
             wrapMode: Text.WordWrap
@@ -445,6 +479,8 @@ Rectangle {
                 AppController.deleteOperation(targetId);
             } else if (targetKind === "resource") {
                 AppController.deleteResource(targetId);
+            } else if (targetKind === "actor") {
+                AppController.deleteActor(targetId);
             }
         }
     }

@@ -368,7 +368,7 @@ ColumnLayout {
         LineTabBar {
             id: readTabs
             Layout.fillWidth: true
-            model: [qsTr("Headers"), qsTr("Params"), qsTr("Body"), qsTr("Chain")]
+            model: [qsTr("Headers"), qsTr("Params"), qsTr("Body"), qsTr("Auth"), qsTr("Chain")]
         }
 
         StackLayout {
@@ -388,6 +388,49 @@ ColumnLayout {
                 text: AppController.opBody
                 placeholder: qsTr("No request body.")
             }
+            // Auth (read): the actor carries the auth strategy.
+            Rectangle {
+                radius: DesignTokens.radiusSm
+                color: DesignTokens.surfaceSunken
+                border.width: 1
+                border.color: DesignTokens.borderSubtle
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: DesignTokens.spaceMd
+                    spacing: DesignTokens.spaceXs
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: DesignTokens.spaceSm
+                        AppIcon {
+                            name: "user"
+                            size: 15
+                            color: AppController.opActor.length > 0 ? DesignTokens.accent : DesignTokens.textSecondary
+                        }
+                        Label {
+                            text: AppController.opActor.length > 0 ? AppController.opActor : qsTr("No authentication")
+                            color: DesignTokens.textPrimary
+                            font.pixelSize: DesignTokens.fontBody
+                            font.weight: DesignTokens.weightSemiBold
+                        }
+                    }
+                    Label {
+                        visible: AppController.opActor.length > 0
+                        text: AppController.actorAuthLabel(AppController.opActor)
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontLabel
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Authentication is defined on the actor (actors/*.yaml). Pick the actor in Edit mode.")
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontCaption
+                        wrapMode: Text.WordWrap
+                    }
+                    Item {
+                        Layout.fillHeight: true
+                    }
+                }
+            }
             KeyValueList {
                 model: AppController.opExtractions
                 emptyText: qsTr("No extractions.")
@@ -405,7 +448,7 @@ ColumnLayout {
         LineTabBar {
             id: editTabs
             Layout.fillWidth: true
-            model: [AppController.editParamsCount > 0 ? qsTr("Params  %1").arg(AppController.editParamsCount) : qsTr("Params"), AppController.editHeadersCount > 0 ? qsTr("Headers  %1").arg(AppController.editHeadersCount) : qsTr("Headers"), AppController.editBodyFilled ? qsTr("Body  ●") : qsTr("Body"), qsTr("Options"), AppController.editChainCount > 0 ? qsTr("Chain  %1").arg(AppController.editChainCount) : qsTr("Chain")]
+            model: [AppController.editParamsCount > 0 ? qsTr("Params  %1").arg(AppController.editParamsCount) : qsTr("Params"), AppController.editHeadersCount > 0 ? qsTr("Headers  %1").arg(AppController.editHeadersCount) : qsTr("Headers"), AppController.editBodyFilled ? qsTr("Body  ●") : qsTr("Body"), qsTr("Auth"), qsTr("Options"), AppController.editChainCount > 0 ? qsTr("Chain  %1").arg(AppController.editChainCount) : qsTr("Chain")]
         }
 
         StackLayout {
@@ -674,6 +717,47 @@ ColumnLayout {
                     }
                 }
             }
+            // Auth — Reqloom auth is actor-based; pick the actor (or No Auth).
+            ScrollView {
+                id: authScroll
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: authScroll.availableWidth
+                    spacing: DesignTokens.spaceMd
+
+                    OptionRow {
+                        label: qsTr("Actor")
+                        GlassComboBox {
+                            id: actorCombo
+                            width: parent.width
+                            model: [qsTr("(No Auth)")].concat(AppController.actorNames)
+                            currentIndex: AppController.editActor.length === 0 ? 0 : Math.max(0, find(AppController.editActor))
+                            onActivated: AppController.editActor = (currentIndex === 0 ? "" : currentText)
+                        }
+                    }
+                    OptionRow {
+                        label: qsTr("Strategy")
+                        Label {
+                            width: parent.width
+                            text: AppController.actorAuthLabel(AppController.editActor)
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Auth (Basic, API Key, OAuth, AWS SigV4, login chains) is configured on the actor in actors/*.yaml. Choose which actor this request runs as.")
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontCaption
+                        wrapMode: Text.WordWrap
+                    }
+                    Item {
+                        Layout.fillHeight: true
+                    }
+                }
+            }
             // Options
             ScrollView {
                 id: optScroll
@@ -683,16 +767,6 @@ ColumnLayout {
                     width: optScroll.availableWidth
                     spacing: DesignTokens.spaceMd
 
-                    OptionRow {
-                        label: qsTr("Actor")
-                        GlassComboBox {
-                            id: actorCombo
-                            width: parent.width
-                            model: [qsTr("(none)")].concat(AppController.actorNames)
-                            currentIndex: AppController.editActor.length === 0 ? 0 : Math.max(0, find(AppController.editActor))
-                            onActivated: AppController.editActor = (currentIndex === 0 ? "" : currentText)
-                        }
-                    }
                     OptionRow {
                         label: qsTr("Expect status")
                         TextField {

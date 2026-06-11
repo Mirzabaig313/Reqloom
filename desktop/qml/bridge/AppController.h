@@ -57,6 +57,7 @@ class AppController : public QObject {
     // Pickers for the create dialogs.
     Q_PROPERTY(QStringList moduleNames READ moduleNames NOTIFY projectChanged)
     Q_PROPERTY(QStringList actorNames READ actorNames NOTIFY projectChanged)
+    Q_PROPERTY(QStringList actorStrategies READ actorStrategies CONSTANT)
     Q_PROPERTY(QStringList operationIds READ operationIds NOTIFY projectChanged)
     // Editable models backing the New Endpoint dialog's optional chain section.
     Q_PROPERTY(DependencyEditModel* newEndpointDependencies READ newEndpointDependencies CONSTANT)
@@ -115,6 +116,20 @@ class AppController : public QObject {
     Q_PROPERTY(EditableKeyValueModel* editHeaders READ editHeaders CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editQuery READ editQuery CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
+    Q_PROPERTY(EditableKeyValueModel* editActorConfig READ editActorConfig CONSTANT)
+    // Actor auth-endpoint editor (login request + refresh). Read-only seeds for
+    // the dialog (set on prepareEdit/NewActor); the dialog passes edits back to
+    // saveActorEdits. The kv models are mutated directly by QML.
+    Q_PROPERTY(QString actorAuthMethod READ actorAuthMethod NOTIFY actorEditChanged)
+    Q_PROPERTY(QString actorAuthPath READ actorAuthPath NOTIFY actorEditChanged)
+    Q_PROPERTY(QString actorAuthBody READ actorAuthBody NOTIFY actorEditChanged)
+    Q_PROPERTY(QString actorAuthExpect READ actorAuthExpect NOTIFY actorEditChanged)
+    Q_PROPERTY(bool actorHasRefresh READ actorHasRefresh NOTIFY actorEditChanged)
+    Q_PROPERTY(QString actorRefreshMethod READ actorRefreshMethod NOTIFY actorEditChanged)
+    Q_PROPERTY(QString actorRefreshPath READ actorRefreshPath NOTIFY actorEditChanged)
+    Q_PROPERTY(QString actorRefreshBody READ actorRefreshBody NOTIFY actorEditChanged)
+    Q_PROPERTY(EditableKeyValueModel* actorAuthExtract READ actorAuthExtract CONSTANT)
+    Q_PROPERTY(EditableKeyValueModel* actorRefreshExtract READ actorRefreshExtract CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editExtractions READ editExtractions CONSTANT)
     Q_PROPERTY(DependencyEditModel* editDependencies READ editDependencies CONSTANT)
     Q_PROPERTY(
@@ -154,6 +169,51 @@ public:
     [[nodiscard]] int actorCount() const;
     [[nodiscard]] QStringList moduleNames() const;
     [[nodiscard]] QStringList actorNames() const;
+
+    /// Human-readable auth strategy for `actorName` (e.g. "Basic Auth",
+    /// "API Key", "OAuth 2.0 (Client Credentials)"), for the Authorization
+    /// tab. Empty actor → "No authentication".
+    Q_INVOKABLE [[nodiscard]] QString actorAuthLabel(const QString& actorName) const;
+
+    /// The selectable auth strategy labels for the actor editor's combo.
+    [[nodiscard]] QStringList actorStrategies() const;
+    /// Description of an existing actor (for seeding the editor on Edit).
+    Q_INVOKABLE [[nodiscard]] QString actorDescription(const QString& actorId) const;
+    /// Reset the actor editor's config table for a new actor.
+    Q_INVOKABLE void prepareNewActor();
+    /// Load an existing actor's config into the editor's config table.
+    Q_INVOKABLE void prepareEditActor(const QString& actorId);
+    /// Create-or-update an actor. `originalId` empty → create; otherwise edit
+    /// (renaming when `name` differs). Config comes from `editActorConfig`; the
+    /// login request from the auth* args + `actorAuthExtract`; the refresh block
+    /// from the refresh* args + `actorRefreshExtract` (only when `refreshEnabled`).
+    /// Returns true on success; on failure a toast is shown and the caller
+    /// keeps the dialog open so the user's input isn't lost.
+    Q_INVOKABLE bool saveActorEdits(const QString& originalId,
+                                    const QString& name,
+                                    const QString& strategyLabel,
+                                    const QString& description,
+                                    const QString& authMethod,
+                                    const QString& authPath,
+                                    const QString& authBody,
+                                    const QString& authExpect,
+                                    bool refreshEnabled,
+                                    const QString& refreshMethod,
+                                    const QString& refreshPath,
+                                    const QString& refreshBody);
+    /// Delete an actor and clear it from any operation that referenced it.
+    Q_INVOKABLE void deleteActor(const QString& actorId);
+
+    [[nodiscard]] QString actorAuthMethod() const { return actorAuthMethod_; }
+    [[nodiscard]] QString actorAuthPath() const { return actorAuthPath_; }
+    [[nodiscard]] QString actorAuthBody() const { return actorAuthBody_; }
+    [[nodiscard]] QString actorAuthExpect() const { return actorAuthExpect_; }
+    [[nodiscard]] bool actorHasRefresh() const { return actorHasRefresh_; }
+    [[nodiscard]] QString actorRefreshMethod() const { return actorRefreshMethod_; }
+    [[nodiscard]] QString actorRefreshPath() const { return actorRefreshPath_; }
+    [[nodiscard]] QString actorRefreshBody() const { return actorRefreshBody_; }
+    [[nodiscard]] EditableKeyValueModel* actorAuthExtract() { return &actorAuthExtract_; }
+    [[nodiscard]] EditableKeyValueModel* actorRefreshExtract() { return &actorRefreshExtract_; }
     [[nodiscard]] QStringList operationIds() const;
     [[nodiscard]] DependencyEditModel* newEndpointDependencies() { return &newEndpointDeps_; }
     [[nodiscard]] EditableKeyValueModel* newEndpointExtractions() {
@@ -216,6 +276,7 @@ public:
     [[nodiscard]] EditableKeyValueModel* editHeaders() { return &editHeaders_; }
     [[nodiscard]] EditableKeyValueModel* editQuery() { return &editQuery_; }
     [[nodiscard]] EditableKeyValueModel* editForm() { return &editForm_; }
+    [[nodiscard]] EditableKeyValueModel* editActorConfig() { return &actorConfig_; }
     [[nodiscard]] EditableKeyValueModel* editExtractions() { return &editExtractions_; }
     [[nodiscard]] DependencyEditModel* editDependencies() { return &editDependencies_; }
     [[nodiscard]] QStringList editDependencyCandidates() const;
@@ -356,6 +417,10 @@ signals:
     /// Fired on any editable-field or edit-model change (drives live tab
     /// counts, the edit banner, and re-evaluation of the editable bindings).
     void editChanged();
+
+    /// Fired after prepareNewActor/prepareEditActor seeds the actor editor, so
+    /// the dialog's read-only bindings (auth method/path/body/refresh) refresh.
+    void actorEditChanged();
     /// Fired when the execution-chain preview needs to re-render (operation
     /// opened, edit toggled, or dependencies edited).
     void chainChanged();
@@ -408,6 +473,17 @@ private:
     EditableKeyValueModel editQuery_;
     EditableKeyValueModel editForm_;
     EditableKeyValueModel editExtractions_;
+    EditableKeyValueModel actorConfig_;
+    EditableKeyValueModel actorAuthExtract_;
+    EditableKeyValueModel actorRefreshExtract_;
+    QString actorAuthMethod_;
+    QString actorAuthPath_;
+    QString actorAuthBody_;
+    QString actorAuthExpect_;
+    bool actorHasRefresh_{false};
+    QString actorRefreshMethod_;
+    QString actorRefreshPath_;
+    QString actorRefreshBody_;
     DependencyEditModel editDependencies_;
     bool editing_{false};
     QString editMethod_;
