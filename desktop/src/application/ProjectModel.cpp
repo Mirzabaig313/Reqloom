@@ -437,6 +437,99 @@ bool ProjectModel::createResource(const QString& name, const QString& descriptio
     return true;
 }
 
+bool ProjectModel::saveActor(const QString& originalId,
+                             const engine::Actor& actor,
+                             QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    const std::string nameStd = actor.id.value;
+    if (nameStd.empty()) {
+        error = QStringLiteral("Name cannot be empty.");
+        return false;
+    }
+    if (hasIdBreakingChars(nameStd)) {
+        error = QStringLiteral("Name can't contain '.', '/', or '\\'.");
+        return false;
+    }
+    const std::string origStd = originalId.trimmed().toStdString();
+    const bool creating = origStd.empty();
+
+    engine::Project draft = *project_;
+    if (nameStd != origStd && draft.actors.contains(actor.id)) {
+        error = QStringLiteral("An actor named “%1” already exists.")
+                    .arg(QString::fromStdString(nameStd));
+        return false;
+    }
+    if (!creating) {
+        const auto it = draft.actors.find(engine::ActorId{origStd});
+        if (it == draft.actors.end()) {
+            error = QStringLiteral("Actor “%1” not found.").arg(originalId.trimmed());
+            return false;
+        }
+        draft.actors.erase(it);
+    }
+    draft.actors[actor.id] = actor;
+
+    if (!creating && origStd != nameStd) {
+        for (auto& [resId, res] : draft.resources) {
+            for (auto& [opName, op] : res.operations) {
+                if (op.actor.value == origStd) {
+                    op.actor = actor.id;
+                }
+            }
+        }
+    }
+
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return false;
+    }
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
+bool ProjectModel::deleteActor(const engine::ActorId& id, QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    engine::Project draft = *project_;
+    const auto it = draft.actors.find(id);
+    if (it == draft.actors.end()) {
+        error = QStringLiteral("Actor “%1” not found.").arg(QString::fromStdString(id.value));
+        return false;
+    }
+    draft.actors.erase(it);
+    // No operation may point at a now-missing actor.
+    for (auto& [resId, res] : draft.resources) {
+        for (auto& [opName, op] : res.operations) {
+            if (op.actor.value == id.value) {
+                op.actor = engine::ActorId{};
+            }
+        }
+    }
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return false;
+    }
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
 std::optional<engine::OperationId> ProjectModel::createOperation(
     const engine::ResourceId& resourceId,
     const QString& name,

@@ -2,6 +2,7 @@
 #include "ThemeController.h"
 
 #include <QtCore/QSettings>
+#include <QtQml/QQmlEngine>
 
 namespace reqloom::desktop::qml {
 
@@ -34,6 +35,10 @@ ThemeController* ThemeController::create(QQmlEngine*, QJSEngine*) {
     // merge across the static-library boundary — two singletons, so theme
     // changes on the QML instance never reached the DesignTokens-bound one.
     static ThemeController instance;
+    // The QML engine deletes singleton instances at teardown; this one has
+    // static storage (shared across QML + C++ consumers), so hand the engine
+    // CppOwnership to stop it from calling delete on non-heap memory.
+    QQmlEngine::setObjectOwnership(&instance, QQmlEngine::CppOwnership);
     return &instance;
 }
 
