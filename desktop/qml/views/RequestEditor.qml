@@ -16,6 +16,20 @@ ColumnLayout {
 
     readonly property bool editing: AppController.editing
 
+    // Pick a syntax-highlight language for a request body by sniffing its first
+    // non-space char (JSON object/array, or XML/HTML tag); defaults to JSON.
+    function bodyLanguage(body) {
+        const t = ("" + body).trim();
+        if (t.length === 0)
+            return "json";
+        const c = t.charAt(0);
+        if (c === "{" || c === "[")
+            return "json";
+        if (c === "<")
+            return t.toLowerCase().indexOf("<html") >= 0 || t.indexOf("<!") === 0 ? "html" : "xml";
+        return "json";
+    }
+
     // Render a path template with {{variable}} segments tinted (display-only
     // string formatting, mirrors the old highlightVariables helper).
     function escapeHtml(s) {
@@ -122,7 +136,7 @@ ColumnLayout {
             id: methodCombo
             visible: editor.editing
             implicitHeight: 38
-            Layout.preferredWidth: 110
+            Layout.preferredWidth: 82
             model: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
             currentIndex: Math.max(0, find(AppController.editMethod))
             onActivated: AppController.editMethod = currentText
@@ -386,8 +400,9 @@ ColumnLayout {
                 model: AppController.opQuery
                 emptyText: qsTr("No query parameters.")
             }
-            SelectableTextBox {
+            CodeView {
                 text: AppController.opBody
+                language: editor.bodyLanguage(AppController.opBody)
                 placeholder: qsTr("No request body.")
             }
             // Auth (read): the actor carries the auth strategy.
@@ -504,6 +519,28 @@ ColumnLayout {
                     if (t === "text")
                         return qsTr("plain text body");
                     return "{ }";
+                }
+                // Pretty-print the JSON body. Handles the common import artefact
+                // where the body is a JSON *string* that itself contains JSON
+                // (e.g. "{\"a\":1}") by unwrapping one extra layer before
+                // re-indenting. Leaves invalid JSON untouched.
+                function beautify() {
+                    const t = AppController.editBody.trim();
+                    if (t.length === 0)
+                        return;
+                    try {
+                        let v = JSON.parse(t);
+                        if (typeof v === "string") {
+                            try {
+                                v = JSON.parse(v);
+                            } catch (inner) {
+                                // It was a plain string, not double-encoded JSON.
+                            }
+                        }
+                        AppController.editBody = JSON.stringify(v, null, 2);
+                    } catch (e) {
+                        // Not valid JSON — leave the user's text as-is.
+                    }
                 }
                 function loadGraphql() {
                     try {
@@ -625,29 +662,80 @@ ColumnLayout {
                         }
                     }
 
-                    // 2 — raw (JSON / XML / Text)
-                    Rectangle {
-                        radius: DesignTokens.radiusSm
-                        color: DesignTokens.surfaceSunken
-                        border.width: 1
-                        border.color: DesignTokens.borderSubtle
-                        ScrollView {
-                            anchors.fill: parent
-                            anchors.margins: DesignTokens.spaceXs
-                            clip: true
-                            TextArea {
-                                id: rawBody
-                                text: AppController.editBody
-                                placeholderText: bodyBox.rawPlaceholder(AppController.editBodyType)
-                                color: DesignTokens.textPrimary
-                                placeholderTextColor: DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontLabel
-                                font.family: DesignTokens.fontMono
-                                wrapMode: TextEdit.WrapAnywhere
-                                onTextChanged: if (text !== AppController.editBody) {
-                                    AppController.editBody = text;
+                    // 2 — raw (JSON / XML / Text), syntax-highlighted + Beautify
+                    ColumnLayout {
+                        spacing: DesignTokens.spaceXs
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: DesignTokens.spaceSm
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                            Button {
+                                id: beautifyBtn
+                                visible: AppController.editBodyType === "json"
+                                implicitHeight: 26
+                                leftPadding: DesignTokens.spaceMd
+                                rightPadding: DesignTokens.spaceMd
+                                onClicked: bodyBox.beautify()
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr("Pretty-print the JSON body")
+                                background: Rectangle {
+                                    radius: DesignTokens.radiusSm
+                                    color: beautifyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                                    border.width: 1
+                                    border.color: DesignTokens.borderSubtle
                                 }
-                                background: null
+                                contentItem: Text {
+                                    text: qsTr("Beautify")
+                                    color: DesignTokens.accent
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.weight: DesignTokens.weightSemiBold
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.surfaceSunken
+                            border.width: 1
+                            border.color: DesignTokens.borderSubtle
+                            ScrollView {
+                                anchors.fill: parent
+                                anchors.margins: DesignTokens.spaceXs
+                                clip: true
+                                TextArea {
+                                    id: rawBody
+                                    text: AppController.editBody
+                                    placeholderText: bodyBox.rawPlaceholder(AppController.editBodyType)
+                                    color: DesignTokens.textPrimary
+                                    placeholderTextColor: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.family: DesignTokens.fontMono
+                                    wrapMode: TextEdit.WrapAnywhere
+                                    onTextChanged: if (text !== AppController.editBody) {
+                                        AppController.editBody = text;
+                                    }
+                                    background: null
+
+                                    // Live syntax colouring for the editable body.
+                                    BodyHighlighter {
+                                        document: rawBody.textDocument
+                                        language: AppController.editBodyType === "xml" ? "xml" : (AppController.editBodyType === "text" ? "text" : "json")
+                                        propertyColor: DesignTokens.accent
+                                        stringColor: DesignTokens.statusSuccess
+                                        numberColor: DesignTokens.statusWarning
+                                        keywordColor: DesignTokens.methodDelete
+                                        commentColor: DesignTokens.textSecondary
+                                        punctuationColor: DesignTokens.textSecondary
+                                        tagColor: DesignTokens.accent
+                                    }
+                                }
                             }
                         }
                     }
