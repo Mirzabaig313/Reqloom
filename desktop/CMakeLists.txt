@@ -73,11 +73,13 @@ qt_add_qml_module(reqloom-desktop
         qml/views/NewModuleDialog.qml
         qml/views/NewEndpointDialog.qml
         qml/views/ActorDialog.qml
+        qml/views/ManageEnvironmentDialog.qml
         qml/widgets/MethodBadge.qml
         qml/widgets/Card.qml
         qml/widgets/GlassComboBox.qml
         qml/widgets/GlassButton.qml
         qml/widgets/GlassMenu.qml
+        qml/widgets/EnvironmentSelector.qml
         qml/widgets/GlassMenuItem.qml
         qml/widgets/DialogButtons.qml
         qml/widgets/GlassTextField.qml

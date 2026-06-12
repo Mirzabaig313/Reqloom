@@ -117,6 +117,9 @@ class AppController : public QObject {
     Q_PROPERTY(EditableKeyValueModel* editQuery READ editQuery CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editActorConfig READ editActorConfig CONSTANT)
+    Q_PROPERTY(EditableKeyValueModel* editEnvVars READ editEnvVars CONSTANT)
+    Q_PROPERTY(QString editEnvBaseUrl READ editEnvBaseUrl WRITE setEditEnvBaseUrl NOTIFY
+                   editEnvBaseUrlChanged)
     // Actor auth-endpoint editor (login request + refresh). Read-only seeds for
     // the dialog (set on prepareEdit/NewActor); the dialog passes edits back to
     // saveActorEdits. The kv models are mutated directly by QML.
@@ -204,6 +207,18 @@ public:
     /// Delete an actor and clear it from any operation that referenced it.
     Q_INVOKABLE void deleteActor(const QString& actorId);
 
+    // ── Environment create / edit / delete ──────────────────────────────────
+    /// Reset the environment editor's variable table for a new environment.
+    Q_INVOKABLE void prepareNewEnvironment();
+    /// Load an existing environment's variables into the editor table.
+    Q_INVOKABLE void prepareEditEnvironment(const QString& name);
+    /// Create-or-update an environment (`originalName` empty → create; rename
+    /// when `name` differs). Variables come from `editEnvVars`. Returns true on
+    /// success so the dialog stays open on a rejected save.
+    Q_INVOKABLE bool saveEnvironmentEdits(const QString& originalName, const QString& name);
+    /// Delete an environment.
+    Q_INVOKABLE void deleteEnvironment(const QString& name);
+
     [[nodiscard]] QString actorAuthMethod() const { return actorAuthMethod_; }
     [[nodiscard]] QString actorAuthPath() const { return actorAuthPath_; }
     [[nodiscard]] QString actorAuthBody() const { return actorAuthBody_; }
@@ -277,6 +292,9 @@ public:
     [[nodiscard]] EditableKeyValueModel* editQuery() { return &editQuery_; }
     [[nodiscard]] EditableKeyValueModel* editForm() { return &editForm_; }
     [[nodiscard]] EditableKeyValueModel* editActorConfig() { return &actorConfig_; }
+    [[nodiscard]] EditableKeyValueModel* editEnvVars() { return &envVars_; }
+    [[nodiscard]] QString editEnvBaseUrl() const { return editEnvBaseUrl_; }
+    void setEditEnvBaseUrl(const QString& url);
     [[nodiscard]] EditableKeyValueModel* editExtractions() { return &editExtractions_; }
     [[nodiscard]] DependencyEditModel* editDependencies() { return &editDependencies_; }
     [[nodiscard]] QStringList editDependencyCandidates() const;
@@ -421,6 +439,9 @@ signals:
     /// Fired after prepareNewActor/prepareEditActor seeds the actor editor, so
     /// the dialog's read-only bindings (auth method/path/body/refresh) refresh.
     void actorEditChanged();
+
+    /// Fired when the env editor's Base URL field is seeded programmatically.
+    void editEnvBaseUrlChanged();
     /// Fired when the execution-chain preview needs to re-render (operation
     /// opened, edit toggled, or dependencies edited).
     void chainChanged();
@@ -474,6 +495,8 @@ private:
     EditableKeyValueModel editForm_;
     EditableKeyValueModel editExtractions_;
     EditableKeyValueModel actorConfig_;
+    EditableKeyValueModel envVars_;
+    QString editEnvBaseUrl_;
     EditableKeyValueModel actorAuthExtract_;
     EditableKeyValueModel actorRefreshExtract_;
     QString actorAuthMethod_;
@@ -512,7 +535,7 @@ private:
     QStringList environments_;
     QString environment_;
     bool running_{false};
-    bool captureBodies_{false};
+    bool captureBodies_{true};
     bool hasResponse_{false};
     int respStatus_{0};
     int respElapsedMs_{0};

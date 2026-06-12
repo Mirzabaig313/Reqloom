@@ -94,6 +94,9 @@ private:
     // stepIndex → position in rows_. Positions are stable: rows are only ever
     // appended (never removed) within a run, so settling a step is O(1).
     QHash<int, int> stepRowByIndex_;
+    // Position of the run header row, so onRunEnded can settle its stale
+    // "running" badge to the final outcome instead of leaving it spinning.
+    int runStartRow_{-1};
 };
 
 }  // namespace reqloom::desktop::qml

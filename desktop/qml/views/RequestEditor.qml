@@ -303,13 +303,15 @@ ColumnLayout {
         rightPadding: DesignTokens.spaceMd
         background: Rectangle {
             radius: DesignTokens.radiusSm
-            color: secondary.down ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
+            color: secondary.down ? DesignTokens.accentMuted : (secondary.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
             border.width: 1
-            border.color: DesignTokens.borderStrong
+            // Illuminate the boundary on hover/press so clickability stays
+            // obvious on low-contrast / anti-glare displays.
+            border.color: (secondary.hovered || secondary.down) ? DesignTokens.accent : DesignTokens.borderStrong
         }
         contentItem: Text {
             text: secondary.text
-            color: secondary.enabled ? DesignTokens.textSecondary : DesignTokens.borderStrong
+            color: !secondary.enabled ? DesignTokens.borderStrong : (secondary.hovered ? DesignTokens.textPrimary : DesignTokens.textSecondary)
             font.pixelSize: DesignTokens.fontBody
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
