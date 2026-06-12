@@ -7,12 +7,16 @@ import Reqloom
 Rectangle {
     id: badge
     required property string method
+    // When > 0, the pill is at least this wide so a column of badges
+    // (e.g. the Explorer) keeps every following name on the same x-axis,
+    // regardless of method length (GET vs OPTIONS).
+    property int minWidth: 0
 
     function hue(m) {
-        return DesignTokens.methodColor(m)
+        return DesignTokens.methodColor(m);
     }
 
-    implicitWidth: label.implicitWidth + DesignTokens.spaceSm * 2
+    implicitWidth: Math.max(label.implicitWidth + DesignTokens.spaceSm * 2, minWidth)
     implicitHeight: 22
     radius: DesignTokens.radiusSm
     color: Qt.rgba(hue(method).r, hue(method).g, hue(method).b, 0.16)

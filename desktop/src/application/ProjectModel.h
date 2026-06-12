@@ -106,6 +106,22 @@ public:
     /// Emits `saved` on success.
     [[nodiscard]] bool deleteActor(const engine::ActorId& id, QString& error);
 
+    /// Create or update an environment. `originalName` empty → create a new
+    /// environment named `name`; otherwise update it (renaming to `name` if
+    /// different, moving its transport config and the project default when they
+    /// point at the old name). `variables` replaces the env's variable map.
+    /// Validates + persists (the writer prunes a renamed env's stale file);
+    /// emits `saved` on success.
+    [[nodiscard]] bool saveEnvironment(const QString& originalName,
+                                       const QString& name,
+                                       const std::map<std::string, std::string>& variables,
+                                       QString& error);
+
+    /// Delete environment `name` (and its transport config); if it was the
+    /// project default, reassign the default to another environment (or empty).
+    /// Persists + rebinds; emits `saved` on success.
+    [[nodiscard]] bool deleteEnvironment(const QString& name, QString& error);
+
     /// Create an empty resource named `name` (optional `description`), persist,
     /// and rebind. Fails if the name is empty, contains id-breaking characters
     /// ('.', '/', '\'), or already exists. Emits `saved` on success.

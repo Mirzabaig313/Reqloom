@@ -530,6 +530,103 @@ bool ProjectModel::deleteActor(const engine::ActorId& id, QString& error) {
     return true;
 }
 
+bool ProjectModel::saveEnvironment(const QString& originalName,
+                                   const QString& name,
+                                   const std::map<std::string, std::string>& variables,
+                                   QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    const std::string nameStd = name.trimmed().toStdString();
+    if (nameStd.empty()) {
+        error = QStringLiteral("Name cannot be empty.");
+        return false;
+    }
+    if (hasIdBreakingChars(nameStd)) {
+        error = QStringLiteral("Name can't contain '.', '/', or '\\'.");
+        return false;
+    }
+    const std::string origStd = originalName.trimmed().toStdString();
+    const bool creating = origStd.empty();
+
+    engine::Project draft = *project_;
+    if (nameStd != origStd && draft.environments.contains(nameStd)) {
+        error = QStringLiteral("An environment named “%1” already exists.").arg(name.trimmed());
+        return false;
+    }
+    if (!creating) {
+        const auto it = draft.environments.find(origStd);
+        if (it == draft.environments.end()) {
+            error = QStringLiteral("Environment “%1” not found.").arg(originalName.trimmed());
+            return false;
+        }
+        draft.environments.erase(it);
+    }
+    draft.environments[nameStd] = variables;
+
+    if (!creating && origStd != nameStd) {
+        // Move the per-env transport config and the project default onto the
+        // new name so neither dangles after the rename.
+        if (const auto t = draft.transport.find(origStd); t != draft.transport.end()) {
+            draft.transport[nameStd] = t->second;
+            draft.transport.erase(t);
+        }
+        if (draft.defaultEnvironment == origStd) {
+            draft.defaultEnvironment = nameStd;
+        }
+    }
+    if (draft.defaultEnvironment.empty()) {
+        draft.defaultEnvironment = nameStd;
+    }
+
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return false;
+    }
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
+bool ProjectModel::deleteEnvironment(const QString& name, QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    const std::string nameStd = name.trimmed().toStdString();
+    engine::Project draft = *project_;
+    const auto it = draft.environments.find(nameStd);
+    if (it == draft.environments.end()) {
+        error = QStringLiteral("Environment “%1” not found.").arg(name.trimmed());
+        return false;
+    }
+    draft.environments.erase(it);
+    draft.transport.erase(nameStd);
+    if (draft.defaultEnvironment == nameStd) {
+        draft.defaultEnvironment =
+            draft.environments.empty() ? std::string{} : draft.environments.begin()->first;
+    }
+
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return false;
+    }
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
 std::optional<engine::OperationId> ProjectModel::createOperation(
     const engine::ResourceId& resourceId,
     const QString& name,
