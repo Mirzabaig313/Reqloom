@@ -131,6 +131,11 @@ AppController::AppController(QObject* parent)
     connect(project_.get(), &ProjectModel::saved, this, &AppController::onLoaded);
     connect(project_.get(), &ProjectModel::loadFailed, this, &AppController::onLoadFailed);
 
+    // Capture response bodies by default so the timeline shows full request /
+    // response detail (including error bodies) without an opt-in toggle. The
+    // RunController defaults to off, so push our default through explicitly.
+    runController_->setCaptureResponseBodies(captureBodies_);
+
     connect(runController_.get(), &RunController::runningChanged, this, [this](bool running) {
         running_ = running;
         emit runningChanged();
@@ -1342,6 +1347,72 @@ void AppController::deleteActor(const QString& actorId) {
     QString error;
     if (project_->deleteActor(engine::ActorId{actorId.toStdString()}, error)) {
         emit notify(QStringLiteral("Deleted actor “%1”").arg(actorId), false);
+    } else {
+        emit notify(error, true);
+    }
+}
+
+void AppController::prepareNewEnvironment() {
+    envVars_.clearRows();
+    editEnvBaseUrl_.clear();
+    emit editEnvBaseUrlChanged();
+}
+
+void AppController::setEditEnvBaseUrl(const QString& url) {
+    if (url == editEnvBaseUrl_) {
+        return;
+    }
+    editEnvBaseUrl_ = url;
+    emit editEnvBaseUrlChanged();
+}
+
+void AppController::prepareEditEnvironment(const QString& name) {
+    std::vector<std::pair<QString, QString>> pairs;
+    editEnvBaseUrl_.clear();
+    if (project_->hasProject()) {
+        const auto& envs = project_->project().environments;
+        const auto it = envs.find(name.toStdString());
+        if (it != envs.end()) {
+            for (const auto& [key, value] : it->second) {
+                // baseUrl is surfaced in its own dedicated field, not the table.
+                if (key == "baseUrl") {
+                    editEnvBaseUrl_ = QString::fromStdString(value);
+                    continue;
+                }
+                pairs.emplace_back(QString::fromStdString(key), QString::fromStdString(value));
+            }
+        }
+    }
+    envVars_.setPairs(std::move(pairs));
+    emit editEnvBaseUrlChanged();
+}
+
+bool AppController::saveEnvironmentEdits(const QString& originalName, const QString& name) {
+    std::map<std::string, std::string> variables;
+    for (const auto& [key, value] : envVars_.pairs()) {
+        // Skip a stray baseUrl row — the dedicated field is authoritative.
+        if (!key.isEmpty() && key != QStringLiteral("baseUrl")) {
+            variables.insert_or_assign(key.toStdString(), value.toStdString());
+        }
+    }
+    const QString baseUrl = editEnvBaseUrl_.trimmed();
+    if (!baseUrl.isEmpty()) {
+        variables.insert_or_assign(std::string{"baseUrl"}, baseUrl.toStdString());
+    }
+    QString error;
+    if (project_->saveEnvironment(originalName, name, variables, error)) {
+        setEnvironment(name.trimmed());
+        emit notify(QStringLiteral("Saved environment “%1”").arg(name.trimmed()), false);
+        return true;
+    }
+    emit notify(error, true);
+    return false;
+}
+
+void AppController::deleteEnvironment(const QString& name) {
+    QString error;
+    if (project_->deleteEnvironment(name, error)) {
+        emit notify(QStringLiteral("Deleted environment “%1”").arg(name), false);
     } else {
         emit notify(error, true);
     }

@@ -369,19 +369,9 @@ ApplicationWindow {
                 color: DesignTokens.textSecondary
                 font.pixelSize: DesignTokens.fontLabel
             }
-            GlassComboBox {
-                id: envCombo
-                model: AppController.environments
-                implicitWidth: 160
-                enabled: AppController.environments.length > 0
-                onActivated: AppController.environment = currentText
-                Component.onCompleted: currentIndex = Math.max(0, find(AppController.environment))
-                Connections {
-                    target: AppController
-                    function onEnvironmentChanged() {
-                        envCombo.currentIndex = Math.max(0, envCombo.find(AppController.environment));
-                    }
-                }
+            EnvironmentSelector {
+                onNewRequested: manageEnvironmentDialog.openManager("")
+                onManageRequested: manageEnvironmentDialog.openManager(AppController.environment)
             }
 
             CheckBox {
@@ -726,6 +716,28 @@ ApplicationWindow {
         onAccepted: AppController.openProject(selectedFolder)
     }
 
+    GlassMenu {
+        id: envMenu
+        GlassMenuItem {
+            text: qsTr("New Environment…")
+            onTriggered: environmentDialog.openFor("")
+        }
+        GlassMenuItem {
+            text: AppController.environment.length > 0 ? qsTr("Edit “%1”…").arg(AppController.environment) : qsTr("Edit…")
+            enabled: AppController.environment.length > 0
+            onTriggered: environmentDialog.openFor(AppController.environment)
+        }
+        MenuSeparator {}
+        GlassMenuItem {
+            text: AppController.environment.length > 0 ? qsTr("Delete “%1”").arg(AppController.environment) : qsTr("Delete")
+            enabled: AppController.environments.length > 1 && AppController.environment.length > 0
+            onTriggered: AppController.deleteEnvironment(AppController.environment)
+        }
+    }
+
+    ManageEnvironmentDialog {
+        id: manageEnvironmentDialog
+    }
     SecretsDialog {
         id: secretsDialog
     }

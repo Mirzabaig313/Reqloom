@@ -201,6 +201,9 @@ Rectangle {
                         visible: del.isOperation
                         Layout.alignment: Qt.AlignVCenter
                         method: del.isOperation ? del.method : "GET"
+                        // Uniform column width so endpoint names align whether
+                        // the verb is GET (3) or DELETE/OPTIONS (6–7).
+                        minWidth: 58
                     }
                     Label {
                         Layout.fillWidth: true

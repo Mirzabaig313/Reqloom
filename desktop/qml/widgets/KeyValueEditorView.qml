@@ -41,6 +41,11 @@ ColumnLayout {
         font.pixelSize: DesignTokens.fontLabel
         font.family: DesignTokens.fontMono
         implicitHeight: 32
+        // Explicit, shared metrics so the placeholder (ghost row) and typed
+        // text sit on the exact same horizontal + vertical axis.
+        leftPadding: DesignTokens.spaceSm
+        rightPadding: DesignTokens.spaceSm
+        verticalAlignment: TextInput.AlignVCenter
         background: Rectangle {
             radius: DesignTokens.radiusSm
             color: DesignTokens.surfaceSunken
