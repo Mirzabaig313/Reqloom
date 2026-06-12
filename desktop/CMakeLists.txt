@@ -92,6 +92,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/LineTabBar.qml
         qml/widgets/SelectableTextBox.qml
         qml/widgets/CodeView.qml
+        qml/widgets/GlassToolTip.qml
         qml/widgets/KeyValueList.qml
         qml/widgets/KeyValueEditorView.qml
         qml/widgets/ChainView.qml

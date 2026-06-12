@@ -198,6 +198,10 @@ ColumnLayout {
             enabled: !AppController.running
             implicitWidth: 96
             implicitHeight: 38
+            GlassToolTip {
+                active: sendButton.hovered
+                text: editor.editing ? qsTr("Apply your edits and send, resolving the dependency chain  (⌘↵)") : qsTr("Send this request, resolving its dependency chain first  (⌘↵)")
+            }
             background: Rectangle {
                 radius: DesignTokens.radiusSm
                 color: !sendButton.enabled ? DesignTokens.borderStrong : sendButton.down ? DesignTokens.accentHover : DesignTokens.accent
@@ -241,6 +245,10 @@ ColumnLayout {
                 verticalAlignment: Text.AlignVCenter
             }
             onClicked: AppController.beginEdit()
+            GlassToolTip {
+                active: editButton.hovered
+                text: qsTr("Edit this request — method, path, headers, body, and dependency chain")
+            }
         }
 
         // Edit mode: Save commits the edits to the project (persists + exits
@@ -297,24 +305,32 @@ ColumnLayout {
 
         SecondaryButton {
             text: qsTr("Hooks…")
+            tip: qsTr("Edit the pre-request and post-response scripts for this endpoint")
             onClicked: AppController.openHookEditor()
         }
         SecondaryButton {
             text: qsTr("Dry Run")
+            tip: qsTr("Preview the resolved chain and built requests — nothing is actually sent")
             onClicked: editor.editing ? AppController.applyAndRun(false, true) : AppController.runSelected(false, true)
         }
         SecondaryButton {
             text: qsTr("Send Cleanly")
+            tip: qsTr("Clear cached sessions and extracted values first, then send from scratch")
             onClicked: editor.editing ? AppController.applyAndRun(true, false) : AppController.runSelected(true, false)
         }
     }
 
     component SecondaryButton: Button {
         id: secondary
+        property string tip: ""
         enabled: !AppController.running
         implicitHeight: 32
         leftPadding: DesignTokens.spaceMd
         rightPadding: DesignTokens.spaceMd
+        GlassToolTip {
+            active: secondary.hovered && secondary.tip.length > 0
+            text: secondary.tip
+        }
         background: Rectangle {
             radius: DesignTokens.radiusSm
             color: secondary.down ? DesignTokens.accentMuted : (secondary.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
@@ -679,8 +695,6 @@ ColumnLayout {
                                 leftPadding: DesignTokens.spaceMd
                                 rightPadding: DesignTokens.spaceMd
                                 onClicked: bodyBox.beautify()
-                                ToolTip.visible: hovered
-                                ToolTip.text: qsTr("Pretty-print the JSON body")
                                 background: Rectangle {
                                     radius: DesignTokens.radiusSm
                                     color: beautifyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"

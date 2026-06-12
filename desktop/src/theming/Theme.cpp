@@ -34,10 +34,10 @@ constexpr double kAccentHue = 200.0;
     p.accentMuted = oklch(0.910, 0.030, 195.0);  // light teal selection tint
 
     p.statusIdle = oklch(0.722, 0.012, kAccentHue);
-    p.statusRunning = oklch(0.600, 0.140, 230.0);
+    p.statusRunning = oklch(0.555, 0.150, 230.0);
     p.statusSuccess = oklch(0.560, 0.150, 150.0);
-    p.statusWarning = oklch(0.700, 0.150, 75.0);
-    p.statusError = oklch(0.636, 0.208, 25.3);  // theme.json destructive
+    p.statusWarning = oklch(0.560, 0.160, 75.0);
+    p.statusError = oklch(0.580, 0.215, 25.3);  // theme.json destructive
     p.statusCancelled = oklch(0.550, 0.010, kAccentHue);
     p.statusBlocked = oklch(0.560, 0.150, 320.0);
 
@@ -55,7 +55,7 @@ constexpr double kAccentHue = 200.0;
     p.methodGet = oklch(0.550, 0.150, 255.0);
     p.methodPost = oklch(0.560, 0.150, 150.0);
     p.methodPut = oklch(0.600, 0.150, 55.0);
-    p.methodPatch = oklch(0.620, 0.140, 95.0);
+    p.methodPatch = oklch(0.565, 0.150, 95.0);
     p.methodDelete = oklch(0.560, 0.200, 27.0);
     return p;
 }

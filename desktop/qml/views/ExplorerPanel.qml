@@ -27,6 +27,13 @@ Rectangle {
     property string ctxExampleName: ""
     property string ctxActorId: ""
 
+    // Open the New Endpoint dialog (optionally pre-selecting a module). Lets
+    // other views (e.g. the centre endpoint-list empty state) trigger the same
+    // flow without owning a second dialog.
+    function openNewEndpoint(resourceId) {
+        newEndpointDialog.openFor(resourceId);
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: DesignTokens.spaceMd
@@ -41,8 +48,10 @@ Rectangle {
                 id: addBtn
                 implicitWidth: 28
                 implicitHeight: 28
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Add module or endpoint")
+                GlassToolTip {
+                    active: addBtn.hovered
+                    text: qsTr("Add module or endpoint")
+                }
                 onClicked: addMenu.popup()
                 contentItem: AppIcon {
                     name: "plus"
@@ -58,8 +67,10 @@ Rectangle {
                 id: collapseBtn
                 implicitWidth: 28
                 implicitHeight: 28
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Collapse sidebar")
+                GlassToolTip {
+                    active: collapseBtn.hovered
+                    text: qsTr("Collapse sidebar")
+                }
                 onClicked: panel.collapseRequested()
                 contentItem: AppIcon {
                     name: "chevron-left"
@@ -69,38 +80,6 @@ Rectangle {
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
                     color: collapseBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
-                }
-            }
-        }
-
-        // Live filter.
-        Rectangle {
-            Layout.fillWidth: true
-            height: 34
-            radius: DesignTokens.radiusSm
-            color: DesignTokens.surfaceSunken
-            border.width: 1
-            border.color: filterField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: DesignTokens.spaceSm
-                anchors.rightMargin: DesignTokens.spaceSm
-                spacing: DesignTokens.spaceXs
-                Label {
-                    text: "🔍"
-                    font.pixelSize: DesignTokens.fontLabel
-                    opacity: 0.6
-                }
-                TextField {
-                    id: filterField
-                    Layout.fillWidth: true
-                    placeholderText: qsTr("Filter operations…")
-                    color: DesignTokens.textPrimary
-                    placeholderTextColor: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontBody
-                    background: null
-                    verticalAlignment: TextInput.AlignVCenter
-                    onTextChanged: AppController.setExplorerFilter(text)
                 }
             }
         }
@@ -213,10 +192,12 @@ Rectangle {
                         font.pixelSize: DesignTokens.fontBody
                         font.weight: del.current ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                         elide: Text.ElideRight
-                        ToolTip.visible: hoverHandler.hovered && del.tooltip.length > 0
-                        ToolTip.text: del.tooltip
                         HoverHandler {
                             id: hoverHandler
+                        }
+                        GlassToolTip {
+                            active: hoverHandler.hovered && del.tooltip.length > 0
+                            text: del.tooltip
                         }
                     }
                 }
