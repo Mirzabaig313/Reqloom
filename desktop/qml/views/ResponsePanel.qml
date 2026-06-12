@@ -285,8 +285,10 @@ Rectangle {
                 id: stackBtn
                 implicitWidth: 28
                 implicitHeight: 28
-                ToolTip.visible: hovered
-                ToolTip.text: panel.stacked ? qsTr("Stacked — switch to side-by-side") : qsTr("Side-by-side — switch to stacked")
+                GlassToolTip {
+                    active: stackBtn.hovered
+                    text: panel.stacked ? qsTr("Stacked — switch to side-by-side") : qsTr("Side-by-side — switch to stacked")
+                }
                 onClicked: panel.toggleStackRequested()
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
@@ -302,8 +304,10 @@ Rectangle {
                 id: closeBtn
                 implicitWidth: 28
                 implicitHeight: 28
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Close response panel")
+                GlassToolTip {
+                    active: closeBtn.hovered
+                    text: qsTr("Close response panel")
+                }
                 onClicked: panel.closeRequested()
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
@@ -440,15 +444,13 @@ Rectangle {
                     }
                     Button {
                         id: prettyBtn
-                        visible: respTabs.currentIndex === 1 || respTabs.currentIndex === 3
+                        visible: respTabs.currentIndex === 3
                         implicitHeight: 26
                         leftPadding: DesignTokens.spaceSm
                         rightPadding: DesignTokens.spaceSm
                         checkable: true
                         checked: panel.prettyRaw
                         onToggled: panel.prettyRaw = checked
-                        ToolTip.visible: hovered
-                        ToolTip.text: qsTr("Pretty-print JSON body")
                         background: Rectangle {
                             radius: DesignTokens.radiusSm
                             color: prettyBtn.checked ? DesignTokens.accentMuted : (prettyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
@@ -603,6 +605,32 @@ Rectangle {
                                 contentItem: Text {
                                     text: qsTr("Preview")
                                     color: previewBtn.checked ? DesignTokens.accent : DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.weight: DesignTokens.weightSemiBold
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                            // JSON-only indent toggle — lives with the format
+                            // dropdown so body formatting is one control cluster.
+                            Button {
+                                id: rawPrettyBtn
+                                visible: panel.respFormat === "json"
+                                implicitHeight: 30
+                                leftPadding: DesignTokens.spaceMd
+                                rightPadding: DesignTokens.spaceMd
+                                checkable: true
+                                checked: panel.prettyRaw
+                                onToggled: panel.prettyRaw = checked
+                                background: Rectangle {
+                                    radius: DesignTokens.radiusSm
+                                    color: rawPrettyBtn.checked ? DesignTokens.accentMuted : (rawPrettyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
+                                    border.width: 1
+                                    border.color: rawPrettyBtn.checked ? DesignTokens.accent : DesignTokens.borderSubtle
+                                }
+                                contentItem: Text {
+                                    text: qsTr("Pretty")
+                                    color: rawPrettyBtn.checked ? DesignTokens.accent : DesignTokens.textSecondary
                                     font.pixelSize: DesignTokens.fontLabel
                                     font.weight: DesignTokens.weightSemiBold
                                     horizontalAlignment: Text.AlignHCenter

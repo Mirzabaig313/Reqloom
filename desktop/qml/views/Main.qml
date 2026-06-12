@@ -343,8 +343,6 @@ ApplicationWindow {
                         required property var modelData
                         implicitWidth: 32
                         implicitHeight: 30
-                        ToolTip.visible: hovered
-                        ToolTip.text: qsTr("Appearance: %1").arg(apBtn.modelData.m)
                         background: Rectangle {
                             color: ThemeController.mode === apBtn.modelData.m ? DesignTokens.accentMuted : (apBtn.hovered ? Qt.rgba(1, 1, 1, 0.05) : "transparent")
                             border.width: 1
@@ -479,8 +477,12 @@ ApplicationWindow {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: explorerCollapsed = false
                 }
-                ToolTip.visible: explorerRailArea.containsMouse
-                ToolTip.text: qsTr("Show Explorer")
+                GlassToolTip {
+                    active: explorerRailArea.containsMouse
+                    text: qsTr("Show Explorer")
+                    x: parent.width + 6
+                    y: DesignTokens.spaceLg
+                }
             }
         }
 
@@ -519,6 +521,8 @@ ApplicationWindow {
                 EmptyState {
                     visible: !AppController.hasOperation && AppController.resourceCount === 0
                     anchors.centerIn: parent
+                    actionText: qsTr("Open Project")
+                    onActionTriggered: folderDialog.open()
                 }
 
                 // Endpoint list for the selected module.
@@ -598,12 +602,13 @@ ApplicationWindow {
                             }
                             onClicked: AppController.selectOperation(AppController.selectedModule, opRow.name)
                         }
-                        Label {
-                            anchors.centerIn: parent
+                        EmptyState {
                             visible: endpointList.count === 0 && AppController.resourceCount > 0
-                            text: qsTr("No endpoints in this module yet.")
-                            color: DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontBody
+                            iconName: "plus"
+                            heading: qsTr("No endpoints yet")
+                            body: qsTr("Add an endpoint to this module to start sending requests.")
+                            actionText: qsTr("New Endpoint")
+                            onActionTriggered: explorerPanel.openNewEndpoint(AppController.selectedModule)
                         }
                     }
                 }
@@ -693,8 +698,12 @@ ApplicationWindow {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: responseCollapsed = false
                     }
-                    ToolTip.visible: responseRailArea.containsMouse
-                    ToolTip.text: qsTr("Show Response")
+                    GlassToolTip {
+                        active: responseRailArea.containsMouse
+                        text: qsTr("Show Response")
+                        x: -width - 6
+                        y: DesignTokens.spaceLg
+                    }
                 }
             }
         }

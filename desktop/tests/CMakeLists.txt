@@ -9,6 +9,7 @@ add_executable(reqloom-desktop-ui-tests
     TestMain.cpp
     ui/EnvironmentSettingsTest.cpp
     unit/ColorTest.cpp
+    unit/ContrastTest.cpp
     unit/LayoutSettingsTest.cpp
     unit/FuzzyMatchTest.cpp
     unit/LineDiffTest.cpp

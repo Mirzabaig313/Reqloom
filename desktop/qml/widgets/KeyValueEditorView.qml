@@ -119,10 +119,12 @@ ColumnLayout {
                         font.pixelSize: DesignTokens.fontLabel
                         font.family: DesignTokens.fontMono
                         elide: Text.ElideMiddle
-                        ToolTip.visible: chipHover.hovered && row.value.length > 1
-                        ToolTip.text: row.value.substring(1)
                         HoverHandler {
                             id: chipHover
+                        }
+                        GlassToolTip {
+                            active: chipHover.hovered && row.value.length > 1
+                            text: row.value.substring(1)
                         }
                     }
                     ToolButton {
@@ -165,8 +167,10 @@ ColumnLayout {
                     radius: DesignTokens.radiusSm
                     color: kvAttach.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
                 }
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Attach file")
+                GlassToolTip {
+                    active: kvAttach.hovered
+                    text: qsTr("Attach file")
+                }
             }
 
             ToolButton {
