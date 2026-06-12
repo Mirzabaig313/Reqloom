@@ -57,8 +57,10 @@ Rectangle {
                 id: resetBtn
                 visible: !AppController.running
                 text: qsTr("Reset caches")
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Clear session + extraction caches before the next run")
+                GlassToolTip {
+                    active: resetBtn.hovered
+                    text: qsTr("Clear session + extraction caches before the next run")
+                }
                 onClicked: AppController.resetCaches()
                 contentItem: Text {
                     text: resetBtn.text

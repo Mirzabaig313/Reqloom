@@ -2,11 +2,11 @@
 // TextArea document.
 #include "BodyHighlighter.h"
 
-#include <QtQuick/QQuickTextDocument>
+#include <QtCore/QRegularExpression>
 #include <QtGui/QSyntaxHighlighter>
 #include <QtGui/QTextCharFormat>
 #include <QtGui/QTextDocument>
-#include <QtCore/QRegularExpression>
+#include <QtQuick/QQuickTextDocument>
 
 #include <utility>
 #include <vector>
@@ -58,15 +58,17 @@ namespace {
     return fmt;
 }
 
-[[nodiscard]] HighlighterImpl::Rule
-rule(const QString& pattern, const QColor& color, int group = 0) {
+[[nodiscard]] HighlighterImpl::Rule rule(const QString& pattern,
+                                         const QColor& color,
+                                         int group = 0) {
     return HighlighterImpl::Rule{QRegularExpression(pattern), colorFormat(color), group};
 }
 
 }  // namespace
 
 BodyHighlighter::BodyHighlighter(QObject* parent)
-    : QObject(parent), impl_(std::make_unique<HighlighterImpl>(static_cast<QTextDocument*>(nullptr))) {}
+    : QObject(parent),
+      impl_(std::make_unique<HighlighterImpl>(static_cast<QTextDocument*>(nullptr))) {}
 
 BodyHighlighter::~BodyHighlighter() = default;
 
@@ -174,10 +176,8 @@ void BodyHighlighter::rebuild() {
     } else if (lang == QLatin1String("yaml")) {
         rules.push_back(rule(QStringLiteral("^\\s*([\\w.\\-]+)\\s*:"), propertyColor_, 1));
         rules.push_back(rule(QStringLiteral("\"[^\"]*\"|'[^']*'"), stringColor_));
-        rules.push_back(
-            rule(QStringLiteral("\\b-?\\d+(?:\\.\\d+)?\\b"), numberColor_));
-        rules.push_back(
-            rule(QStringLiteral("\\b(?:true|false|null|yes|no)\\b"), keywordColor_));
+        rules.push_back(rule(QStringLiteral("\\b-?\\d+(?:\\.\\d+)?\\b"), numberColor_));
+        rules.push_back(rule(QStringLiteral("\\b(?:true|false|null|yes|no)\\b"), keywordColor_));
         rules.push_back(rule(QStringLiteral("#.*$"), commentColor_));
     } else if (lang == QLatin1String("javascript") || lang == QLatin1String("js")) {
         rules.push_back(rule(QStringLiteral("\"[^\"]*\"|'[^']*'|`[^`]*`"), stringColor_));
@@ -185,8 +185,7 @@ void BodyHighlighter::rebuild() {
             QStringLiteral("\\b(?:function|return|const|let|var|if|else|for|while|new|class|"
                            "async|await|true|false|null|undefined|import|export|from|of|in)\\b"),
             keywordColor_));
-        rules.push_back(
-            rule(QStringLiteral("\\b-?\\d+(?:\\.\\d+)?\\b"), numberColor_));
+        rules.push_back(rule(QStringLiteral("\\b-?\\d+(?:\\.\\d+)?\\b"), numberColor_));
         rules.push_back(rule(QStringLiteral("//.*$"), commentColor_));
     } else if (lang == QLatin1String("markdown") || lang == QLatin1String("md")) {
         rules.push_back(rule(QStringLiteral("^#{1,6}\\s.*$"), keywordColor_));
