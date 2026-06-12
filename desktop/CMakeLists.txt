@@ -29,6 +29,8 @@ qt_add_executable(reqloom-desktop
     qml/bridge/EditableKeyValueModel.h
     qml/bridge/TimelineModel.cpp
     qml/bridge/TimelineModel.h
+    qml/bridge/BodyHighlighter.cpp
+    qml/bridge/BodyHighlighter.h
     qml/bridge/ExampleListModel.cpp
     qml/bridge/ExampleListModel.h
     qml/bridge/AppController.cpp
@@ -89,6 +91,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/PanelHeader.qml
         qml/widgets/LineTabBar.qml
         qml/widgets/SelectableTextBox.qml
+        qml/widgets/CodeView.qml
         qml/widgets/KeyValueList.qml
         qml/widgets/KeyValueEditorView.qml
         qml/widgets/ChainView.qml
