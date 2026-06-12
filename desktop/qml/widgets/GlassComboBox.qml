@@ -8,6 +8,11 @@ import Reqloom
 ComboBox {
     id: control
     implicitHeight: DesignTokens.controlHeight
+    padding: 0
+    // Reserve room for the chevron via `spacing` (ComboBox lays the content out
+    // to the left of the indicator) rather than padding the text, so the text
+    // gets the full width up to the chevron and short values don't elide.
+    spacing: DesignTokens.spaceSm
     font.pixelSize: DesignTokens.fontLabel
     font.family: DesignTokens.fontSans
 
@@ -19,8 +24,8 @@ ComboBox {
     }
 
     contentItem: Text {
-        leftPadding: DesignTokens.spaceMd
-        rightPadding: 32
+        leftPadding: DesignTokens.spaceSm
+        rightPadding: DesignTokens.spaceSm
         text: control.displayText
         // A leading "+" marks a placeholder row ("+ add dependency…").
         color: control.displayText.startsWith("+") ? DesignTokens.textSecondary : DesignTokens.textPrimary
@@ -32,7 +37,7 @@ ComboBox {
     indicator: AppIcon {
         name: "chevron-down"
         size: 14
-        x: control.width - width - DesignTokens.spaceMd
+        x: control.width - width - DesignTokens.spaceSm
         y: (control.height - height) / 2
     }
 
@@ -63,9 +68,10 @@ ComboBox {
         id: row
         width: ListView.view ? ListView.view.width : control.width
         implicitHeight: DesignTokens.controlHeight
+        padding: 0
         highlighted: control.highlightedIndex === index
         contentItem: Text {
-            leftPadding: DesignTokens.spaceMd
+            leftPadding: DesignTokens.spaceSm
             text: control.textRole && control.textRole.length > 0 ? model[control.textRole] : modelData
             color: DesignTokens.textPrimary
             font.pixelSize: DesignTokens.fontLabel

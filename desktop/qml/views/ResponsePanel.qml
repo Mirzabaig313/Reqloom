@@ -44,6 +44,49 @@ Rectangle {
     /// Pretty-print the Body (Raw) view (indented JSON) vs show it verbatim.
     property bool prettyRaw: true
 
+    // Response body display format, auto-detected from the Content-Type header
+    // and overridable via the Body (Raw) format dropdown (JSON/XML/HTML/…).
+    readonly property var formatLabels: ["JSON", "XML", "HTML", "YAML", "JavaScript", "Markdown", "Text"]
+    readonly property var formatValues: ["json", "xml", "html", "yaml", "javascript", "markdown", "text"]
+    readonly property string detectedFormat: detectFormat(AppController.respHeaders)
+    property string respFormat: detectedFormat
+    // Re-snap to the detected format whenever a new response arrives.
+    onDetectedFormatChanged: respFormat = detectedFormat
+    // Preview rendered HTML / Markdown instead of the coloured source.
+    property bool previewMode: false
+
+    // Map a response's Content-Type to a display-format token. Defaults to JSON
+    // (the overwhelmingly common API shape) when there's no usable hint.
+    function detectFormat(headers) {
+        const m = headers.toLowerCase().match(/content-type:\s*([^\n;]+)/);
+        const ct = m ? m[1].trim() : "";
+        if (ct.indexOf("json") >= 0)
+            return "json";
+        if (ct.indexOf("html") >= 0)
+            return "html";
+        if (ct.indexOf("xml") >= 0)
+            return "xml";
+        if (ct.indexOf("yaml") >= 0)
+            return "yaml";
+        if (ct.indexOf("javascript") >= 0)
+            return "javascript";
+        if (ct.indexOf("markdown") >= 0)
+            return "markdown";
+        if (ct.length === 0)
+            return "json";
+        return "text";
+    }
+
+    // The body text to display, pretty-printed when it's JSON and Pretty is on.
+    function displayBody() {
+        const body = AppController.respBody;
+        if (body.length === 0)
+            return "";
+        if (respFormat === "json" && prettyRaw)
+            return prettyJson(body);
+        return body;
+    }
+
     // Full flattened JSON tree for the open response body. Each row carries an
     // id + parentId (for collapse), a JSONPath (for copy), and hasChildren so
     // the delegate can draw an expander. Recomputed when the body changes.
@@ -521,10 +564,93 @@ Rectangle {
                         }
                     }
 
-                    // Body (Raw)
-                    SelectableTextBox {
-                        text: AppController.respBody.length > 0 ? (panel.prettyRaw ? panel.prettyJson(AppController.respBody) : AppController.respBody) : ""
-                        placeholder: qsTr("(body not captured — enable “Capture bodies”)")
+                    // Body (Raw) — syntax-highlighted source with a format
+                    // dropdown + a Preview toggle (renders HTML / Markdown).
+                    ColumnLayout {
+                        spacing: DesignTokens.spaceSm
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: DesignTokens.spaceSm
+                            GlassComboBox {
+                                id: formatCombo
+                                Layout.preferredWidth: 150
+                                model: panel.formatLabels
+                                Component.onCompleted: currentIndex = panel.formatValues.indexOf(panel.respFormat)
+                                onActivated: panel.respFormat = panel.formatValues[currentIndex]
+                                Connections {
+                                    target: panel
+                                    function onRespFormatChanged() {
+                                        formatCombo.currentIndex = panel.formatValues.indexOf(panel.respFormat);
+                                    }
+                                }
+                            }
+                            Button {
+                                id: previewBtn
+                                visible: panel.respFormat === "html" || panel.respFormat === "markdown"
+                                implicitHeight: 30
+                                leftPadding: DesignTokens.spaceMd
+                                rightPadding: DesignTokens.spaceMd
+                                checkable: true
+                                checked: panel.previewMode
+                                onToggled: panel.previewMode = checked
+                                background: Rectangle {
+                                    radius: DesignTokens.radiusSm
+                                    color: previewBtn.checked ? DesignTokens.accentMuted : (previewBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
+                                    border.width: 1
+                                    border.color: previewBtn.checked ? DesignTokens.accent : DesignTokens.borderSubtle
+                                }
+                                contentItem: Text {
+                                    text: qsTr("Preview")
+                                    color: previewBtn.checked ? DesignTokens.accent : DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.weight: DesignTokens.weightSemiBold
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        // Coloured source view.
+                        CodeView {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            visible: !panel.previewMode
+                            language: panel.respFormat
+                            text: panel.displayBody()
+                            placeholder: qsTr("(body not captured — enable “Capture bodies”)")
+                        }
+
+                        // Rendered preview (HTML / Markdown).
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            visible: panel.previewMode
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.surfaceSunken
+                            border.width: 1
+                            border.color: DesignTokens.borderSubtle
+                            ScrollView {
+                                anchors.fill: parent
+                                anchors.margins: DesignTokens.spaceSm
+                                clip: true
+                                TextArea {
+                                    readOnly: true
+                                    selectByMouse: true
+                                    wrapMode: TextArea.Wrap
+                                    textFormat: panel.respFormat === "markdown" ? TextEdit.MarkdownText : TextEdit.RichText
+                                    text: AppController.respBody
+                                    color: DesignTokens.textPrimary
+                                    selectionColor: DesignTokens.accent
+                                    selectedTextColor: DesignTokens.textInverse
+                                    font.pixelSize: DesignTokens.fontBody
+                                    background: null
+                                }
+                            }
+                        }
                     }
 
                     // Headers
