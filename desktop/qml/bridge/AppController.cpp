@@ -4,6 +4,7 @@
 #include "../../src/application/EnvironmentSettings.h"
 #include "../../src/application/ProjectModel.h"
 #include "../../src/views/HookEditorDialog.h"
+#include "../../src/widgets/GraphLayout.h"
 #include "../../src/widgets/LineDiff.h"
 #include "ThemeController.h"
 
@@ -11,6 +12,7 @@
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QHash>
 #include <QtCore/QStringList>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
@@ -19,6 +21,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <map>
+#include <queue>
 #include <string>
 #include <utility>
 #include <vector>
@@ -191,6 +194,55 @@ AppController::AppController(QObject* parent)
     connect(
         runController_.get(), &RunController::stepFailed, &timeline_, &TimelineModel::onStepFailed);
     connect(runController_.get(), &RunController::runEnded, &timeline_, &TimelineModel::onRunEnded);
+
+    // Live per-node status for the chain graph. Run events carry an operation
+    // by name (stepStarted / stepFailed) or only a step index (responseReceived);
+    // we map index → op from stepStarted so every event can colour its node.
+    connect(runController_.get(),
+            &RunController::runStarted,
+            this,
+            [this](const QString&, int, const QString&) {
+                runStepOp_.clear();
+                chainStatus_.clear();
+                emit chainStatusChanged();
+            });
+    connect(runController_.get(),
+            &RunController::stepStarted,
+            this,
+            [this](int index, const QString& op, int) {
+                runStepOp_.insert(index, op);
+                chainStatus_.insert(op, QStringLiteral("running"));
+                emit chainStatusChanged();
+            });
+    connect(runController_.get(),
+            &RunController::stepSkipped,
+            this,
+            [this](int index, const QString& op, const QString&) {
+                runStepOp_.insert(index, op);
+                chainStatus_.insert(op, QStringLiteral("skipped"));
+                emit chainStatusChanged();
+            });
+    connect(runController_.get(),
+            &RunController::responseReceived,
+            this,
+            [this](int index, int status, const QString&, int, qint64, const QString&) {
+                const QString op = runStepOp_.value(index);
+                if (!op.isEmpty()) {
+                    chainStatus_.insert(op,
+                                        status >= 500   ? QStringLiteral("error")
+                                        : status >= 300 ? QStringLiteral("warning")
+                                                        : QStringLiteral("success"));
+                    emit chainStatusChanged();
+                }
+            });
+    connect(runController_.get(),
+            &RunController::stepFailed,
+            this,
+            [this](int index, const QString& op, const QString&, const QString&) {
+                runStepOp_.insert(index, op);
+                chainStatus_.insert(op, QStringLiteral("error"));
+                emit chainStatusChanged();
+            });
 
     treeFilter_.setSourceModel(&tree_);
 
@@ -538,6 +590,28 @@ QStringList AppController::editDependencyCandidates() const {
     return out;
 }
 
+QStringList AppController::extractedVariablesFor(const QString& operationId) const {
+    QStringList tokens;
+    if (!project_->hasProject()) {
+        return tokens;
+    }
+    const auto* op = project_->findOperation(engine::OperationId{operationId.toStdString()});
+    if (op == nullptr) {
+        return tokens;
+    }
+    const qsizetype dot = operationId.indexOf(QLatin1Char('.'));
+    const QString resource = dot > 0 ? operationId.left(dot) : QString{};
+    for (const auto& ext : op->extractions) {
+        const QString name = QString::fromStdString(ext.variableName);
+        // variableName is the bare name; reference it namespaced by resource.
+        const QString full = name.contains(QLatin1Char('.')) || resource.isEmpty()
+                                 ? name
+                                 : (resource + QLatin1Char('.') + name);
+        tokens.append(QStringLiteral("{{%1}}").arg(full));
+    }
+    return tokens;
+}
+
 int AppController::editParamsCount() const {
     return static_cast<int>(editQuery_.pairs().size());
 }
@@ -602,6 +676,259 @@ QVariantList AppController::chainNodes() const {
     }
     nodes.append(nodeFor(opId, /*isTarget=*/true));
     return nodes;
+}
+
+QVariantMap AppController::chainGraph() const {
+    // Build the target's transitive dependency DAG (prerequisite → dependent),
+    // run the layered layout, and hand QML node coordinates + edges. Edit mode
+    // takes the target's direct deps from the live picker; everything deeper
+    // comes from the project's declared dependencies.
+    QVariantMap graph;
+    if (!project_->hasProject() || !hasOperation_) {
+        return graph;
+    }
+    const QString targetId = currentOperationId();
+    const auto* targetOp = project_->findOperation(engine::OperationId{targetId.toStdString()});
+    if (targetOp == nullptr) {
+        return graph;
+    }
+
+    std::vector<QString> targetDeps;
+    if (editing_ && chainFieldsLoaded_) {
+        for (const auto& dep : editDependencies_.dependencies()) {
+            targetDeps.emplace_back(QString::fromStdString(dep));
+        }
+    } else {
+        for (const auto& dep : targetOp->explicitDependencies) {
+            targetDeps.emplace_back(QString::fromStdString(dep.value));
+        }
+    }
+    if (targetDeps.empty()) {
+        return graph;  // No chain to draw; ChainView shows its empty text.
+    }
+
+    // BFS the dependency closure, recording ids in discovery order and each
+    // node's direct dependencies (target overridden with the edit-mode picker).
+    QStringList ids;
+    QHash<QString, int> indexOf;
+    QHash<QString, std::vector<QString>> directDeps;
+    std::queue<QString> pending;
+    const auto discover = [&](const QString& id) {
+        if (!indexOf.contains(id)) {
+            indexOf.insert(id, static_cast<int>(ids.size()));
+            ids.append(id);
+        }
+    };
+    discover(targetId);
+    directDeps.insert(targetId, targetDeps);
+    pending.push(targetId);
+    while (!pending.empty()) {
+        const QString id = pending.front();
+        pending.pop();
+        if (!directDeps.contains(id)) {
+            std::vector<QString> deps;
+            const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+            if (op != nullptr) {
+                for (const auto& dep : op->explicitDependencies) {
+                    deps.emplace_back(QString::fromStdString(dep.value));
+                }
+            }
+            directDeps.insert(id, deps);
+        }
+        for (const QString& dep : directDeps.value(id)) {
+            if (!indexOf.contains(dep)) {
+                discover(dep);
+                pending.push(dep);
+            }
+        }
+    }
+
+    std::vector<std::pair<int, int>> edges;
+    for (const QString& id : ids) {
+        const int to = indexOf.value(id);
+        for (const QString& dep : directDeps.value(id)) {
+            const auto it = indexOf.constFind(dep);
+            if (it != indexOf.constEnd()) {
+                edges.emplace_back(it.value(), to);
+            }
+        }
+    }
+
+    layout::LayoutOptions options;
+    options.nodeWidth = 200.0;
+    options.nodeHeight = 38.0;
+    options.hGap = 20.0;
+    options.vGap = 36.0;
+    const layout::LayoutResult laid =
+        layout::layeredLayout(static_cast<int>(ids.size()), edges, options);
+
+    QVariantList nodeList;
+    for (int i = 0; i < ids.size(); ++i) {
+        const QString id = ids.at(i);
+        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        QVariantMap node;
+        node.insert(QStringLiteral("operationId"), id);
+        node.insert(QStringLiteral("method"), op != nullptr ? methodLabel(op->method) : QString{});
+        node.insert(QStringLiteral("isTarget"), id == targetId);
+        node.insert(QStringLiteral("x"), laid.nodes[static_cast<std::size_t>(i)].x);
+        node.insert(QStringLiteral("y"), laid.nodes[static_cast<std::size_t>(i)].y);
+        // Detail surfaced when a node is clicked in the graph.
+        node.insert(QStringLiteral("path"),
+                    op != nullptr ? QString::fromStdString(op->pathTemplate) : QString{});
+        node.insert(QStringLiteral("actor"),
+                    op != nullptr ? QString::fromStdString(op->actor.value) : QString{});
+        QStringList extracts;
+        if (op != nullptr) {
+            for (const auto& extraction : op->extractions) {
+                extracts.append(QString::fromStdString(extraction.variableName));
+            }
+        }
+        node.insert(QStringLiteral("extracts"), extracts);
+        QStringList depList;
+        for (const QString& dep : directDeps.value(id)) {
+            depList.append(dep);
+        }
+        node.insert(QStringLiteral("deps"), depList);
+        nodeList.append(node);
+    }
+    QVariantList edgeList;
+    for (const auto& [from, to] : edges) {
+        QVariantMap edge;
+        edge.insert(QStringLiteral("from"), from);
+        edge.insert(QStringLiteral("to"), to);
+        edgeList.append(edge);
+    }
+
+    graph.insert(QStringLiteral("nodes"), nodeList);
+    graph.insert(QStringLiteral("edges"), edgeList);
+    graph.insert(QStringLiteral("width"), laid.width);
+    graph.insert(QStringLiteral("height"), laid.height);
+    graph.insert(QStringLiteral("nodeWidth"), options.nodeWidth);
+    graph.insert(QStringLiteral("nodeHeight"), options.nodeHeight);
+    return graph;
+}
+
+QVariantMap AppController::chainStatus() const {
+    QVariantMap status;
+    for (auto it = chainStatus_.constBegin(); it != chainStatus_.constEnd(); ++it) {
+        status.insert(it.key(), it.value());
+    }
+    return status;
+}
+
+void AppController::prepareChainEditor() {
+    if (!project_->hasProject() || !hasOperation_) {
+        chainEditor_.rebuild({});
+        return;
+    }
+    const QString targetId = currentOperationId();
+    const auto* targetOp = project_->findOperation(engine::OperationId{targetId.toStdString()});
+    if (targetOp == nullptr) {
+        chainEditor_.rebuild({});
+        return;
+    }
+
+    // BFS the declared transitive dependency closure, in discovery order.
+    QStringList ids;
+    QHash<QString, bool> seen;
+    std::queue<QString> pending;
+    ids.append(targetId);
+    seen.insert(targetId, true);
+    pending.push(targetId);
+    while (!pending.empty()) {
+        const QString id = pending.front();
+        pending.pop();
+        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        if (op == nullptr) {
+            continue;
+        }
+        for (const auto& dep : op->explicitDependencies) {
+            const QString depId = QString::fromStdString(dep.value);
+            if (!seen.contains(depId)) {
+                seen.insert(depId, true);
+                ids.append(depId);
+                pending.push(depId);
+            }
+        }
+    }
+
+    const QStringList allIds = operationIds();
+    std::vector<ChainEditorModel::OpSeed> seeds;
+    seeds.reserve(static_cast<std::size_t>(ids.size()));
+    for (const QString& id : ids) {
+        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        ChainEditorModel::OpSeed seed;
+        seed.operationId = id;
+        seed.method = op != nullptr ? methodLabel(op->method) : QString{};
+        seed.isTarget = (id == targetId);
+        if (op != nullptr) {
+            for (const auto& dep : op->explicitDependencies) {
+                seed.dependencies.push_back(dep.value);
+            }
+            for (const auto& ext : op->extractions) {
+                seed.extractions.emplace_back(QString::fromStdString(ext.variableName),
+                                              QString::fromStdString(ext.sourcePath));
+            }
+        }
+        for (const QString& candidate : allIds) {
+            if (candidate != id) {
+                seed.candidates.append(candidate);
+            }
+        }
+        seeds.push_back(std::move(seed));
+    }
+    chainEditor_.rebuild(seeds);
+}
+
+bool AppController::saveChainEdits() {
+    if (!project_->hasProject()) {
+        return false;
+    }
+    std::map<std::string, engine::Operation> updates;
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        const QString id = chainEditor_.operationIdAt(i);
+        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        if (op == nullptr) {
+            continue;
+        }
+        engine::Operation updated = *op;  // copy; patch only the chain fields
+
+        updated.explicitDependencies.clear();
+        for (const auto& dep : chainEditor_.depModelAt(i)->dependencies()) {
+            updated.explicitDependencies.push_back(engine::OperationId{dep});
+        }
+
+        // Preserve each extraction's source kind by variable name; new rows
+        // default to JSONPath (the common case).
+        std::map<std::string, engine::Extraction::Source> sourceByVar;
+        for (const auto& ext : op->extractions) {
+            sourceByVar[ext.variableName] = ext.source;
+        }
+        updated.extractions.clear();
+        for (const auto& [variable, sourcePath] : chainEditor_.extractModelAt(i)->pairs()) {
+            const QString var = variable.trimmed();
+            const QString path = sourcePath.trimmed();
+            if (var.isEmpty() && path.isEmpty()) {
+                continue;
+            }
+            engine::Extraction extraction;
+            extraction.variableName = var.toStdString();
+            extraction.sourcePath = path.toStdString();
+            const auto found = sourceByVar.find(extraction.variableName);
+            extraction.source =
+                found != sourceByVar.end() ? found->second : engine::Extraction::Source::JsonPath;
+            updated.extractions.push_back(std::move(extraction));
+        }
+        updates.emplace(id.toStdString(), std::move(updated));
+    }
+
+    QString error;
+    if (!project_->saveOperations(updates, error)) {
+        emit notify(error.isEmpty() ? QStringLiteral("Could not save the chain.") : error, true);
+        return false;
+    }
+    emit notify(QStringLiteral("Chain saved."), false);
+    return true;
 }
 
 void AppController::beginEdit() {
@@ -698,6 +1025,9 @@ void AppController::beginEdit() {
 
     chainFieldsLoaded_ = true;
     editing_ = true;
+    // Seed the whole-chain editor (every step in the transitive chain) so the
+    // Chain tab can edit them all in one place.
+    prepareChainEditor();
     emit editingChanged();
     emit editChanged();
     emit chainChanged();
@@ -1441,6 +1771,13 @@ void AppController::selectOperationById(const QString& operationId) {
         selectModule(module);
     }
     selectOperation(module, opName);
+}
+
+void AppController::editOperationById(const QString& operationId) {
+    selectOperationById(operationId);
+    if (hasOperation_ && !editing_) {
+        beginEdit();
+    }
 }
 
 void AppController::activateOperationById(const QString& operationId) {

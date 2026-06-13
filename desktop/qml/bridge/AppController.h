@@ -3,6 +3,7 @@
 // state to QML. C++ owns logic/state; QML binds to these properties.
 #pragma once
 
+#include "ChainEditorModel.h"
 #include "DependencyEditModel.h"
 #include "EditableKeyValueModel.h"
 #include "ExampleListModel.h"
@@ -20,6 +21,7 @@
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractItemModel>
+#include <QtCore/QHash>
 #include <QtCore/QObject>
 #include <QtCore/QSettings>
 #include <QtCore/QString>
@@ -145,6 +147,15 @@ class AppController : public QObject {
     // Execution-chain nodes for the visual preview ({operationId, method,
     // isTarget}). Recomputed from the open op (read) or the edited deps (edit).
     Q_PROPERTY(QVariantList chainNodes READ chainNodes NOTIFY chainChanged)
+    // Layered DAG of the target's transitive dependency chain, with computed
+    // node coordinates + edges, for the graph ChainView.
+    Q_PROPERTY(QVariantMap chainGraph READ chainGraph NOTIFY chainChanged)
+    // Live per-operation run status (operationId → status token) so the chain
+    // graph can colour each node as a run streams (running/success/error/…).
+    Q_PROPERTY(QVariantMap chainStatus READ chainStatus NOTIFY chainStatusChanged)
+    // Whole-chain editor: every operation in the target's transitive chain,
+    // each with its own editable depends_on + extract.
+    Q_PROPERTY(ChainEditorModel* chainEditor READ chainEditor CONSTANT)
 
 public:
     explicit AppController(QObject* parent = nullptr);
@@ -303,6 +314,22 @@ public:
     [[nodiscard]] bool editBodyFilled() const;
     [[nodiscard]] int editChainCount() const;
     [[nodiscard]] QVariantList chainNodes() const;
+    [[nodiscard]] QVariantMap chainGraph() const;
+    [[nodiscard]] QVariantMap chainStatus() const;
+    [[nodiscard]] ChainEditorModel* chainEditor() { return &chainEditor_; }
+
+    /// Rebuild the whole-chain editor from the open operation's transitive
+    /// dependency chain (each step seeded from the project). Call when the
+    /// Chain tab is shown.
+    Q_INVOKABLE void prepareChainEditor();
+    /// Persist every chain operation's edited depends_on + extract in one
+    /// validated write. Returns true on success (dialog/banner stays on error).
+    Q_INVOKABLE bool saveChainEdits();
+
+    /// The `{{resource.variable}}` tokens an operation extracts from its
+    /// response — shown under a dependency so the user knows which variables
+    /// each prerequisite makes available to reference.
+    Q_INVOKABLE [[nodiscard]] QStringList extractedVariablesFor(const QString& operationId) const;
 
     /// Open a project directory (the folder containing reqloom.yaml).
     Q_INVOKABLE void openProject(const QUrl& directory);
@@ -379,6 +406,10 @@ public:
     /// Select an operation row ("<resource>.<op>") and open it in the editor
     /// (select-to-preview). Resolves the module + endpoint.
     Q_INVOKABLE void selectOperationById(const QString& operationId);
+    /// Open an operation by id and immediately enter Edit mode — used by the
+    /// chain graph so any step's dependencies/extractions can be edited in the
+    /// UI without hand-editing YAML.
+    Q_INVOKABLE void editOperationById(const QString& operationId);
     /// Activate an operation row (double-click / Enter): open it and run it.
     Q_INVOKABLE void activateOperationById(const QString& operationId);
 
@@ -445,6 +476,8 @@ signals:
     /// Fired when the execution-chain preview needs to re-render (operation
     /// opened, edit toggled, or dependencies edited).
     void chainChanged();
+    /// Fired when a run streams a new per-operation status (chain graph colours).
+    void chainStatusChanged();
     /// Transient feedback for create/rename/delete outcomes and errors.
     /// `isError` tints the message (full Toast UI lands in WS-D).
     void notify(QString message, bool isError);
@@ -483,6 +516,7 @@ private:
     DependencyEditModel newEndpointDeps_;
     EditableKeyValueModel newEndpointExtractions_;
     TimelineModel timeline_;
+    ChainEditorModel chainEditor_;
     ExampleListModel exampleList_;
     KeyValueModel opHeaders_;
     KeyValueModel opQuery_;
@@ -535,6 +569,10 @@ private:
     QStringList environments_;
     QString environment_;
     bool running_{false};
+    // Live chain-graph run state: index→op (from stepStarted) lets index-only
+    // events (responseReceived) find their node; op→status token feeds colours.
+    QHash<int, QString> runStepOp_;
+    QHash<QString, QString> chainStatus_;
     bool captureBodies_{true};
     bool hasResponse_{false};
     int respStatus_{0};
