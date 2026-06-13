@@ -186,6 +186,7 @@ Dialog {
             ExtractionEditor {
                 Layout.fillWidth: true
                 extractModel: AppController.newEndpointExtractions
+                resourcePrefix: moduleCombo.currentText
             }
         }
     }

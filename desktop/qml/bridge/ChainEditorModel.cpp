@@ -1,0 +1,90 @@
+// ChainEditorModel — see header. Owns per-operation dependency + extraction
+// editors for the whole-chain editor.
+#include "ChainEditorModel.h"
+
+namespace reqloom::desktop::qml {
+
+ChainEditorModel::ChainEditorModel(QObject* parent) : QAbstractListModel(parent) {}
+
+int ChainEditorModel::rowCount(const QModelIndex& parent) const {
+    return parent.isValid() ? 0 : static_cast<int>(rows_.size());
+}
+
+QVariant ChainEditorModel::data(const QModelIndex& index, int role) const {
+    if (!index.isValid() || index.row() < 0 || index.row() >= static_cast<int>(rows_.size())) {
+        return {};
+    }
+    const Row& row = rows_[static_cast<std::size_t>(index.row())];
+    switch (role) {
+        case OperationIdRole:
+            return row.operationId;
+        case MethodRole:
+            return row.method;
+        case IsTargetRole:
+            return row.isTarget;
+        case DepModelRole:
+            return QVariant::fromValue(static_cast<QObject*>(row.deps.get()));
+        case ExtractModelRole:
+            return QVariant::fromValue(static_cast<QObject*>(row.extracts.get()));
+        case CandidatesRole:
+            return row.candidates;
+        default:
+            return {};
+    }
+}
+
+QHash<int, QByteArray> ChainEditorModel::roleNames() const {
+    return {
+        {OperationIdRole, "operationId"},
+        {MethodRole, "method"},
+        {IsTargetRole, "isTarget"},
+        {DepModelRole, "depModel"},
+        {ExtractModelRole, "extractModel"},
+        {CandidatesRole, "candidates"},
+    };
+}
+
+void ChainEditorModel::rebuild(const std::vector<OpSeed>& seeds) {
+    beginResetModel();
+    rows_.clear();
+    rows_.reserve(seeds.size());
+    for (const OpSeed& seed : seeds) {
+        Row row;
+        row.operationId = seed.operationId;
+        row.method = seed.method;
+        row.isTarget = seed.isTarget;
+        row.candidates = seed.candidates;
+        // Per-row models are parented to this model (C++ ownership), so QML
+        // never deletes them when a delegate is destroyed.
+        row.deps = std::make_unique<DependencyEditModel>(this);
+        row.deps->setCandidates(seed.candidates);
+        row.deps->setDependencies(seed.dependencies);
+        row.extracts = std::make_unique<EditableKeyValueModel>(this);
+        row.extracts->setPairs(seed.extractions);
+        rows_.push_back(std::move(row));
+    }
+    endResetModel();
+}
+
+QString ChainEditorModel::operationIdAt(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) {
+        return {};
+    }
+    return rows_[static_cast<std::size_t>(row)].operationId;
+}
+
+DependencyEditModel* ChainEditorModel::depModelAt(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) {
+        return nullptr;
+    }
+    return rows_[static_cast<std::size_t>(row)].deps.get();
+}
+
+EditableKeyValueModel* ChainEditorModel::extractModelAt(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) {
+        return nullptr;
+    }
+    return rows_[static_cast<std::size_t>(row)].extracts.get();
+}
+
+}  // namespace reqloom::desktop::qml
