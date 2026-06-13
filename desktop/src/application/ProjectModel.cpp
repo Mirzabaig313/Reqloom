@@ -209,6 +209,51 @@ bool ProjectModel::saveOperation(const engine::OperationId& id,
     return true;
 }
 
+bool ProjectModel::saveOperations(const std::map<std::string, engine::Operation>& updates,
+                                  QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    if (updates.empty()) {
+        return true;
+    }
+
+    engine::Project draft = *project_;
+    for (const auto& [idStr, updated] : updates) {
+        const auto dot = idStr.find('.');
+        if (dot == std::string::npos) {
+            error = QStringLiteral("Malformed operation id: %1").arg(QString::fromStdString(idStr));
+            return false;
+        }
+        const engine::ResourceId resId{idStr.substr(0, dot)};
+        const auto opName = idStr.substr(dot + 1);
+        auto resIt = draft.resources.find(resId);
+        if (resIt == draft.resources.end() || !resIt->second.operations.contains(opName)) {
+            error = QStringLiteral("Operation not found: %1").arg(QString::fromStdString(idStr));
+            return false;
+        }
+        resIt->second.operations[opName] = updated;
+    }
+
+    // Validate the whole draft once: a chain edit can introduce a cycle or an
+    // undefined reference across operations, which only a full-graph check sees.
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return false;
+    }
+
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
 bool ProjectModel::renameOperation(const engine::OperationId& id,
                                    const QString& newName,
                                    QString& error) {

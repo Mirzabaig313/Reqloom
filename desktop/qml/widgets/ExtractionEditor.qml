@@ -2,20 +2,32 @@
 // rows (mirrors the old ExtractionTableEditor). The source kind is derived from
 // the path prefix in C++ on read-back, so it is never a separate field. Backed
 // by an EditableKeyValueModel with a trailing ghost row.
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import Reqloom
-
-pragma ComponentBehavior: Bound
 
 ColumnLayout {
     id: root
 
     // An EditableKeyValueModel.
     required property var extractModel
+    // The owning endpoint's resource (e.g. "cart"). Extracted variables are
+    // namespaced under it, so a row reads as {{resource.variable}}.
+    property string resourcePrefix: ""
 
     spacing: DesignTokens.spaceXs
+
+    // Extractions always read from THIS endpoint's own response; the value
+    // becomes a {{...}} variable later steps can reference.
+    Label {
+        Layout.fillWidth: true
+        text: qsTr("Pulled from this endpoint's response. Reference it later as %1.").arg(root.resourcePrefix.length > 0 ? "{{" + root.resourcePrefix + ".<variable>}}" : "{{<resource>.<variable>}}")
+        color: DesignTokens.textSecondary
+        font.pixelSize: DesignTokens.fontCaption
+        wrapMode: Text.WordWrap
+    }
 
     component Field: TextField {
         color: DesignTokens.textPrimary
@@ -42,8 +54,17 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: DesignTokens.spaceXs
 
+            // Resource prefix adornment — shows the variable is namespaced,
+            // e.g. "cart." before the editable "verify_id".
+            Label {
+                visible: root.resourcePrefix.length > 0
+                text: root.resourcePrefix + "."
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontLabel
+                font.family: DesignTokens.fontMono
+            }
             Field {
-                Layout.preferredWidth: 140
+                Layout.preferredWidth: 120
                 text: row.key
                 placeholderText: qsTr("variable")
                 onTextEdited: root.extractModel.setKey(row.index, text)

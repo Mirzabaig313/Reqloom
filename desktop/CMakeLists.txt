@@ -31,6 +31,8 @@ qt_add_executable(reqloom-desktop
     qml/bridge/TimelineModel.h
     qml/bridge/BodyHighlighter.cpp
     qml/bridge/BodyHighlighter.h
+    qml/bridge/ChainEditorModel.cpp
+    qml/bridge/ChainEditorModel.h
     qml/bridge/ExampleListModel.cpp
     qml/bridge/ExampleListModel.h
     qml/bridge/AppController.cpp
@@ -55,6 +57,8 @@ qt_add_executable(reqloom-desktop
     src/widgets/FuzzyMatch.h
     src/widgets/LineDiff.cpp
     src/widgets/LineDiff.h
+    src/widgets/GraphLayout.cpp
+    src/widgets/GraphLayout.h
     src/widgets/CodeEditor.cpp
     src/widgets/CodeEditor.h
     src/theming/Color.cpp

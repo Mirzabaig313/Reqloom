@@ -372,21 +372,100 @@ ColumnLayout {
 
     // ── Execution chain (visual preview; live in edit mode) ──
     ColumnLayout {
+        id: chainSection
         Layout.fillWidth: true
         spacing: DesignTokens.spaceXs
 
-        Label {
-            text: qsTr("EXECUTION CHAIN")
-            color: DesignTokens.textSecondary
-            font.pixelSize: DesignTokens.fontCaption
-            font.weight: DesignTokens.weightSemiBold
-            font.letterSpacing: 1.2
+        // Collapsed by default — the chain is reference, not the primary task,
+        // so it shouldn't dominate the editor. Click the header to expand.
+        property bool expanded: false
+        // User-resizable height for the expanded graph (drag the grip below it).
+        property int chainHeight: 240
+        readonly property int nodeCount: (AppController.chainGraph.nodes || []).length
+
+        // Clickable header: chevron + caption + a count summary when collapsed.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: DesignTokens.spaceXs
+
+            AppIcon {
+                name: chainSection.expanded ? "chevron-down" : "chevron-right"
+                size: 14
+                color: DesignTokens.textSecondary
+            }
+            Label {
+                text: qsTr("EXECUTION CHAIN")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontCaption
+                font.weight: DesignTokens.weightSemiBold
+                font.letterSpacing: 1.2
+            }
+            Label {
+                visible: chainSection.nodeCount > 0
+                text: chainSection.nodeCount === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(chainSection.nodeCount)
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontCaption
+            }
+            Item {
+                Layout.fillWidth: true
+            }
+
+            TapHandler {
+                onTapped: chainSection.expanded = !chainSection.expanded
+            }
         }
+
         ChainView {
             Layout.fillWidth: true
-            Layout.maximumHeight: 160
-            nodes: AppController.chainNodes
+            Layout.preferredHeight: chainSection.chainHeight
+            Layout.minimumHeight: 80
+            visible: chainSection.expanded
+            graph: AppController.chainGraph
+            statusMap: AppController.chainStatus
             emptyText: qsTr("No declared dependencies — run Dry Run for the full resolved chain.")
+            onNodeActivated: opId => AppController.selectOperationById(opId)
+            onNodeEditRequested: opId => AppController.editOperationById(opId)
+        }
+
+        // Drag grip to resize the graph height.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 10
+            visible: chainSection.expanded
+            color: "transparent"
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 36
+                height: 3
+                radius: 1.5
+                color: resizeHover.hovered || resizeDrag.active ? DesignTokens.accent : DesignTokens.borderStrong
+            }
+
+            HoverHandler {
+                id: resizeHover
+                cursorShape: Qt.SizeVerCursor
+            }
+            DragHandler {
+                id: resizeDrag
+                target: null
+                xAxis.enabled: false
+                yAxis.enabled: true
+                property real startScene: 0
+                property int startH: 0
+                onActiveChanged: {
+                    if (active) {
+                        startScene = centroid.scenePosition.y;
+                        startH = chainSection.chainHeight;
+                    }
+                }
+                onCentroidChanged: {
+                    if (active) {
+                        const delta = centroid.scenePosition.y - startScene;
+                        chainSection.chainHeight = Math.max(80, Math.min(640, startH + delta));
+                    }
+                }
+            }
         }
     }
 
@@ -1006,26 +1085,115 @@ ColumnLayout {
                 ColumnLayout {
                     width: chainScroll.availableWidth
                     spacing: DesignTokens.spaceSm
-                    Label {
-                        text: qsTr("Depends on")
-                        color: DesignTokens.textPrimary
-                        font.pixelSize: DesignTokens.fontLabel
-                        font.weight: DesignTokens.weightSemiBold
-                    }
-                    DependencyEditor {
+                    // Whole-chain editor: every step in the target's chain,
+                    // each with its own depends_on + extract. Edit any of them
+                    // here and persist the lot with one Save — no YAML.
+                    RowLayout {
                         Layout.fillWidth: true
-                        depModel: AppController.editDependencies
-                        candidates: AppController.editDependencyCandidates
+                        spacing: DesignTokens.spaceSm
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Every step in the chain. Edit any step's dependencies or extractions, then save the whole chain.")
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            wrapMode: Text.WordWrap
+                        }
+                        Button {
+                            id: saveChainBtn
+                            implicitHeight: 30
+                            leftPadding: DesignTokens.spaceMd
+                            rightPadding: DesignTokens.spaceMd
+                            onClicked: AppController.saveChainEdits()
+                            background: Rectangle {
+                                radius: DesignTokens.radiusSm
+                                color: saveChainBtn.down ? DesignTokens.accentHover : DesignTokens.accent
+                            }
+                            contentItem: Text {
+                                text: qsTr("Save chain")
+                                color: DesignTokens.textInverse
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.weight: DesignTokens.weightSemiBold
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
                     }
-                    Label {
-                        text: qsTr("Extract")
-                        color: DesignTokens.textPrimary
-                        font.pixelSize: DesignTokens.fontLabel
-                        font.weight: DesignTokens.weightSemiBold
-                    }
-                    ExtractionEditor {
-                        Layout.fillWidth: true
-                        extractModel: AppController.editExtractions
+
+                    Repeater {
+                        model: AppController.chainEditor
+                        delegate: Rectangle {
+                            id: opCard
+                            required property string operationId
+                            required property string method
+                            required property bool isTarget
+                            required property var depModel
+                            required property var extractModel
+                            required property var candidates
+                            Layout.fillWidth: true
+                            Layout.topMargin: DesignTokens.spaceSm
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.surfaceRaised
+                            border.width: 1
+                            border.color: opCard.isTarget ? DesignTokens.accent : DesignTokens.borderSubtle
+                            implicitHeight: cardCol.implicitHeight + DesignTokens.spaceMd * 2
+
+                            ColumnLayout {
+                                id: cardCol
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: DesignTokens.spaceMd
+                                spacing: DesignTokens.spaceSm
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: DesignTokens.spaceSm
+                                    MethodBadge {
+                                        method: opCard.method
+                                        Layout.preferredWidth: 54
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: opCard.operationId
+                                        color: DesignTokens.textPrimary
+                                        font.pixelSize: DesignTokens.fontLabel
+                                        font.family: DesignTokens.fontMono
+                                        font.weight: DesignTokens.weightSemiBold
+                                        elide: Text.ElideMiddle
+                                    }
+                                    Label {
+                                        visible: opCard.isTarget
+                                        text: qsTr("target")
+                                        color: DesignTokens.accent
+                                        font.pixelSize: DesignTokens.fontCaption
+                                    }
+                                }
+                                Label {
+                                    text: qsTr("Depends on")
+                                    color: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.weight: DesignTokens.weightSemiBold
+                                    font.letterSpacing: 0.6
+                                }
+                                DependencyEditor {
+                                    Layout.fillWidth: true
+                                    depModel: opCard.depModel
+                                    candidates: opCard.candidates
+                                }
+                                Label {
+                                    text: qsTr("Extract")
+                                    color: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.weight: DesignTokens.weightSemiBold
+                                    font.letterSpacing: 0.6
+                                }
+                                ExtractionEditor {
+                                    Layout.fillWidth: true
+                                    extractModel: opCard.extractModel
+                                    resourcePrefix: opCard.operationId.indexOf(".") >= 0 ? opCard.operationId.substring(0, opCard.operationId.indexOf(".")) : ""
+                                }
+                            }
+                        }
                     }
                 }
             }

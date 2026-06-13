@@ -70,6 +70,14 @@ public:
                                      const engine::Operation& updated,
                                      QString& error);
 
+    /// Apply many operation updates in one draft, validate once, and write
+    /// once (so the whole-chain editor persists every step's depends_on /
+    /// extract atomically rather than reloading per operation). `updates` maps
+    /// "<resource>.<op>" id → the replacement operation. Emits `saved` on
+    /// success; on failure `error` is set and nothing is written.
+    [[nodiscard]] bool saveOperations(
+        const std::map<std::string, engine::Operation>& updates, QString& error);
+
     /// Rename operation `id` to `newName` (the part after the resource dot),
     /// persist the project, and rebind. Fails if the name is empty, malformed,
     /// or already used in the resource. Emits `saved` on success.
