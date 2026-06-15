@@ -3,6 +3,7 @@
 #pragma once
 
 #include <reqloom/engine/Actor.h>
+#include <reqloom/engine/Dependency.h>
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/Events.h>
 #include <reqloom/engine/ExecutionEngine.h>
@@ -12,3 +13,4 @@
 #include <reqloom/engine/RunContext.h>
 #include <reqloom/engine/SecretStore.h>
 #include <reqloom/engine/Transport.h>
+#include <reqloom/engine/VariableSuggestion.h>

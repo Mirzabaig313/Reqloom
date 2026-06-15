@@ -171,6 +171,136 @@ std::string truncateForTrace(std::string s) {
 
 }  // namespace
 
+const json* walkJsonPath(const json& doc, std::string_view sourcePath) {
+    return walkJson(doc, sourcePath);
+}
+
+namespace {
+
+/// Multi-match walker: like `walkJson` but `[*]` expands to every array
+/// element and filters/indices apply across the whole current node set, so a
+/// path can resolve to many nodes. Returns pointers into `doc`.
+[[nodiscard]] std::vector<const json*> walkJsonMulti(const json& doc, std::string_view sourcePath) {
+    const std::string path{sourcePath};
+    std::size_t i = 0;
+    const std::size_t n = path.size();
+    if (i < n && path[i] == '$') {
+        ++i;
+    }
+    if (i < n && path[i] == '.') {
+        ++i;
+    }
+
+    static const PredicateEvaluator evaluator;
+    std::vector<const json*> current{&doc};
+    while (i < n && !current.empty()) {
+        std::string name;
+        while (i < n && path[i] != '.' && path[i] != '[') {
+            name.push_back(path[i]);
+            ++i;
+        }
+        if (!name.empty()) {
+            std::vector<const json*> next;
+            for (const auto* node : current) {
+                if (node->is_object()) {
+                    const auto it = node->find(name);
+                    if (it != node->end()) {
+                        next.push_back(&(*it));
+                    }
+                }
+            }
+            current = std::move(next);
+        }
+
+        while (i < n && path[i] == '[') {
+            std::size_t j = i + 1;
+            char quote = 0;
+            while (j < n) {
+                const char c = path[j];
+                if (quote != 0) {
+                    if (c == quote) {
+                        quote = 0;
+                    }
+                } else if (c == '\'' || c == '"') {
+                    quote = c;
+                } else if (c == ']') {
+                    break;
+                }
+                ++j;
+            }
+            if (j >= n) {
+                return {};
+            }
+            const std::string inside = path.substr(i + 1, j - (i + 1));
+            std::vector<const json*> next;
+            if (inside == "*") {
+                for (const auto* node : current) {
+                    if (node->is_array()) {
+                        for (const auto& element : *node) {
+                            next.push_back(&element);
+                        }
+                    }
+                }
+            } else if (inside.starts_with("?(") && inside.ends_with(")")) {
+                const std::string expr =
+                    filterAtToDollar(std::string_view{inside}.substr(2, inside.size() - 3));
+                if (auto parsed = evaluator.parse(expr)) {
+                    for (const auto* node : current) {
+                        if (!node->is_array()) {
+                            continue;
+                        }
+                        for (const auto& element : *node) {
+                            if (evaluator.evaluate(*parsed, element.dump()) ==
+                                PredicateValue::True) {
+                                next.push_back(&element);
+                            }
+                        }
+                    }
+                }
+            } else {
+                std::size_t index = 0;
+                const auto* first = inside.data();
+                const auto* last = first + inside.size();
+                const auto fc = std::from_chars(first, last, index);
+                if (fc.ec == std::errc{} && fc.ptr == last) {
+                    for (const auto* node : current) {
+                        if (node->is_array() && index < node->size()) {
+                            next.push_back(&(*node)[index]);
+                        }
+                    }
+                }
+            }
+            current = std::move(next);
+            i = j + 1;
+        }
+
+        if (i < n && path[i] == '.') {
+            ++i;
+        }
+    }
+    return current;
+}
+
+}  // namespace
+
+std::vector<std::string> evaluateJsonPathAll(const json& doc, std::string_view sourcePath) {
+    std::vector<std::string> out;
+    for (const auto* node : walkJsonMulti(doc, sourcePath)) {
+        out.push_back(node->is_string() ? node->get<std::string>() : node->dump());
+    }
+    return out;
+}
+
+std::vector<std::string> extractAllValues(const std::string& body, std::string_view sourcePath) {
+    json doc;
+    try {
+        doc = json::parse(body);
+    } catch (const json::parse_error&) {
+        return {};
+    }
+    return evaluateJsonPathAll(doc, sourcePath);
+}
+
 std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
     const std::string& body, const std::vector<Extraction>& extractions) {
     if (extractions.empty()) {

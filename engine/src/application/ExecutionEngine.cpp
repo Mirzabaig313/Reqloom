@@ -1195,6 +1195,20 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     return result;
 }
 
+std::expected<ResolvedPlan, ReqloomError> ExecutionEngine::resolvePlan(
+    const Project& project, const OperationId& target) const {
+    return impl_->resolver.resolvePlan(project, target);
+}
+
+std::expected<std::vector<VariableSuggestion>, ReqloomError> ExecutionEngine::suggestVariables(
+    const Project& project, const OperationId& target, const std::string& environment) const {
+    auto plan = impl_->resolver.resolvePlan(project, target);
+    if (!plan) {
+        return std::unexpected(plan.error());
+    }
+    return collectVariableSuggestions(project, target, *plan, environment);
+}
+
 void ExecutionEngine::cancel(RunId run) {
     impl_->cancelledRunId.store(run.value, std::memory_order_release);
 }

@@ -353,6 +353,12 @@ public:
     /// map with "key" (bare variable name) and "value" (source path).
     Q_INVOKABLE [[nodiscard]] QVariantList extractionPairsFor(const QString& operationId) const;
 
+    /// Variables referenceable at `operationId` for `{{` autocomplete: upstream
+    /// extracts, the actor's session tokens, env vars, declared secrets, and
+    /// `$.` built-ins. Each entry is a map {token, kind, detail}. Empty if the
+    /// chain can't be resolved (cycle / undefined ref) or no project is open.
+    Q_INVOKABLE [[nodiscard]] QVariantList variableSuggestions(const QString& operationId) const;
+
     /// The live, editable extract model for a step in the open chain editor,
     /// looked up by operation id (so a dependency's variables can be edited
     /// inline from a dependent's chain table). Returns nullptr if not in the

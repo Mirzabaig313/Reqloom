@@ -58,6 +58,22 @@ TEST(Verifier, jsonpath_resolves_to_scalar_marks_verified) {
     EXPECT_FALSE(report->hasFailures());
 }
 
+TEST(Verifier, jsonpath_filter_resolves_matching_element_marks_verified) {
+    // The Dry-Run preview must understand predicate filters too, the same way
+    // run-time extraction does (shared walkJsonPath).
+    ce::Verifier v;
+    auto op = makeOp({jsonPath("active_id", "$.items[?(@.status=='active')].id")});
+
+    ce::SampleResponse sample;
+    sample.body = R"({"items":[{"status":"closed","id":"a"},{"status":"active","id":"b"}]})";
+
+    auto report = v.verify(op, sample);
+    ASSERT_TRUE(report.has_value()) << report.error().detail;
+    ASSERT_EQ(report->extractions.size(), 1u);
+    EXPECT_EQ(report->extractions[0].status, ce::VerificationStatus::Verified);
+    EXPECT_EQ(report->extractions[0].detail, "\"b\"");
+}
+
 TEST(Verifier, jsonpath_missing_marks_no_match) {
     ce::Verifier v;
     auto op = makeOp({jsonPath("product_id", "$.data.id")});
