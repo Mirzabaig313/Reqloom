@@ -1,11 +1,12 @@
 // Verifier — validates extractions against response payloads.
 #include "Verifier.h"
 
+#include "JsonExtraction.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
-#include <charconv>
 #include <string>
 #include <string_view>
 
@@ -26,63 +27,12 @@ std::string truncate(std::string_view s) {
     return out;
 }
 
-/// Walk the JSONPath subset declared above. Returns nullptr on miss.
-/// Distinguishes "miss" (nullptr) from "hit a null value" (non-null pointer
-/// to a JSON `null`) — the verifier needs that distinction for NoMatch vs Null.
+/// Resolve a JSONPath via the shared engine walker so the Dry-Run preview
+/// understands exactly what run-time extraction does — including predicate
+/// filters (`[?(@.field=='x')]`). Returns nullptr on miss; a non-null pointer
+/// to a JSON `null` for a resolved-but-null value.
 const Json* walk(const Json& root, std::string_view path) {
-    if (!path.starts_with("$")) {
-        return nullptr;
-    }
-    path.remove_prefix(1);
-
-    const Json* cur = &root;
-    while (!path.empty()) {
-        if (path.front() == '.') {
-            path.remove_prefix(1);
-            std::size_t end = 0;
-            while (end < path.size() && path[end] != '.' && path[end] != '[') {
-                ++end;
-            }
-            if (end == 0) {
-                return nullptr;
-            }
-            const std::string name{path.substr(0, end)};
-            if (!cur->is_object()) {
-                return nullptr;
-            }
-            const auto it = cur->find(name);
-            if (it == cur->end()) {
-                return nullptr;
-            }
-            cur = &(*it);
-            path.remove_prefix(end);
-        } else if (path.front() == '[') {
-            path.remove_prefix(1);
-            std::size_t end = 0;
-            while (end < path.size() && path[end] != ']') {
-                ++end;
-            }
-            if (end >= path.size()) {
-                return nullptr;
-            }
-            const auto digits = path.substr(0, end);
-            std::size_t idx = 0;
-            const auto* first = digits.data();
-            const auto* last = first + digits.size();
-            const auto fc = std::from_chars(first, last, idx);
-            if (fc.ec != std::errc{}) {
-                return nullptr;
-            }
-            if (!cur->is_array() || idx >= cur->size()) {
-                return nullptr;
-            }
-            cur = &((*cur)[idx]);
-            path.remove_prefix(end + 1);
-        } else {
-            return nullptr;
-        }
-    }
-    return cur;
+    return walkJsonPath(root, path);
 }
 
 VerifiedExtraction verifyJsonPath(const Extraction& ext, const Json& body) {

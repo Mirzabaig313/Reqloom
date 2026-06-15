@@ -677,6 +677,43 @@ QVariantList AppController::extractionPairsFor(const QString& operationId) const
     return pairs;
 }
 
+QVariantList AppController::variableSuggestions(const QString& operationId) const {
+    QVariantList out;
+    if (!project_->hasProject() || !bootstrapper_ || operationId.isEmpty()) {
+        return out;
+    }
+    auto result =
+        bootstrapper_->engine().suggestVariables(project_->project(),
+                                                 engine::OperationId{operationId.toStdString()},
+                                                 environment_.toStdString());
+    if (!result) {
+        return out;
+    }
+    const auto kindString = [](engine::VariableSuggestion::Kind kind) -> QString {
+        switch (kind) {
+            case engine::VariableSuggestion::Kind::Extract:
+                return QStringLiteral("extract");
+            case engine::VariableSuggestion::Kind::ActorToken:
+                return QStringLiteral("actor");
+            case engine::VariableSuggestion::Kind::EnvVar:
+                return QStringLiteral("env");
+            case engine::VariableSuggestion::Kind::Secret:
+                return QStringLiteral("secret");
+            case engine::VariableSuggestion::Kind::Builtin:
+                return QStringLiteral("builtin");
+        }
+        return {};
+    };
+    for (const auto& suggestion : *result) {
+        QVariantMap entry;
+        entry.insert(QStringLiteral("token"), QString::fromStdString(suggestion.token));
+        entry.insert(QStringLiteral("kind"), kindString(suggestion.kind));
+        entry.insert(QStringLiteral("detail"), QString::fromStdString(suggestion.detail));
+        out.append(entry);
+    }
+    return out;
+}
+
 EditableKeyValueModel* AppController::chainExtractModelFor(const QString& operationId) {
     for (int i = 0; i < chainEditor_.count(); ++i) {
         if (chainEditor_.operationIdAt(i) == operationId) {

@@ -595,6 +595,40 @@ TEST(AuthStrategy, oauth2_client_credentials_surfaces_token_endpoint_error) {
     EXPECT_NE(result.error().detail.find("invalid_client"), std::string::npos);
 }
 
+TEST(AuthStrategy, oauth2_client_credentials_emits_token_response_on_failure) {
+    // The token-endpoint response must reach the event stream so the timeline
+    // can show WHY OAuth2 auth failed (status + body), not just that it did.
+    FakeHttpClient http;
+    http.enqueue(400, R"({"error":"invalid_client"})");
+
+    ce::VariableResolver resolver;
+    auto actor = makeOAuth2ClientCredsActor("https://idp.test/token", "client-x", "wrong-secret");
+
+    std::vector<ce::RunEvent> events;
+    ce::AuthDependencies deps{&http, &resolver};
+    deps.emit = [&events](const ce::RunEvent& e) {
+        events.push_back(e);
+    };
+    deps.captureResponseBodies = true;
+    auto auther = ce::selectAuthenticator(actor, deps);
+    ASSERT_NE(auther, nullptr);
+
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+    ASSERT_FALSE(result.has_value());
+
+    bool sawResponse = false;
+    for (const auto& e : events) {
+        if (const auto* rr = std::get_if<ce::ResponseReceived>(&e)) {
+            sawResponse = true;
+            EXPECT_EQ(rr->status, 400);
+            ASSERT_TRUE(rr->body.has_value());
+            EXPECT_NE(rr->body->find("invalid_client"), std::string::npos);
+        }
+    }
+    EXPECT_TRUE(sawResponse);
+}
+
 TEST(AuthStrategy, oauth2_client_credentials_rejects_response_without_access_token) {
     FakeHttpClient http;
     http.enqueue(200, R"({"token_type":"Bearer"})");  // no access_token

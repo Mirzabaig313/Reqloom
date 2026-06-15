@@ -323,7 +323,8 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     const std::string& tokenUrl,
     std::string formBody,
     std::string_view strategyLabel,
-    const TransportConfig& transport) {
+    const TransportConfig& transport,
+    const AuthDependencies& deps) {
     HttpRequest req;
     req.method = HttpMethod::Post;
     req.url = tokenUrl;
@@ -332,6 +333,16 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     req.body = std::move(formBody);
     req.transport = transport;
 
+    if (deps.emit) {
+        deps.emit(RequestPrepared{deps.runId,
+                                  deps.stepIndex,
+                                  req.method,
+                                  req.url,
+                                  snapshotMaskedRequestHeaders(req),
+                                  requestBodySize(req),
+                                  std::chrono::system_clock::now()});
+    }
+
     const auto response = http.send(req);
     if (!response) {
         return std::unexpected(ReqloomError{
@@ -339,6 +350,21 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
             ErrorClass::Auth,
             "auth: " + std::string{strategyLabel} + " network error: " + response.error().detail});
     }
+
+    // Surface the token-endpoint response (incl. failures) so the timeline can
+    // show why OAuth2 auth failed, not just that it did. Body only when the
+    // run opted into capture — it carries tokens.
+    if (deps.emit) {
+        deps.emit(ResponseReceived{deps.runId,
+                                   deps.stepIndex,
+                                   response->status,
+                                   maskHeaders(response->headers),
+                                   response->body.size(),
+                                   response->elapsed,
+                                   std::chrono::system_clock::now(),
+                                   capturedBody(response->body, deps.captureResponseBodies)});
+    }
+
     if (response->status < 200 || response->status >= 300) {
         // Surface enough of the body to debug misconfigured credentials.
         constexpr std::size_t kBodyExcerpt = 200;
@@ -492,7 +518,7 @@ public:
         }
 
         return executeOAuth2TokenRequest(
-            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport);
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_);
     }
 
 private:
@@ -560,7 +586,7 @@ public:
         }
 
         return executeOAuth2TokenRequest(
-            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport);
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_);
     }
 
 private:
