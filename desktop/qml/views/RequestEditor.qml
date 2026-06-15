@@ -183,12 +183,22 @@ ColumnLayout {
             placeholderTextColor: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontBody
             font.family: DesignTokens.fontMono
-            onTextEdited: AppController.editPath = text
+            // onTextChanged (not onTextEdited) so programmatic inserts from the
+            // {{ autocomplete also write back to the controller.
+            onTextChanged: if (text !== AppController.editPath) {
+                AppController.editPath = text;
+            }
+            Keys.forwardTo: [pathAutocomplete.keyTarget]
             background: Rectangle {
                 radius: DesignTokens.radiusSm
                 color: DesignTokens.surfaceSunken
                 border.width: 1
                 border.color: pathField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+            }
+            VariableAutocomplete {
+                id: pathAutocomplete
+                field: pathField
+                operationId: AppController.selectedModule + "." + AppController.opName
             }
         }
 
@@ -814,7 +824,14 @@ ColumnLayout {
                                     onTextChanged: if (text !== AppController.editBody) {
                                         AppController.editBody = text;
                                     }
+                                    Keys.forwardTo: [bodyAutocomplete.keyTarget]
                                     background: null
+
+                                    VariableAutocomplete {
+                                        id: bodyAutocomplete
+                                        field: rawBody
+                                        operationId: AppController.selectedModule + "." + AppController.opName
+                                    }
 
                                     // Live syntax colouring for the editable body.
                                     BodyHighlighter {
