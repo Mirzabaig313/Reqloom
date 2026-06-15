@@ -5,6 +5,8 @@
 // cycle rejection happen in AppController.createOperation → ProjectModel →
 // engine::validateProject (a dependency that forms a cycle is rejected and
 // nothing is written).
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -166,28 +168,175 @@ Dialog {
             visible: chainToggle.checked
             spacing: DesignTokens.spaceSm
 
-            Label {
-                text: qsTr("Depends on")
-                color: DesignTokens.textPrimary
-                font.pixelSize: DesignTokens.fontLabel
-                font.weight: DesignTokens.weightSemiBold
-            }
-            DependencyEditor {
+            // Depends on + Extract live in one grouped card so they read as a
+            // single "wiring" unit for this endpoint, stacked below each other.
+            Rectangle {
                 Layout.fillWidth: true
-                depModel: AppController.newEndpointDependencies
-                candidates: AppController.operationIds
+                radius: DesignTokens.radiusSm
+                color: DesignTokens.surfaceSunken
+                border.width: 1
+                border.color: DesignTokens.borderSubtle
+                implicitHeight: chainGroup.implicitHeight + DesignTokens.spaceMd * 2
+
+                ColumnLayout {
+                    id: chainGroup
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: DesignTokens.spaceMd
+                    spacing: DesignTokens.spaceSm
+
+                    Label {
+                        text: qsTr("Depends on")
+                        color: DesignTokens.textPrimary
+                        font.pixelSize: DesignTokens.fontLabel
+                        font.weight: DesignTokens.weightSemiBold
+                    }
+
+                    // Column headers.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: DesignTokens.spaceSm
+                        Label {
+                            Layout.preferredWidth: 150
+                            text: qsTr("Endpoint")
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.weight: DesignTokens.weightSemiBold
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Variable name")
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.weight: DesignTokens.weightSemiBold
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Body path / Header")
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.weight: DesignTokens.weightSemiBold
+                        }
+                        Item {
+                            Layout.preferredWidth: 24
+                        }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: DesignTokens.borderSubtle
+                    }
+
+                    // One row per chosen dependency: endpoint id + its var/path
+                    // pairs (its own extract block) + a remove button.
+                    Repeater {
+                        model: AppController.newEndpointDepExtracts
+                        delegate: RowLayout {
+                            id: depRow
+                            required property string operationId
+                            required property var extractModel
+                            Layout.fillWidth: true
+                            Layout.topMargin: DesignTokens.spaceXs
+                            spacing: DesignTokens.spaceSm
+
+                            Label {
+                                Layout.preferredWidth: 150
+                                Layout.alignment: Qt.AlignTop
+                                Layout.topMargin: 6
+                                text: depRow.operationId
+                                color: DesignTokens.textPrimary
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.family: DesignTokens.fontMono
+                                wrapMode: Text.WrapAnywhere
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: DesignTokens.spaceXs
+                                Repeater {
+                                    model: depRow.extractModel
+                                    delegate: RowLayout {
+                                        id: exRow
+                                        required property int index
+                                        required property string key
+                                        required property string value
+                                        Layout.fillWidth: true
+                                        spacing: DesignTokens.spaceSm
+                                        CellField {
+                                            Layout.fillWidth: true
+                                            text: exRow.key
+                                            placeholderText: qsTr("variable_name")
+                                            onTextEdited: depRow.extractModel.setKey(exRow.index, text)
+                                        }
+                                        CellField {
+                                            Layout.fillWidth: true
+                                            text: exRow.value
+                                            placeholderText: qsTr("$.body.path / $.headers.X")
+                                            onTextEdited: depRow.extractModel.setValue(exRow.index, text)
+                                        }
+                                    }
+                                }
+                            }
+                            ToolButton {
+                                id: removeDepBtn
+                                Layout.alignment: Qt.AlignTop
+                                implicitWidth: 24
+                                implicitHeight: 24
+                                text: "✕"
+                                onClicked: AppController.removeNewEndpointDependency(depRow.operationId)
+                                contentItem: Text {
+                                    text: removeDepBtn.text
+                                    color: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                background: Rectangle {
+                                    radius: DesignTokens.radiusSm
+                                    color: removeDepBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                                }
+                            }
+                        }
+                    }
+
+                    // Add a dependency (becomes a new table row).
+                    GlassComboBox {
+                        id: addDepCombo
+                        Layout.fillWidth: true
+                        Layout.topMargin: DesignTokens.spaceXs
+                        readonly property var options: [qsTr("+ Add dependency")].concat(AppController.operationIds)
+                        model: addDepCombo.options
+                        currentIndex: 0
+                        onActivated: function (i) {
+                            if (i > 0) {
+                                AppController.addNewEndpointDependency(addDepCombo.options[i]);
+                                addDepCombo.currentIndex = 0;
+                            }
+                        }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("$.body.path · $.headers.X · $.cookies.X · $.status_code · anything else is a JSON path")
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontCaption
+                        wrapMode: Text.WordWrap
+                    }
+                }
             }
-            Label {
-                text: qsTr("Extract")
-                color: DesignTokens.textPrimary
-                font.pixelSize: DesignTokens.fontLabel
-                font.weight: DesignTokens.weightSemiBold
-            }
-            ExtractionEditor {
-                Layout.fillWidth: true
-                extractModel: AppController.newEndpointExtractions
-                resourcePrefix: moduleCombo.currentText
-            }
+        }
+    }
+
+    component CellField: TextField {
+        color: DesignTokens.textPrimary
+        placeholderTextColor: DesignTokens.textSecondary
+        font.pixelSize: DesignTokens.fontLabel
+        implicitHeight: 32
+        background: Rectangle {
+            radius: DesignTokens.radiusSm
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: parent.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
         }
     }
 

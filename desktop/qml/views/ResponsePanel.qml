@@ -561,6 +561,26 @@ Rectangle {
                                         color: DesignTokens.accent
                                         font.pixelSize: DesignTokens.fontCaption
                                     }
+                                    // Save this response value as a chain variable
+                                    // (extraction) on the current endpoint. The
+                                    // tree already carries the JSONPath (with any
+                                    // array index), so picking is one click.
+                                    Text {
+                                        id: extractHint
+                                        visible: extractMouse.containsMouse || (rowMouse.containsMouse && treeRow.modelData.isLeaf)
+                                        text: qsTr("＋ save as variable")
+                                        color: extractMouse.containsMouse ? DesignTokens.accentHover : DesignTokens.accent
+                                        font.pixelSize: DesignTokens.fontCaption
+                                        font.weight: DesignTokens.weightSemiBold
+                                        MouseArea {
+                                            id: extractMouse
+                                            anchors.fill: parent
+                                            anchors.margins: -4
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: extractDialog.openFor(treeRow.modelData.path, treeRow.modelData.field)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -813,5 +833,74 @@ Rectangle {
         }
 
         onAccepted: AppController.saveResponse(exampleNameField.text.trim())
+    }
+
+    // Save-as-variable prompt (response-driven extract picker). The JSONPath
+    // comes from the clicked tree node; the user just names the variable.
+    Dialog {
+        id: extractDialog
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: 440
+        padding: DesignTokens.spaceLg
+        title: qsTr("Save as variable")
+        header: DialogHeader {
+            title: qsTr("Save as variable")
+        }
+
+        property string sourcePath: ""
+
+        function openFor(path, suggestedName) {
+            sourcePath = path;
+            extractNameField.text = suggestedName;
+            open();
+            extractNameField.forceActiveFocus();
+            extractNameField.selectAll();
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: ColumnLayout {
+            spacing: DesignTokens.spaceSm
+            FieldLabel {
+                text: qsTr("Variable name")
+            }
+            GlassTextField {
+                id: extractNameField
+                Layout.fillWidth: true
+            }
+            FieldLabel {
+                text: qsTr("From this response path")
+            }
+            Label {
+                Layout.fillWidth: true
+                text: extractDialog.sourcePath
+                color: DesignTokens.textPrimary
+                font.pixelSize: DesignTokens.fontLabel
+                font.family: DesignTokens.fontMono
+                wrapMode: Text.WrapAnywhere
+            }
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Saved on this endpoint. Later steps reference it as {{%1.%2}}.").arg(AppController.selectedModule).arg(extractNameField.text.trim().length > 0 ? extractNameField.text.trim() : "<variable>")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontCaption
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Save variable")
+            okEnabled: extractNameField.text.trim().length > 0
+            onAccepted: extractDialog.accept()
+            onRejected: extractDialog.reject()
+        }
+
+        onAccepted: AppController.addExtraction(extractNameField.text.trim(), extractDialog.sourcePath)
     }
 }

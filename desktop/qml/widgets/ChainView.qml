@@ -127,10 +127,14 @@ Rectangle {
                         const ty = t.y;
                         const dy = ty - sy;
                         // Smooth vertical S-curve from source bottom to target top.
+                        // Derived (auto, from {{}} usage) edges are dashed;
+                        // explicit depends_on edges are solid.
+                        ctx.setLineDash(root.edges[i].explicit ? [] : [5, 4]);
                         ctx.beginPath();
                         ctx.moveTo(sx, sy);
                         ctx.bezierCurveTo(sx, sy + dy * 0.5, tx, ty - dy * 0.5, tx, ty);
                         ctx.stroke();
+                        ctx.setLineDash([]);
                         // Arrowhead tucked into the target's top edge.
                         ctx.beginPath();
                         ctx.moveTo(tx, ty);
@@ -138,6 +142,20 @@ Rectangle {
                         ctx.lineTo(tx + 4, ty - 7);
                         ctx.closePath();
                         ctx.fill();
+                        // Label the edge with the variable(s) that flow along it.
+                        const label = root.edges[i].label || "";
+                        if (label.length > 0) {
+                            const mx = (sx + tx) / 2;
+                            const my = (sy + ty) / 2;
+                            ctx.font = "10px monospace";
+                            ctx.textAlign = "center";
+                            ctx.textBaseline = "middle";
+                            const tw = ctx.measureText(label).width;
+                            ctx.fillStyle = DesignTokens.surfaceSunken;
+                            ctx.fillRect(mx - tw / 2 - 5, my - 8, tw + 10, 16);
+                            ctx.fillStyle = col;
+                            ctx.fillText(label, mx, my);
+                        }
                     }
                     ctx.globalAlpha = 1.0;
                 }

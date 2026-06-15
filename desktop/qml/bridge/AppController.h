@@ -64,6 +64,10 @@ class AppController : public QObject {
     // Editable models backing the New Endpoint dialog's optional chain section.
     Q_PROPERTY(DependencyEditModel* newEndpointDependencies READ newEndpointDependencies CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* newEndpointExtractions READ newEndpointExtractions CONSTANT)
+    // Per-dependency extraction editors for the New Endpoint dialog: one row
+    // per chosen dependency, exposing that dependency's own extract block so
+    // "what to pull from each prerequisite" is edited inline (saved to the dep).
+    Q_PROPERTY(ChainEditorModel* newEndpointDepExtracts READ newEndpointDepExtracts CONSTANT)
 
     // Selected operation (request editor)
     Q_PROPERTY(bool hasOperation READ hasOperation NOTIFY operationChanged)
@@ -245,6 +249,7 @@ public:
     [[nodiscard]] EditableKeyValueModel* newEndpointExtractions() {
         return &newEndpointExtractions_;
     }
+    [[nodiscard]] ChainEditorModel* newEndpointDepExtracts() { return &newEndpointDepExtracts_; }
 
     [[nodiscard]] bool hasOperation() const { return hasOperation_; }
     [[nodiscard]] QString opName() const { return opName_; }
@@ -322,6 +327,18 @@ public:
     /// dependency chain (each step seeded from the project). Call when the
     /// Chain tab is shown.
     Q_INVOKABLE void prepareChainEditor();
+    /// Re-derive the chain editor's step membership from the current (possibly
+    /// unsaved) dependency edits, preserving every step's in-progress edits.
+    /// Called after a dependency is added/removed so a newly-referenced step
+    /// becomes an editable row immediately (matching the New Endpoint dialog).
+    Q_INVOKABLE void syncChainEditorMembership();
+
+    /// Add `operationId` as a dependency of the chain's target (the open op),
+    /// then re-derive membership so it appears as an editable row.
+    Q_INVOKABLE void chainAddDependency(const QString& operationId);
+    /// Remove `operationId` from every step's dependencies, then re-derive
+    /// membership so the now-unreferenced step drops out of the chain.
+    Q_INVOKABLE void chainRemoveStep(const QString& operationId);
     /// Persist every chain operation's edited depends_on + extract in one
     /// validated write. Returns true on success (dialog/banner stays on error).
     Q_INVOKABLE bool saveChainEdits();
@@ -330,6 +347,24 @@ public:
     /// response — shown under a dependency so the user knows which variables
     /// each prerequisite makes available to reference.
     Q_INVOKABLE [[nodiscard]] QStringList extractedVariablesFor(const QString& operationId) const;
+
+    /// The variable/path pairs an operation extracts from its response, for
+    /// read-only display in a dependent's "Depends on" table. Each entry is a
+    /// map with "key" (bare variable name) and "value" (source path).
+    Q_INVOKABLE [[nodiscard]] QVariantList extractionPairsFor(const QString& operationId) const;
+
+    /// The live, editable extract model for a step in the open chain editor,
+    /// looked up by operation id (so a dependency's variables can be edited
+    /// inline from a dependent's chain table). Returns nullptr if not in the
+    /// chain. Edits are persisted by saveChainEdits like any other step.
+    Q_INVOKABLE [[nodiscard]] EditableKeyValueModel* chainExtractModelFor(
+        const QString& operationId);
+
+    /// Save a value from the current operation's response as an extracted
+    /// variable (the response-driven picker). `sourcePath` is a JSONPath such
+    /// as "$.data[2].id"; `variableName` is the bare name. Persists immediately
+    /// and returns true on success.
+    Q_INVOKABLE bool addExtraction(const QString& variableName, const QString& sourcePath);
 
     /// Open a project directory (the folder containing reqloom.yaml).
     Q_INVOKABLE void openProject(const QUrl& directory);
@@ -430,6 +465,9 @@ public:
     /// Reset the New Endpoint dialog's chain editors and dependency candidates.
     /// `preselectedResource` selects a module up-front (empty = none).
     Q_INVOKABLE void prepareNewEndpoint(const QString& preselectedResource);
+    /// Add / remove a dependency on the New Endpoint dialog's chain table.
+    Q_INVOKABLE void addNewEndpointDependency(const QString& operationId);
+    Q_INVOKABLE void removeNewEndpointDependency(const QString& operationId);
 
     /// Create an operation from the New Endpoint dialog. Dependencies and
     /// extractions are read from `newEndpointDependencies`/`newEndpointExtractions`.
@@ -484,6 +522,7 @@ signals:
 
 private:
     void onLoaded();
+    void onSaved();
     void onLoadFailed(const QString& code, const QString& detail);
     void loadSampleIfPresent();
     /// Refresh `exampleList_` for the open operation, and rebuild the explorer
@@ -494,6 +533,9 @@ private:
     /// dropdown — does not touch the explorer tree (so selecting an operation
     /// doesn't reset/collapse the TreeView). Called on every selection.
     void refreshOpenOpExamples();
+    /// Rebuild the New Endpoint dialog's per-dependency extraction editors from
+    /// its currently-chosen dependencies.
+    void rebuildNewEndpointDepExtracts();
     /// Fully-qualified id of the open operation ("<module>.<op>"), or empty.
     [[nodiscard]] QString currentOperationId() const;
     /// Assemble a one-shot RequestOverride from the current edit state. Mirrors
@@ -515,6 +557,7 @@ private:
     ProjectTreeFilterModel treeFilter_;
     DependencyEditModel newEndpointDeps_;
     EditableKeyValueModel newEndpointExtractions_;
+    ChainEditorModel newEndpointDepExtracts_;
     TimelineModel timeline_;
     ChainEditorModel chainEditor_;
     ExampleListModel exampleList_;
