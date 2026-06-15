@@ -64,6 +64,64 @@ std::string_view toCodeString(ErrorCode code) noexcept {
     return "E_UNKNOWN";
 }
 
+std::string_view humanize(ErrorCode code) noexcept {
+    switch (code) {
+        case ErrorCode::SchemaInvalid:
+            return "Invalid schema";
+        case ErrorCode::YamlParse:
+            return "Could not parse YAML";
+        case ErrorCode::Cycle:
+            return "Dependency cycle";
+        case ErrorCode::RefUndefined:
+            return "Missing reference";
+        case ErrorCode::SchemaVersion:
+            return "Unsupported schema version";
+        case ErrorCode::VarUnresolved:
+            return "Unresolved variable";
+        case ErrorCode::IndexedRefOutOfRange:
+            return "List index out of range";
+        case ErrorCode::NetworkTimeout:
+            return "Request timed out";
+        case ErrorCode::NetworkDns:
+            return "Could not resolve host";
+        case ErrorCode::NetworkTls:
+            return "TLS handshake failed";
+        case ErrorCode::UploadFileUnreadable:
+            return "Upload file unreadable";
+        case ErrorCode::Http5xx:
+            return "Server error";
+        case ErrorCode::Http4xx:
+            return "Request rejected";
+        case ErrorCode::StatusMismatch:
+            return "Unexpected status code";
+        case ErrorCode::SessionRefreshFailed:
+            return "Authentication failed";
+        case ErrorCode::SecretAccessFailed:
+            return "Could not read secret";
+        case ErrorCode::HookFailure:
+            return "Hook script failed";
+        case ErrorCode::HookTimeout:
+            return "Hook script timed out";
+        case ErrorCode::ExtractionFailed:
+            return "Extraction failed";
+        case ErrorCode::ResponseParse:
+            return "Could not parse response";
+        case ErrorCode::PollTimeout:
+            return "Polling timed out";
+        case ErrorCode::PollMaxAttemptsExceeded:
+            return "Polling gave up";
+        case ErrorCode::PollFailPredicate:
+            return "Polling hit a failure condition";
+        case ErrorCode::LlmRequestFailed:
+            return "AI request failed";
+        case ErrorCode::LlmResponseInvalid:
+            return "AI response was invalid";
+        case ErrorCode::Cancelled:
+            return "Cancelled";
+    }
+    return "Failed";
+}
+
 std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
     // Reverse of toCodeString, matched against the full enumerator list.
     // The drift guard below fails the build if a code is added without

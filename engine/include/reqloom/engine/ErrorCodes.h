@@ -82,6 +82,11 @@ enum class ErrorClass : std::uint8_t {
 /// asserted on by integration tests.
 [[nodiscard]] std::string_view toCodeString(ErrorCode code) noexcept;
 
+/// A short, action-oriented phrase for an error code (e.g. "Authentication
+/// failed"). The canonical source of friendly messages for UI/CLI surfaces —
+/// promote new copy here rather than maintaining per-surface maps.
+[[nodiscard]] std::string_view humanize(ErrorCode code) noexcept;
+
 /// Inverse of `toCodeString`. Returns the matching code, or nullopt for
 /// an unrecognised string (e.g. a code persisted by a newer build).
 /// Callers decide the fallback — the history store maps nullopt to

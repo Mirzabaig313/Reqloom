@@ -38,6 +38,21 @@ TEST(EngineSmoke, FromCodeStringRoundTripsEveryCode) {
     EXPECT_FALSE(ce::fromCodeString("").has_value());
 }
 
+TEST(EngineSmoke, HumanizeIsNonEmptyAndCurated) {
+    // humanize() is the canonical friendly-message source for UI/CLI; every
+    // code maps to a non-empty phrase, and a few are pinned to their copy.
+    EXPECT_EQ(ce::humanize(ce::ErrorCode::SessionRefreshFailed), "Authentication failed");
+    EXPECT_EQ(ce::humanize(ce::ErrorCode::Cycle), "Dependency cycle");
+    EXPECT_EQ(ce::humanize(ce::ErrorCode::NetworkTimeout), "Request timed out");
+    for (const auto code : {ce::ErrorCode::SchemaInvalid,
+                            ce::ErrorCode::RefUndefined,
+                            ce::ErrorCode::ExtractionFailed,
+                            ce::ErrorCode::HookFailure,
+                            ce::ErrorCode::Cancelled}) {
+        EXPECT_FALSE(ce::humanize(code).empty());
+    }
+}
+
 TEST(EngineSmoke, RetryabilityMatchesSpec) {
     // 5xx and network timeouts retry; 4xx and schema errors do not.
     EXPECT_TRUE(ce::isRetryable(ce::ErrorCode::Http5xx));

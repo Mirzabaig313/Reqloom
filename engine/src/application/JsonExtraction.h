@@ -20,13 +20,40 @@
 #include <reqloom/engine/Operation.h>
 #include <reqloom/engine/RunContext.h>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include <expected>
 #include <map>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace reqloom::engine {
+
+/// Resolve a JSONPath against an already-parsed document. Supports the engine's
+/// JSONPath subset — field access (`a.b`), array indexing (`a[0]`, `a[0][1]`),
+/// and predicate filters (`a[?(@.field=='x')]`, first match wins). Returns
+/// nullptr on a miss; a resolved-but-null value yields a non-null pointer to a
+/// JSON `null` (so callers can distinguish "missing" from "present and null").
+/// Shared so every JSONPath surface (extraction, verification) walks the same
+/// way.
+[[nodiscard]] const nlohmann::json* walkJsonPath(const nlohmann::json& doc,
+                                                 std::string_view sourcePath);
+
+/// Evaluate a JSONPath that may contain the wildcard `[*]` (every array
+/// element) in addition to field access, `[N]` indexing, and `[?(...)]`
+/// filters, returning EVERY matched value as a string (raw for JSON strings,
+/// compact `dump()` otherwise). This is the "list" form behind the value
+/// picker (e.g. `$.data[*].id` → all item ids) and a building block for
+/// for-each execution. Empty when nothing matches.
+[[nodiscard]] std::vector<std::string> evaluateJsonPathAll(const nlohmann::json& doc,
+                                                           std::string_view sourcePath);
+
+/// Parse `body` as JSON and `evaluateJsonPathAll` against it. Returns an empty
+/// vector when the body is not valid JSON or nothing matches.
+[[nodiscard]] std::vector<std::string> extractAllValues(const std::string& body,
+                                                        std::string_view sourcePath);
 
 [[nodiscard]] std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
     const std::string& body, const std::vector<Extraction>& extractions);

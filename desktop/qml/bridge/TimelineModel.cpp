@@ -1,6 +1,8 @@
 // TimelineModel — see header. Mirrors the old TimelinePanel.cpp content.
 #include "TimelineModel.h"
 
+#include <reqloom/engine/ErrorCodes.h>
+
 namespace reqloom::desktop::qml {
 
 namespace {
@@ -28,24 +30,13 @@ namespace {
 }
 
 /// Turn a raw engine error code (E_SESSION_REFRESH_FAILED) into a phrase a
-/// human can act on. Known codes get a curated message; anything else falls
+/// human can act on. Known codes resolve via the engine's canonical
+/// `humanize` (one source of truth shared with the CLI); anything else falls
 /// back to title-casing the token (strip E_, underscores → spaces).
 [[nodiscard]] QString humanizeError(const QString& code) {
-    static const QHash<QString, QString> kFriendly = {
-        {QStringLiteral("E_SESSION_REFRESH_FAILED"), QStringLiteral("Authentication failed")},
-        {QStringLiteral("E_LOGIN_FAILED"), QStringLiteral("Login failed")},
-        {QStringLiteral("E_AUTH_FAILED"), QStringLiteral("Authentication failed")},
-        {QStringLiteral("E_NETWORK"), QStringLiteral("Network error")},
-        {QStringLiteral("E_TIMEOUT"), QStringLiteral("Request timed out")},
-        {QStringLiteral("E_CYCLE"), QStringLiteral("Dependency cycle")},
-        {QStringLiteral("E_MISSING_REF"), QStringLiteral("Missing reference")},
-        {QStringLiteral("E_EXTRACTION_FAILED"), QStringLiteral("Extraction failed")},
-        {QStringLiteral("E_SCHEMA_INVALID"), QStringLiteral("Invalid schema")},
-        {QStringLiteral("E_HOOK_FAILED"), QStringLiteral("Hook script failed")},
-    };
-    const auto it = kFriendly.constFind(code);
-    if (it != kFriendly.constEnd()) {
-        return it.value();
+    if (const auto known = engine::fromCodeString(code.toStdString())) {
+        const auto phrase = engine::humanize(*known);
+        return QString::fromUtf8(phrase.data(), static_cast<qsizetype>(phrase.size()));
     }
     QString token = code;
     if (token.startsWith(QLatin1String("E_"))) {

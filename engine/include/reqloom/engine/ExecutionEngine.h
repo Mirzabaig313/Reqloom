@@ -3,12 +3,14 @@
 #pragma once
 
 #include <reqloom/engine/Actor.h>
+#include <reqloom/engine/Dependency.h>
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/Events.h>
 #include <reqloom/engine/Operation.h>
 #include <reqloom/engine/Resource.h>
 #include <reqloom/engine/RunContext.h>
 #include <reqloom/engine/Transport.h>
+#include <reqloom/engine/VariableSuggestion.h>
 
 #include <expected>
 #include <functional>
@@ -120,6 +122,24 @@ public:
                                                              const OperationId& target,
                                                              RunContext& ctx,
                                                              const RunOptions& options = {});
+
+    /// Resolve a target's execution chain without running it: the
+    /// topological order plus the resolved dependency edges (explicit +
+    /// implicit `{{var}}`, each tagged with the flowing variable). Lets the
+    /// UI draw the real resolved graph. Returns the same schema-time errors
+    /// as `run` (cycle, undefined reference).
+    [[nodiscard]] std::expected<ResolvedPlan, ReqloomError> resolvePlan(
+        const Project& project, const OperationId& target) const;
+
+    /// Enumerate the `{{...}}` references usable at `target`: upstream
+    /// extracts, the target actor's session tokens, env vars, declared
+    /// secrets, and `$.` built-ins. Pure (resolves the chain, no I/O) so the
+    /// editor can call it for `{{` autocomplete. `environment` empty → the
+    /// project default. Returns the same schema-time errors as `run`.
+    [[nodiscard]] std::expected<std::vector<VariableSuggestion>, ReqloomError> suggestVariables(
+        const Project& project,
+        const OperationId& target,
+        const std::string& environment = {}) const;
 
     /// Cancel an in-flight run.
     void cancel(RunId run);
