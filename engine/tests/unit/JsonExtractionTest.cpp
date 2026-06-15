@@ -303,3 +303,63 @@ TEST(JsonExtractionResponse, header_extraction_on_non_json_body_does_not_fail_on
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->values.at("ct"), "text/html");
 }
+
+// ── Phase 3: JSONPath filters — "specific item by value" ──────────────────
+
+TEST(JsonExtractionFilter, selects_array_item_by_string_field) {
+    const std::string body = R"({
+        "data": [
+            { "id": "a1", "status": "archived" },
+            { "id": "a2", "status": "active" },
+            { "id": "a3", "status": "active" }
+        ]
+    })";
+    // First element whose status == 'active' is a2.
+    auto result =
+        ce::extractFromJsonDetailed(ce::OperationId{"thing.list"},
+                                    body,
+                                    {jsonpath("active_id", "$.data[?(@.status == 'active')].id")});
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_EQ(result->traces.size(), 1u);
+    EXPECT_EQ(result->traces[0].outcome, ce::ExtractionTrace::Outcome::Resolved);
+    EXPECT_EQ(result->traces[0].value, "a2");
+}
+
+TEST(JsonExtractionFilter, selects_array_item_by_numeric_field) {
+    const std::string body = R"({ "items": [ {"qty": 1, "sku": "x"}, {"qty": 2, "sku": "y"} ] })";
+    auto result = ce::extractFromJsonDetailed(
+        ce::OperationId{"cart.x"}, body, {jsonpath("sku", "$.items[?(@.qty == 2)].sku")});
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->traces[0].value, "y");
+}
+
+TEST(JsonExtractionFilter, no_matching_item_is_missing) {
+    const std::string body = R"({ "data": [ {"id": "a1", "status": "archived"} ] })";
+    auto result =
+        ce::extractFromJsonDetailed(ce::OperationId{"thing.list"},
+                                    body,
+                                    {jsonpath("active_id", "$.data[?(@.status == 'active')].id")});
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->traces[0].outcome, ce::ExtractionTrace::Outcome::Missing);
+}
+
+TEST(JsonExtractionFilter, plain_index_still_resolves) {
+    // Regression: indexing must keep working alongside filters.
+    const std::string body = R"({ "data": [ {"id": "a1"}, {"id": "a2"} ] })";
+    auto result = ce::extractFromJsonDetailed(
+        ce::OperationId{"thing.list"}, body, {jsonpath("second", "$.data[1].id")});
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->traces[0].value, "a2");
+}
+
+TEST(JsonExtractionFilter, filter_value_containing_at_sign_is_intact) {
+    // The '@'→'$' translation must not corrupt '@' inside a string literal.
+    const std::string body =
+        R"({ "users": [ {"email": "a@b.com", "id": "u1"}, {"email": "c@d.com", "id": "u2"} ] })";
+    auto result =
+        ce::extractFromJsonDetailed(ce::OperationId{"user.list"},
+                                    body,
+                                    {jsonpath("uid", "$.users[?(@.email == 'c@d.com')].id")});
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->traces[0].value, "u2");
+}

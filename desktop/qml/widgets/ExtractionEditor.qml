@@ -42,6 +42,36 @@ ColumnLayout {
         }
     }
 
+    // Column headers — mirror the New Endpoint dialog's dependency table so the
+    // two extraction surfaces read identically.
+    RowLayout {
+        Layout.fillWidth: true
+        Layout.topMargin: DesignTokens.spaceXs
+        spacing: DesignTokens.spaceXs
+        Label {
+            Layout.preferredWidth: 150
+            text: qsTr("Variable name")
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontCaption
+            font.weight: DesignTokens.weightSemiBold
+        }
+        Label {
+            Layout.fillWidth: true
+            text: qsTr("Body path / Header")
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontCaption
+            font.weight: DesignTokens.weightSemiBold
+        }
+        Item {
+            Layout.preferredWidth: 28
+        }
+    }
+    Rectangle {
+        Layout.fillWidth: true
+        Layout.preferredHeight: 1
+        color: DesignTokens.borderSubtle
+    }
+
     Repeater {
         model: root.extractModel
 
@@ -54,20 +84,25 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: DesignTokens.spaceXs
 
-            // Resource prefix adornment — shows the variable is namespaced,
-            // e.g. "cart." before the editable "verify_id".
-            Label {
-                visible: root.resourcePrefix.length > 0
-                text: root.resourcePrefix + "."
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontLabel
-                font.family: DesignTokens.fontMono
-            }
-            Field {
-                Layout.preferredWidth: 120
-                text: row.key
-                placeholderText: qsTr("variable")
-                onTextEdited: root.extractModel.setKey(row.index, text)
+            // Variable column groups the resource-prefix adornment with the
+            // editable name so the "cart." namespace stays glued to its field
+            // and the column lines up under the "Variable name" header.
+            RowLayout {
+                Layout.preferredWidth: 150
+                spacing: 2
+                Label {
+                    visible: root.resourcePrefix.length > 0
+                    text: root.resourcePrefix + "."
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    font.family: DesignTokens.fontMono
+                }
+                Field {
+                    Layout.fillWidth: true
+                    text: row.key
+                    placeholderText: qsTr("variable")
+                    onTextEdited: root.extractModel.setKey(row.index, text)
+                }
             }
             Field {
                 Layout.fillWidth: true

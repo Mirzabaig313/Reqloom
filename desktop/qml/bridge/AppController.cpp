@@ -13,6 +13,7 @@
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
+#include <QtCore/QSet>
 #include <QtCore/QStringList>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
@@ -131,7 +132,7 @@ AppController::AppController(QObject* parent)
       bootstrapper_(std::make_unique<Bootstrapper>()),
       runController_(std::make_unique<RunController>(bootstrapper_->engine(), *project_, this)) {
     connect(project_.get(), &ProjectModel::loaded, this, &AppController::onLoaded);
-    connect(project_.get(), &ProjectModel::saved, this, &AppController::onLoaded);
+    connect(project_.get(), &ProjectModel::saved, this, &AppController::onSaved);
     connect(project_.get(), &ProjectModel::loadFailed, this, &AppController::onLoadFailed);
 
     // Capture response bodies by default so the timeline shows full request /
@@ -267,6 +268,16 @@ AppController::AppController(QObject* parent)
     };
     connect(&editDependencies_, &QAbstractItemModel::dataChanged, this, onDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::rowsInserted, this, onDepsChanged);
+
+    // Keep the New Endpoint dialog's per-dependency extraction editors in sync
+    // with its chosen dependencies.
+    const auto onNewDepsChanged = [this]() {
+        rebuildNewEndpointDepExtracts();
+    };
+    connect(&newEndpointDeps_, &QAbstractItemModel::dataChanged, this, onNewDepsChanged);
+    connect(&newEndpointDeps_, &QAbstractItemModel::rowsInserted, this, onNewDepsChanged);
+    connect(&newEndpointDeps_, &QAbstractItemModel::rowsRemoved, this, onNewDepsChanged);
+    connect(&newEndpointDeps_, &QAbstractItemModel::modelReset, this, onNewDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::rowsRemoved, this, onDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::modelReset, this, onDepsChanged);
 
@@ -319,6 +330,42 @@ void AppController::onLoaded() {
     }
     refreshExamples();
     emit projectChanged();
+}
+
+void AppController::onSaved() {
+    // A mutation (operation/chain/actor/env save) re-publishes the project.
+    // Unlike a fresh load, keep the user where they are: refresh project-derived
+    // models but preserve the selected module + open operation so saving from
+    // the response/chain editor doesn't bounce them back to the first module.
+    resources_.reload(project_->project());
+    tree_.populate(project_->project());
+    status_ = QStringLiteral("%1 modules").arg(resourceCount());
+    exampleStore_.setProjectRoot(project_->rootPath());
+
+    environments_ = project_->environmentNames();
+
+    const QString openModule = selectedModule_;
+    const QString openOp = hasOperation_ ? opName_ : QString{};
+    if (!openModule.isEmpty()) {
+        const auto& resources = project_->project().resources;
+        const auto it = resources.find(engine::ResourceId{openModule.toStdString()});
+        if (it != resources.end()) {
+            operations_.reload(it->second);
+        }
+    }
+    refreshExamples();
+    emit projectChanged();
+    emit selectionChanged();
+
+    // Refresh the open operation's read fields from the saved project, but only
+    // when not editing (re-selecting would discard an in-progress edit).
+    if (!editing_ && !openModule.isEmpty() && !openOp.isEmpty()) {
+        const auto& resources = project_->project().resources;
+        const auto it = resources.find(engine::ResourceId{openModule.toStdString()});
+        if (it != resources.end() && it->second.operations.contains(openOp.toStdString())) {
+            selectOperation(openModule, openOp);
+        }
+    }
 }
 
 void AppController::selectModule(const QString& moduleName) {
@@ -612,6 +659,81 @@ QStringList AppController::extractedVariablesFor(const QString& operationId) con
     return tokens;
 }
 
+QVariantList AppController::extractionPairsFor(const QString& operationId) const {
+    QVariantList pairs;
+    if (!project_->hasProject()) {
+        return pairs;
+    }
+    const auto* op = project_->findOperation(engine::OperationId{operationId.toStdString()});
+    if (op == nullptr) {
+        return pairs;
+    }
+    for (const auto& ext : op->extractions) {
+        QVariantMap row;
+        row.insert(QStringLiteral("key"), QString::fromStdString(ext.variableName));
+        row.insert(QStringLiteral("value"), QString::fromStdString(ext.sourcePath));
+        pairs.append(row);
+    }
+    return pairs;
+}
+
+EditableKeyValueModel* AppController::chainExtractModelFor(const QString& operationId) {
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        if (chainEditor_.operationIdAt(i) == operationId) {
+            return chainEditor_.extractModelAt(i);
+        }
+    }
+    return nullptr;
+}
+
+bool AppController::addExtraction(const QString& variableName, const QString& sourcePath) {
+    if (!project_->hasProject() || !hasOperation_) {
+        return false;
+    }
+    const QString opId = currentOperationId();
+    const auto* op = project_->findOperation(engine::OperationId{opId.toStdString()});
+    if (op == nullptr) {
+        return false;
+    }
+    const QString var = variableName.trimmed();
+    const QString path = sourcePath.trimmed();
+    if (var.isEmpty() || path.isEmpty()) {
+        emit notify(QStringLiteral("A variable name and a path are both required."), true);
+        return false;
+    }
+
+    engine::Operation updated = *op;
+    const std::string varStd = var.toStdString();
+    const std::string pathStd = path.toStdString();
+    // Replace a same-named extraction in place, otherwise append a new one.
+    bool replaced = false;
+    for (auto& ext : updated.extractions) {
+        if (ext.variableName == varStd) {
+            ext.sourcePath = pathStd;
+            ext.source = sourceForPath(pathStd);
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced) {
+        engine::Extraction extraction;
+        extraction.variableName = varStd;
+        extraction.sourcePath = pathStd;
+        extraction.source = sourceForPath(pathStd);
+        updated.extractions.push_back(std::move(extraction));
+    }
+
+    QString error;
+    if (!project_->saveOperation(engine::OperationId{opId.toStdString()}, updated, error)) {
+        emit notify(error.isEmpty() ? QStringLiteral("Could not save the variable.") : error, true);
+        return false;
+    }
+    const qsizetype dot = opId.indexOf(QLatin1Char('.'));
+    const QString resource = dot > 0 ? opId.left(dot) : opId;
+    emit notify(QStringLiteral("Saved variable {{%1.%2}}").arg(resource, var), false);
+    return true;
+}
+
 int AppController::editParamsCount() const {
     return static_cast<int>(editQuery_.pairs().size());
 }
@@ -693,25 +815,118 @@ QVariantMap AppController::chainGraph() const {
         return graph;
     }
 
-    std::vector<QString> targetDeps;
-    if (editing_ && chainFieldsLoaded_) {
-        for (const auto& dep : editDependencies_.dependencies()) {
-            targetDeps.emplace_back(QString::fromStdString(dep));
+    // {{token}} references found in an operation's request templates.
+    const auto referencedTokens = [](const engine::Operation& op) {
+        QSet<QString> out;
+        const auto scan = [&out](const std::string& text) {
+            const QString s = QString::fromStdString(text);
+            int i = 0;
+            while ((i = s.indexOf(QStringLiteral("{{"), i)) >= 0) {
+                const int j = s.indexOf(QStringLiteral("}}"), i + 2);
+                if (j < 0) {
+                    break;
+                }
+                const QString tok = s.mid(i + 2, j - (i + 2)).trimmed();
+                if (!tok.isEmpty()) {
+                    out.insert(tok);
+                }
+                i = j + 2;
+            }
+        };
+        scan(op.pathTemplate);
+        if (op.bodyTemplate) {
+            scan(*op.bodyTemplate);
         }
-    } else {
-        for (const auto& dep : targetOp->explicitDependencies) {
-            targetDeps.emplace_back(QString::fromStdString(dep.value));
+        for (const auto& [key, value] : op.headers) {
+            scan(key);
+            scan(value);
         }
-    }
-    if (targetDeps.empty()) {
-        return graph;  // No chain to draw; ChainView shows its empty text.
+        for (const auto& [key, value] : op.queryParams) {
+            scan(key);
+            scan(value);
+        }
+        if (op.bodyForm) {
+            for (const auto& [key, value] : *op.bodyForm) {
+                scan(key);
+                scan(value);
+            }
+        }
+        return out;
+    };
+    // "resource.var" tokens an operation provides via its extractions.
+    const auto providedTokens = [](const engine::Operation& op, const QString& opId) {
+        QSet<QString> out;
+        const qsizetype dot = opId.indexOf(QLatin1Char('.'));
+        const QString resource = dot > 0 ? opId.left(dot) : QString{};
+        for (const auto& ext : op.extractions) {
+            const QString var = QString::fromStdString(ext.variableName);
+            out.insert(var.contains(QLatin1Char('.')) || resource.isEmpty()
+                           ? var
+                           : resource + QLatin1Char('.') + var);
+        }
+        return out;
+    };
+
+    // Project-wide map: providable token → the operation that produces it, so a
+    // {{resource.var}} reference can auto-wire a dependency on its producer.
+    QHash<QString, QString> producerOf;
+    for (const auto& [resId, resource] : project_->project().resources) {
+        for (const auto& [opName, op] : resource.operations) {
+            const QString opId = QString::fromStdString(op.id.value);
+            for (const QString& tok : providedTokens(op, opId)) {
+                producerOf.insert(tok, opId);
+            }
+        }
     }
 
-    // BFS the dependency closure, recording ids in discovery order and each
-    // node's direct dependencies (target overridden with the edit-mode picker).
+    // Explicit depends_on of an operation (edit-mode picker overrides the
+    // target's), as a set for fast lookup.
+    const auto explicitDepsOf = [&](const QString& id) {
+        QSet<QString> out;
+        if (id == targetId && editing_ && chainFieldsLoaded_) {
+            for (const auto& dep : editDependencies_.dependencies()) {
+                out.insert(QString::fromStdString(dep));
+            }
+        } else {
+            const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+            if (op != nullptr) {
+                for (const auto& dep : op->explicitDependencies) {
+                    out.insert(QString::fromStdString(dep.value));
+                }
+            }
+        }
+        return out;
+    };
+
+    // Prerequisites = explicit depends_on ∪ producers of referenced {{tokens}}.
+    const auto prereqsOf = [&](const QString& id) {
+        std::vector<QString> out;
+        QSet<QString> seen;
+        const auto add = [&](const QString& p) {
+            if (p != id && !p.isEmpty() && !seen.contains(p)) {
+                seen.insert(p);
+                out.push_back(p);
+            }
+        };
+        for (const QString& dep : explicitDepsOf(id)) {
+            add(dep);
+        }
+        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        if (op != nullptr) {
+            for (const QString& tok : referencedTokens(*op)) {
+                const auto it = producerOf.constFind(tok);
+                if (it != producerOf.constEnd()) {
+                    add(it.value());
+                }
+            }
+        }
+        return out;
+    };
+
+    // BFS the prerequisite closure from the target, recording discovery order.
     QStringList ids;
     QHash<QString, int> indexOf;
-    QHash<QString, std::vector<QString>> directDeps;
+    QHash<QString, std::vector<QString>> prereqs;
     std::queue<QString> pending;
     const auto discover = [&](const QString& id) {
         if (!indexOf.contains(id)) {
@@ -720,37 +935,58 @@ QVariantMap AppController::chainGraph() const {
         }
     };
     discover(targetId);
-    directDeps.insert(targetId, targetDeps);
     pending.push(targetId);
     while (!pending.empty()) {
         const QString id = pending.front();
         pending.pop();
-        if (!directDeps.contains(id)) {
-            std::vector<QString> deps;
-            const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
-            if (op != nullptr) {
-                for (const auto& dep : op->explicitDependencies) {
-                    deps.emplace_back(QString::fromStdString(dep.value));
-                }
-            }
-            directDeps.insert(id, deps);
+        if (!prereqs.contains(id)) {
+            prereqs.insert(id, prereqsOf(id));
         }
-        for (const QString& dep : directDeps.value(id)) {
-            if (!indexOf.contains(dep)) {
-                discover(dep);
-                pending.push(dep);
+        for (const QString& p : prereqs.value(id)) {
+            if (!indexOf.contains(p)) {
+                discover(p);
+                pending.push(p);
             }
         }
     }
+    if (ids.size() <= 1) {
+        return graph;  // No chain to draw; ChainView shows its empty text.
+    }
 
-    std::vector<std::pair<int, int>> edges;
+    // Edges (prerequisite → dependent) with explicit/derived kind and the
+    // variable(s) that actually flow along them (consumer refs ∩ producer provides).
+    struct EdgeInfo {
+        int from{0};
+        int to{0};
+        bool isExplicit{false};
+        QString label;
+    };
+    std::vector<EdgeInfo> edgeInfos;
+    std::vector<std::pair<int, int>> layoutEdges;
     for (const QString& id : ids) {
         const int to = indexOf.value(id);
-        for (const QString& dep : directDeps.value(id)) {
-            const auto it = indexOf.constFind(dep);
-            if (it != indexOf.constEnd()) {
-                edges.emplace_back(it.value(), to);
+        const auto* consumerOp = project_->findOperation(engine::OperationId{id.toStdString()});
+        const QSet<QString> refTokens =
+            consumerOp != nullptr ? referencedTokens(*consumerOp) : QSet<QString>{};
+        const QSet<QString> explicitSet = explicitDepsOf(id);
+        for (const QString& p : prereqs.value(id)) {
+            const auto it = indexOf.constFind(p);
+            if (it == indexOf.constEnd()) {
+                continue;
             }
+            const auto* producerOp = project_->findOperation(engine::OperationId{p.toStdString()});
+            const QSet<QString> provided =
+                producerOp != nullptr ? providedTokens(*producerOp, p) : QSet<QString>{};
+            QStringList flowing;
+            for (const QString& tok : refTokens) {
+                if (provided.contains(tok)) {
+                    flowing.append(QStringLiteral("{{%1}}").arg(tok));
+                }
+            }
+            flowing.sort();
+            edgeInfos.push_back(EdgeInfo{
+                it.value(), to, explicitSet.contains(p), flowing.join(QStringLiteral(", "))});
+            layoutEdges.emplace_back(it.value(), to);
         }
     }
 
@@ -760,7 +996,7 @@ QVariantMap AppController::chainGraph() const {
     options.hGap = 20.0;
     options.vGap = 36.0;
     const layout::LayoutResult laid =
-        layout::layeredLayout(static_cast<int>(ids.size()), edges, options);
+        layout::layeredLayout(static_cast<int>(ids.size()), layoutEdges, options);
 
     QVariantList nodeList;
     for (int i = 0; i < ids.size(); ++i) {
@@ -785,17 +1021,19 @@ QVariantMap AppController::chainGraph() const {
         }
         node.insert(QStringLiteral("extracts"), extracts);
         QStringList depList;
-        for (const QString& dep : directDeps.value(id)) {
+        for (const QString& dep : prereqs.value(id)) {
             depList.append(dep);
         }
         node.insert(QStringLiteral("deps"), depList);
         nodeList.append(node);
     }
     QVariantList edgeList;
-    for (const auto& [from, to] : edges) {
+    for (const auto& info : edgeInfos) {
         QVariantMap edge;
-        edge.insert(QStringLiteral("from"), from);
-        edge.insert(QStringLiteral("to"), to);
+        edge.insert(QStringLiteral("from"), info.from);
+        edge.insert(QStringLiteral("to"), info.to);
+        edge.insert(QStringLiteral("explicit"), info.isExplicit);
+        edge.insert(QStringLiteral("label"), info.label);
         edgeList.append(edge);
     }
 
@@ -878,6 +1116,131 @@ void AppController::prepareChainEditor() {
         seeds.push_back(std::move(seed));
     }
     chainEditor_.rebuild(seeds);
+}
+
+void AppController::syncChainEditorMembership() {
+    if (!project_->hasProject() || !hasOperation_ || chainEditor_.count() == 0) {
+        return;
+    }
+    const QString targetId = currentOperationId();
+
+    // Snapshot current edits so a rebuild preserves in-progress work.
+    QHash<QString, std::vector<std::string>> editedDeps;
+    QHash<QString, std::vector<std::pair<QString, QString>>> editedExtracts;
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        const QString id = chainEditor_.operationIdAt(i);
+        editedDeps.insert(id, chainEditor_.depModelAt(i)->dependencies());
+        editedExtracts.insert(id, chainEditor_.extractModelAt(i)->pairs());
+    }
+
+    // BFS the transitive closure from the target using edited deps where we
+    // have them, falling back to the saved project for not-yet-edited steps.
+    QStringList ids;
+    QHash<QString, bool> seen;
+    std::queue<QString> pending;
+    ids.append(targetId);
+    seen.insert(targetId, true);
+    pending.push(targetId);
+    while (!pending.empty()) {
+        const QString id = pending.front();
+        pending.pop();
+        std::vector<std::string> deps;
+        if (editedDeps.contains(id)) {
+            deps = editedDeps.value(id);
+        } else if (const auto* op =
+                       project_->findOperation(engine::OperationId{id.toStdString()})) {
+            for (const auto& dep : op->explicitDependencies) {
+                deps.push_back(dep.value);
+            }
+        }
+        for (const auto& dep : deps) {
+            const QString depId = QString::fromStdString(dep);
+            if (!seen.contains(depId)) {
+                seen.insert(depId, true);
+                ids.append(depId);
+                pending.push(depId);
+            }
+        }
+    }
+
+    // Membership unchanged → live models are already correct, skip the rebuild
+    // (avoids resetting focus and re-entrancy).
+    QSet<QString> current;
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        current.insert(chainEditor_.operationIdAt(i));
+    }
+    const QSet<QString> wanted(ids.cbegin(), ids.cend());
+    if (current == wanted) {
+        return;
+    }
+
+    const QStringList allIds = operationIds();
+    std::vector<ChainEditorModel::OpSeed> seeds;
+    seeds.reserve(static_cast<std::size_t>(ids.size()));
+    for (const QString& id : ids) {
+        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        ChainEditorModel::OpSeed seed;
+        seed.operationId = id;
+        seed.method = op != nullptr ? methodLabel(op->method) : QString{};
+        seed.isTarget = (id == targetId);
+        if (editedDeps.contains(id)) {
+            seed.dependencies = editedDeps.value(id);
+        } else if (op != nullptr) {
+            for (const auto& dep : op->explicitDependencies) {
+                seed.dependencies.push_back(dep.value);
+            }
+        }
+        if (editedExtracts.contains(id)) {
+            seed.extractions = editedExtracts.value(id);
+        } else if (op != nullptr) {
+            for (const auto& ext : op->extractions) {
+                seed.extractions.emplace_back(QString::fromStdString(ext.variableName),
+                                              QString::fromStdString(ext.sourcePath));
+            }
+        }
+        for (const QString& candidate : allIds) {
+            if (candidate != id) {
+                seed.candidates.append(candidate);
+            }
+        }
+        seeds.push_back(std::move(seed));
+    }
+    chainEditor_.rebuild(seeds);
+}
+
+void AppController::chainAddDependency(const QString& operationId) {
+    if (operationId.isEmpty() || chainEditor_.count() == 0) {
+        return;
+    }
+    const QString targetId = currentOperationId();
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        if (chainEditor_.operationIdAt(i) == targetId) {
+            auto* deps = chainEditor_.depModelAt(i);
+            const int ghost = deps->rowCount() - 1;
+            deps->setSelection(ghost >= 0 ? ghost : 0, operationId);
+            break;
+        }
+    }
+    syncChainEditorMembership();
+}
+
+void AppController::chainRemoveStep(const QString& operationId) {
+    if (operationId.isEmpty()) {
+        return;
+    }
+    // Drop it as a dependency of every step so it is no longer referenced.
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        auto* deps = chainEditor_.depModelAt(i);
+        for (int row = 0; row < deps->rowCount(); ++row) {
+            const QString value =
+                deps->data(deps->index(row, 0), DependencyEditModel::ValueRole).toString();
+            if (value == operationId) {
+                deps->removeRow(row);
+                break;
+            }
+        }
+    }
+    syncChainEditorMembership();
 }
 
 bool AppController::saveChainEdits() {
@@ -1810,6 +2173,50 @@ void AppController::prepareNewEndpoint(const QString& /*preselectedResource*/) {
     // out self-reference by construction (the new op isn't created yet).
     newEndpointDeps_.setCandidates(operationIds());
     newEndpointExtractions_.clearRows();
+    rebuildNewEndpointDepExtracts();
+}
+
+void AppController::rebuildNewEndpointDepExtracts() {
+    std::vector<ChainEditorModel::OpSeed> seeds;
+    if (project_->hasProject()) {
+        for (const auto& depStd : newEndpointDeps_.dependencies()) {
+            const QString id = QString::fromStdString(depStd);
+            const auto* op = project_->findOperation(engine::OperationId{depStd});
+            ChainEditorModel::OpSeed seed;
+            seed.operationId = id;
+            seed.method = op != nullptr ? methodLabel(op->method) : QString{};
+            seed.isTarget = false;
+            if (op != nullptr) {
+                for (const auto& ext : op->extractions) {
+                    seed.extractions.emplace_back(QString::fromStdString(ext.variableName),
+                                                  QString::fromStdString(ext.sourcePath));
+                }
+            }
+            seeds.push_back(std::move(seed));
+        }
+    }
+    newEndpointDepExtracts_.rebuild(seeds);
+}
+
+void AppController::addNewEndpointDependency(const QString& operationId) {
+    if (operationId.isEmpty()) {
+        return;
+    }
+    // Setting the trailing blank (ghost) row appends and grows a new ghost.
+    const int ghost = newEndpointDeps_.rowCount() - 1;
+    newEndpointDeps_.setSelection(ghost >= 0 ? ghost : 0, operationId);
+}
+
+void AppController::removeNewEndpointDependency(const QString& operationId) {
+    for (int row = 0; row < newEndpointDeps_.rowCount(); ++row) {
+        const QString value =
+            newEndpointDeps_.data(newEndpointDeps_.index(row, 0), DependencyEditModel::ValueRole)
+                .toString();
+        if (value == operationId) {
+            newEndpointDeps_.removeRow(row);
+            return;
+        }
+    }
 }
 
 void AppController::createOperation(const QString& module,
@@ -1842,14 +2249,54 @@ void AppController::createOperation(const QString& module,
                                                    dependencies,
                                                    extractions,
                                                    error);
-    if (created) {
-        emit notify(
-            QStringLiteral("Created endpoint “%1”").arg(QString::fromStdString(created->value)),
-            false);
-        selectOperationById(QString::fromStdString(created->value));
-    } else {
+    if (!created) {
         emit notify(error, true);
+        return;
     }
+
+    // Persist any edits to the dependencies' own extract blocks (the "pull
+    // X from this prerequisite" rows), so a value declared here is saved on
+    // the producing endpoint where the engine reads it.
+    std::map<std::string, engine::Operation> depUpdates;
+    for (int i = 0; i < newEndpointDepExtracts_.count(); ++i) {
+        const QString id = newEndpointDepExtracts_.operationIdAt(i);
+        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        if (op == nullptr) {
+            continue;
+        }
+        engine::Operation updated = *op;
+        std::map<std::string, engine::Extraction::Source> sourceByVar;
+        for (const auto& ext : op->extractions) {
+            sourceByVar[ext.variableName] = ext.source;
+        }
+        updated.extractions.clear();
+        for (const auto& [variable, sourcePath] :
+             newEndpointDepExtracts_.extractModelAt(i)->pairs()) {
+            const QString var = variable.trimmed();
+            const QString p = sourcePath.trimmed();
+            if (var.isEmpty() && p.isEmpty()) {
+                continue;
+            }
+            engine::Extraction extraction;
+            extraction.variableName = var.toStdString();
+            extraction.sourcePath = p.toStdString();
+            const auto found = sourceByVar.find(extraction.variableName);
+            extraction.source =
+                found != sourceByVar.end() ? found->second : sourceForPath(extraction.sourcePath);
+            updated.extractions.push_back(std::move(extraction));
+        }
+        depUpdates.emplace(id.toStdString(), std::move(updated));
+    }
+    if (!depUpdates.empty()) {
+        QString depError;
+        if (!project_->saveOperations(depUpdates, depError)) {
+            emit notify(depError, true);
+        }
+    }
+
+    emit notify(QStringLiteral("Created endpoint “%1”").arg(QString::fromStdString(created->value)),
+                false);
+    selectOperationById(QString::fromStdString(created->value));
 }
 
 void AppController::renameOperation(const QString& operationId, const QString& newName) {

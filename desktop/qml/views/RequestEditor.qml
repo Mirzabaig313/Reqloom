@@ -1119,80 +1119,23 @@ ColumnLayout {
                         }
                     }
 
-                    Repeater {
-                        model: AppController.chainEditor
-                        delegate: Rectangle {
-                            id: opCard
-                            required property string operationId
-                            required property string method
-                            required property bool isTarget
-                            required property var depModel
-                            required property var extractModel
-                            required property var candidates
-                            Layout.fillWidth: true
-                            Layout.topMargin: DesignTokens.spaceSm
-                            radius: DesignTokens.radiusSm
-                            color: DesignTokens.surfaceRaised
-                            border.width: 1
-                            border.color: opCard.isTarget ? DesignTokens.accent : DesignTokens.borderSubtle
-                            implicitHeight: cardCol.implicitHeight + DesignTokens.spaceMd * 2
+                    // One box, one table for the whole chain (header + every
+                    // step as a row + a single add-dependency + hint).
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: DesignTokens.spaceSm
+                        radius: DesignTokens.radiusSm
+                        color: DesignTokens.surfaceRaised
+                        border.width: 1
+                        border.color: DesignTokens.borderSubtle
+                        implicitHeight: chainTable.implicitHeight + DesignTokens.spaceMd * 2
 
-                            ColumnLayout {
-                                id: cardCol
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                anchors.margins: DesignTokens.spaceMd
-                                spacing: DesignTokens.spaceSm
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: DesignTokens.spaceSm
-                                    MethodBadge {
-                                        method: opCard.method
-                                        Layout.preferredWidth: 54
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: opCard.operationId
-                                        color: DesignTokens.textPrimary
-                                        font.pixelSize: DesignTokens.fontLabel
-                                        font.family: DesignTokens.fontMono
-                                        font.weight: DesignTokens.weightSemiBold
-                                        elide: Text.ElideMiddle
-                                    }
-                                    Label {
-                                        visible: opCard.isTarget
-                                        text: qsTr("target")
-                                        color: DesignTokens.accent
-                                        font.pixelSize: DesignTokens.fontCaption
-                                    }
-                                }
-                                Label {
-                                    text: qsTr("Depends on")
-                                    color: DesignTokens.textSecondary
-                                    font.pixelSize: DesignTokens.fontCaption
-                                    font.weight: DesignTokens.weightSemiBold
-                                    font.letterSpacing: 0.6
-                                }
-                                DependencyEditor {
-                                    Layout.fillWidth: true
-                                    depModel: opCard.depModel
-                                    candidates: opCard.candidates
-                                }
-                                Label {
-                                    text: qsTr("Extract")
-                                    color: DesignTokens.textSecondary
-                                    font.pixelSize: DesignTokens.fontCaption
-                                    font.weight: DesignTokens.weightSemiBold
-                                    font.letterSpacing: 0.6
-                                }
-                                ExtractionEditor {
-                                    Layout.fillWidth: true
-                                    extractModel: opCard.extractModel
-                                    resourcePrefix: opCard.operationId.indexOf(".") >= 0 ? opCard.operationId.substring(0, opCard.operationId.indexOf(".")) : ""
-                                }
-                            }
+                        ChainDependencyTable {
+                            id: chainTable
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: DesignTokens.spaceMd
                         }
                     }
                 }

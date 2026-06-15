@@ -102,6 +102,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/ChainView.qml
         qml/widgets/StatusBadge.qml
         qml/widgets/DependencyEditor.qml
+        qml/widgets/ChainDependencyTable.qml
         qml/widgets/ExtractionEditor.qml
         qml/views/SecretsDialog.qml
         qml/widgets/Toast.qml
