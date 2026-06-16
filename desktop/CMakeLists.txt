@@ -63,6 +63,8 @@ qt_add_executable(reqloom-desktop
     src/widgets/GraphLayout.h
     src/widgets/ConstraintLayout.cpp
     src/widgets/ConstraintLayout.h
+    src/widgets/LatencyStats.cpp
+    src/widgets/LatencyStats.h
     src/widgets/CodeEditor.cpp
     src/widgets/CodeEditor.h
     src/theming/Color.cpp
@@ -114,6 +116,7 @@ qt_add_qml_module(reqloom-desktop
         qml/views/SecretsDialog.qml
         qml/widgets/Toast.qml
         qml/widgets/EmptyState.qml
+        qml/widgets/LatencySparkline.qml
         qml/motion/SpringMotion.qml
         qml/motion/ColorMotion.qml
         qml/motion/FadeMotion.qml
