@@ -122,21 +122,62 @@ ColumnLayout {
     }
 
     // ── Address bar: method + path + Send ──
-    RowLayout {
+    // Constraint-solved row (LayoutSolver) instead of magic pixel widths: the
+    // method slot sizes to its widest item, Send to its widest label, and the
+    // path fills the remainder. See doc/local/UI_improment.md §3.
+    Item {
+        id: addressBar
         Layout.fillWidth: true
-        spacing: DesignTokens.spaceSm
+        implicitHeight: 38
+
+        readonly property var methodItems: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+        // Method slot = widest method label + chevron + field padding.
+        readonly property real methodSlot: Math.max(72, LayoutSolver.contentWidth(addressBar.methodItems, DesignTokens.fontLabel, DesignTokens.fontSans, 40))
+        // Send slot = widest of its labels + button padding.
+        readonly property real sendSlot: Math.max(90, LayoutSolver.contentWidth([qsTr("Running…"), qsTr("Send")], DesignTokens.fontBody, DesignTokens.fontSans, 44))
+
+        readonly property var solved: LayoutSolver.solveLinear([({
+                    "minimum": addressBar.methodSlot,
+                    "preferred": addressBar.methodSlot,
+                    "maximum": addressBar.methodSlot,
+                    "stretch": 0
+                }), ({
+                    "minimum": 140,
+                    "preferred": 140,
+                    "stretch": 1
+                }), ({
+                    "minimum": addressBar.sendSlot,
+                    "preferred": addressBar.sendSlot,
+                    "maximum": addressBar.sendSlot,
+                    "stretch": 0
+                })], addressBar.width, DesignTokens.spaceSm)
+
+        readonly property var methodGeom: addressBar.solved[0] || ({
+                "offset": 0,
+                "size": addressBar.methodSlot
+            })
+        readonly property var pathGeom: addressBar.solved[1] || ({
+                "offset": 0,
+                "size": 0
+            })
+        readonly property var sendGeom: addressBar.solved[2] || ({
+                "offset": 0,
+                "size": addressBar.sendSlot
+            })
 
         MethodBadge {
             visible: !editor.editing
+            x: addressBar.methodGeom.offset
+            width: addressBar.methodGeom.size
+            height: 38
             method: AppController.opMethod
-            implicitHeight: 38
-            Layout.preferredWidth: 64
         }
         GlassComboBox {
             id: methodCombo
             visible: editor.editing
-            implicitHeight: 38
-            Layout.preferredWidth: 82
+            x: addressBar.methodGeom.offset
+            width: addressBar.methodGeom.size
+            height: 38
             model: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
             currentIndex: Math.max(0, find(AppController.editMethod))
             onActivated: AppController.editMethod = currentText
@@ -145,7 +186,8 @@ ColumnLayout {
         // Path: highlighted preview (read) ↔ editable field (edit).
         Rectangle {
             visible: !editor.editing
-            Layout.fillWidth: true
+            x: addressBar.pathGeom.offset
+            width: addressBar.pathGeom.size
             height: 38
             radius: DesignTokens.radiusSm
             color: DesignTokens.surfaceSunken
@@ -161,8 +203,9 @@ ColumnLayout {
         TextField {
             id: pathField
             visible: editor.editing
-            Layout.fillWidth: true
-            implicitHeight: 38
+            x: addressBar.pathGeom.offset
+            width: addressBar.pathGeom.size
+            height: 38
             text: AppController.editPath
             placeholderText: qsTr("/api/v1/…")
             color: DesignTokens.textPrimary
@@ -194,10 +237,11 @@ ColumnLayout {
 
         Button {
             id: sendButton
+            x: addressBar.sendGeom.offset
+            width: addressBar.sendGeom.size
+            height: 38
             text: AppController.running ? qsTr("Running…") : qsTr("Send")
             enabled: !AppController.running
-            implicitWidth: 96
-            implicitHeight: 38
             GlassToolTip {
                 active: sendButton.hovered
                 text: editor.editing ? qsTr("Apply your edits and send, resolving the dependency chain  (⌘↵)") : qsTr("Send this request, resolving its dependency chain first  (⌘↵)")
