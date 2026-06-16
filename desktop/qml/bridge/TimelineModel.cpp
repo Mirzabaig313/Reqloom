@@ -1,6 +1,8 @@
 // TimelineModel — see header. Mirrors the old TimelinePanel.cpp content.
 #include "TimelineModel.h"
 
+#include "../../src/widgets/LatencyStats.h"
+
 #include <reqloom/engine/ErrorCodes.h>
 
 namespace reqloom::desktop::qml {
@@ -125,6 +127,33 @@ void TimelineModel::reset() {
     stepRowByIndex_.clear();
     runStartRow_ = -1;
     endResetModel();
+    if (!latencyMs_.empty() || !latencyBars_.isEmpty()) {
+        latencyMs_.clear();
+        latencyBars_.clear();
+        emit latenciesChanged();
+    }
+}
+
+QVariantMap TimelineModel::latencyStats() const {
+    QVariantMap out;
+    const stats::Summary s = stats::summarize(latencyMs_);
+    out.insert(QStringLiteral("count"), static_cast<int>(s.count));
+    out.insert(QStringLiteral("min"), s.min);
+    out.insert(QStringLiteral("max"), s.max);
+    out.insert(QStringLiteral("mean"), s.mean);
+    out.insert(QStringLiteral("median"), s.median);
+    out.insert(QStringLiteral("p95"), s.p95);
+
+    const stats::Histogram h = stats::histogram(latencyMs_);
+    out.insert(QStringLiteral("start"), h.start);
+    out.insert(QStringLiteral("binWidth"), h.binWidth);
+    QVariantList bins;
+    bins.reserve(static_cast<qsizetype>(h.counts.size()));
+    for (const int c : h.counts) {
+        bins.append(c);
+    }
+    out.insert(QStringLiteral("bins"), bins);
+    return out;
 }
 
 void TimelineModel::onRunStarted(QString target, int chainSize, QString environment) {
@@ -217,6 +246,18 @@ void TimelineModel::onResponseReceived(
     }
     row.value = expanded;
     appendRow(std::move(row));
+
+    // Feed the latency sparkline: one bar per response, in request order.
+    const QString token = status >= 500   ? QStringLiteral("error")
+                          : status >= 300 ? QStringLiteral("warning")
+                                          : QStringLiteral("success");
+    latencyMs_.push_back(static_cast<double>(elapsedMs));
+    QVariantMap bar;
+    bar.insert(QStringLiteral("ms"), static_cast<double>(elapsedMs));
+    bar.insert(QStringLiteral("token"), token);
+    bar.insert(QStringLiteral("op"), QStringLiteral("step %1").arg(index + 1));
+    latencyBars_.append(bar);
+    emit latenciesChanged();
 }
 
 void TimelineModel::onExtractionCompleted(int index,

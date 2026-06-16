@@ -76,6 +76,13 @@ Rectangle {
             }
         }
 
+        // Response-time sparkline (median · p95 · max) for the current run.
+        LatencySparkline {
+            Layout.fillWidth: true
+            bars: AppController.timeline.latencyBars
+            stats: AppController.timeline.latencyStats
+        }
+
         ListView {
             id: timelineList
             Layout.fillWidth: true

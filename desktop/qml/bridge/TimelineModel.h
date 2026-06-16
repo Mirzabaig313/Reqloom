@@ -9,6 +9,8 @@
 #include <QtCore/QAbstractListModel>
 #include <QtCore/QHash>
 #include <QtCore/QString>
+#include <QtCore/QVariantList>
+#include <QtCore/QVariantMap>
 
 #include <cstdint>
 #include <vector>
@@ -19,6 +21,13 @@ class TimelineModel : public QAbstractListModel {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned and populated by AppController")
+
+    /// Per-response latency bars for the sparkline: a list of
+    /// `{ ms: real, token: string, op: string }` in request order.
+    Q_PROPERTY(QVariantList latencyBars READ latencyBars NOTIFY latenciesChanged)
+    /// Summary + Freedman–Diaconis histogram of the run's latencies:
+    /// `{ count, min, max, mean, median, p95, binWidth, start, bins:[int] }`.
+    Q_PROPERTY(QVariantMap latencyStats READ latencyStats NOTIFY latenciesChanged)
 
 public:
     /// Row kind, mirroring the RunEvent types the old TimelinePanel rendered.
@@ -48,6 +57,12 @@ public:
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
+
+    [[nodiscard]] QVariantList latencyBars() const { return latencyBars_; }
+    [[nodiscard]] QVariantMap latencyStats() const;
+
+signals:
+    void latenciesChanged();
 
 public slots:
     // One slot per RunController signal. Signatures match the signals so the
@@ -91,6 +106,10 @@ private:
     [[nodiscard]] QModelIndex rowIndex(int at) const { return index(at, 0); }
 
     std::vector<Row> rows_;
+    // Per-response latency samples (ms) for the run, in request order, plus the
+    // QML-facing bar list ({ms, token, op}); kept in lockstep.
+    std::vector<double> latencyMs_;
+    QVariantList latencyBars_;
     // stepIndex → position in rows_. Positions are stable: rows are only ever
     // appended (never removed) within a run, so settling a step is O(1).
     QHash<int, int> stepRowByIndex_;
