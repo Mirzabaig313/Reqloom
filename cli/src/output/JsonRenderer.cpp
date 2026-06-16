@@ -89,10 +89,15 @@ void JsonRenderer::render(const ce::OperationId& target,
     std::uint32_t blocked = 0;
     std::uint32_t cancelled = 0;
     std::uint32_t pollAttempts = 0;
+    std::uint32_t forEachIterations = 0;
     for (const auto& s : result.steps) {
         if (s.pollAttempt) {
             ++pollAttempts;
             continue;  // poll attempts don't count toward step totals
+        }
+        if (s.forEachIndex) {
+            ++forEachIterations;
+            continue;  // for-each iterations group under their parent step
         }
         switch (s.status) {
             case ce::StepResult::Status::Succeeded:
@@ -126,6 +131,7 @@ void JsonRenderer::render(const ce::OperationId& target,
     out_ << "    \"skipped\": " << skipped << ",\n";
     out_ << "    \"blocked\": " << blocked << ",\n";
     out_ << "    \"cancelled\": " << cancelled << ",\n";
+    out_ << "    \"for_each_iterations\": " << forEachIterations << ",\n";
     out_ << "    \"poll_attempts\": " << pollAttempts << "\n";
     out_ << "  },\n";
 
@@ -152,6 +158,11 @@ void JsonRenderer::render(const ce::OperationId& target,
             out_ << "      \"poll_attempt\": " << *step.pollAttempt << ",\n";
         } else {
             out_ << "      \"poll_attempt\": null,\n";
+        }
+        if (step.forEachIndex) {
+            out_ << "      \"for_each_index\": " << *step.forEachIndex << ",\n";
+        } else {
+            out_ << "      \"for_each_index\": null,\n";
         }
         out_ << R"(      "detail": ")" << escape(step.detail) << "\"\n";
         out_ << "    }";

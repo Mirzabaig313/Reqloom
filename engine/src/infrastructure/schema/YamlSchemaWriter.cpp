@@ -331,6 +331,14 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
         e << YAML::Key << "timeout" << YAML::Value << (std::to_string(p.timeout.count()) + "ms")
           << YAML::Key << "max_attempts" << YAML::Value << p.maxAttempts << YAML::EndMap;
     }
+    if (op.forEach) {
+        e << YAML::Key << "for_each" << YAML::Value << YAML::BeginMap << YAML::Key << "over"
+          << YAML::Value << op.forEach->over.value;
+        if (op.forEach->continueOnError) {
+            e << YAML::Key << "continue_on_error" << YAML::Value << true;
+        }
+        e << YAML::EndMap;
+    }
     emitExtractions(e, op.extractions);
     if (op.provenance) {
         emitProvenance(e, *op.provenance);

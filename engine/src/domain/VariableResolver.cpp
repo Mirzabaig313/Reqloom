@@ -404,7 +404,19 @@ ResolvedRef resolveDotted(std::string_view ref,
     // Search instances in reverse (most recent first). Handles the case where
     // a resource accrues fields across multiple operations — e.g. order.create
     // extracts order_id, order.pay extracts payment_id; both should resolve.
-    const auto& instances = ctx.instances(ResourceId{scope});
+    const ResourceId resId{scope};
+    const auto& instances = ctx.instances(resId);
+
+    // For-each binding: while iterating, resolve to the bound instance instead
+    // of the most-recent, so the body uses the current item.
+    if (const auto iter = ctx.iteration(resId); iter.has_value() && *iter < instances.size()) {
+        const auto fieldIt = instances[*iter].variables.find(field);
+        if (fieldIt != instances[*iter].variables.end()) {
+            return fieldIt->second;
+        }
+        return std::nullopt;
+    }
+
     for (auto it = instances.rbegin(); it != instances.rend(); ++it) {
         auto fieldIt = it->variables.find(field);
         if (fieldIt != it->variables.end()) {

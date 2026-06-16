@@ -72,6 +72,8 @@ ColumnLayout {
             required property string method
             required property bool isTarget
             required property var extractModel
+            required property string forEachOver
+            required property bool forEachContinueOnError
             Layout.fillWidth: true
             spacing: 0
 
@@ -158,6 +160,61 @@ ColumnLayout {
                         radius: DesignTokens.radiusSm
                         color: stepRemove.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
                     }
+                }
+            }
+
+            // Per-step fan-out control: run once, or once per item of an
+            // upstream list resource (for-each / data-driven execution).
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.bottomMargin: DesignTokens.spaceMd
+                spacing: DesignTokens.spaceSm
+                visible: AppController.chainForEachOptions(step.operationId).length > 0
+                Label {
+                    text: qsTr("Run")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontCaption
+                    font.weight: DesignTokens.weightSemiBold
+                }
+                GlassComboBox {
+                    id: forEachCombo
+                    Layout.preferredWidth: 240
+                    readonly property var options: [qsTr("once")].concat(AppController.chainForEachOptions(step.operationId))
+                    model: forEachCombo.options.map(function (o, i) {
+                        return i === 0 ? o : qsTr("for each ") + o;
+                    })
+                    currentIndex: {
+                        const i = forEachCombo.options.indexOf(step.forEachOver);
+                        return i > 0 ? i : 0;
+                    }
+                    onActivated: function (i) {
+                        AppController.chainSetForEach(step.operationId, i > 0 ? forEachCombo.options[i] : "");
+                    }
+                }
+                Label {
+                    visible: step.forEachOver.length > 0
+                    Layout.fillWidth: true
+                    text: qsTr("runs once per {{%1.…}} item").arg(step.forEachOver)
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontCaption
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            // For-each continue-on-error toggle (only when fanning out).
+            CheckBox {
+                id: continueOnErrorCheck
+                visible: step.forEachOver.length > 0
+                Layout.leftMargin: DesignTokens.spaceLg
+                Layout.bottomMargin: DesignTokens.spaceMd
+                checked: step.forEachContinueOnError
+                onToggled: AppController.chainSetForEachContinueOnError(step.operationId, checked)
+                contentItem: Text {
+                    text: qsTr("keep going if an item fails")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontCaption
+                    leftPadding: continueOnErrorCheck.indicator.width + DesignTokens.spaceXs
+                    verticalAlignment: Text.AlignVCenter
                 }
             }
 

@@ -152,6 +152,32 @@ TEST(VariableResolver, preserves_indexed_resource_lookup) {
     EXPECT_FALSE(miss.unresolved.empty());
 }
 
+TEST(VariableResolver, for_each_iteration_binding_selects_the_bound_instance) {
+    // While a for-each iteration is bound, a bare `{{order.id}}` resolves to
+    // that iteration's instance instead of the most-recent — this is what lets
+    // a for-each body iterate the list.
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const ce::ResourceId order{"order"};
+    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-1"}}});
+    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-2"}}});
+    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-3"}}});
+
+    // No binding → most-recent.
+    EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-3");
+
+    ctx.setIteration(order, 0);
+    EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-1");
+    ctx.setIteration(order, 1);
+    EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-2");
+
+    // Clearing the binding restores most-recent resolution.
+    ctx.setIteration(order, std::nullopt);
+    EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-3");
+}
+
 TEST(VariableResolver, preserves_secret_and_env_resolution) {
     ce::VariableResolver resolver;
     ce::RunContext ctx;

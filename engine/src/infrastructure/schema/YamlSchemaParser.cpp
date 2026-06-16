@@ -813,6 +813,15 @@ std::expected<Resource, ReqloomError> parseResource(const std::string& resourceI
             op.pollUntil = std::move(poll);
         }
 
+        if (opNode["for_each"]) {
+            const auto over = opNode["for_each"]["over"].as<std::string>("");
+            if (!over.empty()) {
+                ForEach forEach{ResourceId{over}};
+                forEach.continueOnError = opNode["for_each"]["continue_on_error"].as<bool>(false);
+                op.forEach = forEach;
+            }
+        }
+
         op.extractions = parseExtractions(opNode["extract"]);
 
         if (opNode["depends_on"] && opNode["depends_on"].IsSequence()) {
