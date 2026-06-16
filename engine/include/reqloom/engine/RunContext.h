@@ -72,6 +72,10 @@ struct StepResult {
     /// Set when this row is one poll attempt within a `poll_until` loop
     /// (1-based). Parent operation rows leave this empty.
     std::optional<int> pollAttempt;
+
+    /// Set when this row is one iteration of a `for_each` operation (1-based).
+    /// Plain (non-for-each) operation rows leave this empty.
+    std::optional<int> forEachIndex;
 };
 
 struct ExtractionTrace {
@@ -125,6 +129,13 @@ public:
         const ResourceId& resource) const noexcept;
     void appendInstance(const ResourceId& resource, ResourceInstance instance);
     void clearExtractions();
+
+    // For-each iteration binding. While set, a bare `{{<resource>.<field>}}`
+    // resolves to that resource's instance at the bound index (instead of the
+    // most-recent), so a for-each body iterates the list. Cleared after the
+    // loop. nullopt means "no binding" (normal most-recent resolution).
+    void setIteration(const ResourceId& resource, std::optional<std::size_t> index);
+    [[nodiscard]] std::optional<std::size_t> iteration(const ResourceId& resource) const noexcept;
 
     // Step recording
     void record(StepResult step);

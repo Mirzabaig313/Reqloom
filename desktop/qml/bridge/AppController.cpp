@@ -840,6 +840,60 @@ EditableKeyValueModel* AppController::chainExtractModelFor(const QString& operat
     return nullptr;
 }
 
+QStringList AppController::chainForEachOptions(const QString& operationId) const {
+    // A step can fan out over any resource produced by another step in the
+    // chain. Offer the distinct resources of every other step, discovery order.
+    QStringList resources;
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        const QString id = chainEditor_.operationIdAt(i);
+        if (id == operationId) {
+            continue;
+        }
+        const QString resource = id.section('.', 0, 0);
+        if (!resource.isEmpty() && !resources.contains(resource)) {
+            resources.append(resource);
+        }
+    }
+    return resources;
+}
+
+QString AppController::chainForEachOver(const QString& operationId) const {
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        if (chainEditor_.operationIdAt(i) == operationId) {
+            return chainEditor_.forEachOverAt(i);
+        }
+    }
+    return {};
+}
+
+void AppController::chainSetForEach(const QString& operationId, const QString& overResource) {
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        if (chainEditor_.operationIdAt(i) == operationId) {
+            chainEditor_.setForEachOver(i, overResource);
+            return;
+        }
+    }
+}
+
+bool AppController::chainForEachContinueOnError(const QString& operationId) const {
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        if (chainEditor_.operationIdAt(i) == operationId) {
+            return chainEditor_.forEachContinueOnErrorAt(i);
+        }
+    }
+    return false;
+}
+
+void AppController::chainSetForEachContinueOnError(const QString& operationId,
+                                                   bool continueOnError) {
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        if (chainEditor_.operationIdAt(i) == operationId) {
+            chainEditor_.setForEachContinueOnError(i, continueOnError);
+            return;
+        }
+    }
+}
+
 bool AppController::addExtraction(const QString& variableName, const QString& sourcePath) {
     if (!project_->hasProject() || !hasOperation_) {
         return false;
@@ -1261,6 +1315,10 @@ void AppController::prepareChainEditor() {
                 seed.extractions.emplace_back(QString::fromStdString(ext.variableName),
                                               QString::fromStdString(ext.sourcePath));
             }
+            if (op->forEach) {
+                seed.forEachOver = QString::fromStdString(op->forEach->over.value);
+                seed.forEachContinueOnError = op->forEach->continueOnError;
+            }
         }
         for (const QString& candidate : allIds) {
             if (candidate != id) {
@@ -1281,10 +1339,14 @@ void AppController::syncChainEditorMembership() {
     // Snapshot current edits so a rebuild preserves in-progress work.
     QHash<QString, std::vector<std::string>> editedDeps;
     QHash<QString, std::vector<std::pair<QString, QString>>> editedExtracts;
+    QHash<QString, QString> editedForEach;
+    QHash<QString, bool> editedForEachContinue;
     for (int i = 0; i < chainEditor_.count(); ++i) {
         const QString id = chainEditor_.operationIdAt(i);
         editedDeps.insert(id, chainEditor_.depModelAt(i)->dependencies());
         editedExtracts.insert(id, chainEditor_.extractModelAt(i)->pairs());
+        editedForEach.insert(id, chainEditor_.forEachOverAt(i));
+        editedForEachContinue.insert(id, chainEditor_.forEachContinueOnErrorAt(i));
     }
 
     // BFS the transitive closure from the target using edited deps where we
@@ -1351,6 +1413,16 @@ void AppController::syncChainEditorMembership() {
                 seed.extractions.emplace_back(QString::fromStdString(ext.variableName),
                                               QString::fromStdString(ext.sourcePath));
             }
+        }
+        if (editedForEach.contains(id)) {
+            seed.forEachOver = editedForEach.value(id);
+        } else if (op != nullptr && op->forEach) {
+            seed.forEachOver = QString::fromStdString(op->forEach->over.value);
+        }
+        if (editedForEachContinue.contains(id)) {
+            seed.forEachContinueOnError = editedForEachContinue.value(id);
+        } else if (op != nullptr && op->forEach) {
+            seed.forEachContinueOnError = op->forEach->continueOnError;
         }
         for (const QString& candidate : allIds) {
             if (candidate != id) {
@@ -1436,6 +1508,17 @@ bool AppController::saveChainEdits() {
                 found != sourceByVar.end() ? found->second : engine::Extraction::Source::JsonPath;
             updated.extractions.push_back(std::move(extraction));
         }
+
+        // For-each fan-out: set or clear based on the chain editor's choice.
+        const QString overResource = chainEditor_.forEachOverAt(i).trimmed();
+        if (overResource.isEmpty()) {
+            updated.forEach.reset();
+        } else {
+            engine::ForEach forEach{engine::ResourceId{overResource.toStdString()}};
+            forEach.continueOnError = chainEditor_.forEachContinueOnErrorAt(i);
+            updated.forEach = forEach;
+        }
+
         updates.emplace(id.toStdString(), std::move(updated));
     }
 

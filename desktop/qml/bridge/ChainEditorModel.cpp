@@ -28,6 +28,10 @@ QVariant ChainEditorModel::data(const QModelIndex& index, int role) const {
             return QVariant::fromValue(static_cast<QObject*>(row.extracts.get()));
         case CandidatesRole:
             return row.candidates;
+        case ForEachOverRole:
+            return row.forEachOver;
+        case ForEachContinueOnErrorRole:
+            return row.forEachContinueOnError;
         default:
             return {};
     }
@@ -41,6 +45,8 @@ QHash<int, QByteArray> ChainEditorModel::roleNames() const {
         {DepModelRole, "depModel"},
         {ExtractModelRole, "extractModel"},
         {CandidatesRole, "candidates"},
+        {ForEachOverRole, "forEachOver"},
+        {ForEachContinueOnErrorRole, "forEachContinueOnError"},
     };
 }
 
@@ -54,6 +60,8 @@ void ChainEditorModel::rebuild(const std::vector<OpSeed>& seeds) {
         row.method = seed.method;
         row.isTarget = seed.isTarget;
         row.candidates = seed.candidates;
+        row.forEachOver = seed.forEachOver;
+        row.forEachContinueOnError = seed.forEachContinueOnError;
         // Per-row models are parented to this model (C++ ownership), so QML
         // never deletes them when a delegate is destroyed.
         row.deps = std::make_unique<DependencyEditModel>(this);
@@ -87,4 +95,43 @@ EditableKeyValueModel* ChainEditorModel::extractModelAt(int row) const {
     return rows_[static_cast<std::size_t>(row)].extracts.get();
 }
 
+QString ChainEditorModel::forEachOverAt(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) {
+        return {};
+    }
+    return rows_[static_cast<std::size_t>(row)].forEachOver;
+}
+
+void ChainEditorModel::setForEachOver(int row, const QString& overResource) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) {
+        return;
+    }
+    Row& target = rows_[static_cast<std::size_t>(row)];
+    if (target.forEachOver == overResource) {
+        return;
+    }
+    target.forEachOver = overResource;
+    const QModelIndex idx = index(row);
+    emit dataChanged(idx, idx, {ForEachOverRole});
+}
+
+bool ChainEditorModel::forEachContinueOnErrorAt(int row) const {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) {
+        return false;
+    }
+    return rows_[static_cast<std::size_t>(row)].forEachContinueOnError;
+}
+
+void ChainEditorModel::setForEachContinueOnError(int row, bool continueOnError) {
+    if (row < 0 || row >= static_cast<int>(rows_.size())) {
+        return;
+    }
+    Row& target = rows_[static_cast<std::size_t>(row)];
+    if (target.forEachContinueOnError == continueOnError) {
+        return;
+    }
+    target.forEachContinueOnError = continueOnError;
+    const QModelIndex idx = index(row);
+    emit dataChanged(idx, idx, {ForEachContinueOnErrorRole});
+}
 }  // namespace reqloom::desktop::qml

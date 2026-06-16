@@ -105,6 +105,16 @@ void TextRenderer::render(const ce::OperationId& target,
                          step.detail.empty() ? std::string{} : "  " + step.detail);
             continue;
         }
+        if (step.forEachIndex) {
+            std::println(summary_,
+                         "    iter #{:<2} {:<6} {} ({}ms){}",
+                         *step.forEachIndex,
+                         std::string(statusGlyph(step.status)),
+                         step.op.value,
+                         step.elapsed.count(),
+                         step.detail.empty() ? std::string{} : "  " + step.detail);
+            continue;
+        }
         std::println(summary_,
                      "  {:<6} {} ({}ms) err={}",
                      std::string(statusGlyph(step.status)),

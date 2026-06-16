@@ -163,6 +163,96 @@ resources:
     EXPECT_TRUE(submit.expectStatusList.empty());
 }
 
+TEST(SchemaParserForEach, parses_for_each_over_resource_and_round_trips) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: ForEachSample
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  org:
+    operations:
+      list:
+        method: GET
+        path: /api/v1/orgs
+        extract:
+          org_id: $.data.items[*].id
+  org_detail:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/orgs/{{org.org_id}}
+        for_each:
+          over: org
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& get = result->resources.at(ce::ResourceId{"org_detail"}).operations.at("get");
+    ASSERT_TRUE(get.forEach.has_value()) << "for_each should be parsed";
+    EXPECT_EQ(get.forEach->over.value, "org");
+
+    // Round-trip: write the project back out and re-parse — for_each survives.
+    const auto out = scratch.path() / "out";
+    fs::create_directories(out);
+    ASSERT_TRUE(ce::writeProject(out, *result).has_value());
+    auto reloaded = ce::parseProject(out / "reqloom.yaml");
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& reget = reloaded->resources.at(ce::ResourceId{"org_detail"}).operations.at("get");
+    ASSERT_TRUE(reget.forEach.has_value());
+    EXPECT_EQ(reget.forEach->over.value, "org");
+    EXPECT_FALSE(reget.forEach->continueOnError) << "default is stop-on-first-failure";
+}
+
+TEST(SchemaParserForEach, parses_continue_on_error_flag_and_round_trips) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: ForEachContinue
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  org:
+    operations:
+      list:
+        method: GET
+        path: /api/v1/orgs
+        extract:
+          org_id: $.data.items[*].id
+  org_detail:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/orgs/{{org.org_id}}
+        for_each:
+          over: org
+          continue_on_error: true
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& get = result->resources.at(ce::ResourceId{"org_detail"}).operations.at("get");
+    ASSERT_TRUE(get.forEach.has_value());
+    EXPECT_TRUE(get.forEach->continueOnError);
+
+    const auto out = scratch.path() / "out";
+    fs::create_directories(out);
+    ASSERT_TRUE(ce::writeProject(out, *result).has_value());
+    auto reloaded = ce::parseProject(out / "reqloom.yaml");
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& reget = reloaded->resources.at(ce::ResourceId{"org_detail"}).operations.at("get");
+    ASSERT_TRUE(reget.forEach.has_value());
+    EXPECT_TRUE(reget.forEach->continueOnError) << "continue_on_error should survive round-trip";
+}
+
 TEST(SchemaParserPolling, ops_without_poll_until_remain_nullopt) {
     ScratchDir scratch;
     const auto yaml = scratch.write("reqloom.yaml", R"YAML(

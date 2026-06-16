@@ -32,6 +32,8 @@ public:
         DepModelRole,                        ///< DependencyEditModel* (QObject*)
         ExtractModelRole,                    ///< EditableKeyValueModel* (QObject*)
         CandidatesRole,                      ///< QStringList of pickable op ids
+        ForEachOverRole,                     ///< QString resource to iterate ("" = run once)
+        ForEachContinueOnErrorRole,          ///< bool: keep going after a failed iteration
     };
 
     /// Seed for one operation row.
@@ -42,6 +44,8 @@ public:
         std::vector<std::string> dependencies;
         std::vector<std::pair<QString, QString>> extractions;
         QStringList candidates;
+        QString forEachOver;  ///< resource id to fan out over, empty = run once
+        bool forEachContinueOnError{false};
     };
 
     explicit ChainEditorModel(QObject* parent = nullptr);
@@ -59,12 +63,22 @@ public:
     [[nodiscard]] DependencyEditModel* depModelAt(int row) const;
     [[nodiscard]] EditableKeyValueModel* extractModelAt(int row) const;
 
+    /// Read/patch the per-step for-each target resource ("" = run once).
+    [[nodiscard]] QString forEachOverAt(int row) const;
+    void setForEachOver(int row, const QString& overResource);
+
+    /// Read/patch the per-step for-each continue-on-error flag.
+    [[nodiscard]] bool forEachContinueOnErrorAt(int row) const;
+    void setForEachContinueOnError(int row, bool continueOnError);
+
 private:
     struct Row {
         QString operationId;
         QString method;
         bool isTarget{false};
         QStringList candidates;
+        QString forEachOver;
+        bool forEachContinueOnError{false};
         std::unique_ptr<DependencyEditModel> deps;
         std::unique_ptr<EditableKeyValueModel> extracts;
     };

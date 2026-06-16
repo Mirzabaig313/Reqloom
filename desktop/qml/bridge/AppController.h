@@ -391,6 +391,24 @@ public:
     Q_INVOKABLE [[nodiscard]] EditableKeyValueModel* chainExtractModelFor(
         const QString& operationId);
 
+    /// Resources the given chain step can fan out over (the distinct resources
+    /// of the *other* steps in the chain). Used to populate the for-each combo.
+    Q_INVOKABLE [[nodiscard]] QStringList chainForEachOptions(const QString& operationId) const;
+
+    /// The resource the given chain step currently iterates ("" = run once).
+    Q_INVOKABLE [[nodiscard]] QString chainForEachOver(const QString& operationId) const;
+
+    /// Set (or clear, when `overResource` is empty) the for-each target of a
+    /// chain step. Persisted by saveChainEdits like any other step edit.
+    Q_INVOKABLE void chainSetForEach(const QString& operationId, const QString& overResource);
+
+    /// Whether the given chain step keeps running after a failed iteration.
+    Q_INVOKABLE [[nodiscard]] bool chainForEachContinueOnError(const QString& operationId) const;
+
+    /// Set the for-each continue-on-error flag of a chain step.
+    Q_INVOKABLE void chainSetForEachContinueOnError(const QString& operationId,
+                                                    bool continueOnError);
+
     /// Save a value from the current operation's response as an extracted
     /// variable (the response-driven picker). `sourcePath` is a JSONPath such
     /// as "$.data[2].id"; `variableName` is the bare name. Persists immediately

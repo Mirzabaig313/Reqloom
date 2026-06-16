@@ -13,6 +13,7 @@ struct RunContext::Impl {
     /// would invite bugs without buying real testing power.
     std::map<ActorId, std::map<std::string, std::string>> cookieJars;
     std::map<ResourceId, std::vector<ResourceInstance>> instances;
+    std::map<ResourceId, std::size_t> iterations;
     std::vector<ResourceInstance> emptyInstances;
     std::vector<StepResult> steps;
     std::vector<ExtractionTrace> extractionTrace;
@@ -71,6 +72,22 @@ void RunContext::appendInstance(const ResourceId& resource, ResourceInstance ins
 
 void RunContext::clearExtractions() {
     impl_->instances.clear();
+}
+
+void RunContext::setIteration(const ResourceId& resource, std::optional<std::size_t> index) {
+    if (index.has_value()) {
+        impl_->iterations[resource] = *index;
+    } else {
+        impl_->iterations.erase(resource);
+    }
+}
+
+std::optional<std::size_t> RunContext::iteration(const ResourceId& resource) const noexcept {
+    const auto it = impl_->iterations.find(resource);
+    if (it == impl_->iterations.end()) {
+        return std::nullopt;
+    }
+    return it->second;
 }
 
 void RunContext::record(StepResult step) {
