@@ -1,9 +1,12 @@
 // WCAG contrast guard for the status + method colour vocabularies. Badges pair
 // a coloured foreground (status hue / method hue) with a low-emphasis tinted
 // background of the same hue; this test computes the WCAG 2.x contrast ratio
-// for each pairing in both themes and asserts a ≥3:1 floor (AA for bold/large
-// text and for UI-component contrast, §1.4.3/§1.4.11). Status badges also pair
-// colour with a glyph (DESIGN.md §6.1), so colour is never the sole signal.
+// for each pairing in both themes and asserts a ≥4.5:1 floor (AA for normal
+// text, §1.4.3). The foregrounds are solved to this ratio in Theme via
+// theming::oklchForContrast, so this test locks the solver's guarantee in.
+// Status badges also pair colour with a glyph (DESIGN.md §6.1), so colour is
+// never the sole signal.
+#include "theming/Color.h"
 #include "theming/Theme.h"
 
 #include <gtest/gtest.h>
@@ -48,7 +51,7 @@ namespace {
                   mix(hue.blue(), surface.blue())};
 }
 
-constexpr double kMinRatio = 3.0;
+constexpr double kMinRatio = 4.5;
 
 void checkTheme(Appearance appearance, const char* label) {
     const Theme theme = Theme::resolve(appearance);
@@ -92,6 +95,33 @@ TEST(Contrast, light_theme_badges_meet_aa_floor) {
 
 TEST(Contrast, dark_theme_badges_meet_aa_floor) {
     checkTheme(Appearance::Dark, "dark");
+}
+
+// Direct solver checks: oklchForContrast must reach the requested ratio against
+// both a near-white and a near-black background, across hues.
+TEST(Contrast, solver_reaches_target_on_light_background) {
+    const QColor lightBg = oklch(0.985, 0.003, 264.5);  // raised light surface
+    for (double hue : {25.0, 95.0, 150.0, 230.0, 320.0}) {
+        const QColor solved = oklchForContrast(0.18, hue, lightBg, 4.5, 0.62);
+        EXPECT_GE(contrastRatio(solved, lightBg), 4.5)
+            << "hue " << hue << " on light bg = " << contrastRatio(solved, lightBg);
+    }
+}
+
+TEST(Contrast, solver_reaches_target_on_dark_background) {
+    const QColor darkBg = oklch(0.230, 0.020, 207.3);  // raised dark surface
+    for (double hue : {25.0, 95.0, 150.0, 230.0, 320.0}) {
+        const QColor solved = oklchForContrast(0.18, hue, darkBg, 4.5, 0.40);
+        EXPECT_GE(contrastRatio(solved, darkBg), 4.5)
+            << "hue " << hue << " on dark bg = " << contrastRatio(solved, darkBg);
+    }
+}
+
+TEST(Contrast, solver_keeps_already_accessible_colour_unchanged) {
+    const QColor white{255, 255, 255};
+    // Pure black on white already exceeds any target → returned unchanged.
+    const QColor solved = oklchForContrast(0.0, 0.0, white, 4.5, 0.0);
+    EXPECT_EQ(solved, oklch(0.0, 0.0, 0.0));
 }
 
 }  // namespace reqloom::desktop::theming::tests
