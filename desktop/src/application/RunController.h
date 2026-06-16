@@ -55,6 +55,7 @@ struct RequestOverride {
     bool chainEdited{false};
     std::vector<std::string> dependencies;        ///< replaces explicitDependencies
     std::vector<engine::Extraction> extractions;  ///< replaces extractions
+    std::vector<engine::Assertion> assertions;    ///< replaces assertions
 };
 
 /// Apply a RequestOverride's fields onto an operation in place. Shared by the
@@ -139,6 +140,7 @@ signals:
                              QString sourcePath,
                              QString outcome,
                              QString value);
+    void assertionCompleted(int index, QString op, QString name, QString expr, bool passed);
     void stepFailed(int index, QString op, QString code, QString detail);
     void runEnded(QString outcome);
 

@@ -523,7 +523,7 @@ ColumnLayout {
         LineTabBar {
             id: readTabs
             Layout.fillWidth: true
-            model: [qsTr("Headers"), qsTr("Params"), qsTr("Body"), qsTr("Auth"), qsTr("Chain")]
+            model: [qsTr("Headers"), qsTr("Params"), qsTr("Body"), qsTr("Auth"), qsTr("Chain"), qsTr("Assertions")]
         }
 
         StackLayout {
@@ -591,6 +591,10 @@ ColumnLayout {
                 model: AppController.opExtractions
                 emptyText: qsTr("No extractions.")
             }
+            KeyValueList {
+                model: AppController.opAssertions
+                emptyText: qsTr("No assertions.")
+            }
         }
     }
 
@@ -604,7 +608,7 @@ ColumnLayout {
         LineTabBar {
             id: editTabs
             Layout.fillWidth: true
-            model: [AppController.editParamsCount > 0 ? qsTr("Params  %1").arg(AppController.editParamsCount) : qsTr("Params"), AppController.editHeadersCount > 0 ? qsTr("Headers  %1").arg(AppController.editHeadersCount) : qsTr("Headers"), AppController.editBodyFilled ? qsTr("Body  ●") : qsTr("Body"), qsTr("Auth"), qsTr("Options"), AppController.editChainCount > 0 ? qsTr("Chain  %1").arg(AppController.editChainCount) : qsTr("Chain")]
+            model: [AppController.editParamsCount > 0 ? qsTr("Params  %1").arg(AppController.editParamsCount) : qsTr("Params"), AppController.editHeadersCount > 0 ? qsTr("Headers  %1").arg(AppController.editHeadersCount) : qsTr("Headers"), AppController.editBodyFilled ? qsTr("Body  ●") : qsTr("Body"), qsTr("Auth"), qsTr("Options"), AppController.editChainCount > 0 ? qsTr("Chain  %1").arg(AppController.editChainCount) : qsTr("Chain"), AppController.editAssertionsCount > 0 ? qsTr("Assertions  %1").arg(AppController.editAssertionsCount) : qsTr("Assertions")]
         }
 
         StackLayout {
@@ -1193,6 +1197,16 @@ ColumnLayout {
                             anchors.margins: DesignTokens.spaceMd
                         }
                     }
+                }
+            }
+            // Assertions
+            ScrollView {
+                id: assertScroll
+                clip: true
+                contentWidth: availableWidth
+                AssertionEditor {
+                    width: assertScroll.availableWidth
+                    assertModel: AppController.editAssertions
                 }
             }
         }

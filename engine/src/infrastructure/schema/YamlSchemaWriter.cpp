@@ -223,6 +223,24 @@ void emitExtractions(YAML::Emitter& e, const std::vector<Extraction>& extraction
     e << YAML::EndMap;
 }
 
+void emitAssertions(YAML::Emitter& e, const std::vector<Assertion>& assertions) {
+    if (assertions.empty()) {
+        return;
+    }
+    e << YAML::Key << "assert" << YAML::Value << YAML::BeginSeq;
+    for (const auto& assertion : assertions) {
+        // Compact scalar when unnamed; the `{ expr, name }` map form when a
+        // human label is attached, so both round-trip.
+        if (assertion.name) {
+            e << YAML::BeginMap << YAML::Key << "expr" << YAML::Value << assertion.expr << YAML::Key
+              << "name" << YAML::Value << *assertion.name << YAML::EndMap;
+        } else {
+            e << assertion.expr;
+        }
+    }
+    e << YAML::EndSeq;
+}
+
 void emitProvenance(YAML::Emitter& e, const Provenance& p) {
     e << YAML::Key << "_provenance" << YAML::Value << YAML::BeginMap;
     e << YAML::Key << "source" << YAML::Value << std::string{provenanceSourceToString(p.source)};
@@ -340,6 +358,7 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
         e << YAML::EndMap;
     }
     emitExtractions(e, op.extractions);
+    emitAssertions(e, op.assertions);
     if (op.provenance) {
         emitProvenance(e, *op.provenance);
     }

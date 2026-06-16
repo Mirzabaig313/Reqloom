@@ -216,6 +216,10 @@ AppController::AppController(QObject* parent)
             &RunController::extractionCompleted,
             &timeline_,
             &TimelineModel::onExtractionCompleted);
+    connect(runController_.get(),
+            &RunController::assertionCompleted,
+            &timeline_,
+            &TimelineModel::onAssertionCompleted);
     connect(
         runController_.get(), &RunController::stepFailed, &timeline_, &TimelineModel::onStepFailed);
     connect(runController_.get(), &RunController::runEnded, &timeline_, &TimelineModel::onRunEnded);
@@ -280,7 +284,8 @@ AppController::AppController(QObject* parent)
     for (QAbstractItemModel* model : {static_cast<QAbstractItemModel*>(&editHeaders_),
                                       static_cast<QAbstractItemModel*>(&editQuery_),
                                       static_cast<QAbstractItemModel*>(&editForm_),
-                                      static_cast<QAbstractItemModel*>(&editExtractions_)}) {
+                                      static_cast<QAbstractItemModel*>(&editExtractions_),
+                                      static_cast<QAbstractItemModel*>(&editAssertions_)}) {
         connect(model, &QAbstractItemModel::dataChanged, this, onEditModelChanged);
         connect(model, &QAbstractItemModel::rowsInserted, this, onEditModelChanged);
         connect(model, &QAbstractItemModel::rowsRemoved, this, onEditModelChanged);
@@ -449,6 +454,17 @@ void AppController::selectOperation(const QString& moduleName, const QString& op
                                  QString::fromStdString(ext.sourcePath));
     }
     opExtractions_.reloadPairs(std::move(extractRows));
+
+    // Read-view assertions: key = label (name, or the expression when unnamed),
+    // value = the expression. Reuses the KeyValueList widget.
+    std::vector<std::pair<QString, QString>> assertRows;
+    assertRows.reserve(op.assertions.size());
+    for (const auto& a : op.assertions) {
+        const QString expr = QString::fromStdString(a.expr);
+        const QString label = a.name ? QString::fromStdString(*a.name) : expr;
+        assertRows.emplace_back(label, expr);
+    }
+    opAssertions_.reloadPairs(std::move(assertRows));
 
     opDependencies_.clear();
     for (const auto& dep : op.explicitDependencies) {
@@ -960,6 +976,16 @@ bool AppController::editBodyFilled() const {
 int AppController::editChainCount() const {
     return static_cast<int>(editDependencies_.dependencies().size() +
                             editExtractions_.pairs().size());
+}
+
+int AppController::editAssertionsCount() const {
+    int count = 0;
+    for (const auto& [expr, name] : editAssertions_.pairs()) {
+        if (!expr.trimmed().isEmpty()) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 QVariantList AppController::chainNodes() const {
@@ -1564,6 +1590,14 @@ void AppController::seedEditChainFromProject() {
                                  QString::fromStdString(ext.sourcePath));
     }
     editExtractions_.setPairs(std::move(extractRows));
+
+    std::vector<std::pair<QString, QString>> assertRows;
+    assertRows.reserve(op->assertions.size());
+    for (const auto& a : op->assertions) {
+        assertRows.emplace_back(QString::fromStdString(a.expr),
+                                a.name ? QString::fromStdString(*a.name) : QString{});
+    }
+    editAssertions_.setPairs(std::move(assertRows));
 }
 
 void AppController::beginEdit() {
@@ -1658,6 +1692,14 @@ void AppController::beginEdit() {
     }
     editExtractions_.setPairs(std::move(extractRows));
 
+    std::vector<std::pair<QString, QString>> assertRows;
+    assertRows.reserve(op->assertions.size());
+    for (const auto& a : op->assertions) {
+        assertRows.emplace_back(QString::fromStdString(a.expr),
+                                a.name ? QString::fromStdString(*a.name) : QString{});
+    }
+    editAssertions_.setPairs(std::move(assertRows));
+
     chainFieldsLoaded_ = true;
     editing_ = true;
     // Seed the whole-chain editor (every step in the transitive chain) so the
@@ -1715,6 +1757,19 @@ RequestOverride AppController::buildOverride() const {
         ext.sourcePath = sourcePath.toStdString();
         ext.source = sourceForPath(ext.sourcePath);
         ov.extractions.push_back(std::move(ext));
+    }
+    for (const auto& [expr, name] : editAssertions_.pairs()) {
+        const QString trimmedExpr = expr.trimmed();
+        if (trimmedExpr.isEmpty()) {
+            continue;
+        }
+        engine::Assertion assertion;
+        assertion.expr = trimmedExpr.toStdString();
+        const QString trimmedName = name.trimmed();
+        if (!trimmedName.isEmpty()) {
+            assertion.name = trimmedName.toStdString();
+        }
+        ov.assertions.push_back(std::move(assertion));
     }
     return ov;
 }

@@ -37,6 +37,7 @@ public:
         Request,
         Response,
         Extraction,
+        Assertion,
         Skip,
         Fail,
         RunEnd,
@@ -80,6 +81,7 @@ public slots:
                                QString sourcePath,
                                QString outcome,
                                QString value);
+    void onAssertionCompleted(int index, QString op, QString name, QString expr, bool passed);
     void onStepFailed(int index, QString op, QString code, QString detail);
     void onRunEnded(QString outcome);
 

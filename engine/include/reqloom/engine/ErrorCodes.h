@@ -52,6 +52,10 @@ enum class ErrorCode : std::uint8_t {
     ExtractionFailed,
     ResponseParse,
 
+    /// A declared response assertion (`assert:`) evaluated to false against
+    /// the final response. Carries the failing expression in `detail`.
+    AssertionFailed,
+
     // Polling
     PollTimeout,              ///< wall-clock budget exceeded
     PollMaxAttemptsExceeded,  ///< attempt-count budget exceeded

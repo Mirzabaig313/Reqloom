@@ -143,6 +143,16 @@ struct Provenance {
     std::map<std::string, std::string> evidence;
 };
 
+/// A declared response assertion. `expr` is a predicate in the engine's
+/// predicate grammar (the same one `poll_until.success_when` uses): comparisons
+/// (`==, !=, <, <=, >, >=, in, matches`), boolean `&&`/`||`, `$.json.path`
+/// references, and the `$.status_code` shortcut. Evaluated against the final
+/// response after extractions. `name` is an optional human label for reports.
+struct Assertion {
+    std::string expr;
+    std::optional<std::string> name;
+};
+
 /// One declared operation.
 struct Operation {
     OperationId id;
@@ -163,6 +173,10 @@ struct Operation {
     std::vector<int> expectStatusList;
 
     std::vector<Extraction> extractions;
+
+    /// Declared response assertions, evaluated after extractions against the
+    /// final response. Any failing assertion fails the step (AssertionFailed).
+    std::vector<Assertion> assertions;
 
     /// Explicit dependencies declared by the user.
     std::vector<OperationId> explicitDependencies;

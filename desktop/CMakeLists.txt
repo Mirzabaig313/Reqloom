@@ -113,6 +113,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/ValuePicker.qml
         qml/widgets/PathTokenBar.qml
         qml/widgets/ExtractionEditor.qml
+        qml/widgets/AssertionEditor.qml
         qml/views/SecretsDialog.qml
         qml/widgets/Toast.qml
         qml/widgets/EmptyState.qml

@@ -164,7 +164,21 @@ void JsonRenderer::render(const ce::OperationId& target,
         } else {
             out_ << "      \"for_each_index\": null,\n";
         }
-        out_ << R"(      "detail": ")" << escape(step.detail) << "\"\n";
+        out_ << R"(      "detail": ")" << escape(step.detail) << "\",\n";
+        out_ << "      \"assertions\": [";
+        bool firstAssert = true;
+        for (const auto& a : step.assertions) {
+            if (!firstAssert) {
+                out_ << ",";
+            }
+            firstAssert = false;
+            out_ << "\n        { \"name\": \"" << escape(a.name) << "\", \"expr\": \""
+                 << escape(a.expr) << "\", \"passed\": " << (a.passed ? "true" : "false") << " }";
+        }
+        if (!step.assertions.empty()) {
+            out_ << "\n      ";
+        }
+        out_ << "]\n";
         out_ << "    }";
     }
     if (!result.steps.empty()) {

@@ -120,6 +120,18 @@ struct StepFailed {
     TimePoint at;
 };
 
+/// One declared assertion evaluated against the final response. Streamed per
+/// assertion (like ExtractionCompleted) so the timeline shows pass/fail rows.
+struct AssertionCompleted {
+    RunId runId;
+    std::size_t stepIndex{};
+    OperationId op;
+    std::string name;
+    std::string expr;
+    bool passed{false};
+    TimePoint at;
+};
+
 struct StepCancelled {
     RunId runId;
     std::size_t stepIndex{};
@@ -152,6 +164,7 @@ using RunEvent = std::variant<RunStarted,
                               ResponseReceived,
                               ExtractionApplied,
                               ExtractionCompleted,
+                              AssertionCompleted,
                               StepFailed,
                               StepCancelled,
                               SessionRefreshed,

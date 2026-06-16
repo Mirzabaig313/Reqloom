@@ -49,6 +49,13 @@ struct ResourceInstance {
     std::map<std::string, std::string> variables;
 };
 
+/// Outcome of one declared assertion evaluated against the final response.
+struct AssertionResult {
+    std::string name;  ///< Human label, or the expression when unnamed.
+    std::string expr;  ///< The predicate that was evaluated.
+    bool passed{false};
+};
+
 /// One step in a chain.
 struct StepResult {
     enum class Status : std::uint8_t {
@@ -76,6 +83,10 @@ struct StepResult {
     /// Set when this row is one iteration of a `for_each` operation (1-based).
     /// Plain (non-for-each) operation rows leave this empty.
     std::optional<int> forEachIndex;
+
+    /// Results of the operation's declared assertions, in declaration order.
+    /// Empty when the operation declares none.
+    std::vector<AssertionResult> assertions;
 };
 
 struct ExtractionTrace {

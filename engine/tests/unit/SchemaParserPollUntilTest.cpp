@@ -253,6 +253,52 @@ resources:
     EXPECT_TRUE(reget.forEach->continueOnError) << "continue_on_error should survive round-trip";
 }
 
+TEST(SchemaParserAssertions, parses_named_and_bare_assertions_and_round_trips) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: AssertSample
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  order:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/orders/1
+        assert:
+          - $.status_code == 200
+          - expr: $.data.id
+            name: has id
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& get = result->resources.at(ce::ResourceId{"order"}).operations.at("get");
+    ASSERT_EQ(get.assertions.size(), 2u);
+    EXPECT_EQ(get.assertions[0].expr, "$.status_code == 200");
+    EXPECT_FALSE(get.assertions[0].name.has_value());
+    EXPECT_EQ(get.assertions[1].expr, "$.data.id");
+    ASSERT_TRUE(get.assertions[1].name.has_value());
+    EXPECT_EQ(*get.assertions[1].name, "has id");
+
+    const auto out = scratch.path() / "out";
+    fs::create_directories(out);
+    ASSERT_TRUE(ce::writeProject(out, *result).has_value());
+    auto reloaded = ce::parseProject(out / "reqloom.yaml");
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& reget = reloaded->resources.at(ce::ResourceId{"order"}).operations.at("get");
+    ASSERT_EQ(reget.assertions.size(), 2u);
+    EXPECT_EQ(reget.assertions[0].expr, "$.status_code == 200");
+    EXPECT_FALSE(reget.assertions[0].name.has_value());
+    EXPECT_EQ(reget.assertions[1].expr, "$.data.id");
+    ASSERT_TRUE(reget.assertions[1].name.has_value());
+    EXPECT_EQ(*reget.assertions[1].name, "has id");
+}
+
 TEST(SchemaParserPolling, ops_without_poll_until_remain_nullopt) {
     ScratchDir scratch;
     const auto yaml = scratch.write("reqloom.yaml", R"YAML(
