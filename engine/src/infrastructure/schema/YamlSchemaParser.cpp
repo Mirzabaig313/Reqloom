@@ -248,6 +248,30 @@ std::vector<Extraction> parseExtractions(const YAML::Node& node) {
     return result;
 }
 
+/// Parse the `assert:` block: a sequence whose items are either a bare scalar
+/// (the predicate expression, unnamed) or a map `{ expr: ..., name: ... }`.
+std::vector<Assertion> parseAssertions(const YAML::Node& node) {
+    std::vector<Assertion> result;
+    if (!node || !node.IsSequence()) {
+        return result;
+    }
+    for (const auto& item : node) {
+        Assertion assertion;
+        if (item.IsMap()) {
+            assertion.expr = item["expr"].as<std::string>("");
+            if (item["name"]) {
+                assertion.name = item["name"].as<std::string>();
+            }
+        } else {
+            assertion.expr = item.as<std::string>("");
+        }
+        if (!assertion.expr.empty()) {
+            result.push_back(std::move(assertion));
+        }
+    }
+    return result;
+}
+
 /// Parse a non-negative integer using from_chars. Returns nullopt for
 /// any malformed input (non-digit, sign, partial parse, negative).
 /// Used by all the duration parsers below — std::stol throws on bad
@@ -823,6 +847,7 @@ std::expected<Resource, ReqloomError> parseResource(const std::string& resourceI
         }
 
         op.extractions = parseExtractions(opNode["extract"]);
+        op.assertions = parseAssertions(opNode["assert"]);
 
         if (opNode["depends_on"] && opNode["depends_on"].IsSequence()) {
             for (const auto& dep : opNode["depends_on"]) {

@@ -81,6 +81,7 @@ class AppController : public QObject {
     Q_PROPERTY(KeyValueModel* opHeaders READ opHeaders CONSTANT)
     Q_PROPERTY(KeyValueModel* opQuery READ opQuery CONSTANT)
     Q_PROPERTY(KeyValueModel* opExtractions READ opExtractions CONSTANT)
+    Q_PROPERTY(KeyValueModel* opAssertions READ opAssertions CONSTANT)
 
     // Environment + run state
     Q_PROPERTY(QStringList environments READ environments NOTIFY projectChanged)
@@ -141,6 +142,7 @@ class AppController : public QObject {
     Q_PROPERTY(EditableKeyValueModel* actorAuthExtract READ actorAuthExtract CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* actorRefreshExtract READ actorRefreshExtract CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editExtractions READ editExtractions CONSTANT)
+    Q_PROPERTY(EditableKeyValueModel* editAssertions READ editAssertions CONSTANT)
     Q_PROPERTY(DependencyEditModel* editDependencies READ editDependencies CONSTANT)
     Q_PROPERTY(
         QStringList editDependencyCandidates READ editDependencyCandidates NOTIFY editChanged)
@@ -149,6 +151,7 @@ class AppController : public QObject {
     Q_PROPERTY(int editHeadersCount READ editHeadersCount NOTIFY editChanged)
     Q_PROPERTY(bool editBodyFilled READ editBodyFilled NOTIFY editChanged)
     Q_PROPERTY(int editChainCount READ editChainCount NOTIFY editChanged)
+    Q_PROPERTY(int editAssertionsCount READ editAssertionsCount NOTIFY editChanged)
     // Execution-chain nodes for the visual preview ({operationId, method,
     // isTarget}). Recomputed from the open op (read) or the edited deps (edit).
     Q_PROPERTY(QVariantList chainNodes READ chainNodes NOTIFY chainChanged)
@@ -262,6 +265,7 @@ public:
     [[nodiscard]] KeyValueModel* opHeaders() { return &opHeaders_; }
     [[nodiscard]] KeyValueModel* opQuery() { return &opQuery_; }
     [[nodiscard]] KeyValueModel* opExtractions() { return &opExtractions_; }
+    [[nodiscard]] KeyValueModel* opAssertions() { return &opAssertions_; }
 
     [[nodiscard]] QStringList environments() const { return environments_; }
     [[nodiscard]] QString environment() const { return environment_; }
@@ -314,11 +318,13 @@ public:
     void setEditEnvBaseUrl(const QString& url);
     [[nodiscard]] EditableKeyValueModel* editExtractions() { return &editExtractions_; }
     [[nodiscard]] DependencyEditModel* editDependencies() { return &editDependencies_; }
+    [[nodiscard]] EditableKeyValueModel* editAssertions() { return &editAssertions_; }
     [[nodiscard]] QStringList editDependencyCandidates() const;
     [[nodiscard]] int editParamsCount() const;
     [[nodiscard]] int editHeadersCount() const;
     [[nodiscard]] bool editBodyFilled() const;
     [[nodiscard]] int editChainCount() const;
+    [[nodiscard]] int editAssertionsCount() const;
     [[nodiscard]] QVariantList chainNodes() const;
     [[nodiscard]] QVariantMap chainGraph() const;
     [[nodiscard]] QVariantMap chainStatus() const;
@@ -627,6 +633,7 @@ private:
     KeyValueModel opHeaders_;
     KeyValueModel opQuery_;
     KeyValueModel opExtractions_;
+    KeyValueModel opAssertions_;
 
     // Editable request surface (Edit mode). Seeded from the open op on
     // beginEdit; the trailing ghost-row models grow as the user types.
@@ -634,6 +641,7 @@ private:
     EditableKeyValueModel editQuery_;
     EditableKeyValueModel editForm_;
     EditableKeyValueModel editExtractions_;
+    EditableKeyValueModel editAssertions_;
     EditableKeyValueModel actorConfig_;
     EditableKeyValueModel envVars_;
     QString editEnvBaseUrl_;

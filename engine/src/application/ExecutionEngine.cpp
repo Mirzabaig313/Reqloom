@@ -1078,6 +1078,44 @@ struct ExecutionEngine::Impl {
             }
         }
 
+        // Response assertions: evaluate each declared predicate against the
+        // final (post-poll, post-hook, post-extraction) response. Record every
+        // outcome; the first failure fails the step. Reuses the predicate
+        // grammar that poll_until.success_when uses.
+        if (httpResp && !op.assertions.empty()) {
+            const PredicateEvaluator assertionEval;
+            const auto parsedBody = assertionEval.parseBody(httpResp->body);
+            std::optional<std::string> firstFail;
+            for (const auto& assertion : op.assertions) {
+                AssertionResult ar;
+                ar.expr = assertion.expr;
+                ar.name = assertion.name.value_or(assertion.expr);
+                const auto parsed = assertionEval.parse(assertion.expr);
+                ar.passed =
+                    parsed && assertionEval.evaluate(*parsed, parsedBody, httpResp->status) ==
+                                  PredicateValue::True;
+                if (!ar.passed && !firstFail) {
+                    firstFail = ar.name;
+                }
+                emit(AssertionCompleted{runId,
+                                        stepIndex,
+                                        op.id,
+                                        ar.name,
+                                        ar.expr,
+                                        ar.passed,
+                                        std::chrono::system_clock::now()});
+                result.assertions.push_back(std::move(ar));
+            }
+            if (firstFail) {
+                result.status = StepResult::Status::Failed;
+                result.error = ErrorCode::AssertionFailed;
+                result.detail = "assertion failed: " + *firstFail + " for " + op.id.value;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
+            }
+        }
+
         result.status = StepResult::Status::Succeeded;
         auto elapsed = std::chrono::steady_clock::now() - startTime;
         result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);

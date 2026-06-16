@@ -194,6 +194,15 @@ void JUnitRenderer::render(const ce::OperationId& target,
             out_ << "]]></system-out>\n";
         }
 
+        if (!parent.assertions.empty()) {
+            out_ << "      <system-out><![CDATA[";
+            for (const auto& a : parent.assertions) {
+                out_ << (a.passed ? "PASS" : "FAIL") << " assert: " << a.name << "  (" << a.expr
+                     << ")\n";
+            }
+            out_ << "]]></system-out>\n";
+        }
+
         out_ << "    </testcase>\n";
     }
 

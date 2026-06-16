@@ -124,6 +124,12 @@ void TextRenderer::render(const ce::OperationId& target,
         if (!step.detail.empty()) {
             std::println(summary_, "         {}", step.detail);
         }
+        for (const auto& a : step.assertions) {
+            std::println(summary_,
+                         "         {} assert: {}",
+                         a.passed ? std::string{"\u2713"} : std::string{"\u2717"},
+                         a.name);
+        }
     }
 }
 

@@ -48,6 +48,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_EXTRACTION_FAILED";
         case ErrorCode::ResponseParse:
             return "E_RESPONSE_PARSE";
+        case ErrorCode::AssertionFailed:
+            return "E_ASSERTION_FAILED";
         case ErrorCode::PollTimeout:
             return "E_POLL_TIMEOUT";
         case ErrorCode::PollMaxAttemptsExceeded:
@@ -106,6 +108,8 @@ std::string_view humanize(ErrorCode code) noexcept {
             return "Extraction failed";
         case ErrorCode::ResponseParse:
             return "Could not parse response";
+        case ErrorCode::AssertionFailed:
+            return "Assertion failed";
         case ErrorCode::PollTimeout:
             return "Polling timed out";
         case ErrorCode::PollMaxAttemptsExceeded:
@@ -126,7 +130,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
     // Reverse of toCodeString, matched against the full enumerator list.
     // The drift guard below fails the build if a code is added without
     // growing this array.
-    constexpr std::array<ErrorCode, 26> kAll = {
+    constexpr std::array<ErrorCode, 27> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,
         ErrorCode::Cycle,
@@ -147,6 +151,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::HookTimeout,
         ErrorCode::ExtractionFailed,
         ErrorCode::ResponseParse,
+        ErrorCode::AssertionFailed,
         ErrorCode::PollTimeout,
         ErrorCode::PollMaxAttemptsExceeded,
         ErrorCode::PollFailPredicate,
@@ -215,6 +220,7 @@ ErrorClass classify(ErrorCode code) noexcept {
 
         case ErrorCode::ExtractionFailed:
         case ErrorCode::ResponseParse:
+        case ErrorCode::AssertionFailed:
             return ErrorClass::Extraction;
 
         case ErrorCode::PollTimeout:

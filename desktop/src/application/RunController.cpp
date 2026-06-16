@@ -235,6 +235,7 @@ void applyOverrideToOperation(ce::Operation& op, const RequestOverride& ov) {
             op.explicitDependencies.push_back(ce::OperationId{dep});
         }
         op.extractions = ov.extractions;
+        op.assertions = ov.assertions;
     }
 }
 
@@ -360,6 +361,12 @@ void RunController::publishEvent(const ce::RunEvent& event) {
                                          QString::fromStdString(e.sourcePath),
                                          format::extractionOutcome(e.outcome),
                                          QString::fromStdString(e.value));
+            } else if constexpr (std::is_same_v<T, ce::AssertionCompleted>) {
+                emit assertionCompleted(static_cast<int>(e.stepIndex),
+                                        QString::fromStdString(e.op.value),
+                                        QString::fromStdString(e.name),
+                                        QString::fromStdString(e.expr),
+                                        e.passed);
             } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
                 emit stepFailed(static_cast<int>(e.stepIndex),
                                 QString::fromStdString(e.op.value),

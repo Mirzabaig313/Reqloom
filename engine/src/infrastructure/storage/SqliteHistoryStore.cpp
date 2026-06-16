@@ -321,6 +321,12 @@ struct EventEnvelope {
                              {"sourcePath", v.sourcePath},
                              {"outcome", outcome},
                              {"value", v.value}};
+            } else if constexpr (std::is_same_v<T, AssertionCompleted>) {
+                e.eventType = "AssertionCompleted";
+                e.stepIndex = v.stepIndex;
+                e.opId = v.op.value;
+                e.payload = {
+                    {"op", v.op.value}, {"name", v.name}, {"expr", v.expr}, {"passed", v.passed}};
             } else if constexpr (std::is_same_v<T, StepFailed>) {
                 e.eventType = "StepFailed";
                 e.stepIndex = v.stepIndex;
@@ -461,6 +467,17 @@ struct EventEnvelope {
             ev.outcome = ExtractionCompleted::Outcome::Missing;
         }
         ev.value = p.value("value", std::string{});
+        ev.at = at;
+        return ev;
+    }
+    if (eventType == "AssertionCompleted") {
+        AssertionCompleted ev;
+        ev.runId = runId;
+        ev.stepIndex = stepIndex.value_or(0);
+        ev.op = OperationId{p.value("op", std::string{})};
+        ev.name = p.value("name", std::string{});
+        ev.expr = p.value("expr", std::string{});
+        ev.passed = p.value("passed", false);
         ev.at = at;
         return ev;
     }

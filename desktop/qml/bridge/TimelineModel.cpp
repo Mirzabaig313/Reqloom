@@ -21,6 +21,8 @@ namespace {
             return QStringLiteral("response");
         case TimelineModel::Kind::Extraction:
             return QStringLiteral("extraction");
+        case TimelineModel::Kind::Assertion:
+            return QStringLiteral("assertion");
         case TimelineModel::Kind::Skip:
             return QStringLiteral("skip");
         case TimelineModel::Kind::Fail:
@@ -286,6 +288,21 @@ void TimelineModel::onExtractionCompleted(int index,
         row.detail = QStringLiteral("%1  (%2)").arg(outcome, sourcePath);
         row.value = sourcePath;
     }
+    appendRow(std::move(row));
+}
+
+void TimelineModel::onAssertionCompleted(
+    int index, QString /*op*/, QString name, QString expr, bool passed) {
+    Row row;
+    row.kind = Kind::Assertion;
+    row.stepIndex = index + 1;
+    row.title = name;
+    // Passed reads green; a failed assertion is a real failure (red), since it
+    // also fails the step (unlike a null extraction, which is amber).
+    row.statusToken = passed ? QStringLiteral("success") : QStringLiteral("error");
+    row.statusLabel = passed ? QStringLiteral("\u2713") : QStringLiteral("\u2717");
+    row.detail = expr;
+    row.value = expr;
     appendRow(std::move(row));
 }
 
