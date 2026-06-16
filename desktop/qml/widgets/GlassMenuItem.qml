@@ -18,5 +18,8 @@ MenuItem {
     background: Rectangle {
         radius: DesignTokens.radiusSm
         color: item.highlighted ? DesignTokens.accentMuted : "transparent"
+        Behavior on color {
+            ColorMotion {}
+        }
     }
 }

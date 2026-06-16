@@ -36,6 +36,9 @@ ToolTip {
         onTriggered: tip.visible = true
     }
 
+    enter: PopupEnter {}
+    exit: PopupExit {}
+
     background: Rectangle {
         radius: DesignTokens.radiusSm
         // Translucent fill so it reads as a light overlay, not a solid block.

@@ -21,6 +21,9 @@ ComboBox {
         color: DesignTokens.surfaceSunken
         border.width: 1
         border.color: control.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+        Behavior on border.color {
+            ColorMotion {}
+        }
     }
 
     contentItem: Text {
@@ -46,6 +49,10 @@ ComboBox {
         width: control.width
         implicitHeight: Math.min(popupList.contentHeight + 8, 340)
         padding: 4
+
+        // Drop down with a quick scale-from-top + fade.
+        enter: PopupEnter {}
+        exit: PopupExit {}
 
         background: Rectangle {
             radius: DesignTokens.radius
@@ -82,6 +89,9 @@ ComboBox {
         background: Rectangle {
             radius: DesignTokens.radiusSm
             color: row.highlighted ? DesignTokens.accentMuted : "transparent"
+            Behavior on color {
+                ColorMotion {}
+            }
         }
     }
 }

@@ -12,6 +12,8 @@ Dialog {
     id: dialog
     title: qsTr("New Module")
     modal: true
+    enter: PopupEnter {}
+    exit: PopupExit {}
     anchors.centerIn: Overlay.overlay
     width: 460
     padding: DesignTokens.spaceLg
