@@ -65,6 +65,7 @@ add_executable(reqloom-engine-integration-tests
     integration/HappyPathTest.cpp
     integration/HooksTest.cpp
     integration/PollingTest.cpp
+    integration/ForEachTest.cpp
     integration/RunOptionsTest.cpp
     integration/MultipartTest.cpp
     integration/SessionRefreshTest.cpp

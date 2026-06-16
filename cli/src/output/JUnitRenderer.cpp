@@ -75,7 +75,7 @@ std::vector<GroupedStep> groupSteps(const std::vector<ce::StepResult>& steps) {
     std::vector<std::size_t> pendingPolls;
 
     for (std::size_t i = 0; i < steps.size(); ++i) {
-        if (steps[i].pollAttempt) {
+        if (steps[i].pollAttempt || steps[i].forEachIndex) {
             pendingPolls.push_back(i);
         } else {
             groups.push_back(GroupedStep{i, std::move(pendingPolls)});
@@ -185,9 +185,11 @@ void JUnitRenderer::render(const ce::OperationId& target,
             out_ << "      <system-out><![CDATA[";
             for (auto idx : g.pollIdxs) {
                 const auto& poll = result.steps[idx];
-                out_ << "poll #" << poll.pollAttempt.value_or(0) << " " << statusGlyph(poll.status)
-                     << " (" << poll.elapsed.count() << "ms)" << (poll.detail.empty() ? "" : "  ")
-                     << poll.detail << "\n";
+                const std::string tag =
+                    poll.forEachIndex ? "iter #" + std::to_string(*poll.forEachIndex)
+                                      : "poll #" + std::to_string(poll.pollAttempt.value_or(0));
+                out_ << tag << " " << statusGlyph(poll.status) << " (" << poll.elapsed.count()
+                     << "ms)" << (poll.detail.empty() ? "" : "  ") << poll.detail << "\n";
             }
             out_ << "]]></system-out>\n";
         }

@@ -14,6 +14,8 @@
 #include "Cookies.h"
 #include "HeaderMasking.h"
 #include "JsonExtraction.h"
+
+#include <reqloom/engine/JsonValues.h>
 #include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
 #include "RequestSigners.h"
@@ -915,79 +917,147 @@ struct ExecutionEngine::Impl {
         }
 
         if (httpResp && !op.extractions.empty()) {
-            auto detailed = extractFromResponseDetailed(
-                op.id, httpResp->body, httpResp->status, httpResp->headers, op.extractions);
-            if (!detailed) {
-                result.status = StepResult::Status::Failed;
-                result.error = detailed.error().code;
-                auto elapsed = std::chrono::steady_clock::now() - startTime;
-                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
-                return result;
+            // Partition extractions: list (`[*]` JSONPath, fan-out) vs scalar.
+            std::vector<Extraction> scalarExts;
+            std::vector<Extraction> listExts;
+            for (const auto& ext : op.extractions) {
+                if (ext.source == Extraction::Source::JsonPath &&
+                    ext.sourcePath.find("[*]") != std::string::npos) {
+                    listExts.push_back(ext);
+                } else {
+                    scalarExts.push_back(ext);
+                }
             }
 
-            // Trace every extraction outcome — including misses — so the
-            // timeline shows nulls and missing fields. The op still fails
-            std::optional<std::string> firstMiss;
-            for (auto& t : detailed->traces) {
-                const bool isMissLike = t.outcome == ExtractionTrace::Outcome::Missing ||
-                                        t.outcome == ExtractionTrace::Outcome::InvalidPattern;
-                if (!firstMiss && isMissLike) {
-                    firstMiss = t.variableName;
+            std::map<std::string, std::string> scalarValues;
+            if (!scalarExts.empty()) {
+                auto detailed = extractFromResponseDetailed(
+                    op.id, httpResp->body, httpResp->status, httpResp->headers, scalarExts);
+                if (!detailed) {
+                    result.status = StepResult::Status::Failed;
+                    result.error = detailed.error().code;
+                    auto elapsed = std::chrono::steady_clock::now() - startTime;
+                    result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                    return result;
                 }
 
-                ExtractionCompleted ev;
-                ev.runId = runId;
-                ev.stepIndex = stepIndex;
-                ev.op = t.op;
-                ev.variableName = t.variableName;
-                ev.sourcePath = t.sourcePath;
-                ev.at = std::chrono::system_clock::now();
-                switch (t.outcome) {
-                    case ExtractionTrace::Outcome::Resolved:
-                        // RunContext keeps the real value for downstream
-                        // templating; the event copy (timeline + disk) is
-                        // masked when the variable name looks secret.
-                        ev.outcome = ExtractionCompleted::Outcome::Resolved;
-                        ev.value = isSensitiveName(t.variableName)
-                                       ? std::string{kRedactedHeaderValue}
-                                       : t.value;
-                        break;
-                    case ExtractionTrace::Outcome::Null:
-                        ev.outcome = ExtractionCompleted::Outcome::Null;
-                        break;
-                    case ExtractionTrace::Outcome::Missing:
-                        ev.outcome = ExtractionCompleted::Outcome::Missing;
-                        break;
-                    case ExtractionTrace::Outcome::InvalidPattern:
-                        ev.outcome = ExtractionCompleted::Outcome::InvalidPattern;
-                        break;
-                    case ExtractionTrace::Outcome::Unsupported:
-                        ev.outcome = ExtractionCompleted::Outcome::Unsupported;
-                        break;
+                // Trace every extraction outcome — including misses — so the
+                // timeline shows nulls and missing fields. The op still fails
+                std::optional<std::string> firstMiss;
+                for (auto& t : detailed->traces) {
+                    const bool isMissLike = t.outcome == ExtractionTrace::Outcome::Missing ||
+                                            t.outcome == ExtractionTrace::Outcome::InvalidPattern;
+                    if (!firstMiss && isMissLike) {
+                        firstMiss = t.variableName;
+                    }
+
+                    ExtractionCompleted ev;
+                    ev.runId = runId;
+                    ev.stepIndex = stepIndex;
+                    ev.op = t.op;
+                    ev.variableName = t.variableName;
+                    ev.sourcePath = t.sourcePath;
+                    ev.at = std::chrono::system_clock::now();
+                    switch (t.outcome) {
+                        case ExtractionTrace::Outcome::Resolved:
+                            // RunContext keeps the real value for downstream
+                            // templating; the event copy (timeline + disk) is
+                            // masked when the variable name looks secret.
+                            ev.outcome = ExtractionCompleted::Outcome::Resolved;
+                            ev.value = isSensitiveName(t.variableName)
+                                           ? std::string{kRedactedHeaderValue}
+                                           : t.value;
+                            break;
+                        case ExtractionTrace::Outcome::Null:
+                            ev.outcome = ExtractionCompleted::Outcome::Null;
+                            break;
+                        case ExtractionTrace::Outcome::Missing:
+                            ev.outcome = ExtractionCompleted::Outcome::Missing;
+                            break;
+                        case ExtractionTrace::Outcome::InvalidPattern:
+                            ev.outcome = ExtractionCompleted::Outcome::InvalidPattern;
+                            break;
+                        case ExtractionTrace::Outcome::Unsupported:
+                            ev.outcome = ExtractionCompleted::Outcome::Unsupported;
+                            break;
+                    }
+                    emit(std::move(ev));
+
+                    ctx.recordExtraction(std::move(t));
                 }
-                emit(std::move(ev));
-
-                ctx.recordExtraction(std::move(t));
-            }
-            if (firstMiss) {
-                result.status = StepResult::Status::Failed;
-                result.error = ErrorCode::ExtractionFailed;
-                result.detail = "extract '" + *firstMiss + "' missed for " + op.id.value;
-                auto elapsed = std::chrono::steady_clock::now() - startTime;
-                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
-                return result;
+                if (firstMiss) {
+                    result.status = StepResult::Status::Failed;
+                    result.error = ErrorCode::ExtractionFailed;
+                    result.detail = "extract '" + *firstMiss + "' missed for " + op.id.value;
+                    auto elapsed = std::chrono::steady_clock::now() - startTime;
+                    result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                    return result;
+                }
+                scalarValues = std::move(detailed->values);
             }
 
-            if (!detailed->values.empty()) {
-                ResourceInstance instance;
-                instance.variables = std::move(detailed->values);
+            if (listExts.empty()) {
+                // Plain extraction: one instance from the scalar values.
+                if (!scalarValues.empty()) {
+                    ResourceInstance instance;
+                    instance.variables = std::move(scalarValues);
 
-                // Names only — the per-extraction ExtractionCompleted
-                // events above carry the values (masked when sensitive).
+                    std::vector<std::string> names;
+                    names.reserve(instance.variables.size());
+                    for (const auto& [k, _] : instance.variables) {
+                        names.push_back(k);
+                    }
+                    emit(ExtractionApplied{runId,
+                                           stepIndex,
+                                           op.resource,
+                                           std::move(names),
+                                           std::chrono::system_clock::now()});
+                    ctx.appendInstance(op.resource, std::move(instance));
+                }
+            } else {
+                // List extraction (for-each producer): each `[*]` path yields a
+                // vector; we append one instance per item (scalars broadcast
+                // into every instance), so a downstream for_each can iterate.
+                std::size_t count = 0;
+                std::vector<std::pair<std::string, std::vector<std::string>>> lists;
+                std::optional<std::string> emptyList;
+                for (const auto& ext : listExts) {
+                    auto values = extractValues(httpResp->body, ext.sourcePath);
+                    count = std::max(count, values.size());
+                    if (values.empty() && !emptyList) {
+                        emptyList = ext.variableName;
+                    }
+                    ExtractionCompleted ev;
+                    ev.runId = runId;
+                    ev.stepIndex = stepIndex;
+                    ev.op = op.id;
+                    ev.variableName = ext.variableName;
+                    ev.sourcePath = ext.sourcePath;
+                    ev.at = std::chrono::system_clock::now();
+                    ev.outcome = values.empty() ? ExtractionCompleted::Outcome::Missing
+                                                : ExtractionCompleted::Outcome::Resolved;
+                    ev.value =
+                        values.empty() ? std::string{} : std::to_string(values.size()) + " items";
+                    emit(std::move(ev));
+                    lists.emplace_back(ext.variableName, std::move(values));
+                }
+                if (emptyList) {
+                    result.status = StepResult::Status::Failed;
+                    result.error = ErrorCode::ExtractionFailed;
+                    result.detail =
+                        "list extract '" + *emptyList + "' matched no items for " + op.id.value;
+                    auto elapsed = std::chrono::steady_clock::now() - startTime;
+                    result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                    return result;
+                }
+
                 std::vector<std::string> names;
-                names.reserve(instance.variables.size());
-                for (const auto& [k, _] : instance.variables) {
+                names.reserve(scalarValues.size() + lists.size());
+                for (const auto& [k, _] : scalarValues) {
                     names.push_back(k);
+                }
+                for (const auto& [var, _] : lists) {
+                    names.push_back(var);
                 }
                 emit(ExtractionApplied{runId,
                                        stepIndex,
@@ -995,7 +1065,16 @@ struct ExecutionEngine::Impl {
                                        std::move(names),
                                        std::chrono::system_clock::now()});
 
-                ctx.appendInstance(op.resource, std::move(instance));
+                for (std::size_t k = 0; k < count; ++k) {
+                    ResourceInstance instance;
+                    instance.variables = scalarValues;  // broadcast scalars
+                    for (const auto& [var, values] : lists) {
+                        if (k < values.size()) {
+                            instance.variables[var] = values[k];
+                        }
+                    }
+                    ctx.appendInstance(op.resource, std::move(instance));
+                }
             }
         }
 
@@ -1147,15 +1226,75 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
 
         impl_->emit(StepStarted{runId, i, opId, 1, std::chrono::system_clock::now()});
 
-        std::vector<StepResult> pollAttemptRows;
-        auto stepResult = impl_->executeStep(op, project, ctx, rctx, runId, i, pollAttemptRows);
-        // Per-attempt rows precede the parent step row so renderers can
-        // group them under the operation that owned the poll loop.
-        for (auto& row : pollAttemptRows) {
-            result.steps.push_back(std::move(row));
+        StepResult stepResult;
+        if (op.forEach) {
+            // Data-driven fan-out: run once per instance of the `over` resource
+            // (populated by an upstream list extraction). Each iteration binds
+            // `{{<over>.field}}` to that item; iteration rows are tagged with
+            // forEachIndex and grouped under this step, like poll attempts.
+            const ResourceId overRes = op.forEach->over;
+            const std::size_t itemCount = ctx.instances(overRes).size();
+            stepResult.op = opId;
+            if (itemCount == 0) {
+                stepResult.status = StepResult::Status::Succeeded;
+                stepResult.detail = "for_each: no items in " + overRes.value;
+            } else {
+                bool anyFailed = false;
+                bool anyCancelled = false;
+                const bool continueOnError = op.forEach->continueOnError;
+                std::size_t failedCount = 0;
+                for (std::size_t k = 0; k < itemCount; ++k) {
+                    ctx.setIteration(overRes, k);
+                    std::vector<StepResult> iterPollRows;
+                    auto iter = impl_->executeStep(op, project, ctx, rctx, runId, i, iterPollRows);
+                    for (auto& row : iterPollRows) {
+                        row.forEachIndex = static_cast<int>(k + 1);
+                        result.steps.push_back(std::move(row));
+                    }
+                    iter.forEachIndex = static_cast<int>(k + 1);
+                    if (iter.status == StepResult::Status::Failed) {
+                        anyFailed = true;
+                        ++failedCount;
+                        stepResult.error = iter.error;
+                        stepResult.detail = iter.detail;
+                    }
+                    if (iter.status == StepResult::Status::Cancelled) {
+                        anyCancelled = true;
+                    }
+                    ctx.record(iter);
+                    result.steps.push_back(std::move(iter));
+                    // A cancel always stops the fan-out. A failure stops it only
+                    // when continue-on-error is off.
+                    if (anyCancelled || (anyFailed && !continueOnError)) {
+                        break;
+                    }
+                }
+                ctx.setIteration(overRes, std::nullopt);
+                stepResult.status = anyCancelled ? StepResult::Status::Cancelled
+                                    : anyFailed  ? StepResult::Status::Failed
+                                                 : StepResult::Status::Succeeded;
+                if (stepResult.status == StepResult::Status::Succeeded) {
+                    stepResult.detail = "for_each over " + overRes.value + " — " +
+                                        std::to_string(itemCount) + " iterations";
+                } else if (anyFailed && continueOnError) {
+                    stepResult.detail = "for_each over " + overRes.value + " — " +
+                                        std::to_string(failedCount) + " of " +
+                                        std::to_string(itemCount) + " iterations failed";
+                }
+            }
+            result.steps.push_back(stepResult);
+            ctx.record(stepResult);
+        } else {
+            std::vector<StepResult> pollAttemptRows;
+            stepResult = impl_->executeStep(op, project, ctx, rctx, runId, i, pollAttemptRows);
+            // Per-attempt rows precede the parent step row so renderers can
+            // group them under the operation that owned the poll loop.
+            for (auto& row : pollAttemptRows) {
+                result.steps.push_back(std::move(row));
+            }
+            result.steps.push_back(stepResult);
+            ctx.record(stepResult);
         }
-        result.steps.push_back(stepResult);
-        ctx.record(stepResult);
 
         if (stepResult.status == StepResult::Status::Failed) {
             impl_->emit(StepFailed{runId,

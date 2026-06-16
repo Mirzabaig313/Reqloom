@@ -89,6 +89,19 @@ struct PollUntil {
     int maxAttempts{30};
 };
 
+/// For-each / data-driven execution. When set, the operation runs once per
+/// instance of resource `over` (populated by an upstream op that extracts a
+/// list via a `[*]` path). During iteration k, `{{<over>.<field>}}` in this
+/// operation's templates resolves to that resource's k-th instance.
+struct ForEach {
+    ResourceId over;
+
+    /// When true, a failed iteration does not stop the fan-out — the remaining
+    /// items still run and the parent step is marked failed if any failed.
+    /// When false (default), the fan-out stops at the first failed iteration.
+    bool continueOnError{false};
+};
+
 /// Import/verification provenance for non-hand-written operations.
 /// Treated as opaque metadata by the runtime — extending this struct
 /// must not change execution semantics.
@@ -173,6 +186,10 @@ struct Operation {
     /// `expectStatusList`, the engine enters a polling loop. Extractions
     /// run against the final poll response.
     std::optional<PollUntil> pollUntil;
+
+    /// When set, the engine runs this operation once per instance of the
+    /// `over` resource (data-driven fan-out). See `ForEach`.
+    std::optional<ForEach> forEach;
 
     /// Set only for non-hand-written operations. Pure metadata — the runtime
     /// ignores this; tooling and the UI consume it.
