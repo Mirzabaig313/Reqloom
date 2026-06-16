@@ -2,6 +2,7 @@
 // string model. Replaces the stock TabBar's equal-width stretch so tabs sit
 // tight on the left with a single full-width baseline. Reusable across the
 // request editor and response panel so every tab strip looks identical.
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import Reqloom
@@ -24,12 +25,14 @@ Item {
     }
 
     Row {
+        id: tabRow
         anchors.left: parent.left
         anchors.bottom: parent.bottom
         anchors.top: parent.top
         spacing: DesignTokens.spaceLg
 
         Repeater {
+            id: tabRepeater
             model: bar.model
 
             delegate: Item {
@@ -47,14 +50,9 @@ Item {
                     color: bar.currentIndex === tab.index ? DesignTokens.textPrimary : DesignTokens.textSecondary
                     font.pixelSize: DesignTokens.fontBody
                     font.weight: bar.currentIndex === tab.index ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
-                }
-
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    height: 2
-                    color: bar.currentIndex === tab.index ? DesignTokens.accent : "transparent"
+                    Behavior on color {
+                        ColorMotion {}
+                    }
                 }
 
                 HoverHandler {
@@ -64,6 +62,25 @@ Item {
                     onTapped: bar.currentIndex = tab.index
                 }
             }
+        }
+    }
+
+    // Single sliding underline that springs between tabs, instead of a static
+    // per-tab rectangle. Tracks the current tab's geometry.
+    Rectangle {
+        id: indicator
+        readonly property Item current: tabRepeater.itemAt(bar.currentIndex)
+        height: 2
+        color: DesignTokens.accent
+        anchors.bottom: parent.bottom
+        visible: indicator.current !== null
+        x: indicator.current ? tabRow.x + indicator.current.x : 0
+        width: indicator.current ? indicator.current.width : 0
+        Behavior on x {
+            SpringMotion {}
+        }
+        Behavior on width {
+            SpringMotion {}
         }
     }
 }

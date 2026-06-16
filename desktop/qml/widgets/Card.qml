@@ -10,4 +10,10 @@ Rectangle {
     color: DesignTokens.glassFill
     border.width: 1
     border.color: DesignTokens.glassBorder
+    Behavior on color {
+        ColorMotion {}
+    }
+    Behavior on border.color {
+        ColorMotion {}
+    }
 }

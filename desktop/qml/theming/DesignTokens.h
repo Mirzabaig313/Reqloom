@@ -85,6 +85,18 @@ class DesignTokens : public QObject {
     Q_PROPERTY(int controlHeight READ controlHeight CONSTANT)
     Q_PROPERTY(int controlHeightLg READ controlHeightLg CONSTANT)
     Q_PROPERTY(int iconSize READ iconSize CONSTANT)
+    // Motion — one canonical spring tuning (critically-ish damped harmonic
+    // oscillator) so position/size settling reads as physical and coherent
+    // app-wide. `motionSpring`/`motionDamping`/`motionMass`/`motionEpsilon`
+    // feed Qt SpringAnimation; the two durations cover color/opacity fades
+    // where a spring doesn't apply. Tuned for a lively settle with a hint of
+    // overshoot (never robotic, never bouncy).
+    Q_PROPERTY(qreal motionSpring READ motionSpring CONSTANT)
+    Q_PROPERTY(qreal motionDamping READ motionDamping CONSTANT)
+    Q_PROPERTY(qreal motionMass READ motionMass CONSTANT)
+    Q_PROPERTY(qreal motionEpsilon READ motionEpsilon CONSTANT)
+    Q_PROPERTY(int motionFast READ motionFast CONSTANT)
+    Q_PROPERTY(int motionMedium READ motionMedium CONSTANT)
     // Soft elevation shadow colour (translucent), appearance-aware.
     Q_PROPERTY(QColor shadow READ shadow NOTIFY tokensChanged)
     // Glassmorphism: translucent panel fill + highlight border, the iridescent
@@ -162,6 +174,15 @@ public:
     [[nodiscard]] int controlHeight() const { return 34; }
     [[nodiscard]] int controlHeightLg() const { return 36; }
     [[nodiscard]] int iconSize() const { return 16; }
+    // Motion tuning — see the Q_PROPERTY block. Qt's SpringAnimation `damping`
+    // is normalised 0..1 (1 ≈ critically damped); 0.32 leaves a small, organic
+    // overshoot. `epsilon` is the settle threshold in px.
+    [[nodiscard]] qreal motionSpring() const { return 3.2; }
+    [[nodiscard]] qreal motionDamping() const { return 0.32; }
+    [[nodiscard]] qreal motionMass() const { return 1.0; }
+    [[nodiscard]] qreal motionEpsilon() const { return 0.25; }
+    [[nodiscard]] int motionFast() const { return 120; }
+    [[nodiscard]] int motionMedium() const { return 200; }
     [[nodiscard]] QColor shadow() const;
     [[nodiscard]] QColor glassFill() const;
     [[nodiscard]] QColor glassBorder() const;

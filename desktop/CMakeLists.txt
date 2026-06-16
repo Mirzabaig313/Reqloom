@@ -110,6 +110,11 @@ qt_add_qml_module(reqloom-desktop
         qml/views/SecretsDialog.qml
         qml/widgets/Toast.qml
         qml/widgets/EmptyState.qml
+        qml/motion/SpringMotion.qml
+        qml/motion/ColorMotion.qml
+        qml/motion/FadeMotion.qml
+        qml/motion/PopupEnter.qml
+        qml/motion/PopupExit.qml
     RESOURCES
         qml/icons/chevron-left.svg
         qml/icons/chevron-right.svg

@@ -20,6 +20,9 @@ Rectangle {
     implicitHeight: 22
     radius: DesignTokens.radiusSm
     color: Qt.rgba(hue(method).r, hue(method).g, hue(method).b, 0.16)
+    Behavior on color {
+        ColorMotion {}
+    }
 
     Text {
         id: label

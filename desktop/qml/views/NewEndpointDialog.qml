@@ -16,6 +16,8 @@ Dialog {
     id: dialog
     title: qsTr("New Endpoint")
     modal: true
+    enter: PopupEnter {}
+    exit: PopupExit {}
     anchors.centerIn: Overlay.overlay
     width: 540
     padding: DesignTokens.spaceLg

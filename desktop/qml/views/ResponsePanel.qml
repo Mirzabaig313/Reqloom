@@ -793,6 +793,8 @@ Rectangle {
     Dialog {
         id: saveExampleDialog
         modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
         width: 380
         padding: DesignTokens.spaceLg
@@ -840,6 +842,8 @@ Rectangle {
     Dialog {
         id: extractDialog
         modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
         width: 440
         padding: DesignTokens.spaceLg

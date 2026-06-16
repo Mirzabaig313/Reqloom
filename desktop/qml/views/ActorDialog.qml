@@ -12,6 +12,8 @@ import Reqloom
 Dialog {
     id: dialog
     modal: true
+    enter: PopupEnter {}
+    exit: PopupExit {}
     anchors.centerIn: Overlay.overlay
     width: 600
     height: Math.min(720, Overlay.overlay ? Overlay.overlay.height - 80 : 720)

@@ -157,6 +157,7 @@ Item {
         width: 340
         padding: DesignTokens.spaceXs
         closePolicy: Popup.NoAutoClose
+        enter: PopupEnter {}
 
         background: Rectangle {
             radius: DesignTokens.radiusSm

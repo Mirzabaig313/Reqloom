@@ -21,6 +21,9 @@ Rectangle {
     implicitHeight: 20
     radius: DesignTokens.radiusSm
     color: Qt.rgba(hue.r, hue.g, hue.b, 0.16)
+    Behavior on color {
+        ColorMotion {}
+    }
 
     Row {
         id: row
