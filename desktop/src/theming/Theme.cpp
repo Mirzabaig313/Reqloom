@@ -33,13 +33,38 @@ constexpr double kAccentHue = 200.0;
     p.accentHover = oklch(0.580, 0.115, 193.2);
     p.accentMuted = oklch(0.910, 0.030, 195.0);  // light teal selection tint
 
+    // Status + method foregrounds are solved to AA contrast (≥4.5:1) against
+    // their own 16% tint over the raised surface, rather than hand-tuned: the
+    // designed hue/chroma/lightness is the starting point and the lightness is
+    // nudged only if it falls short (WCAG §1.4.3, DESIGN.md §2.7). The tint
+    // itself shifts with the solved foreground, so iterate to a fixed point.
+    const QColor raisedLight = p.surfaceRaised;
+    const auto accessible = [&raisedLight](double l, double c, double h, double tintWeight) {
+        constexpr double kTarget = 4.55;  // small margin over the 4.5 AA floor
+        const auto tintOf = [&](const QColor& fg) {
+            const auto mix = [&](int s, int b) {
+                return static_cast<int>((s * tintWeight) + (b * (1.0 - tintWeight)));
+            };
+            return QColor{mix(fg.red(), raisedLight.red()),
+                          mix(fg.green(), raisedLight.green()),
+                          mix(fg.blue(), raisedLight.blue())};
+        };
+        QColor fg = oklch(l, c, h);
+        for (int i = 0; i < 6; ++i) {
+            fg = oklchForContrast(c, h, tintOf(fg), kTarget, l);
+        }
+        return fg;
+    };
+
+    // Status badges fill the hue at 16%, method chips at 18% (statusTint /
+    // methodTint) — solve each against its own tint weight.
     p.statusIdle = oklch(0.722, 0.012, kAccentHue);
-    p.statusRunning = oklch(0.555, 0.150, 230.0);
-    p.statusSuccess = oklch(0.560, 0.150, 150.0);
-    p.statusWarning = oklch(0.560, 0.160, 75.0);
-    p.statusError = oklch(0.580, 0.215, 25.3);  // theme.json destructive
-    p.statusCancelled = oklch(0.550, 0.010, kAccentHue);
-    p.statusBlocked = oklch(0.560, 0.150, 320.0);
+    p.statusRunning = accessible(0.555, 0.150, 230.0, 0.16);
+    p.statusSuccess = accessible(0.560, 0.150, 150.0, 0.16);
+    p.statusWarning = accessible(0.560, 0.160, 75.0, 0.16);
+    p.statusError = accessible(0.580, 0.215, 25.3, 0.16);  // theme.json destructive
+    p.statusCancelled = accessible(0.550, 0.010, kAccentHue, 0.16);
+    p.statusBlocked = accessible(0.560, 0.150, 320.0, 0.16);
 
     // Tint tokens (§2.9): teal-leaning surface tints, opaque.
     p.tintCache = oklch(0.945, 0.020, 195.0);
@@ -51,12 +76,12 @@ constexpr double kAccentHue = 200.0;
 
     // HTTP method vocabulary (§6.2a): mnemonic hues, distinct from status.
     // GET blue(255), POST green(150), PUT orange(55), PATCH yellow(95),
-    // DELETE red(27). Mid lightness for AA text on a light surface.
-    p.methodGet = oklch(0.550, 0.150, 255.0);
-    p.methodPost = oklch(0.560, 0.150, 150.0);
-    p.methodPut = oklch(0.600, 0.150, 55.0);
-    p.methodPatch = oklch(0.565, 0.150, 95.0);
-    p.methodDelete = oklch(0.560, 0.200, 27.0);
+    // DELETE red(27). Lightness solved for AA text on the method tint.
+    p.methodGet = accessible(0.550, 0.150, 255.0, 0.18);
+    p.methodPost = accessible(0.560, 0.150, 150.0, 0.18);
+    p.methodPut = accessible(0.600, 0.150, 55.0, 0.18);
+    p.methodPatch = accessible(0.565, 0.150, 95.0, 0.18);
+    p.methodDelete = accessible(0.560, 0.200, 27.0, 0.18);
     return p;
 }
 
@@ -78,13 +103,35 @@ constexpr double kAccentHue = 200.0;
     p.accentHover = oklch(0.850, 0.090, 185.2);
     p.accentMuted = oklch(0.324, 0.045, 200.0);
 
+    // Status + method foregrounds solved to AA (≥4.5:1) against their 16% tint
+    // over the dark raised surface; designed values are kept when already
+    // accessible (WCAG §1.4.3, DESIGN.md §2.7). Iterate: the tint shifts with
+    // the solved foreground.
+    const QColor raisedDark = p.surfaceRaised;
+    const auto accessible = [&raisedDark](double l, double c, double h, double tintWeight) {
+        constexpr double kTarget = 4.55;
+        const auto tintOf = [&](const QColor& fg) {
+            const auto mix = [&](int s, int b) {
+                return static_cast<int>((s * tintWeight) + (b * (1.0 - tintWeight)));
+            };
+            return QColor{mix(fg.red(), raisedDark.red()),
+                          mix(fg.green(), raisedDark.green()),
+                          mix(fg.blue(), raisedDark.blue())};
+        };
+        QColor fg = oklch(l, c, h);
+        for (int i = 0; i < 6; ++i) {
+            fg = oklchForContrast(c, h, tintOf(fg), kTarget, l);
+        }
+        return fg;
+    };
+
     p.statusIdle = oklch(0.480, 0.012, 210.0);
-    p.statusRunning = oklch(0.750, 0.130, 230.0);
-    p.statusSuccess = oklch(0.780, 0.160, 150.0);
-    p.statusWarning = oklch(0.800, 0.150, 75.0);
-    p.statusError = oklch(0.704, 0.191, 22.2);  // theme.json destructive (dark)
-    p.statusCancelled = oklch(0.680, 0.010, 210.0);
-    p.statusBlocked = oklch(0.720, 0.160, 320.0);
+    p.statusRunning = accessible(0.750, 0.130, 230.0, 0.16);
+    p.statusSuccess = accessible(0.780, 0.160, 150.0, 0.16);
+    p.statusWarning = accessible(0.800, 0.150, 75.0, 0.16);
+    p.statusError = accessible(0.704, 0.191, 22.2, 0.16);  // theme.json destructive (dark)
+    p.statusCancelled = accessible(0.680, 0.010, 210.0, 0.16);
+    p.statusBlocked = accessible(0.720, 0.160, 320.0, 0.16);
 
     p.tintCache = oklch(0.300, 0.040, 195.0);
     p.tintSubstituted = oklch(0.320, 0.045, 5.7);  // Blush Pearl accent tint
@@ -94,12 +141,12 @@ constexpr double kAccentHue = 200.0;
     p.tintDiffRemove = oklch(0.310, 0.060, 27.0);
 
     // HTTP method vocabulary (§6.2a): brighter in dark to clear AA on the
-    // raised surface, same hues as light (§6.2a).
-    p.methodGet = oklch(0.720, 0.140, 255.0);
-    p.methodPost = oklch(0.780, 0.160, 150.0);
-    p.methodPut = oklch(0.770, 0.150, 55.0);
-    p.methodPatch = oklch(0.820, 0.150, 95.0);
-    p.methodDelete = oklch(0.700, 0.180, 27.0);
+    // raised surface, same hues as light. Lightness solved for AA on the tint.
+    p.methodGet = accessible(0.720, 0.140, 255.0, 0.18);
+    p.methodPost = accessible(0.780, 0.160, 150.0, 0.18);
+    p.methodPut = accessible(0.770, 0.150, 55.0, 0.18);
+    p.methodPatch = accessible(0.820, 0.150, 95.0, 0.18);
+    p.methodDelete = accessible(0.700, 0.180, 27.0, 0.18);
     return p;
 }
 
