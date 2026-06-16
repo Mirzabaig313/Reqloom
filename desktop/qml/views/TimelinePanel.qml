@@ -112,6 +112,9 @@ Rectangle {
                 implicitHeight: contentCol.implicitHeight + DesignTokens.spaceSm
                 radius: DesignTokens.radiusSm
                 color: expanded ? DesignTokens.surfaceSunken : isHeader ? DesignTokens.surfaceSunken : "transparent"
+                Behavior on color {
+                    ColorMotion {}
+                }
 
                 ColumnLayout {
                     id: contentCol

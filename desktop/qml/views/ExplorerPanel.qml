@@ -152,6 +152,9 @@ Rectangle {
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
                     color: del.current ? DesignTokens.accentMuted : del.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
+                    Behavior on color {
+                        ColorMotion {}
+                    }
                 }
 
                 indicator: Item {
@@ -362,6 +365,8 @@ Rectangle {
     Dialog {
         id: renameDialog
         modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
         width: 380
         padding: DesignTokens.spaceLg
@@ -421,6 +426,8 @@ Rectangle {
     Dialog {
         id: deleteDialog
         modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
         width: 380
         padding: DesignTokens.spaceLg
@@ -474,6 +481,8 @@ Rectangle {
     Dialog {
         id: exampleRenameDialog
         modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
         width: 380
         padding: DesignTokens.spaceLg

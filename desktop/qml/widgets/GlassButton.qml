@@ -21,6 +21,15 @@ Button {
         border.width: control.primary ? 0 : 1
         border.color: DesignTokens.borderSubtle
         opacity: control.enabled ? 1.0 : 0.5
+        Behavior on color {
+            ColorMotion {}
+        }
+    }
+
+    // A subtle press-in spring so every button feels physical.
+    scale: control.down ? 0.97 : 1.0
+    Behavior on scale {
+        SpringMotion {}
     }
 
     contentItem: Text {

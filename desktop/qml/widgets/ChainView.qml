@@ -95,6 +95,11 @@ Rectangle {
             height: root.graphH
             transformOrigin: Item.TopLeft
             scale: root.zoom
+            // Zoom settles with the app's canonical spring instead of
+            // snapping in 10% steps.
+            Behavior on scale {
+                SpringMotion {}
+            }
             // Offset that centres the graph within the available width.
             readonly property real offsetX: Math.max(0, (width - root.graphW) / 2)
 
@@ -172,6 +177,18 @@ Rectangle {
                     y: card.modelData.y
                     width: root.nodeW
                     height: root.nodeH
+                    // A gentle physical lift when hovered, and a spring on
+                    // position so a relayout glides rather than jumps.
+                    scale: cardHover.hovered ? 1.03 : 1.0
+                    Behavior on scale {
+                        SpringMotion {}
+                    }
+                    Behavior on x {
+                        SpringMotion {}
+                    }
+                    Behavior on y {
+                        SpringMotion {}
+                    }
                     radius: DesignTokens.radiusSm
                     color: card.modelData.isTarget ? DesignTokens.accentMuted : DesignTokens.surfaceRaised
                     border.width: card.nodeStatus.length > 0 ? 2 : 1
@@ -212,6 +229,7 @@ Rectangle {
                     }
 
                     HoverHandler {
+                        id: cardHover
                         cursorShape: Qt.PointingHandCursor
                         onHoveredChanged: root.hoveredIndex = hovered ? card.index : -1
                     }
@@ -295,6 +313,8 @@ Rectangle {
         padding: DesignTokens.spaceMd
         modal: false
         focus: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         background: Rectangle {

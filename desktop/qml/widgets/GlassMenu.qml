@@ -7,6 +7,10 @@ import Reqloom
 Menu {
     id: menu
     padding: 6
+
+    enter: PopupEnter {}
+    exit: PopupExit {}
+
     background: Rectangle {
         implicitWidth: 230
         radius: DesignTokens.radius

@@ -136,6 +136,8 @@ Item {
         focus: true
         padding: DesignTokens.spaceXs
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        enter: PopupEnter {}
+        exit: PopupExit {}
         onOpened: {
             search.text = "";
             root._applyFilter();

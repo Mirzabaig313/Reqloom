@@ -13,6 +13,8 @@ Dialog {
         title: qsTr("Manage Secrets")
     }
     modal: true
+    enter: PopupEnter {}
+    exit: PopupExit {}
     anchors.centerIn: Overlay.overlay
     width: 560
     padding: DesignTokens.spaceLg
@@ -163,6 +165,8 @@ Dialog {
     Dialog {
         id: setDialog
         modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
         width: 380
         padding: DesignTokens.spaceLg

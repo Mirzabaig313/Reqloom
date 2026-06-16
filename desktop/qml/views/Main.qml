@@ -418,9 +418,7 @@ ApplicationWindow {
             color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
             opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
             Behavior on opacity {
-                NumberAnimation {
-                    duration: 120
-                }
+                FadeMotion {}
             }
         }
 
@@ -449,9 +447,7 @@ ApplicationWindow {
                 border.width: 1
                 border.color: DesignTokens.glassBorder
                 Behavior on color {
-                    ColorAnimation {
-                        duration: 120
-                    }
+                    ColorMotion {}
                 }
 
                 AppIcon {
@@ -499,9 +495,7 @@ ApplicationWindow {
                 color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
                 opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
                 Behavior on opacity {
-                    NumberAnimation {
-                        duration: 120
-                    }
+                    FadeMotion {}
                 }
             }
 
@@ -648,9 +642,7 @@ ApplicationWindow {
                     border.width: 1
                     border.color: DesignTokens.glassBorder
                     Behavior on color {
-                        ColorAnimation {
-                            duration: 120
-                        }
+                        ColorMotion {}
                     }
 
                     // Side-by-side: vertical strip — chevron on top, rotated label.
@@ -759,6 +751,8 @@ ApplicationWindow {
         anchors.centerIn: Overlay.overlay
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         modal: false
+        enter: PopupEnter {}
+        exit: PopupExit {}
         padding: DesignTokens.spaceLg
 
         background: Rectangle {
