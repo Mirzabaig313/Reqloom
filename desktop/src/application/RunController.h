@@ -15,6 +15,8 @@
 #include <QtCore/QString>
 
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include <atomic>
@@ -95,6 +97,16 @@ public:
     void setCaptureResponseBodies(bool capture) noexcept;
     [[nodiscard]] bool captureResponseBodies() const noexcept;
 
+    /// Pin concrete values for `{{resource.var}}` tokens (the value picker,
+    /// Option A). Each pair is ("resource.var", value). Before each run these
+    /// are seeded as the resource's most-recent instance, so the producing op
+    /// is extraction-cache-skipped and the chain uses the chosen value.
+    void setVariableOverrides(std::vector<std::pair<std::string, std::string>> overrides);
+
+    /// Clear the run context's extraction cache only (sessions kept). Used when
+    /// a pin changes so a stale pinned value can't linger into the next run.
+    void clearExtractionCache();
+
 public slots:
     /// Kick off a run ending at `target` against `environment` (empty → project
     /// default). `dryRun` previews the resolved chain without sending requests.
@@ -147,6 +159,8 @@ private:
     QFutureWatcher<RunReport> watcher_;
     bool running_{false};
     bool captureResponseBodies_{false};
+    // Pinned `{{resource.var}}` → value, seeded before each run (value picker).
+    std::vector<std::pair<std::string, std::string>> variableOverrides_;
     // Written on the worker thread (RunStarted handler), read on the GUI
     // thread (cancelRun) — atomic to avoid a data race on the run id.
     std::atomic<std::uint64_t> currentRunId_{0};

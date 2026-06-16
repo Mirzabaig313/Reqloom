@@ -3,6 +3,8 @@
 
 #include "application/JsonExtraction.h"
 
+#include <reqloom/engine/JsonValues.h>
+
 #include <gtest/gtest.h>
 
 namespace ce = reqloom::engine;
@@ -17,7 +19,7 @@ ce::Extraction jsonpath(std::string name, std::string path) {
 
 TEST(JsonPathAll, wildcard_collects_every_matching_value) {
     const std::string body = R"({"data":[{"id":"a"},{"id":"b"},{"id":"c"}]})";
-    const auto values = ce::extractAllValues(body, "$.data[*].id");
+    const auto values = ce::extractValues(body, "$.data[*].id");
     ASSERT_EQ(values.size(), 3u);
     EXPECT_EQ(values[0], "a");
     EXPECT_EQ(values[1], "b");
@@ -27,16 +29,16 @@ TEST(JsonPathAll, wildcard_collects_every_matching_value) {
 TEST(JsonPathAll, filter_collects_only_matching_elements) {
     const std::string body =
         R"({"items":[{"status":"open","id":"x"},{"status":"closed","id":"y"},{"status":"open","id":"z"}]})";
-    const auto values = ce::extractAllValues(body, "$.items[?(@.status=='open')].id");
+    const auto values = ce::extractValues(body, "$.items[?(@.status=='open')].id");
     ASSERT_EQ(values.size(), 2u);
     EXPECT_EQ(values[0], "x");
     EXPECT_EQ(values[1], "z");
 }
 
 TEST(JsonPathAll, single_value_path_returns_one_and_bad_body_returns_empty) {
-    EXPECT_EQ(ce::extractAllValues(R"({"a":{"b":"v"}})", "$.a.b").size(), 1u);
-    EXPECT_TRUE(ce::extractAllValues("not json", "$.a").empty());
-    EXPECT_TRUE(ce::extractAllValues(R"({"a":1})", "$.missing").empty());
+    EXPECT_EQ(ce::extractValues(R"({"a":{"b":"v"}})", "$.a.b").size(), 1u);
+    EXPECT_TRUE(ce::extractValues("not json", "$.a").empty());
+    EXPECT_TRUE(ce::extractValues(R"({"a":1})", "$.missing").empty());
 }
 
 TEST(JsonExtractionDetailed, classifies_resolved_null_and_missing_per_extraction) {

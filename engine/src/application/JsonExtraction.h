@@ -41,19 +41,10 @@ namespace reqloom::engine {
 [[nodiscard]] const nlohmann::json* walkJsonPath(const nlohmann::json& doc,
                                                  std::string_view sourcePath);
 
-/// Evaluate a JSONPath that may contain the wildcard `[*]` (every array
-/// element) in addition to field access, `[N]` indexing, and `[?(...)]`
-/// filters, returning EVERY matched value as a string (raw for JSON strings,
-/// compact `dump()` otherwise). This is the "list" form behind the value
-/// picker (e.g. `$.data[*].id` → all item ids) and a building block for
-/// for-each execution. Empty when nothing matches.
-[[nodiscard]] std::vector<std::string> evaluateJsonPathAll(const nlohmann::json& doc,
-                                                           std::string_view sourcePath);
-
 /// Parse `body` as JSON and `evaluateJsonPathAll` against it. Returns an empty
 /// vector when the body is not valid JSON or nothing matches.
-[[nodiscard]] std::vector<std::string> extractAllValues(const std::string& body,
-                                                        std::string_view sourcePath);
+[[nodiscard]] std::vector<std::string> evaluateJsonPathAll(const nlohmann::json& doc,
+                                                           std::string_view sourcePath);
 
 [[nodiscard]] std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
     const std::string& body, const std::vector<Extraction>& extractions);
