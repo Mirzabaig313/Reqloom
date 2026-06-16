@@ -4,6 +4,8 @@
 #include "Cookies.h"
 #include "PredicateEvaluator.h"
 
+#include <reqloom/engine/JsonValues.h>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -291,7 +293,7 @@ std::vector<std::string> evaluateJsonPathAll(const json& doc, std::string_view s
     return out;
 }
 
-std::vector<std::string> extractAllValues(const std::string& body, std::string_view sourcePath) {
+std::vector<std::string> extractValues(const std::string& body, std::string_view sourcePath) {
     json doc;
     try {
         doc = json::parse(body);

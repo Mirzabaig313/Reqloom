@@ -13,6 +13,7 @@
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QSet>
 #include <QtCore/QStringList>
 #include <QtGui/QClipboard>
@@ -161,6 +162,29 @@ AppController::AppController(QObject* parent)
                 respElapsedMs_ = static_cast<int>(elapsedMs);
                 respBody_ = body;
                 emit responseChanged();
+            });
+    // Re-fetch auto-save: when the producer endpoint targeted by
+    // refreshCandidates returns, store its body as an example so the value
+    // picker's candidate list updates with the freshly fetched ids.
+    connect(runController_.get(),
+            &RunController::responseReceived,
+            this,
+            [this](int index, int status, const QString&, int, qint64, const QString& body) {
+                if (pendingCandidateOp_.isEmpty()) {
+                    return;
+                }
+                if (runStepOp_.value(index) != pendingCandidateOp_) {
+                    return;
+                }
+                if (status >= 200 && status < 300 && !body.isEmpty()) {
+                    SavedResponse example;
+                    example.name = QStringLiteral("Latest (auto)");
+                    example.status = status;
+                    example.body = body;
+                    exampleStore_.save(pendingCandidateOp_, example);
+                }
+                pendingCandidateOp_.clear();
+                emit variableOverridesChanged();
             });
     connect(runController_.get(), &RunController::runEnded, this, [this](const QString& outcome) {
         runOutcome_ = outcome;
@@ -712,6 +736,99 @@ QVariantList AppController::variableSuggestions(const QString& operationId) cons
         out.append(entry);
     }
     return out;
+}
+
+std::pair<QString, QString> AppController::findVariableProducer(const QString& token) const {
+    if (!project_->hasProject() || token.isEmpty()) {
+        return {};
+    }
+    const auto& proj = project_->project();
+    for (const auto& [resId, resource] : proj.resources) {
+        const QString resName = QString::fromStdString(resId.value);
+        for (const auto& [opName, op] : resource.operations) {
+            for (const auto& ext : op.extractions) {
+                const QString var = QString::fromStdString(ext.variableName);
+                // Match both the namespaced form (resource.var) and the bare
+                // variable name (covers variables named with dots).
+                if (token == (resName + QLatin1Char('.') + var) || token == var) {
+                    return {resName + QLatin1Char('.') + QString::fromStdString(opName),
+                            QString::fromStdString(ext.sourcePath)};
+                }
+            }
+        }
+    }
+    return {};
+}
+
+QStringList AppController::candidateValues(const QString& token) const {
+    QStringList out;
+    const auto [producerOpId, sourcePath] = findVariableProducer(token);
+    if (producerOpId.isEmpty() || sourcePath.isEmpty()) {
+        return out;
+    }
+
+    // Turn a single-item extract path into its list form so every id surfaces:
+    // `$.data[0].id` → `$.data[*].id`.
+    static const QRegularExpression indexRe(QStringLiteral("\\[\\d+\\]"));
+    QString listPath = sourcePath;
+    listPath.replace(indexRe, QStringLiteral("[*]"));
+
+    std::set<QString> seen;
+    for (const auto& example : exampleStore_.list(producerOpId)) {
+        for (const auto& value :
+             engine::extractValues(example.body.toStdString(), listPath.toStdString())) {
+            const QString candidate = QString::fromStdString(value);
+            if (!candidate.isEmpty() && seen.insert(candidate).second) {
+                out.append(candidate);
+            }
+        }
+    }
+    return out;
+}
+
+QString AppController::producerOpFor(const QString& token) const {
+    return findVariableProducer(token).first;
+}
+
+void AppController::setVariableOverride(const QString& token, const QString& value) {
+    if (token.isEmpty()) {
+        return;
+    }
+    if (value.isEmpty()) {
+        variableOverrides_.remove(token);
+    } else {
+        variableOverrides_.insert(token, value);
+    }
+
+    // Push the full pin set to the run controller and drop the extraction
+    // cache so a removed/changed pin can't survive into the next run.
+    std::vector<std::pair<std::string, std::string>> overrides;
+    overrides.reserve(static_cast<std::size_t>(variableOverrides_.size()));
+    for (auto it = variableOverrides_.constBegin(); it != variableOverrides_.constEnd(); ++it) {
+        overrides.emplace_back(it.key().toStdString(), it.value().toStdString());
+    }
+    if (runController_) {
+        runController_->setVariableOverrides(std::move(overrides));
+        runController_->clearExtractionCache();
+    }
+    emit variableOverridesChanged();
+}
+
+QString AppController::variableOverride(const QString& token) const {
+    return variableOverrides_.value(token);
+}
+
+void AppController::refreshCandidates(const QString& token) {
+    if (!project_->hasProject() || runController_ == nullptr || runController_->isRunning()) {
+        return;
+    }
+    const QString producerOpId = findVariableProducer(token).first;
+    if (producerOpId.isEmpty()) {
+        return;
+    }
+    // Capture is on by default; the response lands in the auto-save handler.
+    pendingCandidateOp_ = producerOpId;
+    runController_->run(producerOpId, environment_, false, false);
 }
 
 EditableKeyValueModel* AppController::chainExtractModelFor(const QString& operationId) {
@@ -1328,7 +1445,42 @@ bool AppController::saveChainEdits() {
         return false;
     }
     emit notify(QStringLiteral("Chain saved."), false);
+
+    // Save chain rewrote the target's depends_on / extract on disk; refresh the
+    // endpoint editor's edit-mode models so a later endpoint Save (which writes
+    // from those models) reflects — rather than clobbers — what we just saved.
+    if (editing_) {
+        seedEditChainFromProject();
+        emit editChanged();
+        emit chainChanged();
+    }
     return true;
+}
+
+void AppController::seedEditChainFromProject() {
+    if (!project_->hasProject()) {
+        return;
+    }
+    const auto* op =
+        project_->findOperation(engine::OperationId{currentOperationId().toStdString()});
+    if (op == nullptr) {
+        return;
+    }
+    editDependencies_.setCandidates(editDependencyCandidates());
+    std::vector<std::string> deps;
+    deps.reserve(op->explicitDependencies.size());
+    for (const auto& dep : op->explicitDependencies) {
+        deps.push_back(dep.value);
+    }
+    editDependencies_.setDependencies(deps);
+
+    std::vector<std::pair<QString, QString>> extractRows;
+    extractRows.reserve(op->extractions.size());
+    for (const auto& ext : op->extractions) {
+        extractRows.emplace_back(QString::fromStdString(ext.variableName),
+                                 QString::fromStdString(ext.sourcePath));
+    }
+    editExtractions_.setPairs(std::move(extractRows));
 }
 
 void AppController::beginEdit() {

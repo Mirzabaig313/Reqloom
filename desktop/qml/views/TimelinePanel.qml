@@ -160,11 +160,14 @@ Rectangle {
 
                         Label {
                             Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignTop
                             text: row.detail
                             color: row.statusToken === "warning" ? DesignTokens.statusWarning : row.statusToken === "error" ? DesignTokens.statusError : row.statusToken === "success" && row.kind === "extraction" ? DesignTokens.statusSuccess : DesignTokens.textSecondary
                             font.pixelSize: DesignTokens.fontCaption
                             font.family: DesignTokens.fontMono
-                            elide: Text.ElideRight
+                            // Wrap long summaries (e.g. extraction-failure detail)
+                            // onto the next line instead of truncating with "…".
+                            wrapMode: Text.WordWrap
                             horizontalAlignment: Text.AlignRight
                         }
                     }
