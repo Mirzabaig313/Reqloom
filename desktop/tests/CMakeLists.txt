@@ -14,6 +14,7 @@ add_executable(reqloom-desktop-ui-tests
     unit/FuzzyMatchTest.cpp
     unit/LineDiffTest.cpp
     unit/GraphLayoutTest.cpp
+    unit/ConstraintLayoutTest.cpp
     unit/SavedResponseStoreTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SavedResponseStore.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SavedResponseStore.h
@@ -31,6 +32,8 @@ add_executable(reqloom-desktop-ui-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LineDiff.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/GraphLayout.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/GraphLayout.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/ConstraintLayout.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/ConstraintLayout.h
 )
 target_include_directories(reqloom-desktop-ui-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
