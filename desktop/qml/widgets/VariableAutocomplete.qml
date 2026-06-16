@@ -46,6 +46,18 @@ Item {
         if (between.indexOf("}}") >= 0) {
             return null;
         }
+        // If the caret sits inside a CLOSED, complete `{{resource.var}}`, defer
+        // to the value picker (ValuePicker) rather than offering name suggestions.
+        const close = field.text.indexOf("}}", pos);
+        if (close >= 0) {
+            const tail = field.text.substring(pos, close);
+            if (tail.indexOf("{{") < 0) {
+                const full = field.text.substring(open + 2, close).trim();
+                if (full.indexOf(".") >= 0) {
+                    return null;
+                }
+            }
+        }
         return {
             "start": open,
             "query": between.trim()

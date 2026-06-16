@@ -30,6 +30,7 @@
 #include <QtCore/QVariant>
 
 #include <memory>
+#include <utility>
 
 namespace reqloom::desktop {
 class ProjectModel;
@@ -359,6 +360,30 @@ public:
     /// chain can't be resolved (cycle / undefined ref) or no project is open.
     Q_INVOKABLE [[nodiscard]] QVariantList variableSuggestions(const QString& operationId) const;
 
+    /// Candidate concrete values for a `{{resource.var}}` token, sourced from
+    /// the producing operation's saved example responses (e.g. the list
+    /// endpoint). Powers the value picker so the user chooses a real id rather
+    /// than typing it. Empty when there's no producer or no saved example yet.
+    Q_INVOKABLE [[nodiscard]] QStringList candidateValues(const QString& token) const;
+
+    /// The operation id that produces `{{resource.var}}` (extracts that
+    /// variable), or empty if nothing does. Lets the value picker explain an
+    /// empty list ("nothing produces this") vs. "producer exists, Re-fetch".
+    Q_INVOKABLE [[nodiscard]] QString producerOpFor(const QString& token) const;
+
+    /// Pin / clear a concrete value for a `{{resource.var}}` token (value
+    /// picker, Option A). Empty `value` clears the pin. Stored per session and
+    /// applied to every subsequent run until changed. Clearing/changing a pin
+    /// resets the extraction cache so a stale value can't linger.
+    Q_INVOKABLE void setVariableOverride(const QString& token, const QString& value);
+    /// The currently pinned value for `token`, or empty if none.
+    Q_INVOKABLE [[nodiscard]] QString variableOverride(const QString& token) const;
+
+    /// Re-fetch candidate values: run the producing (list) endpoint for
+    /// `token`, auto-save its response as an example, and refresh the picker so
+    /// newly added ids appear. No-op while a run is in flight.
+    Q_INVOKABLE void refreshCandidates(const QString& token);
+
     /// The live, editable extract model for a step in the open chain editor,
     /// looked up by operation id (so a dependency's variables can be edited
     /// inline from a dependent's chain table). Returns nullptr if not in the
@@ -522,6 +547,9 @@ signals:
     void chainChanged();
     /// Fired when a run streams a new per-operation status (chain graph colours).
     void chainStatusChanged();
+    /// Fired when a value-picker pin is set or cleared (drives the picker's
+    /// current-value highlight).
+    void variableOverridesChanged();
     /// Transient feedback for create/rename/delete outcomes and errors.
     /// `isError` tints the message (full Toast UI lands in WS-D).
     void notify(QString message, bool isError);
@@ -542,6 +570,17 @@ private:
     /// Rebuild the New Endpoint dialog's per-dependency extraction editors from
     /// its currently-chosen dependencies.
     void rebuildNewEndpointDepExtracts();
+    /// Re-seed the open operation's edit-mode depends_on / extract models from
+    /// the project. Keeps the endpoint editor's Save (buildOverride) and the
+    /// "EXECUTION CHAIN" preview in sync after the Chain tab's "Save chain"
+    /// rewrites the wiring, so a subsequent endpoint Save can't clobber it.
+    void seedEditChainFromProject();
+    /// Find the operation that produces `token` (a `{{...}}` reference) and the
+    /// JSONPath it extracts from. Matches the token against both the namespaced
+    /// form (`<resource>.<var>`) and the bare variable name, so it works
+    /// whether the variable was named plainly or with dots. Returns
+    /// {operationId, sourcePath}, both empty if nothing produces it.
+    [[nodiscard]] std::pair<QString, QString> findVariableProducer(const QString& token) const;
     /// Fully-qualified id of the open operation ("<module>.<op>"), or empty.
     [[nodiscard]] QString currentOperationId() const;
     /// Assemble a one-shot RequestOverride from the current edit state. Mirrors
@@ -622,6 +661,11 @@ private:
     // events (responseReceived) find their node; op→status token feeds colours.
     QHash<int, QString> runStepOp_;
     QHash<QString, QString> chainStatus_;
+    // Value-picker pins: "<resource>.<var>" → chosen concrete value.
+    QHash<QString, QString> variableOverrides_;
+    // Producer op whose response should be saved as an example when it lands
+    // (set by refreshCandidates), then cleared.
+    QString pendingCandidateOp_;
     bool captureBodies_{true};
     bool hasResponse_{false};
     int respStatus_{0};

@@ -102,6 +102,17 @@ void RunController::run(const QString& target,
     runWithOverride(target, environment, clean, dryRun, RequestOverride{});
 }
 
+void RunController::setVariableOverrides(
+    std::vector<std::pair<std::string, std::string>> overrides) {
+    variableOverrides_ = std::move(overrides);
+}
+
+void RunController::clearExtractionCache() {
+    if (context_ && !running_) {
+        context_->clearExtractions();
+    }
+}
+
 namespace {
 
 /// Map a method label to the engine enum. Unknown → GET (the safe default).
@@ -256,6 +267,20 @@ void RunController::runWithOverride(const QString& target,
         requestOverride.active ? patchedProject(project_.project(), targetId, requestOverride)
                                : project_.projectPtr();
     ce::RunContext& ctx = *context_;
+
+    // Value-picker pins (Option A): seed each chosen value as the resource's
+    // most-recent instance so the producing op is extraction-cache-skipped and
+    // the chain uses the pinned value. A clean run resets extractions inside
+    // the engine, so pins are intentionally ignored there (truly fresh).
+    for (const auto& [token, value] : variableOverrides_) {
+        const auto dot = token.find('.');
+        if (dot == std::string::npos) {
+            continue;
+        }
+        ce::ResourceInstance instance;
+        instance.variables[token.substr(dot + 1)] = value;
+        ctx.appendInstance(ce::ResourceId{token.substr(0, dot)}, std::move(instance));
+    }
 
     running_ = true;
     emit runningChanged(true);

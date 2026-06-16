@@ -152,24 +152,10 @@ ColumnLayout {
             border.width: 1
             border.color: DesignTokens.borderSubtle
             clip: true
-            Flickable {
+            // Read-mode path with clickable `{{token}}` chips (value picker).
+            PathTokenBar {
                 anchors.fill: parent
-                anchors.leftMargin: DesignTokens.spaceMd
-                anchors.rightMargin: DesignTokens.spaceMd
-                contentWidth: pathPreview.implicitWidth
-                contentHeight: height
-                flickableDirection: Flickable.HorizontalFlick
-                clip: true
-                Text {
-                    id: pathPreview
-                    height: parent.height
-                    verticalAlignment: Text.AlignVCenter
-                    textFormat: Text.RichText
-                    text: editor.highlightPath(AppController.opPath)
-                    color: DesignTokens.textPrimary
-                    font.pixelSize: DesignTokens.fontBody
-                    font.family: DesignTokens.fontMono
-                }
+                path: AppController.opPath
             }
         }
         TextField {
@@ -199,6 +185,10 @@ ColumnLayout {
                 id: pathAutocomplete
                 field: pathField
                 operationId: AppController.selectedModule + "." + AppController.opName
+            }
+            ValuePicker {
+                id: pathValuePicker
+                field: pathField
             }
         }
 
@@ -831,6 +821,10 @@ ColumnLayout {
                                         id: bodyAutocomplete
                                         field: rawBody
                                         operationId: AppController.selectedModule + "." + AppController.opName
+                                    }
+                                    ValuePicker {
+                                        id: bodyValuePicker
+                                        field: rawBody
                                     }
 
                                     // Live syntax colouring for the editable body.
