@@ -136,6 +136,12 @@ void TimelineModel::reset() {
     }
 }
 
+int TimelineModel::rowForStep(int stepNumber) const {
+    // Bars carry the 1-based step number; stepRowByIndex_ is keyed by the
+    // 0-based event index, so translate before looking up.
+    return stepRowByIndex_.value(stepNumber - 1, -1);
+}
+
 QVariantMap TimelineModel::latencyStats() const {
     QVariantMap out;
     const stats::Summary s = stats::summarize(latencyMs_);
@@ -258,6 +264,9 @@ void TimelineModel::onResponseReceived(
     bar.insert(QStringLiteral("ms"), static_cast<double>(elapsedMs));
     bar.insert(QStringLiteral("token"), token);
     bar.insert(QStringLiteral("op"), QStringLiteral("step %1").arg(index + 1));
+    // 1-based step number, so a click on this bar can scroll the timeline to
+    // the owning step row (see rowForStep).
+    bar.insert(QStringLiteral("stepIndex"), index + 1);
     latencyBars_.append(bar);
     emit latenciesChanged();
 }

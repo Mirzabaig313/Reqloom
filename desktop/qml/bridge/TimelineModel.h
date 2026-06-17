@@ -62,6 +62,10 @@ public:
     [[nodiscard]] QVariantList latencyBars() const { return latencyBars_; }
     [[nodiscard]] QVariantMap latencyStats() const;
 
+    /// Model row of the step header for a 1-based step number, or -1 if absent.
+    /// Lets the sparkline scroll the timeline to a clicked bar's step.
+    [[nodiscard]] Q_INVOKABLE int rowForStep(int stepNumber) const;
+
 signals:
     void latenciesChanged();
 

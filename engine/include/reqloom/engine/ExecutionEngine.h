@@ -57,6 +57,11 @@ struct Project {
     /// proxy, 5s connect timeout) — which is byte-for-byte equivalent
     /// to the engine's behavior before this map existed.
     std::map<std::string, TransportConfig> transport;
+
+    /// Optional latency budget for the run's p95 response time, in
+    /// milliseconds. 0 means unset (no SLO). Surfaced on the timeline's
+    /// latency chart: the p95 marker turns red when the run breaches it.
+    int latencySloP95Ms{0};
 };
 
 /// Per-run options.
