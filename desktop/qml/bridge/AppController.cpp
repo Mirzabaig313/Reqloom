@@ -2467,7 +2467,12 @@ void AppController::openProjectHistory(const QString& projectRoot) {
     const QString dir = QDir{base}.filePath(QStringLiteral("history"));
     QDir{}.mkpath(dir);
     const QString dbPath = QDir{dir}.filePath(QStringLiteral("history-%1.db").arg(digest));
-    (void)bootstrapper_->engine().openHistory(std::filesystem::path{dbPath.toStdString()});
+    auto opened = bootstrapper_->engine().openHistory(std::filesystem::path{dbPath.toStdString()});
+    if (!opened) {
+        emit notify(QStringLiteral("Could not open run history: %1")
+                        .arg(QString::fromStdString(opened.error().detail)),
+                    true);
+    }
 }
 
 void AppController::refreshHistory() {

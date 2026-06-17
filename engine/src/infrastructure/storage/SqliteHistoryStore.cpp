@@ -926,14 +926,20 @@ std::expected<void, ReqloomError> SqliteHistoryStore::clear() {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: clear before open"});
     }
-    // Order matters only cosmetically (run_events FK cascades on runs), but
-    // deleting both explicitly keeps the intent obvious and avoids relying on
-    // cascade being enabled.
+    // Both deletes commit as one unit so a failure can't leave orphaned
+    // events behind a deleted run (or vice-versa).
+    SqliteTransaction txn{impl_->db.get()};
+    if (!txn.began()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: begin clear txn"));
+    }
     if (auto r = impl_->exec("DELETE FROM run_events;"); !r) {
         return r;
     }
     if (auto r = impl_->exec("DELETE FROM runs;"); !r) {
         return r;
+    }
+    if (!txn.commit()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: commit clear txn"));
     }
     return {};
 }
