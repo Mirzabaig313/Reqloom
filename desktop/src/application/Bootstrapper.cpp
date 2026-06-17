@@ -6,6 +6,8 @@
 
 namespace reqloom::desktop {
 
+// Note: the run-history database is opened per-project by AppController when a
+// project loads (so runs are isolated between projects), not globally here.
 Bootstrapper::Bootstrapper()
     : engine_(std::make_unique<engine::ExecutionEngine>(engine::makeDefaultDependencies())) {}
 

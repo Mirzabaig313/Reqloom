@@ -12,7 +12,10 @@
 #include <reqloom/engine/Transport.h>
 #include <reqloom/engine/VariableSuggestion.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -76,6 +79,22 @@ struct RunOptions {
 /// Upper bound on a captured response body (5 MiB). Larger bodies are
 /// truncated to this many bytes on the `ResponseReceived` event.
 inline constexpr std::size_t kMaxCapturedBodyBytes = 5U * 1024U * 1024U;
+
+/// One past run, as surfaced to a history view. A public value type
+/// mirroring the engine-internal history row, so the desktop/CLI can
+/// list prior runs without reaching into infrastructure headers.
+/// Timestamps are ISO-8601 UTC strings; `endedAt`/`outcome` are empty
+/// until the run terminates (`RunEnded` lands).
+struct RunHistoryEntry {
+    RunId runId;
+    OperationId target;
+    std::string envName;
+    std::string startedAt;
+    std::string endedAt;
+    std::string outcome;  ///< Empty, or Succeeded / Failed / Cancelled.
+    std::size_t chainSize{0};
+    std::int64_t elapsedMs{-1};  ///< Wall-clock run duration in ms; -1 until the run ends.
+};
 
 class ExecutionEngine {
 public:
@@ -147,6 +166,28 @@ public:
     /// Subscribe to streaming run events.
     using EventCallback = std::function<void(const RunEvent&)>;
     void subscribe(EventCallback callback);
+
+    /// Open (creating if missing) the run-history database at `dbPath`.
+    /// Once open, every subsequent run's events are persisted, and the
+    /// read methods below replay prior runs. Idempotent across repeated
+    /// opens of the same path. A no-op `ReqloomError` is returned if the
+    /// engine was built without a history store.
+    [[nodiscard]] std::expected<void, ReqloomError> openHistory(
+        const std::filesystem::path& dbPath);
+
+    /// Past runs, newest-first, capped at `limit` (0 = no limit). Requires
+    /// an opened history store (see `openHistory`).
+    [[nodiscard]] std::expected<std::vector<RunHistoryEntry>, ReqloomError> listRuns(
+        std::size_t limit = 100) const;
+
+    /// Replay every persisted event for one run, in emission order. Lets a
+    /// history view reconstruct a past run's timeline. Requires an opened
+    /// history store.
+    [[nodiscard]] std::expected<std::vector<RunEvent>, ReqloomError> historyEvents(RunId run) const;
+
+    /// Delete all runs from the open history database. Requires an opened
+    /// history store.
+    std::expected<void, ReqloomError> clearHistory();
 
 private:
     struct Impl;

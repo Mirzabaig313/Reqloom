@@ -68,6 +68,7 @@ add_executable(reqloom-engine-integration-tests
     integration/ForEachTest.cpp
     integration/AssertionsTest.cpp
     integration/RunOptionsTest.cpp
+    integration/HistoryFacadeTest.cpp
     integration/MultipartTest.cpp
     integration/SessionRefreshTest.cpp
     integration/ExtractionSourcesTest.cpp

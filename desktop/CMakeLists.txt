@@ -29,6 +29,8 @@ qt_add_executable(reqloom-desktop
     qml/bridge/EditableKeyValueModel.h
     qml/bridge/TimelineModel.cpp
     qml/bridge/TimelineModel.h
+    qml/bridge/HistoryModel.cpp
+    qml/bridge/HistoryModel.h
     qml/bridge/BodyHighlighter.cpp
     qml/bridge/BodyHighlighter.h
     qml/bridge/ChainEditorModel.cpp
@@ -115,6 +117,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/ExtractionEditor.qml
         qml/widgets/AssertionEditor.qml
         qml/views/SecretsDialog.qml
+        qml/views/HistoryDialog.qml
         qml/widgets/Toast.qml
         qml/widgets/EmptyState.qml
         qml/widgets/LatencySparkline.qml

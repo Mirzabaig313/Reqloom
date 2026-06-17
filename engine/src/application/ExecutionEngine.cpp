@@ -1395,4 +1395,54 @@ void ExecutionEngine::subscribe(EventCallback callback) {
     impl_->subscribers.push_back(std::move(callback));
 }
 
+std::expected<void, ReqloomError> ExecutionEngine::openHistory(
+    const std::filesystem::path& dbPath) {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    return impl_->deps.history->open(dbPath);
+}
+
+std::expected<std::vector<RunHistoryEntry>, ReqloomError> ExecutionEngine::listRuns(
+    std::size_t limit) const {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    auto rows = impl_->deps.history->listRuns(limit);
+    if (!rows) {
+        return std::unexpected(rows.error());
+    }
+    std::vector<RunHistoryEntry> entries;
+    entries.reserve(rows->size());
+    for (auto& row : *rows) {
+        entries.emplace_back(RunHistoryEntry{row.runId,
+                                             std::move(row.targetOp),
+                                             std::move(row.envName),
+                                             std::move(row.startedAt),
+                                             std::move(row.endedAt),
+                                             std::move(row.outcome),
+                                             row.chainSize,
+                                             row.elapsedMs});
+    }
+    return entries;
+}
+
+std::expected<std::vector<RunEvent>, ReqloomError> ExecutionEngine::historyEvents(RunId run) const {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    return impl_->deps.history->eventsFor(run);
+}
+
+std::expected<void, ReqloomError> ExecutionEngine::clearHistory() {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    return impl_->deps.history->clear();
+}
+
 }  // namespace reqloom::engine

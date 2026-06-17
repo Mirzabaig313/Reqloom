@@ -62,6 +62,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_LLM_RESPONSE_INVALID";
         case ErrorCode::Cancelled:
             return "E_CANCELLED";
+        case ErrorCode::Internal:
+            return "E_INTERNAL";
     }
     return "E_UNKNOWN";
 }
@@ -122,6 +124,8 @@ std::string_view humanize(ErrorCode code) noexcept {
             return "AI response was invalid";
         case ErrorCode::Cancelled:
             return "Cancelled";
+        case ErrorCode::Internal:
+            return "Internal error";
     }
     return "Failed";
 }
@@ -130,7 +134,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
     // Reverse of toCodeString, matched against the full enumerator list.
     // The drift guard below fails the build if a code is added without
     // growing this array.
-    constexpr std::array<ErrorCode, 27> kAll = {
+    constexpr std::array<ErrorCode, 28> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,
         ErrorCode::Cycle,
@@ -158,9 +162,10 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::LlmRequestFailed,
         ErrorCode::LlmResponseInvalid,
         ErrorCode::Cancelled,
+        ErrorCode::Internal,
     };
-    // Cancelled is the last enumerator, so its value + 1 is the count.
-    static_assert(static_cast<std::size_t>(ErrorCode::Cancelled) + 1 == kAll.size(),
+    // Internal is the last enumerator, so its value + 1 is the count.
+    static_assert(static_cast<std::size_t>(ErrorCode::Internal) + 1 == kAll.size(),
                   "fromCodeString::kAll is out of sync with the ErrorCode enum");
     for (const auto c : kAll) {
         if (toCodeString(c) == code) {
@@ -233,6 +238,7 @@ ErrorClass classify(ErrorCode code) noexcept {
             return ErrorClass::Llm;
 
         case ErrorCode::Cancelled:
+        case ErrorCode::Internal:
             return ErrorClass::Run;
     }
     return ErrorClass::Run;

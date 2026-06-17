@@ -36,6 +36,11 @@ Rectangle {
     /// Emitted when the user closes the response panel; Main collapses it.
     signal closeRequested
 
+    /// Reveal the Timeline tab (used when replaying a past run from history).
+    function showTimeline() {
+        topTabs.currentIndex = 1;
+    }
+
     /// Whether the editor/response are stacked (true) or side-by-side (false),
     /// and a request to flip it — driven from Main's window.responseStacked.
     property bool stacked: false

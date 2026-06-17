@@ -170,14 +170,17 @@ Rectangle {
 
                         Label {
                             Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignTop
+                            Layout.alignment: Qt.AlignVCenter
                             text: row.detail
                             color: row.statusToken === "warning" ? DesignTokens.statusWarning : row.statusToken === "error" ? DesignTokens.statusError : row.statusToken === "success" && row.kind === "extraction" ? DesignTokens.statusSuccess : DesignTokens.textSecondary
                             font.pixelSize: DesignTokens.fontCaption
                             font.family: DesignTokens.fontMono
-                            // Wrap long summaries (e.g. extraction-failure detail)
-                            // onto the next line instead of truncating with "…".
-                            wrapMode: Text.WordWrap
+                            // Keep the inline detail to a single elided line so a
+                            // long failure message (e.g. an RFC-7807 problem body)
+                            // stays a tidy summary; the chevron reveals the full
+                            // text in the selectable panel below.
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
                             horizontalAlignment: Text.AlignRight
                         }
                     }

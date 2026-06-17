@@ -170,6 +170,20 @@ ApplicationWindow {
     property bool responseCollapsed: false
     /// Editor + response stacked vertically (true) vs side-by-side (false).
     property bool responseStacked: false
+    /// Keeps the response/timeline pane visible while viewing a replayed run
+    /// from history, even when no operation is open.
+    property bool historyReplayActive: false
+
+    // When a past run is replayed from history, reveal the pane and switch to
+    // the Timeline tab so the replayed steps are actually visible.
+    Connections {
+        target: AppController
+        function onRunReplayed() {
+            window.historyReplayActive = true;
+            window.responseCollapsed = false;
+            responsePanel.showTimeline();
+        }
+    }
 
     // ── Global shortcuts ───────────────────────────────────────────────────
     Shortcut {
@@ -266,6 +280,28 @@ ApplicationWindow {
                     verticalAlignment: Text.AlignVCenter
                 }
                 onClicked: secretsDialog.openDialog()
+            }
+
+            // Run History
+            Button {
+                text: qsTr("History")
+                implicitHeight: 32
+                leftPadding: DesignTokens.spaceSm
+                rightPadding: DesignTokens.spaceSm
+                background: Rectangle {
+                    radius: DesignTokens.radiusSm
+                    color: "transparent"
+                    border.width: 1
+                    border.color: DesignTokens.borderSubtle
+                }
+                contentItem: Text {
+                    text: parent.text
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: historyDialog.openDialog()
             }
 
             Item {
@@ -624,9 +660,10 @@ ApplicationWindow {
                 SplitView.preferredHeight: responseCollapsed ? 32 : 320
                 SplitView.minimumHeight: responseCollapsed ? 32 : 160
                 color: "transparent"
-                visible: AppController.hasOperation || AppController.hasResponse
+                visible: AppController.hasOperation || AppController.hasResponse || window.historyReplayActive
 
                 ResponsePanel {
+                    id: responsePanel
                     anchors.fill: parent
                     visible: !responseCollapsed
                     stacked: window.responseStacked
@@ -741,6 +778,10 @@ ApplicationWindow {
     }
     SecretsDialog {
         id: secretsDialog
+    }
+
+    HistoryDialog {
+        id: historyDialog
     }
 
     // ── Command palette (Ctrl+P) ────────────────────────────────────────────

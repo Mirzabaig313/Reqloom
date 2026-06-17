@@ -3,18 +3,21 @@
 
 #include "../../src/application/EnvironmentSettings.h"
 #include "../../src/application/ProjectModel.h"
+#include "../../src/views/Formatting.h"
 #include "../../src/views/HookEditorDialog.h"
 #include "../../src/widgets/GraphLayout.h"
 #include "../../src/widgets/LineDiff.h"
 #include "ThemeController.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QCryptographicHash>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSet>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QStringList>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
@@ -26,6 +29,7 @@
 #include <queue>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace reqloom::desktop::qml {
@@ -189,6 +193,8 @@ AppController::AppController(QObject* parent)
     connect(runController_.get(), &RunController::runEnded, this, [this](const QString& outcome) {
         runOutcome_ = outcome;
         emit responseChanged();
+        // The run was just persisted; surface it in the history view.
+        refreshHistory();
     });
 
     // Bridge ALL streamed RunController signals into the timeline model so the
@@ -311,6 +317,7 @@ AppController::AppController(QObject* parent)
     connect(&editDependencies_, &QAbstractItemModel::modelReset, this, onDepsChanged);
 
     loadSampleIfPresent();
+    refreshHistory();
 }
 
 AppController::~AppController() = default;
@@ -333,6 +340,11 @@ void AppController::onLoaded() {
     // Point the saved-example store at this project (per-project isolation) and
     // re-apply the explorer's example child rows from disk.
     exampleStore_.setProjectRoot(project_->rootPath());
+
+    // Open this project's own run-history database so runs are isolated between
+    // projects. Keyed by a hash of the project root under the app-data dir, so
+    // the repo stays clean and two projects never share history.
+    openProjectHistory(project_->rootPath());
 
     environments_ = project_->environmentNames();
     if (environment_.isEmpty() || !environments_.contains(environment_)) {
@@ -2436,6 +2448,137 @@ void AppController::deleteEnvironment(const QString& name) {
     } else {
         emit notify(error, true);
     }
+}
+
+void AppController::openProjectHistory(const QString& projectRoot) {
+    if (!bootstrapper_) {
+        return;
+    }
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (base.isEmpty() || projectRoot.isEmpty()) {
+        return;
+    }
+    // Hash the canonical project path so each project maps to a stable,
+    // filesystem-safe database name without leaking the path or colliding.
+    const QString canonical = QFileInfo(projectRoot).canonicalFilePath();
+    const QString key = canonical.isEmpty() ? projectRoot : canonical;
+    const QString digest = QString::fromLatin1(
+        QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha1).toHex());
+    const QString dir = QDir{base}.filePath(QStringLiteral("history"));
+    QDir{}.mkpath(dir);
+    const QString dbPath = QDir{dir}.filePath(QStringLiteral("history-%1.db").arg(digest));
+    (void)bootstrapper_->engine().openHistory(std::filesystem::path{dbPath.toStdString()});
+}
+
+void AppController::refreshHistory() {
+    if (!bootstrapper_) {
+        return;
+    }
+    auto runs = bootstrapper_->engine().listRuns(100);
+    if (!runs) {
+        // History is best-effort UI; an unopened/unavailable store just
+        // shows an empty list rather than surfacing an error to the user.
+        history_.reset();
+        return;
+    }
+    history_.reload(*runs);
+}
+
+void AppController::clearHistory() {
+    if (!bootstrapper_) {
+        return;
+    }
+    auto cleared = bootstrapper_->engine().clearHistory();
+    if (!cleared) {
+        emit notify(QString::fromStdString(cleared.error().detail), true);
+        return;
+    }
+    refreshHistory();
+    emit notify(QStringLiteral("Run history cleared"), false);
+}
+
+void AppController::replayRun(qulonglong runId) {
+    if (!bootstrapper_) {
+        return;
+    }
+    auto events = bootstrapper_->engine().historyEvents(engine::RunId{runId});
+    if (!events) {
+        emit notify(QString::fromStdString(events.error().detail), true);
+        return;
+    }
+
+    // Rebuild the live timeline from the persisted events, reusing the same
+    // formatting the live run path applies so a replayed run reads identically.
+    timeline_.reset();
+    const auto joinHeaders = [](const std::vector<std::pair<std::string, std::string>>& headers) {
+        QString out;
+        for (const auto& [key, value] : headers) {
+            if (!out.isEmpty()) {
+                out.append(QLatin1Char('\n'));
+            }
+            out.append(QString::fromStdString(key));
+            out.append(QStringLiteral(": "));
+            out.append(QString::fromStdString(value));
+        }
+        return out;
+    };
+
+    for (const auto& event : *events) {
+        std::visit(
+            [&](const auto& e) {
+                using T = std::decay_t<decltype(e)>;
+                if constexpr (std::is_same_v<T, engine::RunStarted>) {
+                    timeline_.onRunStarted(QString::fromStdString(e.target.value),
+                                           static_cast<int>(e.chainSize),
+                                           QString::fromStdString(e.envName));
+                } else if constexpr (std::is_same_v<T, engine::StepStarted>) {
+                    timeline_.onStepStarted(static_cast<int>(e.stepIndex),
+                                            QString::fromStdString(e.op.value),
+                                            e.attempt);
+                } else if constexpr (std::is_same_v<T, engine::StepSkipped>) {
+                    timeline_.onStepSkipped(static_cast<int>(e.stepIndex),
+                                            QString::fromStdString(e.op.value),
+                                            format::skipReason(e.reason));
+                } else if constexpr (std::is_same_v<T, engine::RequestPrepared>) {
+                    timeline_.onRequestPrepared(static_cast<int>(e.stepIndex),
+                                                format::method(e.method),
+                                                QString::fromStdString(e.url),
+                                                joinHeaders(e.maskedHeaders),
+                                                static_cast<int>(e.bodySize));
+                } else if constexpr (std::is_same_v<T, engine::ResponseReceived>) {
+                    timeline_.onResponseReceived(
+                        static_cast<int>(e.stepIndex),
+                        e.status,
+                        joinHeaders(e.headers),
+                        static_cast<int>(e.bodySize),
+                        static_cast<qint64>(e.elapsed.count()),
+                        e.body ? QString::fromStdString(*e.body) : QString{});
+                } else if constexpr (std::is_same_v<T, engine::ExtractionCompleted>) {
+                    timeline_.onExtractionCompleted(static_cast<int>(e.stepIndex),
+                                                    QString::fromStdString(e.op.value),
+                                                    QString::fromStdString(e.variableName),
+                                                    QString::fromStdString(e.sourcePath),
+                                                    format::extractionOutcome(e.outcome),
+                                                    QString::fromStdString(e.value));
+                } else if constexpr (std::is_same_v<T, engine::AssertionCompleted>) {
+                    timeline_.onAssertionCompleted(static_cast<int>(e.stepIndex),
+                                                   QString::fromStdString(e.op.value),
+                                                   QString::fromStdString(e.name),
+                                                   QString::fromStdString(e.expr),
+                                                   e.passed);
+                } else if constexpr (std::is_same_v<T, engine::StepFailed>) {
+                    timeline_.onStepFailed(static_cast<int>(e.stepIndex),
+                                           QString::fromStdString(e.op.value),
+                                           format::errorCode(e.code),
+                                           QString::fromStdString(e.detail));
+                } else if constexpr (std::is_same_v<T, engine::RunEnded>) {
+                    timeline_.onRunEnded(format::runOutcome(e.outcome));
+                }
+            },
+            event);
+    }
+
+    emit runReplayed();
 }
 
 QStringList AppController::operationIds() const {
