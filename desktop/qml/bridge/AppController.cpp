@@ -326,6 +326,26 @@ int AppController::resourceCount() const {
     return project_->hasProject() ? static_cast<int>(project_->project().resources.size()) : 0;
 }
 
+int AppController::latencySloP95Ms() const {
+    return project_->hasProject() ? project_->project().latencySloP95Ms : 0;
+}
+
+void AppController::setLatencySlo(int ms) {
+    if (!project_->hasProject()) {
+        emit notify(QStringLiteral("Open a project before setting a latency SLO."), true);
+        return;
+    }
+    QString error;
+    if (project_->setLatencySloP95Ms(ms, error)) {
+        emit projectChanged();
+        emit notify(ms > 0 ? QStringLiteral("Latency SLO set: p95 < %1 ms").arg(ms)
+                           : QStringLiteral("Latency SLO cleared"),
+                    false);
+    } else {
+        emit notify(error, true);
+    }
+}
+
 void AppController::openProject(const QUrl& directory) {
     const QString path = directory.isLocalFile() ? directory.toLocalFile() : directory.toString();
     project_->loadFromDirectory(path);

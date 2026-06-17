@@ -129,6 +129,9 @@ public:
     /// project default, reassign the default to another environment (or empty).
     /// Persists + rebinds; emits `saved` on success.
     [[nodiscard]] bool deleteEnvironment(const QString& name, QString& error);
+    /// Set the project-level p95 latency SLO budget (ms); 0 clears it.
+    /// Persists the whole project and rebinds. Emits `saved` on success.
+    [[nodiscard]] bool setLatencySloP95Ms(int ms, QString& error);
 
     /// Create an empty resource named `name` (optional `description`), persist,
     /// and rebind. Fails if the name is empty, contains id-breaking characters

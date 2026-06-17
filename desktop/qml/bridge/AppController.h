@@ -48,6 +48,7 @@ class AppController : public QObject {
 
     Q_PROPERTY(QString projectName READ projectName NOTIFY projectChanged)
     Q_PROPERTY(int resourceCount READ resourceCount NOTIFY projectChanged)
+    Q_PROPERTY(int latencySloP95Ms READ latencySloP95Ms NOTIFY projectChanged)
     Q_PROPERTY(QString status READ status NOTIFY projectChanged)
     Q_PROPERTY(ResourceListModel* resources READ resources CONSTANT)
     Q_PROPERTY(OperationListModel* operations READ operations CONSTANT)
@@ -180,6 +181,7 @@ public:
 
     [[nodiscard]] QString projectName() const { return projectName_; }
     [[nodiscard]] int resourceCount() const;
+    [[nodiscard]] int latencySloP95Ms() const;
     [[nodiscard]] QString status() const { return status_; }
     /// Returns a raw pointer to the current ProjectModel for C++ consumers
     /// such as SecretsController (never exposed as a QML property).
@@ -239,6 +241,10 @@ public:
     Q_INVOKABLE bool saveEnvironmentEdits(const QString& originalName, const QString& name);
     /// Delete an environment.
     Q_INVOKABLE void deleteEnvironment(const QString& name);
+
+    /// Set the project's p95 latency SLO budget (ms); 0 clears it. Persists
+    /// to reqloom.yaml and refreshes the latency chart's verdict.
+    Q_INVOKABLE void setLatencySlo(int ms);
 
     /// Reload the history view from the engine's run-history store (newest
     /// first). Called after each run completes and on project load.

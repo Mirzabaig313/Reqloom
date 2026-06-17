@@ -561,8 +561,12 @@ std::string emitRoot(const Project& project) {
     YAML::Emitter e;
     e << YAML::BeginMap << YAML::Key << "version" << YAML::Value << 1 << YAML::Key << "name"
       << YAML::Value << project.name << YAML::Key << "default_environment" << YAML::Value
-      << project.defaultEnvironment << YAML::Key << "imports" << YAML::Value << YAML::BeginSeq
-      << "actors/*.yaml"
+      << project.defaultEnvironment;
+    if (project.latencySloP95Ms > 0) {
+        e << YAML::Key << "latency_slo" << YAML::Value << YAML::BeginMap << YAML::Key << "p95_ms"
+          << YAML::Value << project.latencySloP95Ms << YAML::EndMap;
+    }
+    e << YAML::Key << "imports" << YAML::Value << YAML::BeginSeq << "actors/*.yaml"
       << "resources/*.yaml"
       << "environments/*.yaml" << YAML::EndSeq << YAML::EndMap;
     return e.c_str();

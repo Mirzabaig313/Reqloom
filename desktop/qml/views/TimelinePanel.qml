@@ -77,10 +77,20 @@ Rectangle {
         }
 
         // Response-time sparkline (median · p95 · max) for the current run.
+        // Clicking a bar scrolls the event list to that step.
         LatencySparkline {
             Layout.fillWidth: true
             bars: AppController.timeline.latencyBars
             stats: AppController.timeline.latencyStats
+            sloP95Ms: AppController.latencySloP95Ms
+            onSloChangeRequested: ms => AppController.setLatencySlo(ms)
+            onStepActivated: stepNumber => {
+                const r = AppController.timeline.rowForStep(stepNumber);
+                if (r >= 0) {
+                    timelineList.positionViewAtIndex(r, ListView.Center);
+                    timelineList.currentIndex = r;
+                }
+            }
         }
 
         ListView {

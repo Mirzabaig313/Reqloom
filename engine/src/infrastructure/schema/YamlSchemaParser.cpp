@@ -1003,6 +1003,12 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         project.name = root["name"].as<std::string>("Unnamed Project");
         project.defaultEnvironment = root["default_environment"].as<std::string>("local");
 
+        // Optional latency SLO: latency_slo: { p95_ms: 800 }. Negative or
+        // missing → unset (0). Surfaced on the desktop latency chart.
+        if (root["latency_slo"] && root["latency_slo"]["p95_ms"]) {
+            project.latencySloP95Ms = std::max(0, root["latency_slo"]["p95_ms"].as<int>(0));
+        }
+
         const auto baseDir = rootYaml.parent_path();
 
         auto loadSubFile = [&](const fs::path& file) -> std::optional<ReqloomError> {

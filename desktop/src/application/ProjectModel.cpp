@@ -672,6 +672,28 @@ bool ProjectModel::deleteEnvironment(const QString& name, QString& error) {
     return true;
 }
 
+bool ProjectModel::setLatencySloP95Ms(int ms, QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    engine::Project draft = *project_;
+    draft.latencySloP95Ms = std::max(0, ms);
+
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return false;
+    }
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
 std::optional<engine::OperationId> ProjectModel::createOperation(
     const engine::ResourceId& resourceId,
     const QString& name,

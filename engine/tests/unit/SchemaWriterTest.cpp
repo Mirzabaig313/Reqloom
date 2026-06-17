@@ -901,3 +901,38 @@ TEST(SchemaWriter, transport_emits_only_non_default_fields) {
         << "default connect_timeout should not be emitted; got:\n"
         << content;
 }
+
+TEST(SchemaWriter, latency_slo_round_trips) {
+    ScratchDir scratch;
+    auto original = makeRoundTripProject();
+    original.latencySloP95Ms = 800;
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    EXPECT_EQ(reloaded->latencySloP95Ms, 800);
+}
+
+TEST(SchemaWriter, latency_slo_absent_when_unset) {
+    ScratchDir scratch;
+    auto original = makeRoundTripProject();  // latencySloP95Ms defaults to 0
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    std::string content;
+    {
+        std::ifstream in(*written, std::ios::binary);
+        ASSERT_TRUE(in.good());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_EQ(content.find("latency_slo"), std::string::npos)
+        << "an unset SLO must not be emitted; got:\n"
+        << content;
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value());
+    EXPECT_EQ(reloaded->latencySloP95Ms, 0);
+}

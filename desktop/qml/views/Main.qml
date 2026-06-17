@@ -465,6 +465,7 @@ ApplicationWindow {
             SplitView.minimumWidth: explorerCollapsed ? 32 : 180
             SplitView.maximumWidth: explorerCollapsed ? 32 : 400
             color: "transparent"
+            clip: true
 
             ExplorerPanel {
                 id: explorerPanel
@@ -543,6 +544,10 @@ ApplicationWindow {
                 SplitView.minimumWidth: 320
                 SplitView.minimumHeight: 200
                 radius: 0
+                // Clip so the editor's fixed-width content (action toolbar,
+                // 200px graph cards) can't bleed over the response pane when
+                // the pane is narrower than its content.
+                clip: true
                 color: DesignTokens.glassFill
                 border.width: 1
                 border.color: DesignTokens.glassBorder
@@ -660,6 +665,7 @@ ApplicationWindow {
                 SplitView.preferredHeight: responseCollapsed ? 32 : 320
                 SplitView.minimumHeight: responseCollapsed ? 32 : 160
                 color: "transparent"
+                clip: true
                 visible: AppController.hasOperation || AppController.hasResponse || window.historyReplayActive
 
                 ResponsePanel {

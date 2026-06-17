@@ -24,10 +24,93 @@ Rectangle {
     signal nodeEditRequested(string operationId)
 
     // Index of the node currently hovered (−1 = none): connected edges stay
-    // bright, the rest dim, so you can trace what feeds what.
-    property int hoveredIndex: -1
+    // bright, the rest dim, so you can trace what feeds what. Tracked by
+    // operationId (not row index) because the stable node model below keeps
+    // delegates across relayouts, so model order need not match graph order.
+    property string hoveredOp: ""
     onStatusMapChanged: edgeCanvas.requestPaint()
-    onHoveredIndexChanged: edgeCanvas.requestPaint()
+    onHoveredOpChanged: edgeCanvas.requestPaint()
+
+    // Stable node identity across relayouts. `graph.nodes` is a fresh array on
+    // every rebuild, so binding the Repeater straight to it would destroy and
+    // recreate every delegate — nodes would pop to new spots. Instead we keep a
+    // ListModel keyed by operationId and mutate each row's target x/y in place,
+    // so delegates persist and their `Behavior on x/y` springs glide them.
+    // `nodeOps` maps an edge's node index to its operationId; `livePos` holds
+    // each node's current (animating) logical position so edges follow along.
+    property var nodeOps: []
+    property var livePos: ({})
+
+    ListModel {
+        id: nodeModel
+    }
+
+    // Look up the full graph node (with detail fields) by operationId, for the
+    // detail popover — the ListModel itself carries only render scalars.
+    function nodeByOp(op) {
+        const list = root.graph.nodes || [];
+        for (let i = 0; i < list.length; ++i) {
+            if (list[i].operationId === op) {
+                return list[i];
+            }
+        }
+        return {};
+    }
+
+    // Reconcile the ListModel with the latest graph: update existing rows'
+    // target position in place, append new nodes, drop removed ones.
+    function syncNodes() {
+        const incoming = root.graph.nodes || [];
+        const ops = [];
+        const seen = {};
+        for (let i = 0; i < incoming.length; ++i) {
+            ops.push(incoming[i].operationId);
+            seen[incoming[i].operationId] = incoming[i];
+        }
+        root.nodeOps = ops;
+
+        // Drop rows whose node no longer exists.
+        for (let r = nodeModel.count - 1; r >= 0; --r) {
+            const op = nodeModel.get(r).operationId;
+            if (!seen.hasOwnProperty(op)) {
+                delete root.livePos[op];
+                nodeModel.remove(r);
+            }
+        }
+
+        // Upsert each incoming node.
+        for (let i = 0; i < incoming.length; ++i) {
+            const n = incoming[i];
+            let idx = -1;
+            for (let r = 0; r < nodeModel.count; ++r) {
+                if (nodeModel.get(r).operationId === n.operationId) {
+                    idx = r;
+                    break;
+                }
+            }
+            if (idx < 0) {
+                // New node: seed its live position so the first edge paint and
+                // the delegate both start at the target spot (no glide-in from 0,0).
+                root.livePos[n.operationId] = {
+                    "x": n.x,
+                    "y": n.y
+                };
+                nodeModel.append({
+                    "operationId": n.operationId,
+                    "method": n.method || "",
+                    "isTarget": n.isTarget || false,
+                    "tx": n.x,
+                    "ty": n.y
+                });
+            } else {
+                nodeModel.setProperty(idx, "method", n.method || "");
+                nodeModel.setProperty(idx, "isTarget", n.isTarget || false);
+                nodeModel.setProperty(idx, "tx", n.x);
+                nodeModel.setProperty(idx, "ty", n.y);
+            }
+        }
+        edgeCanvas.requestPaint();
+    }
 
     // Zoom factor for the graph plane (pan is the Flickable itself).
     property real zoom: 1.0
@@ -47,7 +130,8 @@ Rectangle {
     border.color: DesignTokens.borderSubtle
     implicitHeight: root.nodes.length === 0 ? 56 : Math.min(graphH + DesignTokens.spaceLg * 2, 320)
 
-    onGraphChanged: edgeCanvas.requestPaint()
+    onGraphChanged: root.syncNodes()
+    Component.onCompleted: root.syncNodes()
     Connections {
         target: DesignTokens
         function onTokensChanged() {
@@ -113,16 +197,21 @@ Rectangle {
                     ctx.lineWidth = 1.5;
                     const ox = plane.offsetX;
                     for (let i = 0; i < root.edges.length; ++i) {
-                        const s = root.nodes[root.edges[i].from];
-                        const t = root.nodes[root.edges[i].to];
+                        // Resolve endpoints by operationId so coordinates track
+                        // the live (animating) node positions, letting edges
+                        // glide with the cards during a relayout.
+                        const sOp = root.nodeOps[root.edges[i].from];
+                        const tOp = root.nodeOps[root.edges[i].to];
+                        const s = root.livePos[sOp];
+                        const t = root.livePos[tOp];
                         if (!s || !t)
                             continue;
                         // Colour the edge by the downstream node's run status so
                         // the executed flow lights up; default to a neutral line.
-                        const st = root.statusMap[t.operationId] || "";
+                        const st = root.statusMap[tOp] || "";
                         const col = st.length > 0 ? DesignTokens.statusColor(st) : DesignTokens.borderStrong;
                         // Dim edges not touching the hovered node.
-                        const connected = root.hoveredIndex < 0 || root.edges[i].from === root.hoveredIndex || root.edges[i].to === root.hoveredIndex;
+                        const connected = root.hoveredOp.length === 0 || sOp === root.hoveredOp || tOp === root.hoveredOp;
                         ctx.globalAlpha = connected ? 1.0 : 0.16;
                         ctx.strokeStyle = col;
                         ctx.fillStyle = col;
@@ -167,18 +256,25 @@ Rectangle {
             }
 
             Repeater {
-                model: root.nodes
+                model: nodeModel
                 delegate: Rectangle {
                     id: card
                     required property int index
-                    required property var modelData
-                    readonly property string nodeStatus: root.statusMap[card.modelData.operationId] || ""
-                    x: plane.offsetX + card.modelData.x
-                    y: card.modelData.y
+                    required property string operationId
+                    required property string method
+                    required property bool isTarget
+                    required property real tx
+                    required property real ty
+                    readonly property string nodeStatus: root.statusMap[card.operationId] || ""
+                    x: plane.offsetX + card.tx
+                    y: card.ty
                     width: root.nodeW
                     height: root.nodeH
                     // A gentle physical lift when hovered, and a spring on
-                    // position so a relayout glides rather than jumps.
+                    // position so a relayout glides rather than jumps. The
+                    // node model is mutated in place (see syncNodes), so these
+                    // Behaviors actually fire on relayout instead of the
+                    // delegate being recreated at the new spot.
                     scale: cardHover.hovered ? 1.03 : 1.0
                     Behavior on scale {
                         SpringMotion {}
@@ -189,10 +285,27 @@ Rectangle {
                     Behavior on y {
                         SpringMotion {}
                     }
+                    // Publish the live (logical, pre-offset) position as the
+                    // spring animates so the edge Canvas redraws its curves to
+                    // follow the moving cards.
+                    onXChanged: {
+                        root.livePos[card.operationId] = {
+                            "x": card.x - plane.offsetX,
+                            "y": card.y
+                        };
+                        edgeCanvas.requestPaint();
+                    }
+                    onYChanged: {
+                        root.livePos[card.operationId] = {
+                            "x": card.x - plane.offsetX,
+                            "y": card.y
+                        };
+                        edgeCanvas.requestPaint();
+                    }
                     radius: DesignTokens.radiusSm
-                    color: card.modelData.isTarget ? DesignTokens.accentMuted : DesignTokens.surfaceRaised
+                    color: card.isTarget ? DesignTokens.accentMuted : DesignTokens.surfaceRaised
                     border.width: card.nodeStatus.length > 0 ? 2 : 1
-                    border.color: card.nodeStatus.length > 0 ? DesignTokens.statusColor(card.nodeStatus) : (card.modelData.isTarget ? DesignTokens.accent : DesignTokens.borderSubtle)
+                    border.color: card.nodeStatus.length > 0 ? DesignTokens.statusColor(card.nodeStatus) : (card.isTarget ? DesignTokens.accent : DesignTokens.borderSubtle)
 
                     RowLayout {
                         anchors.fill: parent
@@ -201,16 +314,16 @@ Rectangle {
                         spacing: DesignTokens.spaceSm
 
                         MethodBadge {
-                            method: card.modelData.method
+                            method: card.method
                             Layout.preferredWidth: 54
                         }
                         Label {
                             Layout.fillWidth: true
-                            text: card.modelData.operationId
-                            color: card.modelData.isTarget ? DesignTokens.textPrimary : DesignTokens.textSecondary
+                            text: card.operationId
+                            color: card.isTarget ? DesignTokens.textPrimary : DesignTokens.textSecondary
                             font.pixelSize: DesignTokens.fontLabel
                             font.family: DesignTokens.fontMono
-                            font.weight: card.modelData.isTarget ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
+                            font.weight: card.isTarget ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                             elide: Text.ElideMiddle
                         }
                         // Live run-status glyph (colour + glyph, never colour
@@ -221,7 +334,7 @@ Rectangle {
                             label: ""
                         }
                         Label {
-                            visible: card.modelData.isTarget && card.nodeStatus.length === 0
+                            visible: card.isTarget && card.nodeStatus.length === 0
                             text: qsTr("target")
                             color: DesignTokens.accent
                             font.pixelSize: DesignTokens.fontCaption
@@ -231,10 +344,10 @@ Rectangle {
                     HoverHandler {
                         id: cardHover
                         cursorShape: Qt.PointingHandCursor
-                        onHoveredChanged: root.hoveredIndex = hovered ? card.index : -1
+                        onHoveredChanged: root.hoveredOp = hovered ? card.operationId : ""
                     }
                     TapHandler {
-                        onTapped: root.showDetail(card.modelData, card.x, card.y + card.height + 6)
+                        onTapped: root.showDetail(root.nodeByOp(card.operationId), card.x, card.y + card.height + 6)
                     }
                 }
             }
