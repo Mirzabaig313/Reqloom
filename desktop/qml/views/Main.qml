@@ -2,6 +2,7 @@
 // (explorer | editor | response/timeline), collapsible left+right rails,
 // a native MenuBar, top toolbar, keyboard shortcuts, toasts, and an empty
 // state. Logic lives in AppController/SecretsController/ThemeController.
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -88,15 +89,16 @@ ApplicationWindow {
             color: DesignTokens.surfaceRaised
         }
         delegate: MenuBarItem {
+            id: menuBarItem
             contentItem: Text {
-                text: parent.text
+                text: menuBarItem.text
                 color: DesignTokens.textPrimary
                 font.pixelSize: DesignTokens.fontBody
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
             background: Rectangle {
-                color: parent.highlighted ? DesignTokens.accentMuted : "transparent"
+                color: menuBarItem.highlighted ? DesignTokens.accentMuted : "transparent"
                 radius: 4
             }
         }
@@ -121,12 +123,12 @@ ApplicationWindow {
         Menu {
             title: qsTr("View")
             MenuItem {
-                text: explorerCollapsed ? qsTr("Show Explorer") : qsTr("Hide Explorer")
-                onTriggered: explorerCollapsed = !explorerCollapsed
+                text: window.explorerCollapsed ? qsTr("Show Explorer") : qsTr("Hide Explorer")
+                onTriggered: window.explorerCollapsed = !window.explorerCollapsed
             }
             MenuItem {
-                text: responseCollapsed ? qsTr("Show Response") : qsTr("Hide Response")
-                onTriggered: responseCollapsed = !responseCollapsed
+                text: window.responseCollapsed ? qsTr("Show Response") : qsTr("Hide Response")
+                onTriggered: window.responseCollapsed = !window.responseCollapsed
             }
         }
         Menu {
@@ -188,11 +190,11 @@ ApplicationWindow {
     // ── Global shortcuts ───────────────────────────────────────────────────
     Shortcut {
         sequence: "Ctrl+B"
-        onActivated: explorerCollapsed = !explorerCollapsed
+        onActivated: window.explorerCollapsed = !window.explorerCollapsed
     }
     Shortcut {
         sequence: "Ctrl+J"
-        onActivated: responseCollapsed = !responseCollapsed
+        onActivated: window.responseCollapsed = !window.responseCollapsed
     }
     Shortcut {
         sequence: "Ctrl+P"
@@ -239,6 +241,7 @@ ApplicationWindow {
 
             // Open Project
             Button {
+                id: openProjectBtn
                 text: qsTr("Open Project")
                 implicitHeight: 32
                 leftPadding: DesignTokens.spaceSm
@@ -250,7 +253,7 @@ ApplicationWindow {
                     border.color: DesignTokens.borderSubtle
                 }
                 contentItem: Text {
-                    text: parent.text
+                    text: openProjectBtn.text
                     color: DesignTokens.textSecondary
                     font.pixelSize: DesignTokens.fontLabel
                     horizontalAlignment: Text.AlignHCenter
@@ -261,6 +264,7 @@ ApplicationWindow {
 
             // Manage Secrets
             Button {
+                id: manageSecretsBtn
                 text: qsTr("Manage Secrets")
                 enabled: AppController.resourceCount > 0
                 implicitHeight: 32
@@ -273,8 +277,8 @@ ApplicationWindow {
                     border.color: DesignTokens.borderSubtle
                 }
                 contentItem: Text {
-                    text: parent.text
-                    color: parent.enabled ? DesignTokens.textSecondary : DesignTokens.borderStrong
+                    text: manageSecretsBtn.text
+                    color: manageSecretsBtn.enabled ? DesignTokens.textSecondary : DesignTokens.borderStrong
                     font.pixelSize: DesignTokens.fontLabel
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -284,6 +288,7 @@ ApplicationWindow {
 
             // Run History
             Button {
+                id: historyBtn
                 text: qsTr("History")
                 implicitHeight: 32
                 leftPadding: DesignTokens.spaceSm
@@ -295,7 +300,7 @@ ApplicationWindow {
                     border.color: DesignTokens.borderSubtle
                 }
                 contentItem: Text {
-                    text: parent.text
+                    text: historyBtn.text
                     color: DesignTokens.textSecondary
                     font.pixelSize: DesignTokens.fontLabel
                     horizontalAlignment: Text.AlignHCenter
@@ -461,24 +466,24 @@ ApplicationWindow {
         // Left: Explorer panel or collapsed rail.
         Rectangle {
             id: explorerPane
-            SplitView.preferredWidth: explorerCollapsed ? 32 : 280
-            SplitView.minimumWidth: explorerCollapsed ? 32 : 180
-            SplitView.maximumWidth: explorerCollapsed ? 32 : 400
+            SplitView.preferredWidth: window.explorerCollapsed ? 32 : 280
+            SplitView.minimumWidth: window.explorerCollapsed ? 32 : 180
+            SplitView.maximumWidth: window.explorerCollapsed ? 32 : 400
             color: "transparent"
             clip: true
 
             ExplorerPanel {
                 id: explorerPanel
                 anchors.fill: parent
-                visible: !explorerCollapsed
-                onCollapseRequested: explorerCollapsed = true
+                visible: !window.explorerCollapsed
+                onCollapseRequested: window.explorerCollapsed = true
             }
 
             // Collapsed rail: single expand chevron.
             Rectangle {
                 id: explorerRail
                 anchors.fill: parent
-                visible: explorerCollapsed
+                visible: window.explorerCollapsed
                 radius: 0
                 color: explorerRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
                 border.width: 1
@@ -508,7 +513,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: explorerCollapsed = false
+                    onClicked: window.explorerCollapsed = false
                 }
                 GlassToolTip {
                     active: explorerRailArea.containsMouse
@@ -659,11 +664,11 @@ ApplicationWindow {
             // Right: Response + Timeline (or collapsed rail).
             Rectangle {
                 id: responsePane
-                SplitView.preferredWidth: responseCollapsed ? 32 : 400
-                SplitView.minimumWidth: responseCollapsed ? 32 : 200
-                SplitView.maximumWidth: responseCollapsed ? 32 : 700
-                SplitView.preferredHeight: responseCollapsed ? 32 : 320
-                SplitView.minimumHeight: responseCollapsed ? 32 : 160
+                SplitView.preferredWidth: window.responseCollapsed ? 32 : 400
+                SplitView.minimumWidth: window.responseCollapsed ? 32 : 200
+                SplitView.maximumWidth: window.responseCollapsed ? 32 : 700
+                SplitView.preferredHeight: window.responseCollapsed ? 32 : 320
+                SplitView.minimumHeight: window.responseCollapsed ? 32 : 160
                 color: "transparent"
                 clip: true
                 visible: AppController.hasOperation || AppController.hasResponse || window.historyReplayActive
@@ -671,15 +676,15 @@ ApplicationWindow {
                 ResponsePanel {
                     id: responsePanel
                     anchors.fill: parent
-                    visible: !responseCollapsed
+                    visible: !window.responseCollapsed
                     stacked: window.responseStacked
-                    onCloseRequested: responseCollapsed = true
+                    onCloseRequested: window.responseCollapsed = true
                     onToggleStackRequested: window.responseStacked = !window.responseStacked
                 }
 
                 Rectangle {
                     anchors.fill: parent
-                    visible: responseCollapsed
+                    visible: window.responseCollapsed
                     radius: 0
                     color: responseRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
                     border.width: 1
@@ -731,7 +736,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: responseCollapsed = false
+                        onClicked: window.responseCollapsed = false
                     }
                     GlassToolTip {
                         active: responseRailArea.containsMouse
@@ -764,12 +769,12 @@ ApplicationWindow {
         id: envMenu
         GlassMenuItem {
             text: qsTr("New Environment…")
-            onTriggered: environmentDialog.openFor("")
+            onTriggered: manageEnvironmentDialog.openManager("")
         }
         GlassMenuItem {
             text: AppController.environment.length > 0 ? qsTr("Edit “%1”…").arg(AppController.environment) : qsTr("Edit…")
             enabled: AppController.environment.length > 0
-            onTriggered: environmentDialog.openFor(AppController.environment)
+            onTriggered: manageEnvironmentDialog.openManager(AppController.environment)
         }
         MenuSeparator {}
         GlassMenuItem {
@@ -891,23 +896,24 @@ ApplicationWindow {
                 }
 
                 delegate: ItemDelegate {
+                    id: paletteItem
                     required property string itemLabel
                     required property string itemAction
                     width: ListView.view.width
                     height: 36
                     background: Rectangle {
                         radius: DesignTokens.radiusSm
-                        color: parent.hovered ? DesignTokens.accentMuted : "transparent"
+                        color: paletteItem.hovered ? DesignTokens.accentMuted : "transparent"
                     }
                     contentItem: Text {
-                        text: itemLabel
+                        text: paletteItem.itemLabel
                         color: DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontBody
                         verticalAlignment: Text.AlignVCenter
                     }
                     onClicked: {
                         commandPalette.close();
-                        switch (itemAction) {
+                        switch (paletteItem.itemAction) {
                         case "openProject":
                             folderDialog.open();
                             break;
@@ -915,10 +921,10 @@ ApplicationWindow {
                             secretsDialog.openDialog();
                             break;
                         case "newModule":
-                            explorerPanel.newModuleDialog.openDialog();
+                            explorerPanel.openNewModule();
                             break;
                         case "newEndpoint":
-                            explorerPanel.newEndpointDialog.openFor("");
+                            explorerPanel.openNewEndpoint("");
                             break;
                         case "run":
                             AppController.runSelected(false, false);

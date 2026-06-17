@@ -23,6 +23,7 @@ Rectangle {
         spacing: 0
 
         delegate: Rectangle {
+            id: kvRow
             required property string key
             required property string value
             width: ListView.view.width
@@ -36,7 +37,7 @@ Rectangle {
                 spacing: DesignTokens.spaceMd
                 Label {
                     Layout.preferredWidth: parent.width * 0.34
-                    text: key
+                    text: kvRow.key
                     color: DesignTokens.textPrimary
                     font.pixelSize: DesignTokens.fontLabel
                     font.family: DesignTokens.fontMono
@@ -44,7 +45,7 @@ Rectangle {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: value
+                    text: kvRow.value
                     color: DesignTokens.textSecondary
                     font.pixelSize: DesignTokens.fontLabel
                     font.family: DesignTokens.fontMono
@@ -54,7 +55,8 @@ Rectangle {
 
             Rectangle {
                 anchors.bottom: parent.bottom
-                width: parent.width; height: 1
+                width: parent.width
+                height: 1
                 color: DesignTokens.borderSubtle
                 opacity: 0.5
             }

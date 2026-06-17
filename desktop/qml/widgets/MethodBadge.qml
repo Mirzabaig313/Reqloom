@@ -1,7 +1,6 @@
 // MethodBadge — a small color-coded HTTP method pill (DESIGN.md §6.2a).
 // The hue comes from DesignTokens; the fill is a low-emphasis tint of it.
 import QtQuick
-import QtQuick.Layouts
 import Reqloom
 
 Rectangle {

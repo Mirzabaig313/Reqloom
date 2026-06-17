@@ -33,6 +33,11 @@ Rectangle {
     function openNewEndpoint(resourceId) {
         newEndpointDialog.openFor(resourceId);
     }
+    // Open the New Module dialog. Exposed so the command palette (Main) can
+    // trigger it without reaching into this component's internal ids.
+    function openNewModule() {
+        newModuleDialog.openDialog();
+    }
 
     ColumnLayout {
         anchors.fill: parent

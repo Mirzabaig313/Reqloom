@@ -1,6 +1,7 @@
 // SecretsDialog — keychain secrets management (mirrors the old Widgets
 // SecretsDialog). Lists every {{secret.NAME}} the project references with
 // its keychain state, and lets the user set or clear each one.
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -72,6 +73,7 @@ Dialog {
             model: SecretsController.secrets
 
             delegate: Rectangle {
+                id: secretRow
                 required property string name
                 required property string status
                 width: ListView.view.width
@@ -86,60 +88,60 @@ Dialog {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "{{secret." + name + "}}"
+                        text: "{{secret." + secretRow.name + "}}"
                         color: DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontBody
                         font.family: DesignTokens.fontMono
                         elide: Text.ElideRight
                     }
                     Label {
-                        text: status === "set" ? "✓  set" : status
-                        color: status === "set" ? DesignTokens.statusSuccess : DesignTokens.statusError
+                        text: secretRow.status === "set" ? "✓  set" : secretRow.status
+                        color: secretRow.status === "set" ? DesignTokens.statusSuccess : DesignTokens.statusError
                         font.pixelSize: DesignTokens.fontLabel
                     }
 
                     Button {
+                        id: setSecretBtn
                         text: qsTr("Set…")
                         implicitHeight: 28
                         leftPadding: DesignTokens.spaceSm
                         rightPadding: DesignTokens.spaceSm
                         background: Rectangle {
                             radius: DesignTokens.radiusSm
-                            color: parent.down ? DesignTokens.accentMuted : "transparent"
+                            color: setSecretBtn.down ? DesignTokens.accentMuted : "transparent"
                             border.width: 1
                             border.color: DesignTokens.borderStrong
                         }
                         contentItem: Text {
-                            text: parent.text
+                            text: setSecretBtn.text
                             color: DesignTokens.textSecondary
                             font.pixelSize: DesignTokens.fontLabel
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
-                        property string secretName: name
-                        onClicked: setDialog.openFor(secretName)
+                        onClicked: setDialog.openFor(secretRow.name)
                     }
                     Button {
+                        id: clearSecretBtn
                         text: qsTr("Clear")
-                        visible: status === "set"
+                        visible: secretRow.status === "set"
                         implicitHeight: 28
                         leftPadding: DesignTokens.spaceSm
                         rightPadding: DesignTokens.spaceSm
                         background: Rectangle {
                             radius: DesignTokens.radiusSm
-                            color: parent.down ? Qt.rgba(DesignTokens.statusError.r, DesignTokens.statusError.g, DesignTokens.statusError.b, 0.12) : "transparent"
+                            color: clearSecretBtn.down ? Qt.rgba(DesignTokens.statusError.r, DesignTokens.statusError.g, DesignTokens.statusError.b, 0.12) : "transparent"
                             border.width: 1
                             border.color: DesignTokens.borderStrong
                         }
                         contentItem: Text {
-                            text: parent.text
+                            text: clearSecretBtn.text
                             color: DesignTokens.statusError
                             font.pixelSize: DesignTokens.fontLabel
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
-                        property string secretName: name
-                        onClicked: SecretsController.clear(secretName)
+                        onClicked: SecretsController.clear(secretRow.name)
                     }
                 }
 

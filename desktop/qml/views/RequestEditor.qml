@@ -5,6 +5,7 @@
 // Headers / Body raw↔form / Options / Chain) with live per-tab count badges.
 // Send applies edits to a one-shot run; Save persists them to the project.
 // C++ (AppController) owns all state + logic; this file is presentation only.
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -64,17 +65,18 @@ ColumnLayout {
         spacing: DesignTokens.spaceSm
 
         Button {
+            id: backBtn
             text: "←"
             implicitWidth: 32
             implicitHeight: 32
             background: Rectangle {
                 radius: DesignTokens.radiusSm
-                color: parent.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                color: backBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
                 border.width: 1
                 border.color: DesignTokens.borderSubtle
             }
             contentItem: Text {
-                text: parent.text
+                text: backBtn.text
                 color: DesignTokens.textSecondary
                 font.pixelSize: DesignTokens.fontSubtitle
                 horizontalAlignment: Text.AlignHCenter
@@ -1213,13 +1215,14 @@ ColumnLayout {
     }
 
     component OptionRow: RowLayout {
+        id: optionRow
         property string label: ""
         default property alias fieldData: holder.data
         Layout.fillWidth: true
         spacing: DesignTokens.spaceMd
         Label {
             Layout.preferredWidth: 110
-            text: parent.label
+            text: optionRow.label
             color: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontLabel
         }

@@ -2,7 +2,6 @@
 // Shown at the bottom of the window; auto-dismisses after `duration` ms.
 // Error toasts tint red; regular toasts use the overlay surface.
 import QtQuick
-import QtQuick.Controls.Basic
 import Reqloom
 
 Rectangle {

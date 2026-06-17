@@ -4,7 +4,6 @@
 // request editor and response panel so every tab strip looks identical.
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Layouts
 import Reqloom
 
 Item {

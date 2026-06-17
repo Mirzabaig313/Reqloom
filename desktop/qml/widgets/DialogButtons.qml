@@ -1,7 +1,6 @@
 // DialogButtons — a themed dialog footer: a right-aligned Cancel + primary
 // action built from GlassButton. Replaces the default grey DialogButtonBox.
 import QtQuick
-import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import Reqloom
 
