@@ -21,6 +21,7 @@ public:
         RunId run) const override;
     [[nodiscard]] std::expected<std::vector<RunHistoryRow>, ReqloomError> listRuns(
         std::size_t limit) const override;
+    std::expected<void, ReqloomError> clear() override;
     void close() override;
 
 private:

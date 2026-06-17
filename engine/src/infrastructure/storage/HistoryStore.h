@@ -5,6 +5,7 @@
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/Events.h>
 
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -23,6 +24,7 @@ struct RunHistoryRow {
     std::string endedAt;    ///< Empty until RunEnded.
     std::string outcome;    ///< Empty, or Succeeded / Failed / Cancelled.
     std::size_t chainSize{0};
+    std::int64_t elapsedMs{-1};  ///< Wall-clock run duration; -1 until RunEnded lands.
 };
 
 class HistoryStore {
@@ -49,6 +51,9 @@ public:
     /// Runs newest-first, capped at `limit` (0 = no limit).
     [[nodiscard]] virtual std::expected<std::vector<RunHistoryRow>, ReqloomError> listRuns(
         std::size_t limit = 100) const = 0;
+
+    /// Delete all runs and their events from the open database.
+    virtual std::expected<void, ReqloomError> clear() = 0;
 
     virtual void close() = 0;
 };

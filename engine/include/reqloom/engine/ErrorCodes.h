@@ -67,6 +67,11 @@ enum class ErrorCode : std::uint8_t {
 
     // Run
     Cancelled,
+
+    /// An engine-internal precondition was violated (e.g. a read API was
+    /// called on an engine built without the backing store). Not expected
+    /// in production wiring; surfaced rather than crashing.
+    Internal,
 };
 
 enum class ErrorClass : std::uint8_t {

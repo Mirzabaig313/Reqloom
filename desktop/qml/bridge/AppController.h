@@ -3,21 +3,21 @@
 // state to QML. C++ owns logic/state; QML binds to these properties.
 #pragma once
 
+#include "../../src/application/Bootstrapper.h"
+#include "../../src/application/EnvironmentSettings.h"
+#include "../../src/application/RunController.h"
+#include "../../src/application/SavedResponseStore.h"
 #include "ChainEditorModel.h"
 #include "DependencyEditModel.h"
 #include "EditableKeyValueModel.h"
 #include "ExampleListModel.h"
+#include "HistoryModel.h"
 #include "KeyValueModel.h"
 #include "OperationListModel.h"
 #include "ProjectTreeFilterModel.h"
 #include "ProjectTreeModel.h"
 #include "ResourceListModel.h"
 #include "TimelineModel.h"
-
-#include "../../src/application/Bootstrapper.h"
-#include "../../src/application/EnvironmentSettings.h"
-#include "../../src/application/RunController.h"
-#include "../../src/application/SavedResponseStore.h"
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractItemModel>
@@ -104,6 +104,8 @@ class AppController : public QObject {
     // Live run timeline + saved examples for the open operation.
     Q_PROPERTY(TimelineModel* timeline READ timeline CONSTANT)
     Q_PROPERTY(ExampleListModel* examples READ examples CONSTANT)
+    // Past runs (persisted history store), newest-first, for the history view.
+    Q_PROPERTY(HistoryModel* history READ history CONSTANT)
 
     // ── Editable request surface (Override / Edit mode, WS-B) ──────────────
     // `editing` toggles the read preview ↔ editable controls. The editable
@@ -238,6 +240,17 @@ public:
     /// Delete an environment.
     Q_INVOKABLE void deleteEnvironment(const QString& name);
 
+    /// Reload the history view from the engine's run-history store (newest
+    /// first). Called after each run completes and on project load.
+    Q_INVOKABLE void refreshHistory();
+
+    /// Replay a past run into the live timeline by its history runId. Lets
+    /// the history view reconstruct a prior run's step-by-step timeline.
+    Q_INVOKABLE void replayRun(qulonglong runId);
+
+    /// Delete all runs for the current project's history, then refresh the view.
+    Q_INVOKABLE void clearHistory();
+
     [[nodiscard]] QString actorAuthMethod() const { return actorAuthMethod_; }
     [[nodiscard]] QString actorAuthPath() const { return actorAuthPath_; }
     [[nodiscard]] QString actorAuthBody() const { return actorAuthBody_; }
@@ -284,6 +297,7 @@ public:
     [[nodiscard]] QString shownExample() const { return shownExample_; }
     [[nodiscard]] TimelineModel* timeline() { return &timeline_; }
     [[nodiscard]] ExampleListModel* examples() { return &exampleList_; }
+    [[nodiscard]] HistoryModel* history() { return &history_; }
 
     // ── Editable request surface accessors ────────────────────────────────
     [[nodiscard]] bool editing() const { return editing_; }
@@ -554,6 +568,9 @@ signals:
     void environmentChanged();
     void runningChanged();
     void responseChanged();
+    /// Fired after replayRun() has rebuilt the timeline from a past run, so the
+    /// UI can reveal and switch to the Timeline view.
+    void runReplayed();
     void captureBodiesChanged();
     void editingChanged();
     /// Fired on any editable-field or edit-model change (drives live tab
@@ -583,7 +600,11 @@ private:
     void onSaved();
     void onLoadFailed(const QString& code, const QString& detail);
     void loadSampleIfPresent();
-    /// Refresh `exampleList_` for the open operation, and rebuild the explorer
+    /// Open (or switch to) the per-project run-history database. The path is
+    /// derived from a hash of the project root and lives under the app-data
+    /// dir, so each project keeps its own history and the repo stays clean.
+    void openProjectHistory(const QString& projectRoot);  /// Refresh `exampleList_` for the open
+                                                          /// operation, and rebuild the explorer
     /// tree's example child rows from the store. Called on load + after any
     /// example mutation so the panel and explorer stay in sync.
     void refreshExamples();
@@ -628,6 +649,7 @@ private:
     EditableKeyValueModel newEndpointExtractions_;
     ChainEditorModel newEndpointDepExtracts_;
     TimelineModel timeline_;
+    HistoryModel history_;
     ChainEditorModel chainEditor_;
     ExampleListModel exampleList_;
     KeyValueModel opHeaders_;
