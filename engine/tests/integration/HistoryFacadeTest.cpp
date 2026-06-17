@@ -140,9 +140,10 @@ TEST_F(HistoryFacadeFixture, list_runs_returns_persisted_run_after_open) {
     EXPECT_FALSE(row.startedAt.empty());
     EXPECT_FALSE(row.endedAt.empty());
     EXPECT_EQ(row.runId.value, run->runId.value);
-    // Duration comes from the RunEnded event's precise elapsed, not a
-    // second-resolution timestamp diff, so a sub-second run is non-negative.
-    EXPECT_GE(row.elapsedMs, 0);
+    // Duration comes from the RunEnded event's real elapsed (a steady_clock
+    // delta around run()), not a hardcoded 0 or a second-resolution timestamp
+    // diff. A real loopback chain with an auth round-trip always takes >1ms.
+    EXPECT_GT(row.elapsedMs, 0);
 }
 
 TEST_F(HistoryFacadeFixture, history_events_replays_the_run_timeline) {

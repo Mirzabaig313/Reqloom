@@ -603,8 +603,8 @@ private:
     /// Open (or switch to) the per-project run-history database. The path is
     /// derived from a hash of the project root and lives under the app-data
     /// dir, so each project keeps its own history and the repo stays clean.
-    void openProjectHistory(const QString& projectRoot);  /// Refresh `exampleList_` for the open
-                                                          /// operation, and rebuild the explorer
+    void openProjectHistory(const QString& projectRoot);
+    /// Refresh `exampleList_` for the open operation, and rebuild the explorer
     /// tree's example child rows from the store. Called on load + after any
     /// example mutation so the panel and explorer stay in sync.
     void refreshExamples();

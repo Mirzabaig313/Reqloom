@@ -1138,6 +1138,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
                                                             const RunOptions& options) {
     impl_->cancelledRunId.store(0, std::memory_order_release);
     impl_->captureResponseBodies = options.captureResponseBodies;
+    const auto runStart = std::chrono::steady_clock::now();
 
     if (options.resetExtractions) {
         ctx.clearExtractions();
@@ -1367,8 +1368,9 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
         }
     }
 
-    impl_->emit(RunEnded{
-        runId, result.outcome, std::chrono::milliseconds{0}, std::chrono::system_clock::now()});
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - runStart);
+    impl_->emit(RunEnded{runId, result.outcome, elapsed, std::chrono::system_clock::now()});
     return result;
 }
 
