@@ -4,6 +4,7 @@
 // variable table. Reuses AppController's env editor state (prepareEditEnvironment
 // / editEnvVars / saveEnvironmentEdits / deleteEnvironment). Selecting a row in
 // the list loads it (unsaved edits in the pane are discarded — click Save first).
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -137,8 +138,8 @@ Dialog {
                         required property string modelData
                         width: ListView.view ? ListView.view.width : 0
                         implicitHeight: 36
-                        highlighted: modelData === dialog.editingOriginal
-                        onClicked: dialog.selectEnv(modelData)
+                        highlighted: envRow.modelData === dialog.editingOriginal
+                        onClicked: dialog.selectEnv(envRow.modelData)
                         background: Rectangle {
                             radius: DesignTokens.radiusSm
                             color: envRow.highlighted ? DesignTokens.accentMuted : (envRow.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent")

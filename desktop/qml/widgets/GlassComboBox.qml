@@ -1,6 +1,7 @@
 // GlassComboBox — the app's themed select. A rounded glass field with a chevron
 // indicator and a rounded, elevated popup whose rows highlight on hover. Drop-in
 // for QtQuick.Controls ComboBox (same model / currentIndex / textRole API).
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import Reqloom
@@ -73,13 +74,16 @@ ComboBox {
 
     delegate: ItemDelegate {
         id: row
+        required property int index
+        required property var model
+        required property var modelData
         width: ListView.view ? ListView.view.width : control.width
         implicitHeight: DesignTokens.controlHeight
         padding: 0
-        highlighted: control.highlightedIndex === index
+        highlighted: control.highlightedIndex === row.index
         contentItem: Text {
             leftPadding: DesignTokens.spaceSm
-            text: control.textRole && control.textRole.length > 0 ? model[control.textRole] : modelData
+            text: control.textRole && control.textRole.length > 0 ? row.model[control.textRole] : row.modelData
             color: DesignTokens.textPrimary
             font.pixelSize: DesignTokens.fontLabel
             font.family: DesignTokens.fontSans

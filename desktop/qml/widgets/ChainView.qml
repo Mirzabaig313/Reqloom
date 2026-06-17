@@ -72,7 +72,7 @@ Rectangle {
         // Drop rows whose node no longer exists.
         for (let r = nodeModel.count - 1; r >= 0; --r) {
             const op = nodeModel.get(r).operationId;
-            if (!seen.hasOwnProperty(op)) {
+            if (seen[op] === undefined) {
                 delete root.livePos[op];
                 nodeModel.remove(r);
             }

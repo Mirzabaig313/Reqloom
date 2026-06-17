@@ -241,6 +241,126 @@ ColumnLayout {
         }
         onWidthChanged: canvas.requestPaint()
         onHeightChanged: canvas.requestPaint()
+
+        // Inline editor for the p95 budget, parented to the window overlay so
+        // it centres over the whole app. Declared inside this Item (not the
+        // root ColumnLayout) so its positioning isn't flagged as layout-managed.
+        Popup {
+            id: sloPopup
+            parent: Overlay.overlay
+            x: Math.round(((parent ? parent.width : 0) - width) / 2)
+            y: Math.round(((parent ? parent.height : 0) - height) / 2)
+            modal: true
+            focus: true
+            padding: DesignTokens.spaceMd
+            enter: PopupEnter {}
+            exit: PopupExit {}
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+            background: Rectangle {
+                radius: DesignTokens.radius
+                color: DesignTokens.surfaceOverlay
+                border.width: 1
+                border.color: DesignTokens.borderSubtle
+            }
+
+            contentItem: ColumnLayout {
+                spacing: DesignTokens.spaceSm
+
+                Label {
+                    text: qsTr("Latency SLO")
+                    color: DesignTokens.textPrimary
+                    font.pixelSize: DesignTokens.fontBody
+                    font.weight: DesignTokens.weightSemiBold
+                }
+                Label {
+                    text: qsTr("Fail the run's p95 response time above this budget.")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontCaption
+                    Layout.preferredWidth: 240
+                    wrapMode: Text.WordWrap
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: DesignTokens.spaceSm
+                    TextField {
+                        id: sloField
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("e.g. 800")
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        validator: IntValidator {
+                            bottom: 0
+                            top: 600000
+                        }
+                        color: DesignTokens.textPrimary
+                        font.pixelSize: DesignTokens.fontBody
+                        onAccepted: saveSloBtn.commit()
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.surfaceSunken
+                            border.width: 1
+                            border.color: sloField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                        }
+                    }
+                    Label {
+                        text: qsTr("ms")
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontLabel
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: DesignTokens.spaceSm
+                    Button {
+                        id: clearSloBtn
+                        text: qsTr("Clear")
+                        visible: root.sloP95Ms > 0
+                        onClicked: {
+                            root.sloChangeRequested(0);
+                            sloPopup.close();
+                        }
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: "transparent"
+                            border.width: 1
+                            border.color: DesignTokens.borderStrong
+                        }
+                        contentItem: Text {
+                            text: clearSloBtn.text
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    Button {
+                        id: saveSloBtn
+                        text: qsTr("Save")
+                        function commit() {
+                            const v = parseInt(sloField.text, 10);
+                            root.sloChangeRequested(isNaN(v) ? 0 : v);
+                            sloPopup.close();
+                        }
+                        onClicked: saveSloBtn.commit()
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: saveSloBtn.down ? DesignTokens.accentHover : DesignTokens.accent
+                        }
+                        contentItem: Text {
+                            text: saveSloBtn.text
+                            color: DesignTokens.textInverse
+                            font.pixelSize: DesignTokens.fontLabel
+                            font.weight: DesignTokens.weightSemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Bar index at plot-relative x, or −1 outside the bars.
@@ -331,122 +451,5 @@ ColumnLayout {
         sloPopup.open();
         sloField.forceActiveFocus();
         sloField.selectAll();
-    }
-
-    // Inline editor for the p95 budget. Saving emits sloChangeRequested; the
-    // panel persists it via AppController.setLatencySlo.
-    Popup {
-        id: sloPopup
-        parent: Overlay.overlay
-        anchors.centerIn: Overlay.overlay
-        modal: true
-        focus: true
-        padding: DesignTokens.spaceMd
-        enter: PopupEnter {}
-        exit: PopupExit {}
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        background: Rectangle {
-            radius: DesignTokens.radius
-            color: DesignTokens.surfaceOverlay
-            border.width: 1
-            border.color: DesignTokens.borderSubtle
-        }
-
-        contentItem: ColumnLayout {
-            spacing: DesignTokens.spaceSm
-
-            Label {
-                text: qsTr("Latency SLO")
-                color: DesignTokens.textPrimary
-                font.pixelSize: DesignTokens.fontBody
-                font.weight: DesignTokens.weightSemiBold
-            }
-            Label {
-                text: qsTr("Fail the run's p95 response time above this budget.")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontCaption
-                Layout.preferredWidth: 240
-                wrapMode: Text.WordWrap
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: DesignTokens.spaceSm
-                TextField {
-                    id: sloField
-                    Layout.fillWidth: true
-                    placeholderText: qsTr("e.g. 800")
-                    inputMethodHints: Qt.ImhDigitsOnly
-                    validator: IntValidator {
-                        bottom: 0
-                        top: 600000
-                    }
-                    color: DesignTokens.textPrimary
-                    font.pixelSize: DesignTokens.fontBody
-                    onAccepted: saveSloBtn.commit()
-                    background: Rectangle {
-                        radius: DesignTokens.radiusSm
-                        color: DesignTokens.surfaceSunken
-                        border.width: 1
-                        border.color: sloField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                    }
-                }
-                Label {
-                    text: qsTr("ms")
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: DesignTokens.spaceSm
-                Button {
-                    text: qsTr("Clear")
-                    visible: root.sloP95Ms > 0
-                    onClicked: {
-                        root.sloChangeRequested(0);
-                        sloPopup.close();
-                    }
-                    background: Rectangle {
-                        radius: DesignTokens.radiusSm
-                        color: "transparent"
-                        border.width: 1
-                        border.color: DesignTokens.borderStrong
-                    }
-                    contentItem: Text {
-                        text: parent.text
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-                Item {
-                    Layout.fillWidth: true
-                }
-                Button {
-                    id: saveSloBtn
-                    text: qsTr("Save")
-                    function commit() {
-                        const v = parseInt(sloField.text, 10);
-                        root.sloChangeRequested(isNaN(v) ? 0 : v);
-                        sloPopup.close();
-                    }
-                    onClicked: saveSloBtn.commit()
-                    background: Rectangle {
-                        radius: DesignTokens.radiusSm
-                        color: saveSloBtn.down ? DesignTokens.accentHover : DesignTokens.accent
-                    }
-                    contentItem: Text {
-                        text: parent.text
-                        color: DesignTokens.textInverse
-                        font.pixelSize: DesignTokens.fontLabel
-                        font.weight: DesignTokens.weightSemiBold
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-            }
-        }
     }
 }
