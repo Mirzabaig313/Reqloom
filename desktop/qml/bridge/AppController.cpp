@@ -165,6 +165,7 @@ AppController::AppController(QObject* parent)
                 respBodySize_ = bodySize;
                 respElapsedMs_ = static_cast<int>(elapsedMs);
                 respBody_ = body;
+                responseBody_.setBody(body);
                 emit responseChanged();
             });
     // Re-fetch auto-save: when the producer endpoint targeted by
@@ -2843,6 +2844,7 @@ void AppController::selectExample(const QString& operationId, const QString& exa
         respStatus_ = r.status;
         respHeaders_ = r.headers;
         respBody_ = r.body;
+        responseBody_.setBody(r.body);
         respBodySize_ = static_cast<int>(r.body.toUtf8().size());
         respElapsedMs_ = static_cast<int>(r.elapsedMs);
         runOutcome_.clear();

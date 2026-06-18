@@ -17,6 +17,7 @@
 #include "ProjectTreeFilterModel.h"
 #include "ProjectTreeModel.h"
 #include "ResourceListModel.h"
+#include "ResponseBodyModel.h"
 #include "TimelineModel.h"
 
 #include <QtQml/qqmlregistration.h>
@@ -98,6 +99,9 @@ class AppController : public QObject {
     Q_PROPERTY(int respBodySize READ respBodySize NOTIFY responseChanged)
     Q_PROPERTY(QString respHeaders READ respHeaders NOTIFY responseChanged)
     Q_PROPERTY(QString respBody READ respBody NOTIFY responseChanged)
+    /// Parsed JSON tree of the current response body (virtualized in C++ so
+    /// large bodies render without the per-response JS tree build stuttering).
+    Q_PROPERTY(ResponseBodyModel* responseBody READ responseBody CONSTANT)
     Q_PROPERTY(QString runOutcome READ runOutcome NOTIFY responseChanged)
     /// Name of the saved example currently shown (empty when showing a live run).
     Q_PROPERTY(QString shownExample READ shownExample NOTIFY responseChanged)
@@ -299,6 +303,7 @@ public:
     [[nodiscard]] int respBodySize() const { return respBodySize_; }
     [[nodiscard]] QString respHeaders() const { return respHeaders_; }
     [[nodiscard]] QString respBody() const { return respBody_; }
+    [[nodiscard]] ResponseBodyModel* responseBody() { return &responseBody_; }
     [[nodiscard]] QString runOutcome() const { return runOutcome_; }
     [[nodiscard]] QString shownExample() const { return shownExample_; }
     [[nodiscard]] TimelineModel* timeline() { return &timeline_; }
@@ -727,6 +732,7 @@ private:
     int respBodySize_{0};
     QString respHeaders_;
     QString respBody_;
+    ResponseBodyModel responseBody_;
     QString runOutcome_;
     QString shownExample_;
 };

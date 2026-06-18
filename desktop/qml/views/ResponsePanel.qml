@@ -92,59 +92,8 @@ Rectangle {
         return body;
     }
 
-    // Full flattened JSON tree for the open response body. Each row carries an
-    // id + parentId (for collapse), a JSONPath (for copy), and hasChildren so
-    // the delegate can draw an expander. Recomputed when the body changes.
-    property var treeRows: buildTree(AppController.respBody)
-    // Set of collapsed container node ids.
-    property var collapsedNodes: ({})
-    // Rows whose ancestors are all expanded; the tree ListView's model. Set by
-    // recomputeVisible() (not a live binding, to avoid a model binding loop).
-    property var visibleRows: []
-
-    onTreeRowsChanged: {
-        collapsedNodes = ({});
-        recomputeVisible();
-    }
-    Component.onCompleted: recomputeVisible()
-
-    function toggleCollapse(id) {
-        const m = collapsedNodes;
-        if (m[id]) {
-            delete m[id];
-        } else {
-            m[id] = true;
-        }
-        collapsedNodes = m;
-        recomputeVisible();
-    }
-
-    // Recompute the visible-row list: a row is hidden if any ancestor (via
-    // parentId) is currently collapsed.
-    function recomputeVisible() {
-        const all = treeRows;
-        const byId = {};
-        for (const r of all)
-            byId[r.id] = r;
-        const result = [];
-        for (const r of all) {
-            let visible = true;
-            let pid = r.parentId;
-            while (pid >= 0) {
-                if (collapsedNodes[pid]) {
-                    visible = false;
-                    break;
-                }
-                pid = byId[pid] ? byId[pid].parentId : -1;
-            }
-            if (visible)
-                result.push(r);
-        }
-        visibleRows = result;
-    }
-
     // Pretty-print a JSON body for display; returns the raw text unchanged when
-    // it isn't valid JSON. Pure presentation formatting.
+    // it isn't valid JSON. Pure presentation formatting (used by Raw + Diff).
     function prettyJson(body) {
         if (body.length === 0)
             return "";
@@ -153,96 +102,6 @@ Rectangle {
         } catch (e) {
             return body;
         }
-    }
-
-    // Flatten a JSON body into collapsible rows for the Tree view. Each row:
-    // {depth, field, value, isLeaf, hasChildren, id, parentId, path}. Non-JSON
-    // bodies yield a single "(not JSON)" row. `path` is a JSONPath for copy.
-    function buildTree(body) {
-        const rows = [];
-        if (body.length === 0)
-            return rows;
-        let root;
-        try {
-            root = JSON.parse(body);
-        } catch (e) {
-            rows.push({
-                depth: 0,
-                field: "(not JSON)",
-                value: body,
-                isLeaf: true,
-                hasChildren: false,
-                id: 0,
-                parentId: -1,
-                path: "$"
-            });
-            return rows;
-        }
-        let nextId = 0;
-        function walk(node, field, depth, parentId, path) {
-            const id = nextId++;
-            if (node === null) {
-                rows.push({
-                    depth,
-                    field,
-                    value: "null",
-                    isLeaf: true,
-                    hasChildren: false,
-                    id,
-                    parentId,
-                    path
-                });
-            } else if (Array.isArray(node)) {
-                rows.push({
-                    depth,
-                    field,
-                    value: "[" + node.length + "]",
-                    isLeaf: false,
-                    hasChildren: node.length > 0,
-                    id,
-                    parentId,
-                    path
-                });
-                for (let i = 0; i < node.length; ++i)
-                    walk(node[i], String(i), depth + 1, id, path + "[" + i + "]");
-            } else if (typeof node === "object") {
-                const keys = Object.keys(node);
-                rows.push({
-                    depth,
-                    field,
-                    value: "{" + keys.length + "}",
-                    isLeaf: false,
-                    hasChildren: keys.length > 0,
-                    id,
-                    parentId,
-                    path
-                });
-                for (const k of keys)
-                    walk(node[k], k, depth + 1, id, path + "." + k);
-            } else {
-                rows.push({
-                    depth,
-                    field,
-                    value: String(node),
-                    isLeaf: true,
-                    hasChildren: false,
-                    id,
-                    parentId,
-                    path
-                });
-            }
-        }
-        // Don't render a redundant root row for the top-level container.
-        if (root !== null && typeof root === "object") {
-            const keys = Array.isArray(root) ? root.map((_, i) => String(i)) : Object.keys(root);
-            for (const k of keys) {
-                const childPath = Array.isArray(root) ? "$[" + k + "]" : "$." + k;
-                walk(root[k], k, 0, -1, childPath);
-            }
-        } else {
-            walk(root, "value", 0, -1, "$");
-        }
-        return rows;
     }
 
     ColumnLayout {
@@ -490,11 +349,21 @@ Rectangle {
                             anchors.fill: parent
                             anchors.margins: DesignTokens.spaceSm
                             clip: true
-                            model: panel.visibleRows
+                            // C++-parsed, virtualized JSON tree — no per-response
+                            // JS parse/flatten, so large bodies don't stutter.
+                            model: AppController.responseBody
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Rectangle {
                                 id: treeRow
-                                required property var modelData
+                                required property int index
+                                required property int depth
+                                required property string field
+                                required property string value
+                                required property string rawValue
+                                required property bool isLeaf
+                                required property bool hasChildren
+                                required property bool collapsed
+                                required property string path
                                 width: ListView.view.width
                                 height: 22
                                 radius: DesignTokens.radiusSm
@@ -506,10 +375,10 @@ Rectangle {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (treeRow.modelData.hasChildren) {
-                                            panel.toggleCollapse(treeRow.modelData.id);
+                                        if (treeRow.hasChildren) {
+                                            AppController.responseBody.toggle(treeRow.index);
                                         } else {
-                                            AppController.copyToClipboard(treeRow.modelData.value, qsTr("value"));
+                                            AppController.copyToClipboard(treeRow.rawValue, qsTr("value"));
                                         }
                                     }
                                 }
@@ -520,18 +389,18 @@ Rectangle {
                                     anchors.rightMargin: DesignTokens.spaceXs
                                     spacing: DesignTokens.spaceSm
                                     Item {
-                                        Layout.preferredWidth: treeRow.modelData.depth * 16
+                                        Layout.preferredWidth: treeRow.depth * 16
                                     }
                                     Text {
                                         Layout.preferredWidth: 12
-                                        text: treeRow.modelData.hasChildren ? (panel.collapsedNodes[treeRow.modelData.id] ? "\u25B8" : "\u25BE") : ""
+                                        text: treeRow.hasChildren ? (treeRow.collapsed ? "\u25B8" : "\u25BE") : ""
                                         color: DesignTokens.textSecondary
                                         font.pixelSize: DesignTokens.fontCaption
                                         horizontalAlignment: Text.AlignHCenter
                                     }
                                     Text {
                                         id: fieldText
-                                        text: treeRow.modelData.field
+                                        text: treeRow.field
                                         color: fieldMouse.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
                                         font.pixelSize: DesignTokens.fontLabel
                                         font.family: DesignTokens.fontMono
@@ -542,16 +411,16 @@ Rectangle {
                                             anchors.fill: parent
                                             hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
-                                            onClicked: AppController.copyToClipboard(treeRow.modelData.path, treeRow.modelData.path)
+                                            onClicked: AppController.copyToClipboard(treeRow.path, treeRow.path)
                                         }
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: treeRow.modelData.value
-                                        color: treeRow.modelData.isLeaf ? DesignTokens.textPrimary : DesignTokens.textSecondary
+                                        text: treeRow.value
+                                        color: treeRow.isLeaf ? DesignTokens.textPrimary : DesignTokens.textSecondary
                                         font.pixelSize: DesignTokens.fontLabel
                                         font.family: DesignTokens.fontMono
-                                        font.weight: treeRow.modelData.isLeaf ? DesignTokens.weightRegular : DesignTokens.weightSemiBold
+                                        font.weight: treeRow.isLeaf ? DesignTokens.weightRegular : DesignTokens.weightSemiBold
                                         elide: Text.ElideRight
                                     }
                                     Text {
@@ -561,7 +430,7 @@ Rectangle {
                                         font.pixelSize: DesignTokens.fontCaption
                                     }
                                     Text {
-                                        visible: rowMouse.containsMouse && !fieldMouse.containsMouse && treeRow.modelData.isLeaf
+                                        visible: rowMouse.containsMouse && !fieldMouse.containsMouse && treeRow.isLeaf
                                         text: qsTr("copy value")
                                         color: DesignTokens.accent
                                         font.pixelSize: DesignTokens.fontCaption
@@ -572,7 +441,7 @@ Rectangle {
                                     // array index), so picking is one click.
                                     Text {
                                         id: extractHint
-                                        visible: extractMouse.containsMouse || (rowMouse.containsMouse && treeRow.modelData.isLeaf)
+                                        visible: extractMouse.containsMouse || (rowMouse.containsMouse && treeRow.isLeaf)
                                         text: qsTr("＋ save as variable")
                                         color: extractMouse.containsMouse ? DesignTokens.accentHover : DesignTokens.accent
                                         font.pixelSize: DesignTokens.fontCaption
@@ -583,7 +452,7 @@ Rectangle {
                                             anchors.margins: -4
                                             hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
-                                            onClicked: extractDialog.openFor(treeRow.modelData.path, treeRow.modelData.field)
+                                            onClicked: extractDialog.openFor(treeRow.path, treeRow.field)
                                         }
                                     }
                                 }
