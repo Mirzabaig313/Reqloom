@@ -41,7 +41,7 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: DesignTokens.spaceMd
+        anchors.margins: DesignTokens.spaceLg
         spacing: DesignTokens.spaceSm
 
         PanelHeader {

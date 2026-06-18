@@ -19,17 +19,13 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: DesignTokens.spaceMd
+        anchors.margins: DesignTokens.spaceLg
         spacing: DesignTokens.spaceSm
 
         RowLayout {
             Layout.fillWidth: true
-            Label {
+            SectionLabel {
                 text: qsTr("TIMELINE")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontCaption
-                font.weight: DesignTokens.weightSemiBold
-                font.letterSpacing: 1.2
             }
             Item {
                 Layout.fillWidth: true

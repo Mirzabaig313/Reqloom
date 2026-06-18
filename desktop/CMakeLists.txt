@@ -103,6 +103,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/DialogHeader.qml
         qml/widgets/AppIcon.qml
         qml/widgets/PanelHeader.qml
+        qml/widgets/SectionLabel.qml
         qml/widgets/LineTabBar.qml
         qml/widgets/SelectableTextBox.qml
         qml/widgets/CodeView.qml

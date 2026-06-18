@@ -26,7 +26,11 @@ constexpr double kAccentHue = 200.0;
     p.borderSubtle = oklch(0.880, 0.008, 232.4);
     p.borderStrong = oklch(0.722, 0.015, 207.9);  // Weathered Shell
     p.textPrimary = oklch(0.209, 0.017, 216.6);   // Graphite Nacre
-    p.textSecondary = oklch(0.540, 0.016, 210.0);
+    // Secondary text is normal-size body/caption, so it must clear AA (4.5:1).
+    // Solve its lightness against the worst-case surface it sits on — the
+    // darkest light surface, surfaceBase — so it passes on raised/sunken too.
+    // Keeps the designed hue/chroma; only darkens enough to reach the floor.
+    p.textSecondary = oklchForContrast(0.016, 210.0, p.surfaceBase, 4.55, 0.540);
     p.textDisabled = oklch(0.760, 0.010, 210.0);
     p.textInverse = oklch(0.985, 0.003, 264.5);
     p.accentBase = oklch(0.654, 0.110, 193.2);  // Iridescent Teal
