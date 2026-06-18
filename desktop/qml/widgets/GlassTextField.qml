@@ -8,6 +8,10 @@ import Reqloom
 TextField {
     id: control
     property bool mono: false
+    // Validation state — when true the field shows a red (error) border so an
+    // invalid value reads at the input, not only in a message below it. Pair
+    // with a FieldError for the inline explanation.
+    property bool error: false
 
     implicitHeight: DesignTokens.controlHeight
     color: DesignTokens.textPrimary
@@ -21,6 +25,11 @@ TextField {
         radius: DesignTokens.radiusSm
         color: DesignTokens.surfaceSunken
         border.width: 1
-        border.color: control.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+        // Error wins over focus so an invalid value stays visibly flagged even
+        // while the field is focused for correction.
+        border.color: control.error ? DesignTokens.statusError : control.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+        Behavior on border.color {
+            ColorMotion {}
+        }
     }
 }

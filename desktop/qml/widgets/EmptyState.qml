@@ -17,7 +17,9 @@ ColumnLayout {
 
     anchors.centerIn: parent
     spacing: DesignTokens.spaceMd
-    width: 320
+    // Cap at a comfortable reading width but shrink to fit narrow panels
+    // (the response/timeline pane can be dragged down to ~200px).
+    width: Math.min(320, (parent ? parent.width : 320) - DesignTokens.spaceXl * 2)
 
     AppIcon {
         Layout.alignment: Qt.AlignHCenter

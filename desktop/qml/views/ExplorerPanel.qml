@@ -410,7 +410,7 @@ Rectangle {
         MenuSeparator {}
         GlassMenuItem {
             text: qsTr("Delete")
-            onTriggered: AppController.deleteExample(panel.ctxOperationId, panel.ctxExampleName)
+            onTriggered: exampleDeleteDialog.openFor(panel.ctxOperationId, panel.ctxExampleName)
         }
     }
     GlassMenu {
@@ -486,6 +486,10 @@ Rectangle {
             GlassTextField {
                 id: renameField
                 Layout.fillWidth: true
+                error: renameField.text.length > 0 && !AppController.isValidName(renameField.text)
+            }
+            FieldError {
+                text: renameField.error ? qsTr("Name can't contain '.', '/', or '\\'.") : ""
             }
         }
 
@@ -543,6 +547,7 @@ Rectangle {
 
         footer: DialogButtons {
             okText: qsTr("Delete")
+            okDestructive: true
             onAccepted: deleteDialog.accept()
             onRejected: deleteDialog.reject()
         }
@@ -611,5 +616,52 @@ Rectangle {
         }
 
         onAccepted: AppController.renameExample(targetOperationId, targetName, exampleRenameField.text.trim())
+    }
+
+    // Confirm deleting a saved example (destructive, no undo).
+    Dialog {
+        id: exampleDeleteDialog
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: 380
+        padding: DesignTokens.spaceLg
+        title: qsTr("Delete example")
+        header: DialogHeader {
+            title: qsTr("Delete example")
+        }
+
+        property string targetOperationId: ""
+        property string targetName: ""
+
+        function openFor(operationId, name) {
+            targetOperationId = operationId;
+            targetName = name;
+            open();
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: qsTr("Delete saved example “%1”? This can't be undone.").arg(exampleDeleteDialog.targetName)
+            color: DesignTokens.textPrimary
+            font.pixelSize: DesignTokens.fontBody
+            wrapMode: Text.WordWrap
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Delete")
+            okDestructive: true
+            onAccepted: exampleDeleteDialog.accept()
+            onRejected: exampleDeleteDialog.reject()
+        }
+
+        onAccepted: AppController.deleteExample(targetOperationId, targetName)
     }
 }

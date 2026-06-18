@@ -112,6 +112,13 @@ Rectangle {
         anchors.margins: DesignTokens.spaceLg
         spacing: DesignTokens.spaceMd
 
+        // Indeterminate progress while a run is in flight — an at-a-glance
+        // "working" signal even before the first step streams in.
+        BusyBar {
+            Layout.fillWidth: true
+            running: AppController.running
+        }
+
         // ── Response | Timeline switch + close button ───────────────────────
         RowLayout {
             Layout.fillWidth: true
@@ -277,11 +284,19 @@ Rectangle {
                         text: AppController.respElapsedMs + " ms"
                         color: DesignTokens.textSecondary
                         font.pixelSize: DesignTokens.fontLabel
+                        // Tabular figures so the ms value doesn't shift width
+                        // as digits change between runs.
+                        font.features: ({
+                                "tnum": 1
+                            })
                     }
                     Label {
                         text: AppController.respBodySize + " B"
                         color: DesignTokens.textSecondary
                         font.pixelSize: DesignTokens.fontLabel
+                        font.features: ({
+                                "tnum": 1
+                            })
                     }
                     Item {
                         Layout.fillWidth: true
@@ -689,28 +704,14 @@ Rectangle {
                 }
 
                 // Empty state (no response yet).
-                ColumnLayout {
+                Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     visible: !AppController.hasResponse
-                    Item {
-                        Layout.fillHeight: true
-                    }
-                    Label {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: qsTr("No response yet")
-                        color: DesignTokens.textPrimary
-                        font.pixelSize: DesignTokens.fontBody
-                        font.weight: DesignTokens.weightMedium
-                    }
-                    Label {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: qsTr("Press Send to run this endpoint's chain.")
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
-                    }
-                    Item {
-                        Layout.fillHeight: true
+                    EmptyState {
+                        iconName: "zap"
+                        heading: qsTr("No response yet")
+                        body: qsTr("Press Send to run this endpoint's chain and the response will appear here.")
                     }
                 }
             }

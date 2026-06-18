@@ -235,6 +235,7 @@ Dialog {
 
         footer: DialogButtons {
             okText: qsTr("Clear history")
+            okDestructive: true
             cancelText: qsTr("Cancel")
             onAccepted: {
                 AppController.clearHistory();

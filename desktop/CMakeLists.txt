@@ -100,6 +100,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/DialogButtons.qml
         qml/widgets/GlassTextField.qml
         qml/widgets/FieldLabel.qml
+        qml/widgets/FieldError.qml
         qml/widgets/DialogHeader.qml
         qml/widgets/AppIcon.qml
         qml/widgets/PanelHeader.qml
@@ -123,6 +124,7 @@ qt_add_qml_module(reqloom-desktop
         qml/views/HistoryDialog.qml
         qml/widgets/Toast.qml
         qml/widgets/EmptyState.qml
+        qml/widgets/BusyBar.qml
         qml/widgets/LatencySparkline.qml
         qml/motion/SpringMotion.qml
         qml/motion/ColorMotion.qml
