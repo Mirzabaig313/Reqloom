@@ -680,6 +680,7 @@ ApplicationWindow {
                     stacked: window.responseStacked
                     onCloseRequested: window.responseCollapsed = true
                     onToggleStackRequested: window.responseStacked = !window.responseStacked
+                    onSetStackedRequested: value => window.responseStacked = value
                 }
 
                 Rectangle {

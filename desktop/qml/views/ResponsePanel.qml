@@ -45,6 +45,9 @@ Rectangle {
     /// and a request to flip it — driven from Main's window.responseStacked.
     property bool stacked: false
     signal toggleStackRequested
+    /// Request a specific split layout: stacked (horizontal divider) when true,
+    /// side-by-side (vertical divider) when false.
+    signal setStackedRequested(bool value)
 
     /// Pretty-print the Body (Raw) view (indented JSON) vs show it verbatim.
     property bool prettyRaw: true
@@ -151,9 +154,9 @@ Rectangle {
                 implicitHeight: 28
                 GlassToolTip {
                     active: stackBtn.hovered
-                    text: panel.stacked ? qsTr("Stacked — switch to side-by-side") : qsTr("Side-by-side — switch to stacked")
+                    text: qsTr("Split layout")
                 }
-                onClicked: panel.toggleStackRequested()
+                onClicked: splitMenu.popup(stackBtn, 0, stackBtn.height + 4)
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
                     color: stackBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
@@ -162,6 +165,64 @@ Rectangle {
                     name: panel.stacked ? "rows" : "columns"
                     size: 16
                     anchors.centerIn: parent
+                }
+
+                // Split-layout chooser: horizontal (stacked) vs vertical
+                // (side-by-side), with a check on the active one.
+                GlassMenu {
+                    id: splitMenu
+                    GlassMenuItem {
+                        text: qsTr("Split Horizontally")
+                        onTriggered: panel.setStackedRequested(true)
+                        contentItem: RowLayout {
+                            spacing: DesignTokens.spaceSm
+                            AppIcon {
+                                name: "rows"
+                                size: 15
+                                Layout.alignment: Qt.AlignVCenter
+                                color: DesignTokens.textSecondary
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Split Horizontally")
+                                color: DesignTokens.textPrimary
+                                font.pixelSize: DesignTokens.fontBody
+                            }
+                            Text {
+                                visible: panel.stacked
+                                text: "\u2713"
+                                color: DesignTokens.accent
+                                font.pixelSize: DesignTokens.fontBody
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+                        }
+                    }
+                    GlassMenuItem {
+                        text: qsTr("Split Vertically")
+                        onTriggered: panel.setStackedRequested(false)
+                        contentItem: RowLayout {
+                            spacing: DesignTokens.spaceSm
+                            AppIcon {
+                                name: "columns"
+                                size: 15
+                                Layout.alignment: Qt.AlignVCenter
+                                color: DesignTokens.textSecondary
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Split Vertically")
+                                color: DesignTokens.textPrimary
+                                font.pixelSize: DesignTokens.fontBody
+                            }
+                            Text {
+                                visible: !panel.stacked
+                                text: "\u2713"
+                                color: DesignTokens.accent
+                                font.pixelSize: DesignTokens.fontBody
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+                        }
+                    }
                 }
             }
             Button {
