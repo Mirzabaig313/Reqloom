@@ -97,6 +97,9 @@ Dialog {
                 id: nameField
                 Layout.fillWidth: true
                 placeholderText: qsTr("verify")
+                // Flag the field only for a genuinely bad name, not the initial
+                // empty state (which the message below already explains).
+                error: nameField.text.trim().length > 0 && !AppController.isValidName(nameField.text.trim())
                 onTextChanged: dialog.revalidate()
             }
 
@@ -129,13 +132,8 @@ Dialog {
             }
         }
 
-        Label {
-            Layout.fillWidth: true
-            visible: dialog.errorText.length > 0
+        FieldError {
             text: dialog.errorText
-            color: DesignTokens.statusError
-            font.pixelSize: DesignTokens.fontLabel
-            wrapMode: Text.WordWrap
         }
 
         Rectangle {

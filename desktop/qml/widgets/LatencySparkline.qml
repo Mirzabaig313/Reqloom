@@ -66,6 +66,10 @@ ColumnLayout {
             color: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontCaption
             font.family: DesignTokens.fontMono
+            // Tabular figures so the three stats stay column-stable as they update.
+            font.features: ({
+                    "tnum": 1
+                })
         }
         // SLO verdict pill: green when within budget, red when breached.
         // Click to edit; click "+ SLO" (below) to set one when unset.

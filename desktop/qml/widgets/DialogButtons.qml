@@ -10,6 +10,8 @@ Item {
     property string okText: qsTr("OK")
     property bool okEnabled: true
     property bool okPrimary: true
+    // When true the action button is red-filled (delete/remove confirmations).
+    property bool okDestructive: false
     property bool showCancel: true
     signal accepted
     signal rejected
@@ -30,7 +32,9 @@ Item {
         }
         GlassButton {
             text: root.okText
-            primary: root.okPrimary
+            destructive: root.okDestructive
+            // Destructive takes its own fill; don't also mark it primary.
+            primary: root.okPrimary && !root.okDestructive
             enabled: root.okEnabled
             onClicked: root.accepted()
         }

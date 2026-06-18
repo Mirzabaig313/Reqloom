@@ -172,6 +172,18 @@ ApplicationWindow {
     property bool responseCollapsed: false
     /// Editor + response stacked vertically (true) vs side-by-side (false).
     property bool responseStacked: false
+    /// Once the user picks a split orientation we stop auto-managing it, so
+    /// resizing never fights their choice. Until then the layout responds to
+    /// width: side-by-side when wide, stacked when too narrow for two columns.
+    property bool userChoseStack: false
+    readonly property int autoStackBelow: 1040
+
+    onWidthChanged: if (!userChoseStack) {
+        responseStacked = width < autoStackBelow;
+    }
+    Component.onCompleted: if (!userChoseStack) {
+        responseStacked = width < autoStackBelow;
+    }
     /// Keeps the response/timeline pane visible while viewing a replayed run
     /// from history, even when no operation is open.
     property bool historyReplayActive: false
@@ -683,8 +695,14 @@ ApplicationWindow {
                     visible: !window.responseCollapsed
                     stacked: window.responseStacked
                     onCloseRequested: window.responseCollapsed = true
-                    onToggleStackRequested: window.responseStacked = !window.responseStacked
-                    onSetStackedRequested: value => window.responseStacked = value
+                    onToggleStackRequested: {
+                        window.userChoseStack = true;
+                        window.responseStacked = !window.responseStacked;
+                    }
+                    onSetStackedRequested: value => {
+                        window.userChoseStack = true;
+                        window.responseStacked = value;
+                    }
                 }
 
                 Rectangle {
@@ -785,8 +803,53 @@ ApplicationWindow {
         GlassMenuItem {
             text: AppController.environment.length > 0 ? qsTr("Delete “%1”").arg(AppController.environment) : qsTr("Delete")
             enabled: AppController.environments.length > 1 && AppController.environment.length > 0
-            onTriggered: AppController.deleteEnvironment(AppController.environment)
+            onTriggered: envDeleteDialog.openFor(AppController.environment)
         }
+    }
+
+    // Confirm deleting the active environment (destructive, no undo).
+    Dialog {
+        id: envDeleteDialog
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: 400
+        padding: DesignTokens.spaceLg
+        title: qsTr("Delete environment")
+        header: DialogHeader {
+            title: qsTr("Delete environment")
+        }
+
+        property string targetEnv: ""
+
+        function openFor(env) {
+            targetEnv = env;
+            open();
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: qsTr("Delete environment “%1” and its variables? This can't be undone.").arg(envDeleteDialog.targetEnv)
+            color: DesignTokens.textPrimary
+            font.pixelSize: DesignTokens.fontBody
+            wrapMode: Text.WordWrap
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Delete")
+            okDestructive: true
+            onAccepted: envDeleteDialog.accept()
+            onRejected: envDeleteDialog.reject()
+        }
+
+        onAccepted: AppController.deleteEnvironment(targetEnv)
     }
 
     ManageEnvironmentDialog {

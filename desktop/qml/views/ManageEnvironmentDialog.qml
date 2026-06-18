@@ -281,11 +281,9 @@ Dialog {
 
             GlassButton {
                 text: qsTr("Delete")
+                destructive: true
                 enabled: dialog.editingOriginal.length > 0
-                onClicked: {
-                    AppController.deleteEnvironment(dialog.editingOriginal);
-                    dialog.selectEnv(AppController.environments.length > 0 ? AppController.environments[0] : "");
-                }
+                onClicked: envConfirmDelete.open()
             }
             Item {
                 Layout.fillWidth: true
@@ -305,6 +303,47 @@ Dialog {
                 enabled: dialog.nameValid
                 onClicked: dialog.persist(true)
             }
+        }
+    }
+
+    // Confirm deleting the selected environment (destructive, no undo).
+    Dialog {
+        id: envConfirmDelete
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: 400
+        padding: DesignTokens.spaceLg
+        title: qsTr("Delete environment")
+        header: DialogHeader {
+            title: qsTr("Delete environment")
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: qsTr("Delete environment “%1” and its variables? This can't be undone.").arg(dialog.editingOriginal)
+            color: DesignTokens.textPrimary
+            font.pixelSize: DesignTokens.fontBody
+            wrapMode: Text.WordWrap
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Delete")
+            okDestructive: true
+            onAccepted: envConfirmDelete.accept()
+            onRejected: envConfirmDelete.reject()
+        }
+
+        onAccepted: {
+            AppController.deleteEnvironment(dialog.editingOriginal);
+            dialog.selectEnv(AppController.environments.length > 0 ? AppController.environments[0] : "");
         }
     }
 }

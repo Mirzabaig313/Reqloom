@@ -85,7 +85,30 @@ ColumnLayout {
             onClicked: AppController.closeOperation()
         }
         Label {
-            text: AppController.selectedModule + " /"
+            id: moduleCrumb
+            text: AppController.selectedModule
+            color: moduleCrumbHover.hovered ? DesignTokens.accent : DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontBody
+            font.underline: moduleCrumbHover.hovered
+            Behavior on color {
+                ColorMotion {}
+            }
+            // Clickable breadcrumb segment: jump back to this module's endpoint
+            // list (same as the back arrow), so the trail is navigable, not decor.
+            HoverHandler {
+                id: moduleCrumbHover
+                cursorShape: Qt.PointingHandCursor
+            }
+            TapHandler {
+                onTapped: AppController.closeOperation()
+            }
+            GlassToolTip {
+                active: moduleCrumbHover.hovered
+                text: qsTr("Back to %1").arg(AppController.selectedModule)
+            }
+        }
+        Label {
+            text: "/"
             color: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontBody
         }

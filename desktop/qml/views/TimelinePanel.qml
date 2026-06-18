@@ -226,27 +226,11 @@ Rectangle {
             }
 
             // Empty state.
-            ColumnLayout {
-                anchors.centerIn: parent
-                width: parent.width - DesignTokens.spaceXl * 2
+            EmptyState {
                 visible: timelineList.count === 0
-                spacing: DesignTokens.spaceXs
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("No run yet")
-                    color: DesignTokens.textPrimary
-                    font.pixelSize: DesignTokens.fontBody
-                    font.weight: DesignTokens.weightMedium
-                }
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    text: qsTr("Send or Dry Run an endpoint to watch each step, request, response, and extraction stream in here.")
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontCaption
-                    wrapMode: Text.WordWrap
-                }
+                iconName: "zap"
+                heading: qsTr("No run yet")
+                body: qsTr("Send or Dry Run an endpoint to watch each step, request, response, and extraction stream in here.")
             }
         }
     }

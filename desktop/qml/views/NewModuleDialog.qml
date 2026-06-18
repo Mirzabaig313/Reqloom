@@ -73,6 +73,7 @@ Dialog {
                 id: nameField
                 Layout.fillWidth: true
                 placeholderText: qsTr("admin_organization")
+                error: dialog.errorText.length > 0
                 onTextChanged: dialog.revalidate()
             }
 
@@ -94,13 +95,8 @@ Dialog {
             font.pixelSize: DesignTokens.fontLabel
             wrapMode: Text.WordWrap
         }
-        Label {
-            Layout.fillWidth: true
-            visible: dialog.errorText.length > 0
+        FieldError {
             text: dialog.errorText
-            color: DesignTokens.methodDelete
-            font.pixelSize: DesignTokens.fontLabel
-            wrapMode: Text.WordWrap
         }
     }
 
