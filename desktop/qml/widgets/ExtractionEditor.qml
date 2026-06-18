@@ -50,14 +50,14 @@ ColumnLayout {
         spacing: DesignTokens.spaceXs
         Label {
             Layout.preferredWidth: 150
-            text: qsTr("Variable name")
+            text: qsTr("Save as")
             color: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontCaption
             font.weight: DesignTokens.weightSemiBold
         }
         Label {
             Layout.fillWidth: true
-            text: qsTr("Body path / Header")
+            text: qsTr("Extract from response")
             color: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontCaption
             font.weight: DesignTokens.weightSemiBold
