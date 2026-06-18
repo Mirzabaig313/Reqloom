@@ -53,6 +53,26 @@ namespace {
 
 constexpr double kMinRatio = 4.5;
 
+// Body/caption secondary text must clear AA (4.5:1) on every surface it can sit
+// on: the base canvas, raised panels, and sunken inputs. textPrimary is the
+// high-emphasis pair (trivially clears); textSecondary is the at-risk one used
+// for paths, captions, subtitles, and metadata across every panel.
+void checkTextContrast(Appearance appearance, const char* label) {
+    const Theme theme = Theme::resolve(appearance);
+    const Palette& p = theme.palette();
+    const std::array<std::pair<QColor, const char*>, 3> surfaces{{
+        {p.surfaceBase, "surfaceBase"},
+        {p.surfaceRaised, "surfaceRaised"},
+        {p.surfaceSunken, "surfaceSunken"},
+    }};
+    for (const auto& [surface, sname] : surfaces) {
+        const double sec = contrastRatio(p.textSecondary, surface);
+        EXPECT_GE(sec, kMinRatio) << label << " textSecondary on " << sname << " = " << sec << ":1";
+        const double pri = contrastRatio(p.textPrimary, surface);
+        EXPECT_GE(pri, kMinRatio) << label << " textPrimary on " << sname << " = " << pri << ":1";
+    }
+}
+
 void checkTheme(Appearance appearance, const char* label) {
     const Theme theme = Theme::resolve(appearance);
     const Palette& p = theme.palette();
@@ -95,6 +115,14 @@ TEST(Contrast, light_theme_badges_meet_aa_floor) {
 
 TEST(Contrast, dark_theme_badges_meet_aa_floor) {
     checkTheme(Appearance::Dark, "dark");
+}
+
+TEST(Contrast, light_theme_text_meets_aa_floor) {
+    checkTextContrast(Appearance::Light, "light");
+}
+
+TEST(Contrast, dark_theme_text_meets_aa_floor) {
+    checkTextContrast(Appearance::Dark, "dark");
 }
 
 // Direct solver checks: oklchForContrast must reach the requested ratio against

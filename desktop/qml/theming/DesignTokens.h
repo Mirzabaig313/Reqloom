@@ -97,6 +97,7 @@ class DesignTokens : public QObject {
     Q_PROPERTY(qreal motionEpsilon READ motionEpsilon CONSTANT)
     Q_PROPERTY(int motionFast READ motionFast CONSTANT)
     Q_PROPERTY(int motionMedium READ motionMedium CONSTANT)
+    Q_PROPERTY(qreal phi READ phi CONSTANT)
     // Soft elevation shadow colour (translucent), appearance-aware.
     Q_PROPERTY(QColor shadow READ shadow NOTIFY tokensChanged)
     // Glassmorphism: translucent panel fill + highlight border, the iridescent
@@ -183,6 +184,10 @@ public:
     [[nodiscard]] qreal motionEpsilon() const { return 0.25; }
     [[nodiscard]] int motionFast() const { return 120; }
     [[nodiscard]] int motionMedium() const { return 200; }
+    // Golden ratio (φ). Used for true proportions the eye compares side by
+    // side — e.g. the editor:response pane split — NOT the spacing scale,
+    // which stays on the 4px grid for pixel-crisp rendering.
+    [[nodiscard]] qreal phi() const { return 1.6180339887; }
     [[nodiscard]] QColor shadow() const;
     [[nodiscard]] QColor glassFill() const;
     [[nodiscard]] QColor glassBorder() const;

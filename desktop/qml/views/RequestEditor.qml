@@ -439,12 +439,8 @@ ColumnLayout {
                 size: 14
                 color: DesignTokens.textSecondary
             }
-            Label {
+            SectionLabel {
                 text: qsTr("EXECUTION CHAIN")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontCaption
-                font.weight: DesignTokens.weightSemiBold
-                font.letterSpacing: 1.2
             }
             Label {
                 visible: chainSection.nodeCount > 0

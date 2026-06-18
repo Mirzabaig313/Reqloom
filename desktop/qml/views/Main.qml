@@ -656,7 +656,7 @@ ApplicationWindow {
                 // Request editor.
                 RequestEditor {
                     anchors.fill: parent
-                    anchors.margins: DesignTokens.spaceMd
+                    anchors.margins: DesignTokens.spaceLg
                     visible: AppController.hasOperation
                 }
             }
@@ -664,7 +664,11 @@ ApplicationWindow {
             // Right: Response + Timeline (or collapsed rail).
             Rectangle {
                 id: responsePane
-                SplitView.preferredWidth: window.responseCollapsed ? 32 : 400
+                // Golden split: at the default 1280 window the centre area
+                // (window − explorer) divides editor:response = φ:1, so
+                // response ≈ (1280−280)/(φ+1). A constant, not a live binding,
+                // so manual drags and window resizes don't re-snap it.
+                SplitView.preferredWidth: window.responseCollapsed ? 32 : Math.round((1280 - 280) / (DesignTokens.phi + 1))
                 SplitView.minimumWidth: window.responseCollapsed ? 32 : 200
                 SplitView.maximumWidth: window.responseCollapsed ? 32 : 700
                 SplitView.preferredHeight: window.responseCollapsed ? 32 : 320
