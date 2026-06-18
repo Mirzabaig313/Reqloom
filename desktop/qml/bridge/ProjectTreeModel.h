@@ -38,6 +38,16 @@ public:
         MethodRole,       ///< QString: HTTP verb for operation rows
         ExampleNameRole,  ///< QString: saved-example name
         TooltipRole,      ///< QString: full text shown on hover (names truncate)
+        CountRole,        ///< int: child count for folder rows (0 for leaves)
+        StatusRole,       ///< int: HTTP status of a saved-example row (0 otherwise)
+        StatusTokenRole,  ///< QString: success/warning/error token for the status badge
+    };
+
+    /// One saved-example child row: its display name + the HTTP status it
+    /// captured (for the status badge in the explorer).
+    struct ExampleRow {
+        QString name;
+        int status{0};
     };
 
     explicit ProjectTreeModel(QObject* parent = nullptr);
@@ -67,7 +77,7 @@ public:
     /// Replace the saved-example child rows under every operation. Keyed by
     /// fully-qualified operation id. Triggers a rebuild so example rows appear
     /// beneath their operation. (Fed by the WS-C examples bridge.)
-    void setSavedExamples(const QMap<QString, QStringList>& examplesByOperation);
+    void setSavedExamples(const QMap<QString, QList<ExampleRow>>& examplesByOperation);
 
 private:
     enum class Kind : std::uint8_t {
@@ -87,6 +97,7 @@ private:
         QString method;
         QString exampleName;
         QString tooltip;
+        int exampleStatus{0};
         int rowInParent{0};
         Node* parent{nullptr};
         std::vector<std::unique_ptr<Node>> children;
@@ -98,7 +109,7 @@ private:
 
     std::unique_ptr<Node> root_;
     std::shared_ptr<const engine::Project> project_;
-    QMap<QString, QStringList> examples_;
+    QMap<QString, QList<ExampleRow>> examples_;
 };
 
 }  // namespace reqloom::desktop::qml

@@ -124,6 +124,31 @@ QVariant ProjectTreeModel::data(const QModelIndex& index, int role) const {
             return node->exampleName;
         case TooltipRole:
             return node->tooltip.isEmpty() ? node->name : node->tooltip;
+        case CountRole:
+            // Child count only for folder rows; leaves and operations show none.
+            switch (node->kind) {
+                case Kind::ActorGroup:
+                case Kind::ResourceGroup:
+                case Kind::Resource:
+                    return static_cast<int>(node->children.size());
+                default:
+                    return 0;
+            }
+        case StatusRole:
+            return node->exampleStatus;
+        case StatusTokenRole: {
+            const int s = node->exampleStatus;
+            if (s >= 200 && s < 300) {
+                return QStringLiteral("success");
+            }
+            if (s >= 300 && s < 400) {
+                return QStringLiteral("warning");
+            }
+            if (s >= 400) {
+                return QStringLiteral("error");
+            }
+            return QString{};
+        }
         default:
             return {};
     }
@@ -138,6 +163,9 @@ QHash<int, QByteArray> ProjectTreeModel::roleNames() const {
         {MethodRole, "method"},
         {ExampleNameRole, "exampleName"},
         {TooltipRole, "tooltip"},
+        {CountRole, "count"},
+        {StatusRole, "status"},
+        {StatusTokenRole, "statusToken"},
     };
 }
 
@@ -151,7 +179,8 @@ void ProjectTreeModel::clear() {
     rebuild();
 }
 
-void ProjectTreeModel::setSavedExamples(const QMap<QString, QStringList>& examplesByOperation) {
+void ProjectTreeModel::setSavedExamples(
+    const QMap<QString, QList<ExampleRow>>& examplesByOperation) {
     examples_ = examplesByOperation;
     rebuild();
 }
@@ -188,11 +217,12 @@ void ProjectTreeModel::rebuild() {
                         .arg(opId, opNode->method, QString::fromStdString(op.pathTemplate));
                 const auto exIt = examples_.constFind(opId);
                 if (exIt != examples_.constEnd()) {
-                    for (const QString& exampleName : exIt.value()) {
+                    for (const ExampleRow& example : exIt.value()) {
                         Node* exNode = addChild(opNode, Kind::Example);
-                        exNode->name = exampleName;
-                        exNode->exampleName = exampleName;
+                        exNode->name = example.name;
+                        exNode->exampleName = example.name;
                         exNode->operationId = opId;
+                        exNode->exampleStatus = example.status;
                         exNode->tooltip = QStringLiteral("Saved example — click to load");
                     }
                 }
