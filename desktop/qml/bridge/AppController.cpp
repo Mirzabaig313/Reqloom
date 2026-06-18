@@ -2045,13 +2045,13 @@ void AppController::refreshExamples() {
     // The explorer's example child rows: opId → ordered example names. This
     // resets the tree model, so only call it on load + after example mutations
     // — never on plain selection (which would collapse the TreeView).
-    QMap<QString, QStringList> byOperation;
+    QMap<QString, QList<ProjectTreeModel::ExampleRow>> byOperation;
     for (const QString& id : exampleStore_.operationIds()) {
-        QStringList names;
+        QList<ProjectTreeModel::ExampleRow> rows;
         for (const SavedResponse& r : exampleStore_.list(id)) {
-            names.append(r.name);
+            rows.append(ProjectTreeModel::ExampleRow{r.name, r.status});
         }
-        byOperation.insert(id, names);
+        byOperation.insert(id, rows);
     }
     tree_.setSavedExamples(byOperation);
 }

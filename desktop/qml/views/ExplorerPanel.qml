@@ -137,9 +137,12 @@ Rectangle {
                 required property string method
                 required property string exampleName
                 required property string tooltip
+                required property int count
+                required property int status
+                required property string statusToken
 
-                implicitHeight: 30
-                indentation: 14
+                implicitHeight: 34
+                indentation: 16
 
                 readonly property bool isOperation: kind === "operation"
                 readonly property bool isExample: kind === "example"
@@ -147,6 +150,9 @@ Rectangle {
                 readonly property bool isResourcesRoot: kind === "resourceGroup"
                 readonly property bool isActor: kind === "actor"
                 readonly property bool isActorsRoot: kind === "actorGroup"
+                // Live run-status token for this operation (running/success/error/…),
+                // for the trailing status dot. Empty when the op hasn't run.
+                readonly property string opRunToken: del.isOperation ? (AppController.chainStatus[del.operationId] || "") : ""
 
                 onCurrentChanged: {
                     if (del.current) {
@@ -155,27 +161,47 @@ Rectangle {
                 }
 
                 background: Rectangle {
+                    anchors.fill: parent
+                    anchors.topMargin: 1
+                    anchors.bottomMargin: 1
                     radius: DesignTokens.radiusSm
                     color: del.current ? DesignTokens.accentMuted : del.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
+                    border.width: del.current ? 1 : 0
+                    border.color: del.current ? DesignTokens.accent : "transparent"
                     Behavior on color {
                         ColorMotion {}
                     }
                 }
 
+                // The default chevron slot is removed (width 0); the chevron is
+                // drawn as the first item of contentItem so it always sits
+                // directly left of the folder/method icon and indents with it.
                 indicator: Item {
-                    implicitWidth: 18
+                    implicitWidth: 0
                     implicitHeight: del.height
-                    AppIcon {
-                        anchors.centerIn: parent
-                        visible: del.hasChildren
-                        name: del.expanded ? "chevron-down" : "chevron-right"
-                        size: 14
-                        color: del.current ? DesignTokens.accent : DesignTokens.textSecondary
-                    }
                 }
 
                 contentItem: RowLayout {
                     spacing: DesignTokens.spaceXs
+
+                    // Expand/collapse chevron, kept in a fixed-width slot so
+                    // leaf rows (examples) still align under their parents.
+                    Item {
+                        Layout.preferredWidth: 16
+                        Layout.preferredHeight: 16
+                        Layout.alignment: Qt.AlignVCenter
+                        AppIcon {
+                            anchors.centerIn: parent
+                            visible: del.hasChildren
+                            name: del.expanded ? "chevron-down" : "chevron-right"
+                            size: 13
+                            color: del.current ? DesignTokens.accent : DesignTokens.textSecondary
+                        }
+                        TapHandler {
+                            enabled: del.hasChildren
+                            onTapped: tree.toggleExpanded(del.row)
+                        }
+                    }
 
                     AppIcon {
                         visible: !del.isOperation
@@ -183,6 +209,7 @@ Rectangle {
                         size: 15
                         opacity: 0.85
                         name: del.kind === "example" ? "zap" : (del.expanded ? "folder-open" : "folder")
+                        color: del.isExample ? DesignTokens.accent : DesignTokens.textSecondary
                     }
                     MethodBadge {
                         visible: del.isOperation
@@ -193,13 +220,13 @@ Rectangle {
                         minWidth: 58
                     }
                     Label {
-                        Layout.fillWidth: true
                         Layout.alignment: Qt.AlignVCenter
                         text: del.name
                         color: del.isExample ? DesignTokens.textSecondary : DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontBody
                         font.weight: del.current ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                         elide: Text.ElideRight
+                        Layout.maximumWidth: implicitWidth
                         HoverHandler {
                             id: hoverHandler
                         }
@@ -207,6 +234,56 @@ Rectangle {
                             active: hoverHandler.hovered && del.tooltip.length > 0
                             text: del.tooltip
                         }
+                    }
+                    // Child-count pill on folder rows (Actors 5, Resources 12…).
+                    Rectangle {
+                        visible: del.count > 0 && !del.isOperation && !del.isExample
+                        Layout.alignment: Qt.AlignVCenter
+                        implicitHeight: 18
+                        implicitWidth: countLabel.implicitWidth + DesignTokens.spaceSm * 2
+                        radius: DesignTokens.radiusSm
+                        color: DesignTokens.surfaceSunken
+                        Label {
+                            id: countLabel
+                            anchors.centerIn: parent
+                            text: del.count
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.weight: DesignTokens.weightMedium
+                        }
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    // Saved-example HTTP status pill (200 / 4xx …).
+                    Rectangle {
+                        visible: del.isExample && del.status > 0
+                        Layout.alignment: Qt.AlignVCenter
+                        implicitHeight: 18
+                        implicitWidth: exStatusLabel.implicitWidth + DesignTokens.spaceSm * 2
+                        radius: DesignTokens.radiusSm
+                        readonly property color hue: del.statusToken.length > 0 ? DesignTokens.statusColor(del.statusToken) : DesignTokens.textSecondary
+                        color: Qt.rgba(hue.r, hue.g, hue.b, 0.16)
+                        Label {
+                            id: exStatusLabel
+                            anchors.centerIn: parent
+                            text: del.status
+                            color: parent.hue
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.weight: DesignTokens.weightSemiBold
+                            font.family: DesignTokens.fontMono
+                        }
+                    }
+                    // Operation status dot: live run status when available, else
+                    // a subtle marker that the endpoint has captured responses.
+                    Rectangle {
+                        visible: del.isOperation && (del.opRunToken.length > 0 || del.hasChildren)
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.rightMargin: DesignTokens.spaceSm
+                        implicitWidth: 8
+                        implicitHeight: 8
+                        radius: 4
+                        color: del.opRunToken.length > 0 ? DesignTokens.statusColor(del.opRunToken) : DesignTokens.statusSuccess
                     }
                 }
 
