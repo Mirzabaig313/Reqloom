@@ -83,7 +83,7 @@ struct RunOptions {
 
 /// Upper bound on a captured response body (5 MiB). Larger bodies are
 /// truncated to this many bytes on the `ResponseReceived` event.
-inline constexpr std::size_t kMaxCapturedBodyBytes = 5U * 1024U * 1024U;
+inline constexpr std::size_t kMaxCapturedBodyBytes = std::size_t{5} * 1024 * 1024;
 
 /// One past run, as surfaced to a history view. A public value type
 /// mirroring the engine-internal history row, so the desktop/CLI can
