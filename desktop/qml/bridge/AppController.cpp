@@ -1087,9 +1087,9 @@ QVariantMap AppController::chainGraph() const {
         QSet<QString> out;
         const auto scan = [&out](const std::string& text) {
             const QString s = QString::fromStdString(text);
-            int i = 0;
+            qsizetype i = 0;
             while ((i = s.indexOf(QStringLiteral("{{"), i)) >= 0) {
-                const int j = s.indexOf(QStringLiteral("}}"), i + 2);
+                const qsizetype j = s.indexOf(QStringLiteral("}}"), i + 2);
                 if (j < 0) {
                     break;
                 }
@@ -1267,7 +1267,7 @@ QVariantMap AppController::chainGraph() const {
 
     QVariantList nodeList;
     for (int i = 0; i < ids.size(); ++i) {
-        const QString id = ids.at(i);
+        const QString& id = ids.at(i);
         const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
         QVariantMap node;
         node.insert(QStringLiteral("operationId"), id);
