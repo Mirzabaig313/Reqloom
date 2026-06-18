@@ -15,6 +15,8 @@ qt_add_executable(reqloom-desktop
     qml/bridge/SecretsController.cpp
     qml/bridge/ResourceListModel.cpp
     qml/bridge/ResourceListModel.h
+    qml/bridge/ResponseBodyModel.cpp
+    qml/bridge/ResponseBodyModel.h
     qml/bridge/OperationListModel.cpp
     qml/bridge/OperationListModel.h
     qml/bridge/KeyValueModel.cpp
