@@ -116,7 +116,10 @@ Rectangle {
                 // (masked headers / response headers / raw error code). Those
                 // rows get a chevron + click-to-open.
                 readonly property bool expandable: value.length > 0
-                property bool expanded: false
+                // Auto-open a failed step (or any error row carrying detail) so
+                // the failure reason shows without a click; everything else
+                // starts collapsed. Tapping the row still toggles it freely.
+                property bool expanded: expandable && statusToken === "error"
 
                 // Label the revealed payload by what kind of row owns it.
                 readonly property string valueLabel: statusToken === "error" ? qsTr("Failure details") : kind === "request" ? qsTr("Request") : kind === "response" ? qsTr("Response") : kind === "extraction" ? qsTr("Source") : qsTr("Details")
