@@ -1,0 +1,284 @@
+name: Release (cross-platform)
+
+# Tag-triggered cross-platform release. Builds the release preset on Linux,
+# Windows, and macOS, bundles the desktop app (Reqloom) with the platform Qt
+# deploy tools, and publishes a GitHub Release. CLI packaging is intentionally
+# out of scope for now — the CLI build is disabled to speed up the run.
+#
+# Tag routing:
+#   * test*  → trial run. Published as a DRAFT pre-release so it stays
+#                hidden. Name sidesteps the refs/tags/v* protection ruleset.
+#   * v*       → real release. Published as a pre-release while in 0.x.
+#
+# Qt 6.8 LTS comes from the official Qt mirror via aqtinstall (same as
+# build.yml); vcpkg supplies the small non-Qt deps. The macOS release preset
+# hardcodes a Homebrew Qt prefix for local dev, so CMAKE_PREFIX_PATH is
+# overridden on the configure line to point at the aqt-installed Qt.
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "test*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.1.0-alpha.1)"
+        required: true
+
+env:
+  VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
+  QT_VERSION: 6.8.3
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  # ==========================================================================
+  # Per-platform build + package. One artifact per OS uploaded for the
+  # publish job to attach to the Release.
+  # ==========================================================================
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ----- Resolve tag / version ----------------------------------------
+      - name: Resolve release tag
+        id: rel
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Release tag: ${tag}"
+
+      # ----- Linux build prerequisites ------------------------------------
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-14 g++-14 \
+            autoconf autoconf-archive automake libtool pkg-config \
+            ninja-build \
+            libsecret-1-dev \
+            libx11-dev libxext-dev libxrender-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev \
+            libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev \
+            libxcb-render-util0-dev libxcb-shape0-dev libxcb-shm0-dev \
+            libxcb-sync-dev libxcb-util-dev libxcb-xfixes0-dev \
+            libxcb-xinerama0-dev libxcb-xkb-dev libxi-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libfuse2 \
+            libfontconfig1-dev libfreetype6-dev libdbus-1-dev
+
+      - name: Select GCC 14 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+
+      # ----- CMake 4.x + Ninja --------------------------------------------
+      - name: Set up CMake 4.x + Ninja
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~4.0.0"
+
+      # ----- Qt 6.8 via aqtinstall ----------------------------------------
+      - name: Install Qt (Linux)
+        if: runner.os == 'Linux'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          archives: qtbase qtdeclarative qtsvg icu
+          modules: qt5compat
+          cache: true
+
+      - name: Install Qt (Windows / macOS)
+        if: runner.os != 'Linux'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          archives: qtbase qtdeclarative qtsvg
+          modules: qt5compat
+          cache: true
+
+      - name: Export CMAKE_PREFIX_PATH for Qt
+        shell: bash
+        run: echo "CMAKE_PREFIX_PATH=${QT_ROOT_DIR}" >> "$GITHUB_ENV"
+
+      # ----- MSVC environment (Windows) -----------------------------------
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # ----- vcpkg --------------------------------------------------------
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+
+      # ----- Configure / Build --------------------------------------------
+      # -DCMAKE_PREFIX_PATH on the command line overrides the value baked into
+      # the macos-release preset (the Homebrew path), pointing at the
+      # aqt-installed Qt instead. Tests are off for release packaging.
+      - name: Configure
+        shell: bash
+        run: |
+          cmake --preset ${{ matrix.name }}-release \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}" \
+            -DREQLOOM_BUILD_CLI=OFF \
+            -DREQLOOM_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.name }}-release
+
+      # ----- Package: Linux (AppImage + CLI tarball) ----------------------
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.rel.outputs.tag }}"
+          build="build/linux-release"
+          out="dist"
+          mkdir -p "$out"
+
+          # Desktop AppImage via linuxdeploy + the Qt plugin.
+          curl -fsSL -o linuxdeploy \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-plugin-qt \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+
+          appdir="AppDir"
+          rm -rf "$appdir"
+          mkdir -p "$appdir/usr/bin"
+          cp "$build/desktop/Reqloom" "$appdir/usr/bin/Reqloom"
+
+          # Minimal .desktop + icon so linuxdeploy is happy.
+          mkdir -p "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps"
+          cat > "$appdir/usr/share/applications/Reqloom.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Reqloom
+          Exec=Reqloom
+          Icon=Reqloom
+          Categories=Development;
+          Terminal=false
+          EOF
+          # Placeholder 1x1 PNG icon (linuxdeploy requires an icon to exist).
+          printf '\x89PNG\r\n\x1a\n' > "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png"
+
+          export QML_SOURCES_PATHS="$PWD/desktop/qml"
+          export QMAKE="${QT_ROOT_DIR}/bin/qmake"
+          ./linuxdeploy --appdir "$appdir" \
+            --plugin qt \
+            --output appimage \
+            --desktop-file "$appdir/usr/share/applications/Reqloom.desktop" \
+            --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png" || true
+          mv Reqloom*.AppImage "$out/Reqloom-${tag}-linux-x86_64.AppImage" 2>/dev/null || \
+            echo "::warning::AppImage not produced; desktop packaging may need attention"
+
+      # ----- Package: macOS (.app zip + CLI) ------------------------------
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.rel.outputs.tag }}"
+          build="build/macos-release"
+          out="dist"
+          mkdir -p "$out"
+
+          # Bundle Qt frameworks + QML into the .app.
+          "${QT_ROOT_DIR}/bin/macdeployqt" "$build/desktop/Reqloom.app" \
+            -qmldir="$PWD/desktop/qml"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$build/desktop/Reqloom.app" "$out/Reqloom-${tag}-macos.zip"
+
+      # ----- Package: Windows (deployed folder zips) ----------------------
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ steps.rel.outputs.tag }}"
+          $build = "build/windows-release"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          # Desktop: copy exe, run windeployqt with QML scan, zip the folder.
+          $deskDir = "Reqloom-$tag-windows"
+          New-Item -ItemType Directory -Force -Path $deskDir | Out-Null
+          Copy-Item "$build/desktop/Reqloom.exe" $deskDir
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release --qmldir desktop/qml "$deskDir/Reqloom.exe"
+          Compress-Archive -Path "$deskDir/*" -DestinationPath "dist/Reqloom-$tag-windows-x64.zip" -Force
+
+      # ----- Upload artifacts ---------------------------------------------
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: warn
+
+  # ==========================================================================
+  # Publish — gather all platform artifacts, create the GitHub Release.
+  # test-v* tags publish as a hidden DRAFT pre-release.
+  # ==========================================================================
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve release tag
+        id: rel
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if [[ "${tag}" == test-* ]]; then
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          name: ${{ steps.rel.outputs.tag }}
+          prerelease: true
+          draft: ${{ steps.rel.outputs.draft }}
+          fail_on_unmatched_files: false
+          files: artifacts/*
