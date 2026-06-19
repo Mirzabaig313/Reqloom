@@ -4,12 +4,17 @@
 #include "../theming/Theme.h"
 #include "../widgets/CodeEditor.h"
 
+#include <reqloom/engine/Hook.h>
+
 #include <QtGui/QColor>
 #include <QtWidgets/QDialogButtonBox>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QVBoxLayout>
 #include <QtWidgets/QWidget>
+
+#include <string>
 
 namespace reqloom::desktop {
 
@@ -100,13 +105,66 @@ HookEditorDialog::HookEditorDialog(const QString& operationId,
     postEditor_ = buildTab(tabs, tr("Post-response"), postScript, postRef, palette);
     layout->addWidget(tabs, 1);
 
+    // Status line for validation results (hidden until the author validates).
+    okColor_ = palette.statusSuccess.name();
+    errorColor_ = palette.statusError.name();
+    status_ = new QLabel(this);
+    status_->setWordWrap(true);
+    status_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    status_->hide();
+    layout->addWidget(status_);
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
+    auto* validateButton = buttons->addButton(tr("Validate"), QDialogButtonBox::ActionRole);
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(validateButton, &QPushButton::clicked, this, &HookEditorDialog::validateHooks);
 }
 
 HookEditorDialog::~HookEditorDialog() = default;
+
+void HookEditorDialog::validateHooks() {
+    namespace ce = reqloom::engine;
+
+    bool hadError = false;
+    QStringList lines;
+
+    // Dry-run one phase's script (skipping an empty one) against a minimal
+    // sample context — enough to surface syntax and runtime errors.
+    const auto check = [&](const QString& label, ce::HookPhase phase, const QString& script) {
+        const QString trimmed = script.trimmed();
+        if (trimmed.isEmpty()) {
+            return;
+        }
+        ce::HookDryRunInput input;
+        input.phase = phase;
+        input.script = trimmed.toStdString();
+        input.request.method = ce::HttpMethod::Get;
+        input.request.url = "https://example.test/path";
+        if (phase == ce::HookPhase::PostResponse) {
+            input.response = ce::HookSampleResponse{200, {}, std::string{}};
+        }
+        const auto outcome = ce::dryRunHook(input);
+        if (outcome) {
+            lines.append(tr("%1: OK").arg(label));
+        } else {
+            hadError = true;
+            lines.append(tr("%1: %2").arg(label, QString::fromStdString(outcome.error().detail)));
+        }
+    };
+
+    check(tr("Pre-request"), ce::HookPhase::PreRequest, preEditor_->toPlainText());
+    check(tr("Post-response"), ce::HookPhase::PostResponse, postEditor_->toPlainText());
+
+    if (lines.isEmpty()) {
+        lines.append(tr("No hook scripts to validate."));
+    }
+    status_->setStyleSheet(
+        QStringLiteral("color: %1; padding: 4px 2px;").arg(hadError ? errorColor_ : okColor_));
+    status_->setText(lines.join(QLatin1Char('\n')));
+    status_->show();
+}
 
 QString HookEditorDialog::preScript() const {
     return preEditor_->toPlainText();
