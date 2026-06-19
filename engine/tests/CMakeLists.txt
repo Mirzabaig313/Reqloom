@@ -15,6 +15,7 @@ add_executable(reqloom-engine-unit-tests
     unit/PredicateEvaluatorTest.cpp
     unit/PredicatePublicTest.cpp
     unit/HookDryRunTest.cpp
+    unit/FormBodyPreviewTest.cpp
     unit/SchemaParserPollUntilTest.cpp
     unit/VerifierTest.cpp
     unit/SchemaWriterTest.cpp

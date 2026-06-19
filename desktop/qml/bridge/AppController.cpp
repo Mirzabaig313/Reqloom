@@ -10,6 +10,7 @@
 #include "ThemeController.h"
 
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/FormBody.h>
 #include <reqloom/engine/Predicate.h>
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -1135,6 +1136,49 @@ QVariantMap AppController::evaluateAssertion(const QString& expression) const {
     }
     out.insert(QStringLiteral("valid"), true);
     out.insert(QStringLiteral("passed"), *result);
+    return out;
+}
+
+QVariantMap AppController::previewFormBody() const {
+    QVariantMap out;
+
+    std::map<std::string, std::string> fields;
+    for (const auto& [key, value] : editForm_.pairs()) {
+        const QString trimmedKey = key.trimmed();
+        if (!trimmedKey.isEmpty()) {
+            fields[trimmedKey.toStdString()] = value.toStdString();
+        }
+    }
+    std::map<std::string, std::string> headers;
+    for (const auto& [key, value] : editHeaders_.pairs()) {
+        const QString trimmedKey = key.trimmed();
+        if (!trimmedKey.isEmpty()) {
+            headers[trimmedKey.toStdString()] = value.toStdString();
+        }
+    }
+
+    auto preview = engine::previewFormBody(fields, headers);
+    if (!preview) {
+        out.insert(QStringLiteral("valid"), false);
+        out.insert(QStringLiteral("error"), QString::fromStdString(preview.error().detail));
+        return out;
+    }
+
+    out.insert(QStringLiteral("valid"), true);
+    out.insert(QStringLiteral("error"), QString{});
+    out.insert(QStringLiteral("multipart"), preview->kind == engine::FormBodyKind::Multipart);
+    out.insert(QStringLiteral("contentType"), QString::fromStdString(preview->contentType));
+    out.insert(QStringLiteral("totalBytes"), static_cast<qulonglong>(preview->totalBytes));
+    QVariantList parts;
+    for (const auto& part : preview->parts) {
+        QVariantMap entry;
+        entry.insert(QStringLiteral("name"), QString::fromStdString(part.name));
+        entry.insert(QStringLiteral("isFile"), part.isFile);
+        entry.insert(QStringLiteral("filename"), QString::fromStdString(part.filename));
+        entry.insert(QStringLiteral("sizeBytes"), static_cast<qulonglong>(part.sizeBytes));
+        parts.append(entry);
+    }
+    out.insert(QStringLiteral("parts"), parts);
     return out;
 }
 
