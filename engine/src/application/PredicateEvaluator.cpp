@@ -1,6 +1,8 @@
 // PredicateEvaluator — recursive-descent parser with total evaluation (returns False on failure).
 #include "PredicateEvaluator.h"
 
+#include <reqloom/engine/Predicate.h>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -853,6 +855,19 @@ std::expected<PredicateValue, ReqloomError> PredicateEvaluator::eval(std::string
         return std::unexpected(p.error());
     }
     return evaluate(*p, jsonBody, statusCode);
+}
+
+// ─── Public free function (reqloom/engine/Predicate.h) ───────────────────────
+
+std::expected<bool, ReqloomError> evaluatePredicate(std::string_view expression,
+                                                    std::string_view responseBody,
+                                                    int statusCode) {
+    const PredicateEvaluator evaluator;
+    auto result = evaluator.eval(expression, responseBody, statusCode);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    return *result == PredicateValue::True;
 }
 
 }  // namespace reqloom::engine

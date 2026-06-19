@@ -13,6 +13,7 @@ add_executable(reqloom-engine-unit-tests
     unit/SmokeTest.cpp
     unit/VariableResolverTest.cpp
     unit/PredicateEvaluatorTest.cpp
+    unit/PredicatePublicTest.cpp
     unit/SchemaParserPollUntilTest.cpp
     unit/VerifierTest.cpp
     unit/SchemaWriterTest.cpp

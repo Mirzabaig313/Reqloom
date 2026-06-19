@@ -449,6 +449,14 @@ public:
     /// and returns true on success.
     Q_INVOKABLE bool addExtraction(const QString& variableName, const QString& sourcePath);
 
+    /// Evaluate an assertion / predicate `expression` against the current
+    /// response (body + status) using the engine's predicate grammar, for a
+    /// live "test expression" badge. Returns a map {valid, passed, error}:
+    /// `valid==false` with a non-empty `error` means the expression is
+    /// malformed; otherwise `passed` is the boolean outcome. Evaluates against
+    /// the latest response — gate the UI on `hasResponse`.
+    Q_INVOKABLE [[nodiscard]] QVariantMap evaluateAssertion(const QString& expression) const;
+
     /// Open a project directory (the folder containing reqloom.yaml).
     Q_INVOKABLE void openProject(const QUrl& directory);
 

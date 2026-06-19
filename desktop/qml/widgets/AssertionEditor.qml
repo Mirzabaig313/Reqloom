@@ -56,6 +56,14 @@ ColumnLayout {
             font.pixelSize: DesignTokens.fontCaption
             font.weight: DesignTokens.weightSemiBold
         }
+        Label {
+            Layout.preferredWidth: 64
+            text: qsTr("Live")
+            horizontalAlignment: Text.AlignHCenter
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontCaption
+            font.weight: DesignTokens.weightSemiBold
+        }
         Item {
             Layout.preferredWidth: 28
         }
@@ -83,13 +91,51 @@ ColumnLayout {
                 text: row.key
                 placeholderText: qsTr("$.status_code == 200")
                 font.family: DesignTokens.fontMono
-                onTextEdited: root.assertModel.setKey(row.index, text)
+                onTextEdited: {
+                    root.assertModel.setKey(row.index, text);
+                    badge.refresh();
+                }
             }
             Field {
                 Layout.preferredWidth: 150
                 text: row.value
                 placeholderText: qsTr("label")
                 onTextEdited: root.assertModel.setValue(row.index, text)
+            }
+            // Live pass/fail/syntax badge: evaluates the expression against the
+            // latest response via the engine's predicate grammar. Hidden until
+            // there's a response and a non-empty expression to test.
+            Label {
+                id: badge
+                Layout.preferredWidth: 64
+                horizontalAlignment: Text.AlignHCenter
+                font.pixelSize: DesignTokens.fontCaption
+                font.weight: DesignTokens.weightSemiBold
+
+                property var result: ({})
+                function refresh() {
+                    result = AppController.evaluateAssertion(row.key);
+                }
+
+                visible: AppController.hasResponse && row.key.trim().length > 0
+                text: !visible ? "" : (result.valid === false ? qsTr("⚠ error") : (result.passed ? qsTr("✓ pass") : qsTr("✗ fail")))
+                color: result.valid === false ? DesignTokens.statusWarning : (result.passed ? DesignTokens.statusSuccess : DesignTokens.statusError)
+
+                Component.onCompleted: refresh()
+
+                HoverHandler {
+                    id: badgeHover
+                }
+                ToolTip.visible: badgeHover.hovered && badge.visible && result.valid === false && (result.error || "").length > 0
+                ToolTip.text: result.error || ""
+
+                Connections {
+                    target: AppController
+                    // Re-test every row when a new response lands.
+                    function onResponseChanged() {
+                        badge.refresh();
+                    }
+                }
             }
             ToolButton {
                 id: assertRemove
