@@ -93,7 +93,7 @@ ColumnLayout {
                 font.family: DesignTokens.fontMono
                 onTextEdited: {
                     root.assertModel.setKey(row.index, text);
-                    badge.refresh();
+                    badge.refresh(text);
                 }
             }
             Field {
@@ -113,8 +113,8 @@ ColumnLayout {
                 font.weight: DesignTokens.weightSemiBold
 
                 property var result: ({})
-                function refresh() {
-                    result = AppController.evaluateAssertion(row.key);
+                function refresh(expr) {
+                    result = AppController.evaluateAssertion(expr === undefined ? row.key : expr);
                 }
 
                 visible: AppController.hasResponse && row.key.trim().length > 0

@@ -6,6 +6,7 @@
 
 #include <reqloom/engine/Hook.h>
 
+#include <QtConcurrent/QtConcurrentRun>
 #include <QtGui/QColor>
 #include <QtWidgets/QDialogButtonBox>
 #include <QtWidgets/QLabel>
@@ -120,50 +121,73 @@ HookEditorDialog::HookEditorDialog(const QString& operationId,
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(validateButton, &QPushButton::clicked, this, &HookEditorDialog::validateHooks);
+
+    // Deliver the off-thread validation result back on the GUI thread.
+    connect(&validateWatcher_, &QFutureWatcher<ValidationReport>::finished, this, [this]() {
+        const ValidationReport report = validateWatcher_.result();
+        QStringList lines = report.lines;
+        if (lines.isEmpty()) {
+            lines.append(tr("No hook scripts to validate."));
+        }
+        status_->setStyleSheet(QStringLiteral("color: %1; padding: 4px 2px;")
+                                   .arg(report.hadError ? errorColor_ : okColor_));
+        status_->setText(lines.join(QLatin1Char('\n')));
+        status_->show();
+    });
 }
 
 HookEditorDialog::~HookEditorDialog() = default;
 
 void HookEditorDialog::validateHooks() {
-    namespace ce = reqloom::engine;
-
-    bool hadError = false;
-    QStringList lines;
-
-    // Dry-run one phase's script (skipping an empty one) against a minimal
-    // sample context — enough to surface syntax and runtime errors.
-    const auto check = [&](const QString& label, ce::HookPhase phase, const QString& script) {
-        const QString trimmed = script.trimmed();
-        if (trimmed.isEmpty()) {
-            return;
-        }
-        ce::HookDryRunInput input;
-        input.phase = phase;
-        input.script = trimmed.toStdString();
-        input.request.method = ce::HttpMethod::Get;
-        input.request.url = "https://example.test/path";
-        if (phase == ce::HookPhase::PostResponse) {
-            input.response = ce::HookSampleResponse{200, {}, std::string{}};
-        }
-        const auto outcome = ce::dryRunHook(input);
-        if (outcome) {
-            lines.append(tr("%1: OK").arg(label));
-        } else {
-            hadError = true;
-            lines.append(tr("%1: %2").arg(label, QString::fromStdString(outcome.error().detail)));
-        }
-    };
-
-    check(tr("Pre-request"), ce::HookPhase::PreRequest, preEditor_->toPlainText());
-    check(tr("Post-response"), ce::HookPhase::PostResponse, postEditor_->toPlainText());
-
-    if (lines.isEmpty()) {
-        lines.append(tr("No hook scripts to validate."));
+    if (validateWatcher_.isRunning()) {
+        return;
     }
-    status_->setStyleSheet(
-        QStringLiteral("color: %1; padding: 4px 2px;").arg(hadError ? errorColor_ : okColor_));
-    status_->setText(lines.join(QLatin1Char('\n')));
+
+    // Snapshot the editor text on the GUI thread; the worker captures owned
+    // copies only (no `this`, no widgets).
+    const std::string pre = preEditor_->toPlainText().trimmed().toStdString();
+    const std::string post = postEditor_->toPlainText().trimmed().toStdString();
+    const QString preLabel = tr("Pre-request");
+    const QString postLabel = tr("Post-response");
+    const QString okSuffix = tr("OK");
+
+    status_->setStyleSheet(QStringLiteral("color: %1; padding: 4px 2px;").arg(okColor_));
+    status_->setText(tr("Validating…"));
     status_->show();
+
+    auto future =
+        QtConcurrent::run([pre, post, preLabel, postLabel, okSuffix]() -> ValidationReport {
+            namespace ce = reqloom::engine;
+            ValidationReport report;
+
+            const auto check =
+                [&](const QString& label, ce::HookPhase phase, const std::string& script) {
+                    if (script.empty()) {
+                        return;
+                    }
+                    ce::HookDryRunInput input;
+                    input.phase = phase;
+                    input.script = script;
+                    input.request.method = ce::HttpMethod::Get;
+                    input.request.url = "https://example.test/path";
+                    if (phase == ce::HookPhase::PostResponse) {
+                        input.response = ce::HookSampleResponse{200, {}, std::string{}};
+                    }
+                    const auto outcome = ce::dryRunHook(input);
+                    if (outcome) {
+                        report.lines.append(label + QStringLiteral(": ") + okSuffix);
+                    } else {
+                        report.hadError = true;
+                        report.lines.append(label + QStringLiteral(": ") +
+                                            QString::fromStdString(outcome.error().detail));
+                    }
+                };
+
+            check(preLabel, ce::HookPhase::PreRequest, pre);
+            check(postLabel, ce::HookPhase::PostResponse, post);
+            return report;
+        });
+    validateWatcher_.setFuture(future);
 }
 
 QString HookEditorDialog::preScript() const {

@@ -63,9 +63,8 @@ constexpr std::uintmax_t kMaxUploadBytes = 50ULL * 1024 * 1024;  // 50 MiB
 }
 
 [[nodiscard]] bool anyValueIsFileRef(const std::map<std::string, std::string>& resolvedFormFields) {
-    return std::any_of(resolvedFormFields.begin(), resolvedFormFields.end(), [](const auto& kv) {
-        return kv.second.starts_with("@");
-    });
+    return std::ranges::any_of(resolvedFormFields,
+                               [](const auto& kv) { return kv.second.starts_with("@"); });
 }
 
 }  // namespace

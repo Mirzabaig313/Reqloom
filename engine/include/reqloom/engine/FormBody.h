@@ -41,7 +41,8 @@ struct FormBodyPreview {
     std::string contentType;  ///< The Content-Type the engine would send.
     std::string urlEncoded;
     std::vector<FormPartPreview> parts;
-    std::uint64_t totalBytes{0};  ///< Sum of part/body sizes on the wire.
+    std::uint64_t totalBytes{0};  ///< Sum of part/body content bytes (excludes
+                                  ///< multipart boundary/header framing).
 };
 
 /// Preview how `formFields` (already `{{var}}`-substituted, or literal) would

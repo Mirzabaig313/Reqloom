@@ -8,7 +8,9 @@
 
 #include <QtWidgets/QDialog>
 
+#include <QtCore/QFutureWatcher>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 
 class QWidget;
 class QLabel;
@@ -43,14 +45,22 @@ public:
 private:
     /// Dry-run both hook scripts in the engine sandbox against a sample
     /// context and report per-phase OK / error in the status line. Lets the
-    /// author catch a syntax or runtime error before saving and running.
+    /// author catch a syntax or runtime error before saving and running. Runs
+    /// off the GUI thread (the sandbox has a 1s/phase budget).
     void validateHooks();
+
+    /// Off-thread validation result, delivered back via `validateWatcher_`.
+    struct ValidationReport {
+        bool hadError{false};
+        QStringList lines;
+    };
 
     CodeEditor* preEditor_{};
     CodeEditor* postEditor_{};
     QLabel* status_{};
     QString okColor_;
     QString errorColor_;
+    QFutureWatcher<ValidationReport> validateWatcher_;
 };
 
 }  // namespace reqloom::desktop
