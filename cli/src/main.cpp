@@ -30,6 +30,9 @@ void printUsage() {
         "  reqloom lint                     Validate the schema in current project\n"
         "    --project <path>                Project directory (default: cwd)\n"
         "  reqloom import <file>            Import an external API spec\n"
+        "    --out <dir>                     Directory to write the project (default: cwd)\n"
+        "    --project-root <dir>            Containment root the spec must resolve under\n"
+        "    --force                         Overwrite an existing reqloom.yaml\n"
         "  reqloom --help                   Show this message");
 }
 

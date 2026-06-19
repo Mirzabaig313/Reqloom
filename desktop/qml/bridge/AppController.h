@@ -22,6 +22,7 @@
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractItemModel>
+#include <QtCore/QFutureWatcher>
 #include <QtCore/QHash>
 #include <QtCore/QObject>
 #include <QtCore/QSettings>
@@ -32,6 +33,8 @@
 
 #include <memory>
 #include <utility>
+
+#include <cstdint>
 
 namespace reqloom::desktop {
 class ProjectModel;
@@ -449,6 +452,15 @@ public:
     /// Open a project directory (the folder containing reqloom.yaml).
     Q_INVOKABLE void openProject(const QUrl& directory);
 
+    /// Import an OpenAPI 3.x document (`specFile`) into a Reqloom project
+    /// written to `targetDir`, then load it. `overwrite` must be true to
+    /// replace an existing reqloom.yaml in `targetDir`. The parse + write run
+    /// off the GUI thread; results are delivered via `notify` (success summary
+    /// or error) and `importReviewNotes` (engine warnings). When the target
+    /// already holds a project and `overwrite` is false, emits
+    /// `importNeedsOverwrite` so the UI can confirm before clobbering.
+    Q_INVOKABLE void importOpenApi(const QUrl& specFile, const QUrl& targetDir, bool overwrite);
+
     /// Select a module by id; populates `operations` with its endpoints.
     Q_INVOKABLE void selectModule(const QString& moduleName);
 
@@ -482,6 +494,12 @@ public:
     /// Edits to the pre-request / post-response JavaScript are persisted on
     /// Save; file-referenced hooks are written back to their `.js` file.
     Q_INVOKABLE void openHookEditor();
+
+    /// Write `reqloom.d.ts` (the hook sandbox `ctx` type surface) into the
+    /// project root and report the path. Hook authors keep it beside their
+    /// `./hooks/*.js` scripts so a TypeScript-aware editor offers autocomplete
+    /// on `ctx.request`, `ctx.env`, `ctx.hmac`, etc.
+    Q_INVOKABLE void generateHookTypings();
 
     /// Cancel the in-flight run, if any.
     Q_INVOKABLE void cancelRun();
@@ -606,11 +624,26 @@ signals:
     /// `isError` tints the message (full Toast UI lands in WS-D).
     void notify(QString message, bool isError);
 
+    /// Emitted after a successful OpenAPI import when the engine produced
+    /// per-operation review notes (path params to wire to upstream
+    /// extractions, etc.) so the UI can present them for follow-up.
+    void importReviewNotes(QString notes);
+
+    /// Emitted when an import target already contains a reqloom.yaml and the
+    /// caller did not pass `overwrite`. Carries the original arguments so the
+    /// UI can confirm and re-invoke `importOpenApi(..., true)`.
+    void importNeedsOverwrite(QUrl specFile, QUrl targetDir);
+
 private:
     void onLoaded();
     void onSaved();
     void onLoadFailed(const QString& code, const QString& detail);
     void loadSampleIfPresent();
+    /// Best-effort refresh of the project's `reqloom.d.ts` hook typings. Called
+    /// when the hook editor opens so file-referenced hooks have up-to-date
+    /// `ctx.*` autocomplete; failures are swallowed (typings are a convenience,
+    /// never a blocker for editing hooks).
+    void refreshHookTypings();
     /// Open (or switch to) the per-project run-history database. The path is
     /// derived from a hash of the project root and lives under the app-data
     /// dir, so each project keeps its own history and the repo stays clean.
@@ -651,6 +684,19 @@ private:
     std::unique_ptr<ProjectModel> project_;
     std::unique_ptr<Bootstrapper> bootstrapper_;
     std::unique_ptr<RunController> runController_;
+
+    /// Result of an off-thread OpenAPI import, handed back to the GUI thread
+    /// by `importWatcher_` so the project load + toasts run where they're safe.
+    struct ImportOutcome {
+        enum class Status : std::uint8_t { Success, ImportFailed, WriteFailed };
+        Status status{Status::ImportFailed};
+        QString errorDetail;
+        int resources{0};
+        int operations{0};
+        QString notes;
+        QString loadDir;
+    };
+    QFutureWatcher<ImportOutcome> importWatcher_;
     SavedResponseStore exampleStore_;
     ResourceListModel resources_;
     OperationListModel operations_;

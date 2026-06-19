@@ -9,6 +9,10 @@
 #include "../../src/widgets/LineDiff.h"
 #include "ThemeController.h"
 
+#include <reqloom/engine/Factories.h>
+
+#include <QtConcurrent/QtConcurrentRun>
+
 #include <QtCore/QCoreApplication>
 #include <QtCore/QCryptographicHash>
 #include <QtCore/QDir>
@@ -16,7 +20,6 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
 #include <QtCore/QRegularExpression>
-#include <QtCore/QSet>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QStringList>
 #include <QtGui/QClipboard>
@@ -25,9 +28,11 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <queue>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -48,6 +53,34 @@ namespace {
         if (!dir.cdUp()) {
             break;
         }
+    }
+    return {};
+}
+
+/// When an OpenAPI import fails, sniff the file head for the common
+/// non-OpenAPI shapes (Postman collection, Swagger 2.0) so the toast can
+/// say something actionable instead of the engine's terse "found ''".
+/// Returns an empty string when nothing recognizable is found, so the
+/// caller falls back to the engine's own error detail.
+[[nodiscard]] QString importFailureHint(const std::filesystem::path& spec) {
+    std::ifstream in{spec, std::ios::binary};
+    if (!in) {
+        return {};
+    }
+    std::string head(8192, '\0');
+    in.read(head.data(), static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(in.gcount()));
+
+    if (head.find("schema.getpostman.com") != std::string::npos ||
+        head.find("_postman_id") != std::string::npos) {
+        return QStringLiteral(
+            "This looks like a Postman collection, which isn't supported. Reqloom imports "
+            "OpenAPI 3.0/3.1 specs (YAML or JSON) only.");
+    }
+    if (head.find("\"swagger\"") != std::string::npos ||
+        head.find("swagger:") != std::string::npos) {
+        return QStringLiteral(
+            "Swagger 2.0 isn't supported. Convert the spec to OpenAPI 3.x and try again.");
     }
     return {};
 }
@@ -139,6 +172,30 @@ AppController::AppController(QObject* parent)
     connect(project_.get(), &ProjectModel::loaded, this, &AppController::onLoaded);
     connect(project_.get(), &ProjectModel::saved, this, &AppController::onSaved);
     connect(project_.get(), &ProjectModel::loadFailed, this, &AppController::onLoadFailed);
+
+    // Deliver an off-thread OpenAPI import's result back on the GUI thread:
+    // load the written project and surface the summary / review notes here,
+    // where touching models and emitting UI signals is safe.
+    connect(&importWatcher_, &QFutureWatcher<ImportOutcome>::finished, this, [this]() {
+        const ImportOutcome out = importWatcher_.result();
+        switch (out.status) {
+            case ImportOutcome::Status::ImportFailed:
+                emit notify(tr("Import failed: %1").arg(out.errorDetail), true);
+                return;
+            case ImportOutcome::Status::WriteFailed:
+                emit notify(tr("Could not write project: %1").arg(out.errorDetail), true);
+                return;
+            case ImportOutcome::Status::Success:
+                break;
+        }
+        openProject(QUrl::fromLocalFile(out.loadDir));
+        emit notify(
+            tr("Imported %1 resources, %2 operations.").arg(out.resources).arg(out.operations),
+            false);
+        if (!out.notes.isEmpty()) {
+            emit importReviewNotes(out.notes);
+        }
+    });
 
     // Capture response bodies by default so the timeline shows full request /
     // response detail (including error bodies) without an opt-in toggle. The
@@ -350,6 +407,73 @@ void AppController::setLatencySlo(int ms) {
 void AppController::openProject(const QUrl& directory) {
     const QString path = directory.isLocalFile() ? directory.toLocalFile() : directory.toString();
     project_->loadFromDirectory(path);
+}
+
+void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, bool overwrite) {
+    if (importWatcher_.isRunning()) {
+        return;  // an import is already in flight
+    }
+
+    const QString specPath = specFile.isLocalFile() ? specFile.toLocalFile() : specFile.toString();
+    const QString dirPath =
+        targetDir.isLocalFile() ? targetDir.toLocalFile() : targetDir.toString();
+    if (specPath.isEmpty() || dirPath.isEmpty()) {
+        emit notify(tr("Choose both a spec file and a destination folder."), true);
+        return;
+    }
+
+    // Cheap, GUI-thread guard: don't silently clobber an existing project —
+    // ask the UI to confirm first before spinning up the worker. A stat error
+    // on existsEc is intentionally ignored: we fall through to the import, and
+    // writeProject still refuses to overwrite without `overwrite=true`.
+    std::error_code existsEc;
+    const std::filesystem::path dir{dirPath.toStdString()};
+    if (!overwrite && std::filesystem::exists(dir / "reqloom.yaml", existsEc)) {
+        emit importNeedsOverwrite(specFile, targetDir);
+        return;
+    }
+
+    // Parse + verify + write off the GUI thread (AGENTS.md threading rule): a
+    // large spec can take noticeable time. These engine free functions touch
+    // no shared engine state, so running them concurrently with the GUI is
+    // safe. The worker captures only owned copies (no `this`); the result is
+    // delivered back to the GUI thread by `importWatcher_`'s finished handler,
+    // where the project load + toasts run.
+    auto future = QtConcurrent::run([specStd = specPath.toStdString(),
+                                     dirStd = dirPath.toStdString(),
+                                     overwrite]() -> ImportOutcome {
+        ImportOutcome out;
+        const std::filesystem::path spec{specStd};
+        // Containment root: the spec's own directory, so an explicitly
+        // chosen file always resolves inside it while the engine still
+        // rejects `..` traversal.
+        auto imported = engine::importFromOpenApi(spec, spec.parent_path());
+        if (!imported) {
+            out.status = ImportOutcome::Status::ImportFailed;
+            // Prefer an actionable hint for recognizable non-OpenAPI files
+            // (Postman / Swagger 2.0); otherwise surface the engine detail.
+            const QString hint = importFailureHint(spec);
+            out.errorDetail =
+                hint.isEmpty() ? QString::fromStdString(imported.error().detail) : hint;
+            return out;
+        }
+        auto written =
+            engine::writeProject(std::filesystem::path{dirStd}, imported->project, overwrite);
+        if (!written) {
+            out.status = ImportOutcome::Status::WriteFailed;
+            out.errorDetail = QString::fromStdString(written.error().detail);
+            return out;
+        }
+        for (const auto& [resId, resource] : imported->project.resources) {
+            out.operations += static_cast<int>(resource.operations.size());
+        }
+        out.status = ImportOutcome::Status::Success;
+        out.resources = static_cast<int>(imported->project.resources.size());
+        out.notes = QString::fromStdString(imported->warnings);
+        out.loadDir = QString::fromStdString(dirStd);
+        return out;
+    });
+    importWatcher_.setFuture(future);
 }
 
 void AppController::onLoaded() {
@@ -1068,193 +1192,101 @@ QVariantList AppController::chainNodes() const {
 }
 
 QVariantMap AppController::chainGraph() const {
-    // Build the target's transitive dependency DAG (prerequisite → dependent),
-    // run the layered layout, and hand QML node coordinates + edges. Edit mode
-    // takes the target's direct deps from the live picker; everything deeper
-    // comes from the project's declared dependencies.
+    // Draw the target's resolved dependency chain. The engine is the single
+    // source of truth for resolution: resolvePlan() returns the topological
+    // execution order plus the explicit/implicit edges (each implicit edge
+    // tagged with the variable that flows along it). We only lay the result
+    // out and translate it to the QML node/edge shape — no dependency
+    // re-derivation here, so the drawn graph always matches what the engine
+    // actually executes.
     QVariantMap graph;
-    if (!project_->hasProject() || !hasOperation_) {
+    if (!project_->hasProject() || !hasOperation_ || !bootstrapper_) {
         return graph;
     }
     const QString targetId = currentOperationId();
-    const auto* targetOp = project_->findOperation(engine::OperationId{targetId.toStdString()});
-    if (targetOp == nullptr) {
+    const engine::OperationId targetOpId{targetId.toStdString()};
+    if (project_->findOperation(targetOpId) == nullptr) {
         return graph;
     }
 
-    // {{token}} references found in an operation's request templates.
-    const auto referencedTokens = [](const engine::Operation& op) {
-        QSet<QString> out;
-        const auto scan = [&out](const std::string& text) {
-            const QString s = QString::fromStdString(text);
-            qsizetype i = 0;
-            while ((i = s.indexOf(QStringLiteral("{{"), i)) >= 0) {
-                const qsizetype j = s.indexOf(QStringLiteral("}}"), i + 2);
-                if (j < 0) {
-                    break;
+    // In edit mode the chain picker holds unsaved depends_on edits. Resolve
+    // against a patched copy so the preview tracks the live wiring; otherwise
+    // resolve the persisted project directly.
+    engine::Project patched;
+    const engine::Project* proj = &project_->project();
+    if (editing_ && chainFieldsLoaded_) {
+        patched = project_->project();
+        const qsizetype dot = targetId.indexOf(QLatin1Char('.'));
+        if (dot > 0) {
+            const engine::ResourceId resId{targetId.left(dot).toStdString()};
+            const std::string opName = targetId.mid(dot + 1).toStdString();
+            if (auto resIt = patched.resources.find(resId); resIt != patched.resources.end()) {
+                if (auto opIt = resIt->second.operations.find(opName);
+                    opIt != resIt->second.operations.end()) {
+                    opIt->second.explicitDependencies.clear();
+                    for (const auto& dep : editDependencies_.dependencies()) {
+                        opIt->second.explicitDependencies.push_back(engine::OperationId{dep});
+                    }
                 }
-                const QString tok = s.mid(i + 2, j - (i + 2)).trimmed();
-                if (!tok.isEmpty()) {
-                    out.insert(tok);
-                }
-                i = j + 2;
-            }
-        };
-        scan(op.pathTemplate);
-        if (op.bodyTemplate) {
-            scan(*op.bodyTemplate);
-        }
-        for (const auto& [key, value] : op.headers) {
-            scan(key);
-            scan(value);
-        }
-        for (const auto& [key, value] : op.queryParams) {
-            scan(key);
-            scan(value);
-        }
-        if (op.bodyForm) {
-            for (const auto& [key, value] : *op.bodyForm) {
-                scan(key);
-                scan(value);
             }
         }
-        return out;
-    };
-    // "resource.var" tokens an operation provides via its extractions.
-    const auto providedTokens = [](const engine::Operation& op, const QString& opId) {
-        QSet<QString> out;
-        const qsizetype dot = opId.indexOf(QLatin1Char('.'));
-        const QString resource = dot > 0 ? opId.left(dot) : QString{};
-        for (const auto& ext : op.extractions) {
-            const QString var = QString::fromStdString(ext.variableName);
-            out.insert(var.contains(QLatin1Char('.')) || resource.isEmpty()
-                           ? var
-                           : resource + QLatin1Char('.') + var);
-        }
-        return out;
-    };
-
-    // Project-wide map: providable token → the operation that produces it, so a
-    // {{resource.var}} reference can auto-wire a dependency on its producer.
-    QHash<QString, QString> producerOf;
-    for (const auto& [resId, resource] : project_->project().resources) {
-        for (const auto& [opName, op] : resource.operations) {
-            const QString opId = QString::fromStdString(op.id.value);
-            for (const QString& tok : providedTokens(op, opId)) {
-                producerOf.insert(tok, opId);
-            }
-        }
+        proj = &patched;
     }
 
-    // Explicit depends_on of an operation (edit-mode picker overrides the
-    // target's), as a set for fast lookup.
-    const auto explicitDepsOf = [&](const QString& id) {
-        QSet<QString> out;
-        if (id == targetId && editing_ && chainFieldsLoaded_) {
-            for (const auto& dep : editDependencies_.dependencies()) {
-                out.insert(QString::fromStdString(dep));
+    const auto plan = bootstrapper_->engine().resolvePlan(*proj, targetOpId);
+    if (!plan || plan->order.size() <= 1) {
+        // No chain to draw (or an edit-time cycle); ChainView shows empty text.
+        return graph;
+    }
+
+    // Node index = position in the engine's topological order (deps first,
+    // target last).
+    QHash<QString, int> indexOf;
+    QStringList ids;
+    ids.reserve(static_cast<qsizetype>(plan->order.size()));
+    for (const auto& opId : plan->order) {
+        const QString id = QString::fromStdString(opId.value);
+        indexOf.insert(id, static_cast<int>(ids.size()));
+        ids.append(id);
+    }
+
+    // Aggregate engine edges by (producer → consumer) pair so a pair draws
+    // once, not in parallel: an explicit edge wins (solid, no label); otherwise
+    // join the implicit edges' flowing variables into one labeled edge.
+    struct EdgeAgg {
+        bool isExplicit{false};
+        QStringList vars;
+    };
+    std::map<std::pair<int, int>, EdgeAgg> edgeAgg;
+    QHash<QString, QStringList> depsOf;  // consumer id → producer ids
+    for (const auto& edge : plan->edges) {
+        const QString consumer = QString::fromStdString(edge.consumer.value);
+        const QString producer = QString::fromStdString(edge.producer.value);
+        const auto cIt = indexOf.constFind(consumer);
+        const auto pIt = indexOf.constFind(producer);
+        if (cIt == indexOf.constEnd() || pIt == indexOf.constEnd()) {
+            continue;
+        }
+        // Layout/edge direction is prerequisite → dependent: from=producer.
+        EdgeAgg& agg = edgeAgg[std::pair<int, int>{pIt.value(), cIt.value()}];
+        if (edge.implicit) {
+            if (!edge.variable.empty()) {
+                agg.vars.append(
+                    QStringLiteral("{{%1}}").arg(QString::fromStdString(edge.variable)));
             }
         } else {
-            const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
-            if (op != nullptr) {
-                for (const auto& dep : op->explicitDependencies) {
-                    out.insert(QString::fromStdString(dep.value));
-                }
-            }
+            agg.isExplicit = true;
         }
-        return out;
-    };
-
-    // Prerequisites = explicit depends_on ∪ producers of referenced {{tokens}}.
-    const auto prereqsOf = [&](const QString& id) {
-        std::vector<QString> out;
-        QSet<QString> seen;
-        const auto add = [&](const QString& p) {
-            if (p != id && !p.isEmpty() && !seen.contains(p)) {
-                seen.insert(p);
-                out.push_back(p);
-            }
-        };
-        for (const QString& dep : explicitDepsOf(id)) {
-            add(dep);
-        }
-        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
-        if (op != nullptr) {
-            for (const QString& tok : referencedTokens(*op)) {
-                const auto it = producerOf.constFind(tok);
-                if (it != producerOf.constEnd()) {
-                    add(it.value());
-                }
-            }
-        }
-        return out;
-    };
-
-    // BFS the prerequisite closure from the target, recording discovery order.
-    QStringList ids;
-    QHash<QString, int> indexOf;
-    QHash<QString, std::vector<QString>> prereqs;
-    std::queue<QString> pending;
-    const auto discover = [&](const QString& id) {
-        if (!indexOf.contains(id)) {
-            indexOf.insert(id, static_cast<int>(ids.size()));
-            ids.append(id);
-        }
-    };
-    discover(targetId);
-    pending.push(targetId);
-    while (!pending.empty()) {
-        const QString id = pending.front();
-        pending.pop();
-        if (!prereqs.contains(id)) {
-            prereqs.insert(id, prereqsOf(id));
-        }
-        for (const QString& p : prereqs.value(id)) {
-            if (!indexOf.contains(p)) {
-                discover(p);
-                pending.push(p);
-            }
+        QStringList& producers = depsOf[consumer];
+        if (!producers.contains(producer)) {
+            producers.append(producer);
         }
     }
-    if (ids.size() <= 1) {
-        return graph;  // No chain to draw; ChainView shows its empty text.
-    }
 
-    // Edges (prerequisite → dependent) with explicit/derived kind and the
-    // variable(s) that actually flow along them (consumer refs ∩ producer provides).
-    struct EdgeInfo {
-        int from{0};
-        int to{0};
-        bool isExplicit{false};
-        QString label;
-    };
-    std::vector<EdgeInfo> edgeInfos;
     std::vector<std::pair<int, int>> layoutEdges;
-    for (const QString& id : ids) {
-        const int to = indexOf.value(id);
-        const auto* consumerOp = project_->findOperation(engine::OperationId{id.toStdString()});
-        const QSet<QString> refTokens =
-            consumerOp != nullptr ? referencedTokens(*consumerOp) : QSet<QString>{};
-        const QSet<QString> explicitSet = explicitDepsOf(id);
-        for (const QString& p : prereqs.value(id)) {
-            const auto it = indexOf.constFind(p);
-            if (it == indexOf.constEnd()) {
-                continue;
-            }
-            const auto* producerOp = project_->findOperation(engine::OperationId{p.toStdString()});
-            const QSet<QString> provided =
-                producerOp != nullptr ? providedTokens(*producerOp, p) : QSet<QString>{};
-            QStringList flowing;
-            for (const QString& tok : refTokens) {
-                if (provided.contains(tok)) {
-                    flowing.append(QStringLiteral("{{%1}}").arg(tok));
-                }
-            }
-            flowing.sort();
-            edgeInfos.push_back(EdgeInfo{
-                it.value(), to, explicitSet.contains(p), flowing.join(QStringLiteral(", "))});
-            layoutEdges.emplace_back(it.value(), to);
-        }
+    layoutEdges.reserve(edgeAgg.size());
+    for (const auto& [key, agg] : edgeAgg) {
+        layoutEdges.push_back(key);
     }
 
     layout::LayoutOptions options;
@@ -1265,10 +1297,25 @@ QVariantMap AppController::chainGraph() const {
     const layout::LayoutResult laid =
         layout::layeredLayout(static_cast<int>(ids.size()), layoutEdges, options);
 
+    // Resolve a node's operation against the same project the plan came from,
+    // so an edit-mode target reflects the patched copy.
+    const auto findOp = [proj](const QString& id) -> const engine::Operation* {
+        const qsizetype dot = id.indexOf(QLatin1Char('.'));
+        if (dot <= 0) {
+            return nullptr;
+        }
+        const auto resIt = proj->resources.find(engine::ResourceId{id.left(dot).toStdString()});
+        if (resIt == proj->resources.end()) {
+            return nullptr;
+        }
+        const auto opIt = resIt->second.operations.find(id.mid(dot + 1).toStdString());
+        return opIt == resIt->second.operations.end() ? nullptr : &opIt->second;
+    };
+
     QVariantList nodeList;
     for (int i = 0; i < ids.size(); ++i) {
         const QString& id = ids.at(i);
-        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        const auto* op = findOp(id);
         QVariantMap node;
         node.insert(QStringLiteral("operationId"), id);
         node.insert(QStringLiteral("method"), op != nullptr ? methodLabel(op->method) : QString{});
@@ -1287,20 +1334,21 @@ QVariantMap AppController::chainGraph() const {
             }
         }
         node.insert(QStringLiteral("extracts"), extracts);
-        QStringList depList;
-        for (const QString& dep : prereqs.value(id)) {
-            depList.append(dep);
-        }
-        node.insert(QStringLiteral("deps"), depList);
+        QStringList deps = depsOf.value(id);
+        deps.sort();
+        node.insert(QStringLiteral("deps"), deps);
         nodeList.append(node);
     }
+
     QVariantList edgeList;
-    for (const auto& info : edgeInfos) {
+    for (auto& [key, agg] : edgeAgg) {
+        agg.vars.sort();
         QVariantMap edge;
-        edge.insert(QStringLiteral("from"), info.from);
-        edge.insert(QStringLiteral("to"), info.to);
-        edge.insert(QStringLiteral("explicit"), info.isExplicit);
-        edge.insert(QStringLiteral("label"), info.label);
+        edge.insert(QStringLiteral("from"), key.first);
+        edge.insert(QStringLiteral("to"), key.second);
+        edge.insert(QStringLiteral("explicit"), agg.isExplicit);
+        edge.insert(QStringLiteral("label"),
+                    agg.isExplicit ? QString{} : agg.vars.join(QStringLiteral(", ")));
         edgeList.append(edge);
     }
 
@@ -1864,6 +1912,10 @@ void AppController::openHookEditor() {
         return;
     }
 
+    // Refresh the hook sandbox type definitions so a TS-aware editor offers
+    // ctx.* autocomplete on any ./hooks/*.js this operation references.
+    refreshHookTypings();
+
     const auto toQ = [](const std::optional<std::string>& s) {
         return s ? QString::fromStdString(*s) : QString{};
     };
@@ -1945,6 +1997,38 @@ void AppController::openHookEditor() {
     } else {
         emit notify(error, true);
     }
+}
+
+void AppController::refreshHookTypings() {
+    if (!project_->hasProject()) {
+        return;
+    }
+    const auto written =
+        engine::emitHookTypings(std::filesystem::path{project_->rootPath().toStdString()},
+                                project_->project(),
+                                /*overwrite=*/true);
+    if (!written) {
+        // Best-effort: typings are a convenience, never a blocker for editing.
+        return;
+    }
+}
+
+void AppController::generateHookTypings() {
+    if (!project_->hasProject()) {
+        emit notify(QStringLiteral("Open a project before generating hook typings"), true);
+        return;
+    }
+    const auto written =
+        engine::emitHookTypings(std::filesystem::path{project_->rootPath().toStdString()},
+                                project_->project(),
+                                /*overwrite=*/true);
+    if (!written) {
+        emit notify(tr("Couldn't write hook typings: %1")
+                        .arg(QString::fromStdString(written.error().detail)),
+                    true);
+        return;
+    }
+    emit notify(tr("Wrote %1").arg(QString::fromStdString(written->filename().string())), false);
 }
 
 void AppController::resetCaches() {
