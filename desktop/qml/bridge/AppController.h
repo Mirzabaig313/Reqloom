@@ -457,6 +457,13 @@ public:
     /// the latest response — gate the UI on `hasResponse`.
     Q_INVOKABLE [[nodiscard]] QVariantMap evaluateAssertion(const QString& expression) const;
 
+    /// Preview how the current edit-mode `form-data` body would be encoded:
+    /// urlencoded vs multipart, with per-part metadata (name, isFile, filename,
+    /// sizeBytes) and any file error. Reads referenced files, so call on demand
+    /// (a button), not per keystroke. Returns a map
+    /// {valid, error, multipart, contentType, totalBytes, parts:[...]}.
+    Q_INVOKABLE [[nodiscard]] QVariantMap previewFormBody() const;
+
     /// Open a project directory (the folder containing reqloom.yaml).
     Q_INVOKABLE void openProject(const QUrl& directory);
 

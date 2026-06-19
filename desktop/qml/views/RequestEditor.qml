@@ -813,16 +813,82 @@ ColumnLayout {
                     }
 
                     // 1 — form-data / x-www-form-urlencoded
-                    ScrollView {
-                        id: formScroll
-                        clip: true
-                        contentWidth: availableWidth
-                        KeyValueEditorView {
-                            width: formScroll.availableWidth
-                            kvModel: AppController.editForm
-                            allowFiles: AppController.editBodyType === "form-data"
-                            keyPlaceholder: qsTr("field")
-                            valuePlaceholder: AppController.editBodyType === "form-data" ? qsTr("value  (or attach a file)") : qsTr("value")
+                    ColumnLayout {
+                        spacing: DesignTokens.spaceXs
+
+                        ScrollView {
+                            id: formScroll
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            contentWidth: availableWidth
+                            KeyValueEditorView {
+                                width: formScroll.availableWidth
+                                kvModel: AppController.editForm
+                                allowFiles: AppController.editBodyType === "form-data"
+                                keyPlaceholder: qsTr("field")
+                                valuePlaceholder: AppController.editBodyType === "form-data" ? qsTr("value  (or attach a file)") : qsTr("value")
+                            }
+                        }
+
+                        // Upload preview (form-data only). On-demand because it
+                        // reads referenced files to validate size/existence.
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: AppController.editBodyType === "form-data"
+                            spacing: DesignTokens.spaceSm
+
+                            Button {
+                                id: checkUploadBtn
+                                text: qsTr("Check upload")
+                                implicitHeight: 26
+                                leftPadding: DesignTokens.spaceMd
+                                rightPadding: DesignTokens.spaceMd
+                                onClicked: uploadSummary.refresh()
+                                background: Rectangle {
+                                    radius: DesignTokens.radiusSm
+                                    color: checkUploadBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                                    border.width: 1
+                                    border.color: DesignTokens.borderSubtle
+                                }
+                                contentItem: Text {
+                                    text: checkUploadBtn.text
+                                    color: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                            Label {
+                                id: uploadSummary
+                                Layout.fillWidth: true
+                                property var result: ({})
+                                function refresh() {
+                                    result = AppController.previewFormBody();
+                                }
+                                function summarise() {
+                                    if (result.valid === undefined)
+                                        return "";
+                                    if (result.valid === false)
+                                        return qsTr("⚠ %1").arg(result.error);
+                                    if (!result.multipart)
+                                        return qsTr("Sends as form-urlencoded (%1 bytes)").arg(result.totalBytes);
+                                    let files = 0;
+                                    let fields = 0;
+                                    for (const p of result.parts) {
+                                        if (p.isFile)
+                                            files += 1;
+                                        else
+                                            fields += 1;
+                                    }
+                                    return qsTr("multipart/form-data — %1 file(s), %2 field(s), %3 bytes").arg(files).arg(fields).arg(result.totalBytes);
+                                }
+                                text: summarise()
+                                color: result.valid === false ? DesignTokens.statusError : DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontCaption
+                                wrapMode: Text.WordWrap
+                                verticalAlignment: Text.AlignVCenter
+                            }
                         }
                     }
 

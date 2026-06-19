@@ -23,6 +23,8 @@
 
 #include "../domain/Codecs.h"
 
+#include <reqloom/engine/FormBody.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -34,6 +36,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <variant>
 
 namespace reqloom::engine {
 
@@ -184,6 +187,47 @@ std::expected<FormBody, ReqloomError> buildFormBody(
     }
 
     return FormBody{std::move(mb)};
+}
+
+std::expected<FormBodyPreview, ReqloomError> previewFormBody(
+    const std::map<std::string, std::string>& formFields,
+    const std::map<std::string, std::string>& headers) {
+    const bool route = wantsMultipart(headers, formFields);
+    auto built = buildFormBody(formFields, route);
+    if (!built) {
+        return std::unexpected(built.error());
+    }
+
+    FormBodyPreview preview;
+    if (const auto* url = std::get_if<UrlEncodedBody>(&*built)) {
+        preview.kind = FormBodyKind::UrlEncoded;
+        preview.contentType = "application/x-www-form-urlencoded";
+        preview.urlEncoded = url->body;
+        preview.totalBytes = url->body.size();
+        return preview;
+    }
+
+    const auto& mb = std::get<MultipartBody>(*built);
+    preview.kind = FormBodyKind::Multipart;
+    preview.contentType = "multipart/form-data";
+    preview.parts.reserve(mb.parts.size());
+    for (const auto& part : mb.parts) {
+        FormPartPreview pp;
+        pp.name = part.name;
+        pp.isFile = part.isFile();
+        // `part.value` holds the loaded file bytes (or the text value); we
+        // expose only its length, never the bytes themselves.
+        pp.sizeBytes = part.value.size();
+        if (part.filename) {
+            pp.filename = *part.filename;
+        }
+        if (part.filePath) {
+            pp.resolvedPath = *part.filePath;
+        }
+        preview.totalBytes += pp.sizeBytes;
+        preview.parts.push_back(std::move(pp));
+    }
+    return preview;
 }
 
 }  // namespace reqloom::engine
