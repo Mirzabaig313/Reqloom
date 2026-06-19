@@ -8,6 +8,7 @@
 #include <reqloom/engine/Events.h>
 #include <reqloom/engine/ExecutionEngine.h>
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/Hook.h>
 #include <reqloom/engine/JsonValues.h>
 #include <reqloom/engine/Operation.h>
 #include <reqloom/engine/Predicate.h>

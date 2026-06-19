@@ -11,6 +11,7 @@
 #include <QtCore/QString>
 
 class QWidget;
+class QLabel;
 
 namespace reqloom::desktop {
 
@@ -40,8 +41,16 @@ public:
     [[nodiscard]] QString postScript() const;
 
 private:
+    /// Dry-run both hook scripts in the engine sandbox against a sample
+    /// context and report per-phase OK / error in the status line. Lets the
+    /// author catch a syntax or runtime error before saving and running.
+    void validateHooks();
+
     CodeEditor* preEditor_{};
     CodeEditor* postEditor_{};
+    QLabel* status_{};
+    QString okColor_;
+    QString errorColor_;
 };
 
 }  // namespace reqloom::desktop
