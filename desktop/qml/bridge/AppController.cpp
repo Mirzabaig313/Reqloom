@@ -10,6 +10,7 @@
 #include "ThemeController.h"
 
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/Predicate.h>
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -1113,6 +1114,28 @@ bool AppController::addExtraction(const QString& variableName, const QString& so
     const QString resource = dot > 0 ? opId.left(dot) : opId;
     emit notify(QStringLiteral("Saved variable {{%1.%2}}").arg(resource, var), false);
     return true;
+}
+
+QVariantMap AppController::evaluateAssertion(const QString& expression) const {
+    QVariantMap out;
+    out.insert(QStringLiteral("valid"), false);
+    out.insert(QStringLiteral("passed"), false);
+    out.insert(QStringLiteral("error"), QString{});
+
+    const QString trimmed = expression.trimmed();
+    if (trimmed.isEmpty()) {
+        return out;  // nothing to test; UI hides the badge for empty rows
+    }
+
+    auto result =
+        engine::evaluatePredicate(trimmed.toStdString(), respBody_.toStdString(), respStatus_);
+    if (!result) {
+        out.insert(QStringLiteral("error"), QString::fromStdString(result.error().detail));
+        return out;
+    }
+    out.insert(QStringLiteral("valid"), true);
+    out.insert(QStringLiteral("passed"), *result);
+    return out;
 }
 
 int AppController::editParamsCount() const {
