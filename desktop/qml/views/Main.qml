@@ -227,6 +227,12 @@ ApplicationWindow {
         function onNotify(message, isError) {
             toast.show(message, isError);
         }
+        function onImportNeedsOverwrite(specFile, targetDir) {
+            importOverwriteDialog.confirmFor(specFile, targetDir);
+        }
+        function onImportReviewNotes(notes) {
+            importNotesDialog.showNotes(notes);
+        }
     }
     Connections {
         target: SecretsController
@@ -274,7 +280,28 @@ ApplicationWindow {
                 onClicked: folderDialog.open()
             }
 
-            // Manage Secrets
+            // Import OpenAPI
+            Button {
+                id: importBtn
+                text: qsTr("Import OpenAPI")
+                implicitHeight: 32
+                leftPadding: DesignTokens.spaceSm
+                rightPadding: DesignTokens.spaceSm
+                background: Rectangle {
+                    radius: DesignTokens.radiusSm
+                    color: "transparent"
+                    border.width: 1
+                    border.color: DesignTokens.borderSubtle
+                }
+                contentItem: Text {
+                    text: importBtn.text
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: importSpecDialog.open()
+            }
             Button {
                 id: manageSecretsBtn
                 text: qsTr("Manage Secrets")
@@ -788,6 +815,124 @@ ApplicationWindow {
         onAccepted: AppController.openProject(selectedFolder)
     }
 
+    // ── OpenAPI import flow: pick a spec, then a destination folder ──────────
+    FileDialog {
+        id: importSpecDialog
+        title: qsTr("Choose an OpenAPI spec")
+        nameFilters: [qsTr("OpenAPI specs (*.yaml *.yml *.json)"), qsTr("All files (*)")]
+        onAccepted: {
+            importTargetDialog.specUrl = selectedFile;
+            importTargetDialog.open();
+        }
+    }
+
+    FolderDialog {
+        id: importTargetDialog
+        title: qsTr("Choose a destination folder")
+        property url specUrl
+
+        onAccepted: AppController.importOpenApi(specUrl, selectedFolder, false)
+    }
+
+    // Confirm overwriting an existing project in the chosen destination.
+    Dialog {
+        id: importOverwriteDialog
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: 420
+        padding: DesignTokens.spaceLg
+        title: qsTr("Overwrite project")
+
+        property url specUrl
+        property url targetUrl
+
+        function confirmFor(spec, target) {
+            specUrl = spec;
+            targetUrl = target;
+            open();
+        }
+
+        header: DialogHeader {
+            title: qsTr("Overwrite project")
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: qsTr("This folder already contains a reqloom.yaml. Replace it with the imported project?")
+            color: DesignTokens.textPrimary
+            font.pixelSize: DesignTokens.fontBody
+            wrapMode: Text.WordWrap
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Overwrite")
+            okDestructive: true
+            onAccepted: importOverwriteDialog.accept()
+            onRejected: importOverwriteDialog.reject()
+        }
+
+        onAccepted: AppController.importOpenApi(specUrl, targetUrl, true)
+    }
+
+    // Per-operation review notes surfaced after a successful import.
+    Dialog {
+        id: importNotesDialog
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: 560
+        padding: DesignTokens.spaceLg
+        title: qsTr("Import review notes")
+
+        property string notes: ""
+
+        function showNotes(text) {
+            notes = text;
+            open();
+        }
+
+        header: DialogHeader {
+            title: qsTr("Import review notes")
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: ScrollView {
+            implicitHeight: 260
+            clip: true
+
+            TextArea {
+                readOnly: true
+                wrapMode: TextArea.Wrap
+                text: importNotesDialog.notes
+                color: DesignTokens.textPrimary
+                font.pixelSize: DesignTokens.fontBody
+                font.family: DesignTokens.fontMono
+                background: null
+            }
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Done")
+            onAccepted: importNotesDialog.accept()
+            onRejected: importNotesDialog.reject()
+        }
+    }
+
     GlassMenu {
         id: envMenu
         GlassMenuItem {
@@ -925,6 +1070,14 @@ ApplicationWindow {
                                 itemAction: "openProject"
                             },
                             {
+                                itemLabel: qsTr("Import OpenAPI…"),
+                                itemAction: "importOpenApi"
+                            },
+                            {
+                                itemLabel: qsTr("Generate Hook Typings"),
+                                itemAction: "hookTypings"
+                            },
+                            {
                                 itemLabel: qsTr("Manage Secrets"),
                                 itemAction: "secrets"
                             },
@@ -984,6 +1137,12 @@ ApplicationWindow {
                         switch (paletteItem.itemAction) {
                         case "openProject":
                             folderDialog.open();
+                            break;
+                        case "importOpenApi":
+                            importSpecDialog.open();
+                            break;
+                        case "hookTypings":
+                            AppController.generateHookTypings();
                             break;
                         case "secrets":
                             secretsDialog.openDialog();
