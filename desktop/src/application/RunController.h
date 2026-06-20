@@ -8,19 +8,21 @@
 // engine — which is the marshalling discipline AGENTS.md requires.
 #pragma once
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <QtCore/QFutureWatcher>
 #include <QtCore/QObject>
 #include <QtCore/QString>
 
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include <atomic>
 #include <cstdint>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 class ProjectModel;
 
@@ -47,6 +49,13 @@ struct RequestOverride {
     QString expectStatus;    ///< comma-separated codes, e.g. "200,201" (empty → unchanged)
     int timeoutMs{0};        ///< per-op timeout in ms (0 → unchanged)
     bool forceReRun{false};  ///< ignore the extraction cache for this op
+
+    /// Chain wiring. Only applied when `chainEdited` is set, so a request-only
+    /// override doesn't wipe an operation's depends_on / extract.
+    bool chainEdited{false};
+    std::vector<std::string> dependencies;        ///< replaces explicitDependencies
+    std::vector<engine::Extraction> extractions;  ///< replaces extractions
+    std::vector<engine::Assertion> assertions;    ///< replaces assertions
 };
 
 /// Apply a RequestOverride's fields onto an operation in place. Shared by the
@@ -89,6 +98,21 @@ public:
     void setCaptureResponseBodies(bool capture) noexcept;
     [[nodiscard]] bool captureResponseBodies() const noexcept;
 
+    /// Pin concrete values for `{{resource.var}}` tokens (the value picker,
+    /// Option A). Each pair is ("resource.var", value). Before each run these
+    /// are seeded as the resource's most-recent instance, so the producing op
+    /// is extraction-cache-skipped and the chain uses the chosen value.
+    void setVariableOverrides(std::vector<std::pair<std::string, std::string>> overrides);
+
+    /// Clear the run context's extraction cache only (sessions kept). Used when
+    /// a pin changes so a stale pinned value can't linger into the next run.
+    void clearExtractionCache();
+
+    /// Snapshot of an actor's accumulated cookie jar (name → value) for the
+    /// current run context, or empty when no run has populated a context yet.
+    /// Read-only view for a cookie inspector.
+    [[nodiscard]] std::map<std::string, std::string> cookies(const engine::ActorId& actor) const;
+
 public slots:
     /// Kick off a run ending at `target` against `environment` (empty → project
     /// default). `dryRun` previews the resolved chain without sending requests.
@@ -121,6 +145,7 @@ signals:
                              QString sourcePath,
                              QString outcome,
                              QString value);
+    void assertionCompleted(int index, QString op, QString name, QString expr, bool passed);
     void stepFailed(int index, QString op, QString code, QString detail);
     void runEnded(QString outcome);
 
@@ -141,6 +166,8 @@ private:
     QFutureWatcher<RunReport> watcher_;
     bool running_{false};
     bool captureResponseBodies_{false};
+    // Pinned `{{resource.var}}` → value, seeded before each run (value picker).
+    std::vector<std::pair<std::string, std::string>> variableOverrides_;
     // Written on the worker thread (RunStarted handler), read on the GUI
     // thread (cancelRun) — atomic to avoid a data race on the run id.
     std::atomic<std::uint64_t> currentRunId_{0};
@@ -153,4 +180,4 @@ private:
     std::shared_ptr<std::atomic_bool> alive_{std::make_shared<std::atomic_bool>(true)};
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

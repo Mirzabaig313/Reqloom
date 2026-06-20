@@ -1,6 +1,8 @@
 // PredicateEvaluator — recursive-descent parser with total evaluation (returns False on failure).
 #include "PredicateEvaluator.h"
 
+#include <reqloom/engine/Predicate.h>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -15,7 +17,7 @@
 #include <variant>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -793,18 +795,18 @@ ParsedBody::ParsedBody(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
 PredicateEvaluator::PredicateEvaluator() = default;
 
-std::expected<ParsedPredicate, ChainApiError> PredicateEvaluator::parse(
+std::expected<ParsedPredicate, ReqloomError> PredicateEvaluator::parse(
     std::string_view expression) const {
     Lexer lex{expression};
     auto toks = lex.tokenize();
     if (!toks) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "predicate: " + toks.error()});
     }
     Parser parser{std::move(*toks)};
     auto root = parser.parseExpr();
     if (!root) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "predicate: " + root.error()});
     }
     return ParsedPredicate{std::move(*root)};
@@ -845,9 +847,9 @@ PredicateValue PredicateEvaluator::evaluate(const ParsedPredicate& predicate,
     return evaluate(predicate, parseBody(jsonBody), statusCode);
 }
 
-std::expected<PredicateValue, ChainApiError> PredicateEvaluator::eval(std::string_view expression,
-                                                                      std::string_view jsonBody,
-                                                                      int statusCode) const {
+std::expected<PredicateValue, ReqloomError> PredicateEvaluator::eval(std::string_view expression,
+                                                                     std::string_view jsonBody,
+                                                                     int statusCode) const {
     auto p = parse(expression);
     if (!p) {
         return std::unexpected(p.error());
@@ -855,4 +857,17 @@ std::expected<PredicateValue, ChainApiError> PredicateEvaluator::eval(std::strin
     return evaluate(*p, jsonBody, statusCode);
 }
 
-}  // namespace chainapi::engine
+// ─── Public free function (reqloom/engine/Predicate.h) ───────────────────────
+
+std::expected<bool, ReqloomError> evaluatePredicate(std::string_view expression,
+                                                    std::string_view responseBody,
+                                                    int statusCode) {
+    const PredicateEvaluator evaluator;
+    auto result = evaluator.eval(expression, responseBody, statusCode);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    return *result == PredicateValue::True;
+}
+
+}  // namespace reqloom::engine

@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-namespace chainapi::engine::cookies {
+namespace reqloom::engine::cookies {
 
 /// Parse a single `Set-Cookie` header value. Returns `(name, value)`
 /// when the header is well-formed (`name=value` followed by zero or
@@ -42,4 +42,4 @@ namespace chainapi::engine::cookies {
 /// any deterministic order is acceptable.
 [[nodiscard]] std::string formatRequestHeader(const std::map<std::string, std::string>& jar);
 
-}  // namespace chainapi::engine::cookies
+}  // namespace reqloom::engine::cookies

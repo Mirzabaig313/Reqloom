@@ -5,12 +5,12 @@
 
 #pragma once
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <string>
 #include <string_view>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 [[nodiscard]] constexpr std::string_view statusGlyph(engine::StepResult::Status status) noexcept {
     using S = engine::StepResult::Status;
@@ -52,4 +52,4 @@ namespace chainapi::cli {
     return "UNKNOWN";
 }
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

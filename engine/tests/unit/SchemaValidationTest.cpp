@@ -10,8 +10,8 @@
 // up when the user clicked Run. Each test below fails on the parent
 // commit because parse() returned the malformed Project unchallenged.
 
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -22,7 +22,7 @@
 #include <fstream>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -30,7 +30,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-schema-valid");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-schema-valid");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -57,7 +57,7 @@ private:
 
 TEST(SchemaValidation, undefined_resource_reference_fails_load) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: GhostRef
 environment:
@@ -83,7 +83,7 @@ TEST(SchemaValidation, env_and_secret_references_are_accepted) {
     // env / secret roots resolve at run time against the environment
     // and secret store — they must NOT be flagged as undefined.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: EnvSecretOk
 environment:
@@ -107,7 +107,7 @@ resources:
 TEST(SchemaValidation, builtin_dollar_references_are_accepted) {
     // $.uuid / $.now and friends are builtins, not symbols — accepted.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: BuiltinOk
 environment:
@@ -130,7 +130,7 @@ resources:
 TEST(SchemaValidation, actor_reference_is_accepted) {
     // {{user.token}} resolves against the actor session, not a resource.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ActorOk
 environment:
@@ -162,7 +162,7 @@ resources:
 
 TEST(SchemaValidation, undefined_depends_on_target_fails_load) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: GhostDep
 environment:
@@ -188,7 +188,7 @@ resources:
 
 TEST(SchemaValidation, explicit_two_node_cycle_fails_load) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: TwoNodeCycle
 environment:
@@ -224,7 +224,7 @@ TEST(SchemaValidation, implicit_cycle_via_templates_fails_load) {
     // a.op extracts a_id and references {{b.b_id}}; b.op extracts b_id
     // and references {{a.a_id}}. Implicit edges form a cycle.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ImplicitCycle
 environment:
@@ -258,7 +258,7 @@ resources:
 
 TEST(SchemaValidation, self_dependency_via_explicit_depends_on_fails_load) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: SelfDep
 environment:
@@ -287,7 +287,7 @@ TEST(SchemaValidation, undefined_reference_with_surrounding_whitespace_fails_loa
     // slips past the undefined-ref check. Regression for the scanner
     // grammar that previously required `{{word.word}}` with no spaces.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: WhitespaceGhost
 environment:
@@ -312,7 +312,7 @@ TEST(SchemaValidation, implicit_cycle_with_whitespace_references_fails_load) {
     // Same grammar concern, on the cycle path: whitespaced implicit
     // edges must still be inferred so the cycle is detected at load.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: WhitespaceCycle
 environment:
@@ -347,7 +347,7 @@ TEST(SchemaValidation, builtin_call_embedding_a_secret_reference_loads) {
     // (a builtin); the nested secret.API_KEY resolves inside the
     // builtin at run time and must NOT be flagged undefined at load.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: BuiltinCallOk
 environment:
@@ -374,7 +374,7 @@ TEST(SchemaValidation, acyclic_multi_resource_project_loads_cleanly) {
     // A small but realistic chain: order.create → order.pay (implicit
     // via {{order.order_id}}). No cycle, all references defined.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HealthyChain
 environment:
@@ -404,7 +404,7 @@ resources:
 
 // ─── Resource-exhaustion guards (untrusted YAML is an attacker surface) ──────
 //
-// AGENTS.md §"Reading user input" names chainapi.yaml as attacker-controlled
+// AGENTS.md §"Reading user input" names reqloom.yaml as attacker-controlled
 // and requires depth + document-size caps before parsing. These tests feed
 // the parser hostile input and assert it fails cleanly with a YamlParse error
 // rather than exhausting memory or overflowing the stack.
@@ -420,7 +420,7 @@ TEST(SchemaValidation, oversized_schema_document_is_rejected) {
     yaml.append("# ");
     yaml.append(static_cast<std::size_t>(9) * 1024 * 1024, 'x');
     yaml.push_back('\n');
-    const auto path = scratch.write("chainapi.yaml", yaml);
+    const auto path = scratch.write("reqloom.yaml", yaml);
 
     auto result = ce::parseProject(path);
     ASSERT_FALSE(result.has_value());
@@ -440,7 +440,7 @@ TEST(SchemaValidation, deeply_nested_yaml_is_rejected_not_crashing) {
     const std::string yaml =
         "version: 1\nname: DeepNest\nenvironment:\n  baseUrl: http://localhost:0\ndeep: " + nested +
         "\n";
-    const auto path = scratch.write("chainapi.yaml", yaml);
+    const auto path = scratch.write("reqloom.yaml", yaml);
 
     auto result = ce::parseProject(path);
     ASSERT_FALSE(result.has_value());
@@ -470,7 +470,7 @@ resources:
         path: /api/v1/thing
         expect_status: 200
         body: )YAML" + body + "\n";
-    const auto path = scratch.write("chainapi.yaml", yaml);
+    const auto path = scratch.write("reqloom.yaml", yaml);
 
     auto result = ce::parseProject(path);
     ASSERT_FALSE(result.has_value());

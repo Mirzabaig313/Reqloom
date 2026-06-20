@@ -13,15 +13,15 @@
 // the same `req.transport` path either of those would use — confirming
 // it works confirms the wiring is intact.
 
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 

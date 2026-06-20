@@ -3,7 +3,7 @@ title: Engine requirement (full spec)
 description: "The complete engine specification: state machines, error taxonomy, edge cases, and acceptance criteria."
 ---
 
-The full engine specification is at [`doc/ChainAPI - Engine Requirement.md`](https://github.com/chainapi/chainapi/blob/main/doc/ChainAPI%20-%20Engine%20Requirement.md) in the source tree.
+The full engine specification is at [`doc/Reqloom - Engine Requirement.md`](https://github.com/Mirzabaig313/Reqloom/blob/main/doc/Reqloom%20-%20Engine%20Requirement.md) in the source tree.
 
 Sections:
 

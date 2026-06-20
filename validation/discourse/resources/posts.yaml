@@ -7,7 +7,7 @@ operations:
     actor: member
     depends_on: [topic.create]
     body:
-      raw: "Reply from ChainAPI validation."
+      raw: "Reply from Reqloom validation."
       topic_id: "{{topic.topic_id}}"
     expect_status: 200
     extract:
@@ -21,7 +21,7 @@ operations:
     depends_on: [post.reply]
     body:
       post:
-        raw: "Edited by ChainAPI validation."
+        raw: "Edited by Reqloom validation."
         edit_reason: "validation"
     expect_status: 200
 

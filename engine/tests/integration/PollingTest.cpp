@@ -15,8 +15,8 @@
 // on the wrong response or failed an extraction).
 #include "MockSutHarness.h"
 
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -27,22 +27,22 @@
 #include <fstream>
 #include <string>
 
-namespace ce = chainapi::engine;
-namespace ct = chainapi::tests;
+namespace ce = reqloom::engine;
+namespace ct = reqloom::tests;
 namespace fs = std::filesystem;
 
 namespace {
 
 [[nodiscard]] fs::path fixturesDir() {
-    return fs::path(CHAINAPI_FIXTURES_DIR);
+    return fs::path(REQLOOM_FIXTURES_DIR);
 }
 
 class PollingScratchProject {
 public:
     explicit PollingScratchProject(const std::string& yamlBody) {
-        path_ = ct::uniqueTempPath("chainapi-polling-itest");
+        path_ = ct::uniqueTempPath("reqloom-polling-itest");
         fs::create_directories(path_);
-        std::ofstream{path_ / "chainapi.yaml"} << yamlBody;
+        std::ofstream{path_ / "reqloom.yaml"} << yamlBody;
     }
 
     ~PollingScratchProject() {
@@ -50,7 +50,7 @@ public:
         fs::remove_all(path_, ec);
     }
 
-    [[nodiscard]] fs::path yaml() const { return path_ / "chainapi.yaml"; }
+    [[nodiscard]] fs::path yaml() const { return path_ / "reqloom.yaml"; }
 
 private:
     fs::path path_;

@@ -7,11 +7,11 @@
 //   - RetryabilityMatchesSpec      → fails if isRetryable() classification breaks
 //   - RunContextSessionLifecycle   → fails if RunContext session API breaks
 //   - RunContextExtractionCache    → fails if RunContext extraction API breaks
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 TEST(EngineSmoke, ErrorCodeStringsAreStable) {
     EXPECT_EQ(ce::toCodeString(ce::ErrorCode::Cycle), "E_CYCLE");
@@ -36,6 +36,21 @@ TEST(EngineSmoke, FromCodeStringRoundTripsEveryCode) {
     }
     EXPECT_FALSE(ce::fromCodeString("E_NOT_A_REAL_CODE").has_value());
     EXPECT_FALSE(ce::fromCodeString("").has_value());
+}
+
+TEST(EngineSmoke, HumanizeIsNonEmptyAndCurated) {
+    // humanize() is the canonical friendly-message source for UI/CLI; every
+    // code maps to a non-empty phrase, and a few are pinned to their copy.
+    EXPECT_EQ(ce::humanize(ce::ErrorCode::SessionRefreshFailed), "Authentication failed");
+    EXPECT_EQ(ce::humanize(ce::ErrorCode::Cycle), "Dependency cycle");
+    EXPECT_EQ(ce::humanize(ce::ErrorCode::NetworkTimeout), "Request timed out");
+    for (const auto code : {ce::ErrorCode::SchemaInvalid,
+                            ce::ErrorCode::RefUndefined,
+                            ce::ErrorCode::ExtractionFailed,
+                            ce::ErrorCode::HookFailure,
+                            ce::ErrorCode::Cancelled}) {
+        EXPECT_FALSE(ce::humanize(code).empty());
+    }
 }
 
 TEST(EngineSmoke, RetryabilityMatchesSpec) {
@@ -84,13 +99,13 @@ TEST(EngineSmoke, RunContextExtractionCacheIsIndexable) {
     EXPECT_EQ(ctx.instances(order)[1].variables.at("order_id"), "ord-2");
 }
 
-TEST(EngineSmoke, ChainApiErrorIsCarriedThroughExpected) {
-    // Construct a ChainApiError and round-trip it through std::expected
+TEST(EngineSmoke, ReqloomErrorIsCarriedThroughExpected) {
+    // Construct a ReqloomError and round-trip it through std::expected
     // to confirm the error-channel idiom compiles end-to-end.
-    auto failingOperation = []() -> std::expected<int, ce::ChainApiError> {
-        return std::unexpected(ce::ChainApiError{ce::ErrorCode::VarUnresolved,
-                                                 ce::ErrorClass::Resolution,
-                                                 "missing: order.order_id; last set by: never"});
+    auto failingOperation = []() -> std::expected<int, ce::ReqloomError> {
+        return std::unexpected(ce::ReqloomError{ce::ErrorCode::VarUnresolved,
+                                                ce::ErrorClass::Resolution,
+                                                "missing: order.order_id; last set by: never"});
     };
 
     auto result = failingOperation();

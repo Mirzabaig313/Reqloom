@@ -6,14 +6,14 @@
 // instead.
 #pragma once
 
-#include <chainapi/engine/RunContext.h>
+#include <reqloom/engine/RunContext.h>
 
 #include "../infrastructure/http/HttpClient.h"
 
 #include <optional>
 #include <string>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// Test-only seam: when set, OAuth1 signing uses these instead of
 /// generating a random nonce / current Unix time.
@@ -69,4 +69,4 @@ bool signSigV4Request(HttpRequest& req,
                       const ActorSession& session,
                       const SigV4TestOverrides& overrides = {});
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

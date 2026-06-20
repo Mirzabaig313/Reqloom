@@ -1,10 +1,10 @@
 // Stable mapping of ErrorCode → string code, retryability, and class.
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 
 #include <array>
 #include <optional>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 std::string_view toCodeString(ErrorCode code) noexcept {
     switch (code) {
@@ -48,6 +48,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_EXTRACTION_FAILED";
         case ErrorCode::ResponseParse:
             return "E_RESPONSE_PARSE";
+        case ErrorCode::AssertionFailed:
+            return "E_ASSERTION_FAILED";
         case ErrorCode::PollTimeout:
             return "E_POLL_TIMEOUT";
         case ErrorCode::PollMaxAttemptsExceeded:
@@ -60,15 +62,79 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_LLM_RESPONSE_INVALID";
         case ErrorCode::Cancelled:
             return "E_CANCELLED";
+        case ErrorCode::Internal:
+            return "E_INTERNAL";
     }
     return "E_UNKNOWN";
+}
+
+std::string_view humanize(ErrorCode code) noexcept {
+    switch (code) {
+        case ErrorCode::SchemaInvalid:
+            return "Invalid schema";
+        case ErrorCode::YamlParse:
+            return "Could not parse YAML";
+        case ErrorCode::Cycle:
+            return "Dependency cycle";
+        case ErrorCode::RefUndefined:
+            return "Missing reference";
+        case ErrorCode::SchemaVersion:
+            return "Unsupported schema version";
+        case ErrorCode::VarUnresolved:
+            return "Unresolved variable";
+        case ErrorCode::IndexedRefOutOfRange:
+            return "List index out of range";
+        case ErrorCode::NetworkTimeout:
+            return "Request timed out";
+        case ErrorCode::NetworkDns:
+            return "Could not resolve host";
+        case ErrorCode::NetworkTls:
+            return "TLS handshake failed";
+        case ErrorCode::UploadFileUnreadable:
+            return "Upload file unreadable";
+        case ErrorCode::Http5xx:
+            return "Server error";
+        case ErrorCode::Http4xx:
+            return "Request rejected";
+        case ErrorCode::StatusMismatch:
+            return "Unexpected status code";
+        case ErrorCode::SessionRefreshFailed:
+            return "Authentication failed";
+        case ErrorCode::SecretAccessFailed:
+            return "Could not read secret";
+        case ErrorCode::HookFailure:
+            return "Hook script failed";
+        case ErrorCode::HookTimeout:
+            return "Hook script timed out";
+        case ErrorCode::ExtractionFailed:
+            return "Extraction failed";
+        case ErrorCode::ResponseParse:
+            return "Could not parse response";
+        case ErrorCode::AssertionFailed:
+            return "Assertion failed";
+        case ErrorCode::PollTimeout:
+            return "Polling timed out";
+        case ErrorCode::PollMaxAttemptsExceeded:
+            return "Polling gave up";
+        case ErrorCode::PollFailPredicate:
+            return "Polling hit a failure condition";
+        case ErrorCode::LlmRequestFailed:
+            return "AI request failed";
+        case ErrorCode::LlmResponseInvalid:
+            return "AI response was invalid";
+        case ErrorCode::Cancelled:
+            return "Cancelled";
+        case ErrorCode::Internal:
+            return "Internal error";
+    }
+    return "Failed";
 }
 
 std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
     // Reverse of toCodeString, matched against the full enumerator list.
     // The drift guard below fails the build if a code is added without
     // growing this array.
-    constexpr std::array<ErrorCode, 26> kAll = {
+    constexpr std::array<ErrorCode, 28> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,
         ErrorCode::Cycle,
@@ -89,15 +155,17 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::HookTimeout,
         ErrorCode::ExtractionFailed,
         ErrorCode::ResponseParse,
+        ErrorCode::AssertionFailed,
         ErrorCode::PollTimeout,
         ErrorCode::PollMaxAttemptsExceeded,
         ErrorCode::PollFailPredicate,
         ErrorCode::LlmRequestFailed,
         ErrorCode::LlmResponseInvalid,
         ErrorCode::Cancelled,
+        ErrorCode::Internal,
     };
-    // Cancelled is the last enumerator, so its value + 1 is the count.
-    static_assert(static_cast<std::size_t>(ErrorCode::Cancelled) + 1 == kAll.size(),
+    // Internal is the last enumerator, so its value + 1 is the count.
+    static_assert(static_cast<std::size_t>(ErrorCode::Internal) + 1 == kAll.size(),
                   "fromCodeString::kAll is out of sync with the ErrorCode enum");
     for (const auto c : kAll) {
         if (toCodeString(c) == code) {
@@ -157,6 +225,7 @@ ErrorClass classify(ErrorCode code) noexcept {
 
         case ErrorCode::ExtractionFailed:
         case ErrorCode::ResponseParse:
+        case ErrorCode::AssertionFailed:
             return ErrorClass::Extraction;
 
         case ErrorCode::PollTimeout:
@@ -169,9 +238,10 @@ ErrorClass classify(ErrorCode code) noexcept {
             return ErrorClass::Llm;
 
         case ErrorCode::Cancelled:
+        case ErrorCode::Internal:
             return ErrorClass::Run;
     }
     return ErrorClass::Run;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

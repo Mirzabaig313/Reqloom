@@ -2,15 +2,19 @@
 // undefined refs.
 #include "DependencyResolver.h"
 
+#include <algorithm>
+#include <array>
 #include <format>
+#include <map>
 #include <queue>
 #include <regex>
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -107,12 +111,14 @@ std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templ
     return refs;
 }
 
-/// Extract all implicit dependencies from an operation's templates.
-/// A reference like `{{product.product_id}}` implies a dependency on
-/// the resource "product" — specifically on whatever operation produces
-/// that variable (i.e. has it in `extract:`).
-std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& project) {
-    std::set<OperationId> deps;
+/// Like `inferImplicitDeps` but keeps the flowing variable per producer
+/// (as "resource.var"), so callers building a graph can label edges. A
+/// producer that satisfies several referenced variables yields one entry
+/// per distinct (producer, variable) pair.
+std::vector<std::pair<OperationId, std::string>> inferImplicitDepsDetailed(const Operation& op,
+                                                                           const Project& project) {
+    std::vector<std::pair<OperationId, std::string>> deps;
+    std::set<std::pair<std::string, std::string>> seen;
 
     for (const auto& ref : scanReferences(operationTemplates(op))) {
         const auto& refResource = ref.scope;
@@ -122,7 +128,6 @@ std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& p
             continue;
         }
 
-        // Actor deps are handled by the session system, not the chain.
         bool isActor = false;
         for (const auto& [actorId, _] : project.actors) {
             if (actorId.value == refResource) {
@@ -144,7 +149,10 @@ std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& p
                 if (ext.variableName == refVar) {
                     auto depId = OperationId{std::format("{}.{}", refResource, opName)};
                     if (depId.value != op.id.value) {
-                        deps.insert(depId);
+                        const auto variable = std::format("{}.{}", refResource, refVar);
+                        if (seen.insert({depId.value, variable}).second) {
+                            deps.emplace_back(std::move(depId), variable);
+                        }
                     }
                     break;
                 }
@@ -152,6 +160,18 @@ std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& p
         }
     }
 
+    return deps;
+}
+
+/// Extract all implicit dependencies from an operation's templates.
+/// A reference like `{{product.product_id}}` implies a dependency on
+/// the resource "product" — specifically on whatever operation produces
+/// that variable (i.e. has it in `extract:`).
+std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& project) {
+    std::set<OperationId> deps;
+    for (auto& [producer, _] : inferImplicitDepsDetailed(op, project)) {
+        deps.insert(producer);
+    }
     return {deps.begin(), deps.end()};
 }
 
@@ -159,11 +179,21 @@ std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& p
 
 DependencyResolver::DependencyResolver() = default;
 
-std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resolve(
+std::expected<std::vector<OperationId>, ReqloomError> DependencyResolver::resolve(
+    const Project& project, const OperationId& target) const {
+    auto plan = resolvePlan(project, target);
+    if (!plan) {
+        return std::unexpected(plan.error());
+    }
+    return std::move(plan->order);
+}
+
+std::expected<ResolvedPlan, ReqloomError> DependencyResolver::resolvePlan(
     const Project& project, const OperationId& target) const {
     // 1. Build the full dependency graph (explicit + implicit edges) for the
-    //    transitive closure of `target`.
+    //    transitive closure of `target`, recording edge metadata as we go.
     std::map<OperationId, std::vector<OperationId>> graph;
+    std::vector<DependencyEdge> edges;
     std::set<OperationId> visited;
     std::queue<OperationId> worklist;
     worklist.push(target);
@@ -180,34 +210,46 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
         auto dotPos = current.value.find('.');
         if (dotPos == std::string::npos) {
             return std::unexpected(
-                ChainApiError{ErrorCode::RefUndefined,
-                              ErrorClass::Schema,
-                              "Invalid operation id (missing dot): " + current.value});
+                ReqloomError{ErrorCode::RefUndefined,
+                             ErrorClass::Schema,
+                             "Invalid operation id (missing dot): " + current.value});
         }
         auto resName = current.value.substr(0, dotPos);
         auto opName = current.value.substr(dotPos + 1);
 
         auto resIt = project.resources.find(ResourceId{resName});
         if (resIt == project.resources.end()) {
-            return std::unexpected(ChainApiError{ErrorCode::RefUndefined,
-                                                 ErrorClass::Schema,
-                                                 "Resource not found: " + resName +
-                                                     " (referenced by operation " + current.value +
-                                                     ")"});
+            return std::unexpected(ReqloomError{ErrorCode::RefUndefined,
+                                                ErrorClass::Schema,
+                                                "Resource not found: " + resName +
+                                                    " (referenced by operation " + current.value +
+                                                    ")"});
         }
         auto opIt = resIt->second.operations.find(opName);
         if (opIt == resIt->second.operations.end()) {
-            return std::unexpected(ChainApiError{ErrorCode::RefUndefined,
-                                                 ErrorClass::Schema,
-                                                 "Operation not found: " + current.value});
+            return std::unexpected(ReqloomError{ErrorCode::RefUndefined,
+                                                ErrorClass::Schema,
+                                                "Operation not found: " + current.value});
         }
 
         const auto& op = opIt->second;
 
-        std::set<OperationId> allDeps(op.explicitDependencies.begin(),
-                                      op.explicitDependencies.end());
-        auto implicitDeps = inferImplicitDeps(op, project);
-        allDeps.insert(implicitDeps.begin(), implicitDeps.end());
+        // Explicit edges first, so an explicit dep that is also implied is
+        // surfaced as the (solid) explicit edge rather than a duplicate.
+        // Iterate the de-duplicated set so a repeated `depends_on` yields one
+        // edge, not two.
+        std::set<OperationId> explicitProducers(op.explicitDependencies.begin(),
+                                                op.explicitDependencies.end());
+        std::set<OperationId> allDeps = explicitProducers;
+        for (const auto& dep : explicitProducers) {
+            edges.push_back(DependencyEdge{current, dep, false, {}});
+        }
+        for (auto& [producer, variable] : inferImplicitDepsDetailed(op, project)) {
+            allDeps.insert(producer);
+            if (!explicitProducers.contains(producer)) {
+                edges.push_back(DependencyEdge{current, producer, true, std::move(variable)});
+            }
+        }
 
         graph[current] = {allDeps.begin(), allDeps.end()};
 
@@ -278,14 +320,22 @@ std::expected<std::vector<OperationId>, ChainApiError> DependencyResolver::resol
                 cycleOps += node.value;
             }
         }
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::Cycle, ErrorClass::Schema, "Circular dependency detected: " + cycleOps});
     }
 
-    return sorted;
+    // Stable edge order so renderers and tests see deterministic output.
+    std::ranges::sort(edges, [](const DependencyEdge& a, const DependencyEdge& b) {
+        if (a.consumer.value != b.consumer.value) {
+            return a.consumer.value < b.consumer.value;
+        }
+        return a.producer.value < b.producer.value;
+    });
+
+    return ResolvedPlan{std::move(sorted), std::move(edges)};
 }
 
-std::expected<void, ChainApiError> DependencyResolver::validate(const Project& project) const {
+std::expected<void, ReqloomError> DependencyResolver::validate(const Project& project) const {
     // A resolvable reference root: $ builtins, env, secret, or any
     // defined actor or resource.
     const auto isKnownScope = [&](const std::string& scope) -> bool {
@@ -313,7 +363,7 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
             // never resolve — reject at load.
             for (const auto& ref : scanReferences(operationTemplates(op))) {
                 if (!isKnownScope(ref.scope)) {
-                    return std::unexpected(ChainApiError{
+                    return std::unexpected(ReqloomError{
                         ErrorCode::RefUndefined,
                         ErrorClass::Schema,
                         std::format("Operation '{}' references undefined symbol '{}.{}': "
@@ -340,12 +390,12 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
                 }
                 if (!exists) {
                     return std::unexpected(
-                        ChainApiError{ErrorCode::RefUndefined,
-                                      ErrorClass::Schema,
-                                      std::format("Operation '{}' declares depends_on '{}', "
-                                                  "which is not a defined operation",
-                                                  opId.value,
-                                                  dep.value)});
+                        ReqloomError{ErrorCode::RefUndefined,
+                                     ErrorClass::Schema,
+                                     std::format("Operation '{}' declares depends_on '{}', "
+                                                 "which is not a defined operation",
+                                                 opId.value,
+                                                 dep.value)});
                 }
                 allDeps.insert(dep);
             }
@@ -400,7 +450,7 @@ std::expected<void, ChainApiError> DependencyResolver::validate(const Project& p
                 cycleOps += node.value;
             }
         }
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::Cycle, ErrorClass::Schema, "Circular dependency detected: " + cycleOps});
     }
 
@@ -481,4 +531,111 @@ std::vector<std::string> DependencyResolver::collectSecretReferences(const Proje
     return {names.begin(), names.end()};
 }
 
-}  // namespace chainapi::engine
+std::vector<VariableSuggestion> collectVariableSuggestions(const Project& project,
+                                                           const OperationId& target,
+                                                           const ResolvedPlan& plan,
+                                                           const std::string& environment) {
+    std::vector<VariableSuggestion> out;
+    std::set<std::string> seen;
+    const auto add = [&out, &seen](
+                         std::string token, VariableSuggestion::Kind kind, std::string detail) {
+        if (token.empty() || !seen.insert(token).second) {
+            return;
+        }
+        out.push_back(VariableSuggestion{std::move(token), kind, std::move(detail)});
+    };
+
+    // Resolve "<resource>.<op>" against the project.
+    const auto findOp = [&project](const OperationId& id) -> const Operation* {
+        const auto dot = id.value.find('.');
+        if (dot == std::string::npos) {
+            return nullptr;
+        }
+        const auto resName = id.value.substr(0, dot);
+        const auto opName = id.value.substr(dot + 1);
+        const auto resIt = project.resources.find(ResourceId{resName});
+        if (resIt == project.resources.end()) {
+            return nullptr;
+        }
+        const auto opIt = resIt->second.operations.find(opName);
+        if (opIt == resIt->second.operations.end()) {
+            return nullptr;
+        }
+        return &opIt->second;
+    };
+
+    // 1. Upstream extracts — every producing op in the chain (not the target).
+    //    A variable extracted by an op in resource R is referenced as {{R.var}}.
+    for (const auto& opId : plan.order) {
+        if (opId.value == target.value) {
+            continue;
+        }
+        const auto* op = findOp(opId);
+        if (op == nullptr) {
+            continue;
+        }
+        const auto dot = opId.value.find('.');
+        const std::string resource =
+            dot != std::string::npos ? opId.value.substr(0, dot) : opId.value;
+        for (const auto& ext : op->extractions) {
+            add(resource + "." + ext.variableName, VariableSuggestion::Kind::Extract, opId.value);
+        }
+    }
+
+    // 2. The target actor's session tokens — {{actor.var}} from its auth
+    //    steps and refresh block.
+    if (const auto* targetOp = findOp(target); targetOp != nullptr) {
+        if (const auto actorIt = project.actors.find(targetOp->actor);
+            actorIt != project.actors.end()) {
+            const auto& actor = actorIt->second;
+            const auto& actorId = actor.id.value;
+            const auto addTokens = [&](const std::vector<Extraction>& exts) {
+                for (const auto& ext : exts) {
+                    add(actorId + "." + ext.variableName,
+                        VariableSuggestion::Kind::ActorToken,
+                        actorId);
+                }
+            };
+            for (const auto& step : actor.authSteps) {
+                addTokens(step.extractions);
+            }
+            if (actor.refresh) {
+                addTokens(actor.refresh->extractions);
+            }
+        }
+    }
+
+    // 3. Environment variables — {{env.X}}.
+    const std::string envName = environment.empty() ? project.defaultEnvironment : environment;
+    if (const auto envIt = project.environments.find(envName);
+        envIt != project.environments.end()) {
+        for (const auto& [key, _] : envIt->second) {
+            add("env." + key, VariableSuggestion::Kind::EnvVar, envName);
+        }
+    }
+
+    // 4. Declared secrets — {{secret.X}}.
+    for (const auto& name : DependencyResolver::collectSecretReferences(project)) {
+        add("secret." + name, VariableSuggestion::Kind::Secret, {});
+    }
+
+    // 5. Built-ins. Function forms are inserted with empty parens for the user
+    //    to fill; `$.now` accepts an optional +/- duration offset.
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 8> kBuiltins{{
+        {"$.uuid", "Random UUID v4"},
+        {"$.now", "Current timestamp (ISO 8601); supports an offset, e.g. $.now+5m"},
+        {"$.base64.encode()", "Base64-encode the argument"},
+        {"$.base64.decode()", "Base64-decode the argument"},
+        {"$.hex.encode()", "Hex-encode the argument"},
+        {"$.hex.decode()", "Hex-decode the argument"},
+        {"$.url.encode()", "URL-encode the argument"},
+        {"$.url.decode()", "URL-decode the argument"},
+    }};
+    for (const auto& [token, desc] : kBuiltins) {
+        add(std::string{token}, VariableSuggestion::Kind::Builtin, std::string{desc});
+    }
+
+    return out;
+}
+
+}  // namespace reqloom::engine

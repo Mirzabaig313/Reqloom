@@ -2,10 +2,12 @@
 // the wiring keeps view models free of dependency-injection logic.
 #include "Bootstrapper.h"
 
-#include <chainapi/engine/Factories.h>
+#include <reqloom/engine/Factories.h>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
+// Note: the run-history database is opened per-project by AppController when a
+// project loads (so runs are isolated between projects), not globally here.
 Bootstrapper::Bootstrapper()
     : engine_(std::make_unique<engine::ExecutionEngine>(engine::makeDefaultDependencies())) {}
 
@@ -15,4 +17,4 @@ engine::ExecutionEngine& Bootstrapper::engine() noexcept {
     return *engine_;
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

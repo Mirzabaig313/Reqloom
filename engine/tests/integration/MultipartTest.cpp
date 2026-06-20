@@ -9,8 +9,8 @@
 // real network path end-to-end.
 #include "MockSutHarness.h"
 
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -28,13 +28,13 @@
 #include <thread>
 
 namespace fs = std::filesystem;
-namespace ce = chainapi::engine;
-namespace ct = chainapi::tests;
+namespace ce = reqloom::engine;
+namespace ct = reqloom::tests;
 
 namespace {
 
 [[nodiscard]] fs::path fixturesDir() {
-    return fs::path(CHAINAPI_FIXTURES_DIR);
+    return fs::path(REQLOOM_FIXTURES_DIR);
 }
 
 [[nodiscard]] fs::path projectDir() {
@@ -44,7 +44,7 @@ namespace {
 class TempUploadFile {
 public:
     explicit TempUploadFile(std::string contents) : contents_(std::move(contents)) {
-        path_ = ct::uniqueTempPath("chainapi-mp", ".bin");
+        path_ = ct::uniqueTempPath("reqloom-mp", ".bin");
         std::ofstream out(path_, std::ios::binary);
         out << contents_;
     }
@@ -88,7 +88,7 @@ private:
 }
 
 [[nodiscard]] ce::Project loadProject(const std::string& mockBaseUrl, const std::string& filePath) {
-    auto project = ce::parseProject(projectDir() / "chainapi.yaml");
+    auto project = ce::parseProject(projectDir() / "reqloom.yaml");
     EXPECT_TRUE(project.has_value()) << (project ? "" : project.error().detail);
     auto& env = project->environments["local"];
     env["baseUrl"] = mockBaseUrl;
@@ -109,7 +109,7 @@ protected:
 };
 
 TEST_F(MultipartFixture, file_upload_sends_multipart_with_file_bytes) {
-    TempUploadFile tmp{"chainapi-multipart-fixture-bytes"};
+    TempUploadFile tmp{"reqloom-multipart-fixture-bytes"};
 
     auto project = loadProject(harness_->baseUrl(), tmp.path().string());
     ce::ExecutionEngine engine(ce::makeDefaultDependencies());
@@ -167,7 +167,7 @@ TEST_F(MultipartFixture, plain_form_still_uses_url_encoded_body) {
 }
 
 TEST_F(MultipartFixture, missing_upload_file_fails_with_upload_unreadable) {
-    auto project = loadProject(harness_->baseUrl(), "/no/such/path/chainapi-test-missing-XXX.bin");
+    auto project = loadProject(harness_->baseUrl(), "/no/such/path/reqloom-test-missing-XXX.bin");
     ce::ExecutionEngine engine(ce::makeDefaultDependencies());
     ce::RunContext ctx;
 

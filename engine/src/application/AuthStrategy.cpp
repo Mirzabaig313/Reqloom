@@ -8,9 +8,9 @@
 #include "../domain/VariableResolver.h"
 #include "../infrastructure/http/HttpClient.h"
 
-#include <chainapi/engine/Actor.h>
-#include <chainapi/engine/Events.h>
-#include <chainapi/engine/ExecutionEngine.h>  // kMaxCapturedBodyBytes
+#include <reqloom/engine/Actor.h>
+#include <reqloom/engine/Events.h>
+#include <reqloom/engine/ExecutionEngine.h>  // kMaxCapturedBodyBytes
 
 #include <nlohmann/json.hpp>
 
@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -72,15 +72,15 @@ class ChainAuthenticator final : public Authenticator {
 public:
     explicit ChainAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
-    std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         // nullptr here means a programming error in the engine, not a
         // user-triggerable condition.
         if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
-            return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
-                                                 ErrorClass::Auth,
-                                                 "auth: authenticator wired without dependencies"});
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "auth: authenticator wired without dependencies"});
         }
 
         ActorSession session;
@@ -89,7 +89,7 @@ public:
         for (const auto& step : actor.authSteps) {
             auto resolvedPath = deps_.varResolver->resolve(step.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
-                return std::unexpected(ChainApiError{
+                return std::unexpected(ReqloomError{
                     ErrorCode::SessionRefreshFailed,
                     ErrorClass::Auth,
                     "auth: unresolved variable in path: " + resolvedPath.unresolved.front()});
@@ -130,9 +130,9 @@ public:
             auto response = deps_.http->send(req);
             if (!response) {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::SessionRefreshFailed,
-                                  ErrorClass::Auth,
-                                  "auth: network error during step '" + step.id + "'"});
+                    ReqloomError{ErrorCode::SessionRefreshFailed,
+                                 ErrorClass::Auth,
+                                 "auth: network error during step '" + step.id + "'"});
             }
 
             if (deps_.emit) {
@@ -157,22 +157,22 @@ public:
             }
 
             if (step.expectStatus && response->status != *step.expectStatus) {
-                return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
-                                                     ErrorClass::Auth,
-                                                     "auth: step '" + step.id + "' returned HTTP " +
-                                                         std::to_string(response->status) +
-                                                         " (expected " +
-                                                         std::to_string(*step.expectStatus) + ")"});
+                return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                    ErrorClass::Auth,
+                                                    "auth: step '" + step.id + "' returned HTTP " +
+                                                        std::to_string(response->status) +
+                                                        " (expected " +
+                                                        std::to_string(*step.expectStatus) + ")"});
             }
 
             if (!response->body.empty() && !step.extractions.empty()) {
                 auto values = extractFromJson(response->body, step.extractions);
                 if (!values) {
-                    return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
-                                                         ErrorClass::Auth,
-                                                         "auth: extraction failed in step '" +
-                                                             step.id +
-                                                             "': " + values.error().detail});
+                    return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                        ErrorClass::Auth,
+                                                        "auth: extraction failed in step '" +
+                                                            step.id +
+                                                            "': " + values.error().detail});
                 }
                 for (auto& [k, v] : *values) {
                     session.variables[k] = std::move(v);
@@ -193,39 +193,39 @@ class BasicAuthenticator final : public Authenticator {
 public:
     explicit BasicAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
-    std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if (deps_.varResolver == nullptr) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: basic authenticator wired without resolver"});
+                ReqloomError{ErrorCode::SessionRefreshFailed,
+                             ErrorClass::Auth,
+                             "auth: basic authenticator wired without resolver"});
         }
 
         const auto userIt = actor.authConfig.find("username");
         const auto passIt = actor.authConfig.find("password");
         if (userIt == actor.authConfig.end() || passIt == actor.authConfig.end()) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: basic strategy requires `username` and `password` "
-                              "under actor.auth"});
+                ReqloomError{ErrorCode::SessionRefreshFailed,
+                             ErrorClass::Auth,
+                             "auth: basic strategy requires `username` and `password` "
+                             "under actor.auth"});
         }
 
         auto userResolved = deps_.varResolver->resolve(userIt->second, ctx, rctx);
         if (!userResolved.unresolved.empty()) {
-            return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
-                                                 ErrorClass::Auth,
-                                                 "auth: basic.username has unresolved variable: " +
-                                                     userResolved.unresolved.front()});
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "auth: basic.username has unresolved variable: " +
+                                                    userResolved.unresolved.front()});
         }
         auto passResolved = deps_.varResolver->resolve(passIt->second, ctx, rctx);
         if (!passResolved.unresolved.empty()) {
-            return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
-                                                 ErrorClass::Auth,
-                                                 "auth: basic.password has unresolved variable: " +
-                                                     passResolved.unresolved.front()});
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "auth: basic.password has unresolved variable: " +
+                                                    passResolved.unresolved.front()});
         }
 
         ActorSession session;
@@ -253,26 +253,26 @@ class ApiKeyAuthenticator final : public Authenticator {
 public:
     explicit ApiKeyAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
-    std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if (deps_.varResolver == nullptr) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: api_key authenticator wired without resolver"});
+                ReqloomError{ErrorCode::SessionRefreshFailed,
+                             ErrorClass::Auth,
+                             "auth: api_key authenticator wired without resolver"});
         }
 
         const auto keyIt = actor.authConfig.find("key");
         if (keyIt == actor.authConfig.end()) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: api_key strategy requires `key` under actor.auth"});
+                ReqloomError{ErrorCode::SessionRefreshFailed,
+                             ErrorClass::Auth,
+                             "auth: api_key strategy requires `key` under actor.auth"});
         }
         const auto resolvedKey = deps_.varResolver->resolve(keyIt->second, ctx, rctx);
         if (!resolvedKey.unresolved.empty()) {
-            return std::unexpected(ChainApiError{
+            return std::unexpected(ReqloomError{
                 ErrorCode::SessionRefreshFailed,
                 ErrorClass::Auth,
                 "auth: api_key.key has unresolved variable: " + resolvedKey.unresolved.front()});
@@ -294,17 +294,17 @@ public:
                 session.injectQueryParams[nameIt->second] = resolvedKey.output;
             } else if (location == "cookie") {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::SessionRefreshFailed,
-                                  ErrorClass::Auth,
-                                  "auth: api_key location 'cookie' is not yet supported "
-                                  "(use a manual inject: header with Cookie: ...)"});
+                    ReqloomError{ErrorCode::SessionRefreshFailed,
+                                 ErrorClass::Auth,
+                                 "auth: api_key location 'cookie' is not yet supported "
+                                 "(use a manual inject: header with Cookie: ...)"});
             } else {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::SessionRefreshFailed,
-                                  ErrorClass::Auth,
-                                  "auth: api_key.location must be 'header', 'query', "
-                                  "or 'cookie'; got: " +
-                                      location});
+                    ReqloomError{ErrorCode::SessionRefreshFailed,
+                                 ErrorClass::Auth,
+                                 "auth: api_key.location must be 'header', 'query', "
+                                 "or 'cookie'; got: " +
+                                     location});
             }
         }
 
@@ -318,12 +318,13 @@ private:
 /// Shared OAuth2 token-endpoint flow used by `OAuth2ClientCredentials`
 /// and `OAuth2Password`. `formBody` is the already-built
 /// `application/x-www-form-urlencoded` payload.
-std::expected<ActorSession, ChainApiError> executeOAuth2TokenRequest(
+std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     HttpClient& http,
     const std::string& tokenUrl,
     std::string formBody,
     std::string_view strategyLabel,
-    const TransportConfig& transport) {
+    const TransportConfig& transport,
+    const AuthDependencies& deps) {
     HttpRequest req;
     req.method = HttpMethod::Post;
     req.url = tokenUrl;
@@ -332,13 +333,38 @@ std::expected<ActorSession, ChainApiError> executeOAuth2TokenRequest(
     req.body = std::move(formBody);
     req.transport = transport;
 
+    if (deps.emit) {
+        deps.emit(RequestPrepared{deps.runId,
+                                  deps.stepIndex,
+                                  req.method,
+                                  req.url,
+                                  snapshotMaskedRequestHeaders(req),
+                                  requestBodySize(req),
+                                  std::chrono::system_clock::now()});
+    }
+
     const auto response = http.send(req);
     if (!response) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
             ErrorClass::Auth,
             "auth: " + std::string{strategyLabel} + " network error: " + response.error().detail});
     }
+
+    // Surface the token-endpoint response (incl. failures) so the timeline can
+    // show why OAuth2 auth failed, not just that it did. Body only when the
+    // run opted into capture — it carries tokens.
+    if (deps.emit) {
+        deps.emit(ResponseReceived{deps.runId,
+                                   deps.stepIndex,
+                                   response->status,
+                                   maskHeaders(response->headers),
+                                   response->body.size(),
+                                   response->elapsed,
+                                   std::chrono::system_clock::now(),
+                                   capturedBody(response->body, deps.captureResponseBodies)});
+    }
+
     if (response->status < 200 || response->status >= 300) {
         // Surface enough of the body to debug misconfigured credentials.
         constexpr std::size_t kBodyExcerpt = 200;
@@ -346,10 +372,10 @@ std::expected<ActorSession, ChainApiError> executeOAuth2TokenRequest(
                                         ? response->body.substr(0, kBodyExcerpt) + "..."
                                         : response->body;
         return std::unexpected(
-            ChainApiError{ErrorCode::SessionRefreshFailed,
-                          ErrorClass::Auth,
-                          "auth: " + std::string{strategyLabel} + " token endpoint returned HTTP " +
-                              std::to_string(response->status) + " — " + excerpt});
+            ReqloomError{ErrorCode::SessionRefreshFailed,
+                         ErrorClass::Auth,
+                         "auth: " + std::string{strategyLabel} + " token endpoint returned HTTP " +
+                             std::to_string(response->status) + " — " + excerpt});
     }
 
     // Parse the token response once and read every field from the single
@@ -359,7 +385,7 @@ std::expected<ActorSession, ChainApiError> executeOAuth2TokenRequest(
     try {
         doc = json::parse(response->body);
     } catch (const json::parse_error& e) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
             ErrorClass::Auth,
             "auth: " + std::string{strategyLabel} + " response is not valid JSON: " + e.what()});
@@ -367,7 +393,7 @@ std::expected<ActorSession, ChainApiError> executeOAuth2TokenRequest(
 
     const auto accessTokenIt = doc.find("access_token");
     if (accessTokenIt == doc.end() || !accessTokenIt->is_string()) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
             ErrorClass::Auth,
             "auth: " + std::string{strategyLabel} + " response missing string `access_token`"});
@@ -395,37 +421,37 @@ std::expected<ActorSession, ChainApiError> executeOAuth2TokenRequest(
 
 /// Resolve `authConfig[fieldName]` through the variable resolver.
 /// Empty strings are treated as missing.
-std::expected<std::string, ChainApiError> resolveAuthConfigField(const Actor& actor,
-                                                                 const RunContext& ctx,
-                                                                 const ResolveContext& rctx,
-                                                                 VariableResolver& resolver,
-                                                                 std::string_view strategyLabel,
-                                                                 std::string_view fieldName) {
+std::expected<std::string, ReqloomError> resolveAuthConfigField(const Actor& actor,
+                                                                const RunContext& ctx,
+                                                                const ResolveContext& rctx,
+                                                                VariableResolver& resolver,
+                                                                std::string_view strategyLabel,
+                                                                std::string_view fieldName) {
     const auto it = actor.authConfig.find(std::string{fieldName});
     if (it == actor.authConfig.end() || it->second.empty()) {
-        return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
-                                             ErrorClass::Auth,
-                                             "auth: " + std::string{strategyLabel} + " requires `" +
-                                                 std::string{fieldName} + "` under actor.auth"});
+        return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                            ErrorClass::Auth,
+                                            "auth: " + std::string{strategyLabel} + " requires `" +
+                                                std::string{fieldName} + "` under actor.auth"});
     }
     auto resolved = resolver.resolve(it->second, ctx, rctx);
     if (!resolved.unresolved.empty()) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SessionRefreshFailed,
-                          ErrorClass::Auth,
-                          "auth: " + std::string{strategyLabel} + "." + std::string{fieldName} +
-                              " has unresolved variable: " + resolved.unresolved.front()});
+            ReqloomError{ErrorCode::SessionRefreshFailed,
+                         ErrorClass::Auth,
+                         "auth: " + std::string{strategyLabel} + "." + std::string{fieldName} +
+                             " has unresolved variable: " + resolved.unresolved.front()});
     }
     return resolved.output;
 }
 
 /// Resolve an optional config field. Returns empty string when absent.
-std::expected<std::string, ChainApiError> resolveAuthConfigOptional(const Actor& actor,
-                                                                    const RunContext& ctx,
-                                                                    const ResolveContext& rctx,
-                                                                    VariableResolver& resolver,
-                                                                    std::string_view strategyLabel,
-                                                                    std::string_view fieldName) {
+std::expected<std::string, ReqloomError> resolveAuthConfigOptional(const Actor& actor,
+                                                                   const RunContext& ctx,
+                                                                   const ResolveContext& rctx,
+                                                                   VariableResolver& resolver,
+                                                                   std::string_view strategyLabel,
+                                                                   std::string_view fieldName) {
     const auto it = actor.authConfig.find(std::string{fieldName});
     if (it == actor.authConfig.end() || it->second.empty()) {
         return std::string{};
@@ -433,10 +459,10 @@ std::expected<std::string, ChainApiError> resolveAuthConfigOptional(const Actor&
     auto resolved = resolver.resolve(it->second, ctx, rctx);
     if (!resolved.unresolved.empty()) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SessionRefreshFailed,
-                          ErrorClass::Auth,
-                          "auth: " + std::string{strategyLabel} + "." + std::string{fieldName} +
-                              " has unresolved variable: " + resolved.unresolved.front()});
+            ReqloomError{ErrorCode::SessionRefreshFailed,
+                         ErrorClass::Auth,
+                         "auth: " + std::string{strategyLabel} + "." + std::string{fieldName} +
+                             " has unresolved variable: " + resolved.unresolved.front()});
     }
     return resolved.output;
 }
@@ -449,15 +475,15 @@ class OAuth2ClientCredentialsAuthenticator final : public Authenticator {
 public:
     explicit OAuth2ClientCredentialsAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
-    std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: oauth2_client_credentials authenticator wired "
-                              "without dependencies"});
+                ReqloomError{ErrorCode::SessionRefreshFailed,
+                             ErrorClass::Auth,
+                             "auth: oauth2_client_credentials authenticator wired "
+                             "without dependencies"});
         }
         constexpr std::string_view kLabel = "oauth2_client_credentials";
 
@@ -492,7 +518,7 @@ public:
         }
 
         return executeOAuth2TokenRequest(
-            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport);
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_);
     }
 
 private:
@@ -507,15 +533,14 @@ class OAuth2PasswordAuthenticator final : public Authenticator {
 public:
     explicit OAuth2PasswordAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
-    std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
-            return std::unexpected(
-                ChainApiError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: oauth2_password authenticator wired without "
-                              "dependencies"});
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "auth: oauth2_password authenticator wired without "
+                                                "dependencies"});
         }
         constexpr std::string_view kLabel = "oauth2_password";
 
@@ -561,7 +586,7 @@ public:
         }
 
         return executeOAuth2TokenRequest(
-            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport);
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_);
     }
 
 private:
@@ -577,14 +602,14 @@ class OAuth1Authenticator final : public Authenticator {
 public:
     explicit OAuth1Authenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
-    std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if (deps_.varResolver == nullptr) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: oauth1 authenticator wired without resolver"});
+                ReqloomError{ErrorCode::SessionRefreshFailed,
+                             ErrorClass::Auth,
+                             "auth: oauth1 authenticator wired without resolver"});
         }
         constexpr std::string_view kLabel = "oauth1";
 
@@ -618,10 +643,10 @@ public:
         // Token + token_secret must come as a pair (RFC 5849 §3.1).
         if (token->empty() != tokenSecret->empty()) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: oauth1 requires `token` and `token_secret` to be "
-                              "set together (or both omitted for two-legged signing)"});
+                ReqloomError{ErrorCode::SessionRefreshFailed,
+                             ErrorClass::Auth,
+                             "auth: oauth1 requires `token` and `token_secret` to be "
+                             "set together (or both omitted for two-legged signing)"});
         }
 
         ActorSession session;
@@ -652,20 +677,20 @@ private:
 // is optional (for STS temporary credentials).
 // Per the IAM Best Practices guide, prefer environment-injected
 /// short-lived credentials over long-lived access keys committed to
-/// chainapi.yaml. The {{X.y}} resolver lets you pull credentials from
+/// reqloom.yaml. The {{X.y}} resolver lets you pull credentials from
 /// secret stores at run time.
 class AwsSigV4Authenticator final : public Authenticator {
 public:
     explicit AwsSigV4Authenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
 
-    std::expected<ActorSession, ChainApiError> authenticate(const Actor& actor,
-                                                            RunContext& ctx,
-                                                            const ResolveContext& rctx) override {
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
         if (deps_.varResolver == nullptr) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SessionRefreshFailed,
-                              ErrorClass::Auth,
-                              "auth: aws_sigv4 authenticator wired without resolver"});
+                ReqloomError{ErrorCode::SessionRefreshFailed,
+                             ErrorClass::Auth,
+                             "auth: aws_sigv4 authenticator wired without resolver"});
         }
         constexpr std::string_view kLabel = "aws_sigv4";
 
@@ -736,23 +761,23 @@ std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor, AuthDepen
     return nullptr;
 }
 
-std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
+std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     const Actor& actor, RunContext& ctx, const ResolveContext& rctx, const AuthDependencies& deps) {
     if (!actor.refresh) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
             ErrorClass::Auth,
             "refresh: actor '" + actor.id.value + "' has no `session.refresh:` block defined"});
     }
     if ((deps.http == nullptr) || (deps.varResolver == nullptr)) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed, ErrorClass::Auth, "refresh: dependencies not wired"});
     }
 
     const auto& refresh = *actor.refresh;
     auto resolvedPath = deps.varResolver->resolve(refresh.pathTemplate, ctx, rctx);
     if (!resolvedPath.unresolved.empty()) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
             ErrorClass::Auth,
             "refresh: unresolved variable in path: " + resolvedPath.unresolved.front()});
@@ -789,9 +814,9 @@ std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
 
     auto response = deps.http->send(req);
     if (!response) {
-        return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
-                                             ErrorClass::Auth,
-                                             "refresh: network error: " + response.error().detail});
+        return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                            ErrorClass::Auth,
+                                            "refresh: network error: " + response.error().detail});
     }
 
     if (deps.emit) {
@@ -829,7 +854,7 @@ std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
     }();
 
     if (!statusOk) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
             ErrorClass::Auth,
             "refresh: HTTP " + std::to_string(response->status) +
@@ -845,11 +870,11 @@ std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
     auto values = extractFromJson(response->body, refresh.extractions);
     if (!values) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SessionRefreshFailed,
-                          ErrorClass::Auth,
-                          "refresh: extraction failed: " + values.error().detail});
+            ReqloomError{ErrorCode::SessionRefreshFailed,
+                         ErrorClass::Auth,
+                         "refresh: extraction failed: " + values.error().detail});
     }
     return std::move(*values);
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

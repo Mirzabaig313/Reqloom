@@ -4,13 +4,13 @@
 // include itself wouldn't resolve.
 #include "application/Verifier.h"
 
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/Operation.h>
 
 #include <gtest/gtest.h>
 
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 
@@ -56,6 +56,22 @@ TEST(Verifier, jsonpath_resolves_to_scalar_marks_verified) {
     EXPECT_EQ(ex.detail, "\"prod-123\"");
     EXPECT_TRUE(report->allVerified());
     EXPECT_FALSE(report->hasFailures());
+}
+
+TEST(Verifier, jsonpath_filter_resolves_matching_element_marks_verified) {
+    // The Dry-Run preview must understand predicate filters too, the same way
+    // run-time extraction does (shared walkJsonPath).
+    ce::Verifier v;
+    auto op = makeOp({jsonPath("active_id", "$.items[?(@.status=='active')].id")});
+
+    ce::SampleResponse sample;
+    sample.body = R"({"items":[{"status":"closed","id":"a"},{"status":"active","id":"b"}]})";
+
+    auto report = v.verify(op, sample);
+    ASSERT_TRUE(report.has_value()) << report.error().detail;
+    ASSERT_EQ(report->extractions.size(), 1u);
+    EXPECT_EQ(report->extractions[0].status, ce::VerificationStatus::Verified);
+    EXPECT_EQ(report->extractions[0].detail, "\"b\"");
 }
 
 TEST(Verifier, jsonpath_missing_marks_no_match) {

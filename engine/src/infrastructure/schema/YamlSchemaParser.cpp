@@ -22,7 +22,7 @@
 
 namespace fs = std::filesystem;
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -60,7 +60,11 @@ std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     }
     for (const auto& kv : node) {
         auto key = kv.first.as<std::string>();
-        if (kv.second.IsScalar()) {
+        if (kv.second.IsNull()) {
+            // `key:` with no value (or `key: ~`) is an empty string, not the
+            // literal "~" that emitting a null node would round-trip to.
+            result[key] = "";
+        } else if (kv.second.IsScalar()) {
             result[key] = kv.second.as<std::string>();
         } else {
             YAML::Emitter emitter;
@@ -95,6 +99,13 @@ nlohmann::json yamlNodeToJsonValue(const YAML::Node& node, int depth);
 
 nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
     const auto raw = scalar.as<std::string>();
+    // A quoted scalar (yaml-cpp reports the non-specific "!" tag) is always a
+    // string — never coerce it to a number/bool. This preserves values like a
+    // zip code "01234" or a flag-shaped string "true" inside a JSON body
+    // instead of silently retyping them on parse.
+    if (scalar.Tag() == "!") {
+        return nlohmann::json(raw);
+    }
     // Use parens, not braces — nlohmann::json{x} treats braces as an
     // initializer-list and produces a one-element array.
     if (raw == "true") {
@@ -164,7 +175,48 @@ std::string nodeToJsonString(const YAML::Node& node) {
     if (!node || node.IsNull()) {
         return "";
     }
+    // A scalar body is the raw request body verbatim — do NOT JSON-encode it.
+    // Re-encoding a scalar was the over-escaping bug: the writer emits the
+    // stored body as a scalar, so encoding it here would add a layer of quotes
+    // on every save. Structured (map/sequence) bodies are serialized to JSON.
+    if (node.IsScalar()) {
+        return node.as<std::string>();
+    }
     return yamlNodeToJsonValue(node, 0).dump();
+}
+
+Extraction::Source extractionSourceFromString(const std::string& s) {
+    if (s == "xpath") {
+        return Extraction::Source::XPath;
+    }
+    if (s == "header") {
+        return Extraction::Source::Header;
+    }
+    if (s == "status_code") {
+        return Extraction::Source::StatusCode;
+    }
+    if (s == "regex") {
+        return Extraction::Source::Regex;
+    }
+    if (s == "cookie") {
+        return Extraction::Source::Cookie;
+    }
+    return Extraction::Source::JsonPath;
+}
+
+// Source implied by the path prefix when no explicit `source:` is present.
+// XPath/Regex are NOT auto-detectable — they require the explicit map form.
+Extraction::Source autoDetectExtractionSource(const std::string& path) {
+    if (path.starts_with("$.headers.")) {
+        return Extraction::Source::Header;
+    }
+    if (path.starts_with("$.cookies.")) {
+        return Extraction::Source::Cookie;
+    }
+    if (path == "$.status_code") {
+        return Extraction::Source::StatusCode;
+    }
+    return Extraction::Source::JsonPath;
 }
 
 std::vector<Extraction> parseExtractions(const YAML::Node& node) {
@@ -175,26 +227,47 @@ std::vector<Extraction> parseExtractions(const YAML::Node& node) {
     for (const auto& kv : node) {
         Extraction ext;
         ext.variableName = kv.first.as<std::string>();
-        ext.sourcePath = kv.second.as<std::string>();
-
-        // Auto-detect the extraction source from the path prefix. Users
-        // can override by setting `source:` explicitly when the YAML
-        // shape doesn't fit (post-MVP — once we support map-form
-        // extractions). Convention:
-        //   $.headers.X     → Source::Header   (header X, case-insensitive)
-        //   $.cookies.X     → Source::Cookie   (Set-Cookie X)
-        //   $.status_code   → Source::StatusCode
-        //   $... else        → Source::JsonPath (default)
-        // Regex / XPath are not auto-detected — they require an
-        // explicit annotation that hand-written schemas don't carry yet.
-        if (ext.sourcePath.starts_with("$.headers.")) {
-            ext.source = Extraction::Source::Header;
-        } else if (ext.sourcePath.starts_with("$.cookies.")) {
-            ext.source = Extraction::Source::Cookie;
-        } else if (ext.sourcePath == "$.status_code") {
-            ext.source = Extraction::Source::StatusCode;
+        const auto& value = kv.second;
+        // Two shapes: a bare scalar path (source auto-detected from the prefix)
+        // or a map `{ path: ..., source: ... }` carrying an explicit source for
+        // cases the prefix can't express (XPath, Regex). The map form lets
+        // those survive a parse → write → parse round-trip.
+        if (value.IsMap()) {
+            ext.sourcePath = value["path"].as<std::string>("");
+            if (value["source"]) {
+                ext.source = extractionSourceFromString(value["source"].as<std::string>(""));
+            } else {
+                ext.source = autoDetectExtractionSource(ext.sourcePath);
+            }
+        } else {
+            ext.sourcePath = value.as<std::string>("");
+            ext.source = autoDetectExtractionSource(ext.sourcePath);
         }
         result.push_back(std::move(ext));
+    }
+    return result;
+}
+
+/// Parse the `assert:` block: a sequence whose items are either a bare scalar
+/// (the predicate expression, unnamed) or a map `{ expr: ..., name: ... }`.
+std::vector<Assertion> parseAssertions(const YAML::Node& node) {
+    std::vector<Assertion> result;
+    if (!node || !node.IsSequence()) {
+        return result;
+    }
+    for (const auto& item : node) {
+        Assertion assertion;
+        if (item.IsMap()) {
+            assertion.expr = item["expr"].as<std::string>("");
+            if (item["name"]) {
+                assertion.name = item["name"].as<std::string>();
+            }
+        } else {
+            assertion.expr = item.as<std::string>("");
+        }
+        if (!assertion.expr.empty()) {
+            result.push_back(std::move(assertion));
+        }
     }
     return result;
 }
@@ -316,35 +389,39 @@ TransportConfig parseTransport(const YAML::Node& node) {
     return out;
 }
 
+// A hook value is a file reference (not inline JS) when it looks like a
+// relative path to a .js/.mjs file. Single-sourced so the parser can both load
+// the referenced file and remember the reference for a faithful round-trip.
+[[nodiscard]] bool hookValueIsFileRef(std::string_view s) {
+    if (s.starts_with("./") || s.starts_with("../")) {
+        return true;
+    }
+    if (s.find('\n') != std::string_view::npos) {
+        return false;
+    }
+    if (s.find('{') != std::string_view::npos) {
+        return false;
+    }
+    if (s.find('(') != std::string_view::npos) {
+        return false;
+    }
+    if (s.find('=') != std::string_view::npos) {
+        return false;
+    }
+    return s.ends_with(".js") || s.ends_with(".mjs");
+}
+
 // Resolve a hook-script value: if it looks like a relative path to a .js/.mjs
 // file, load the file content; otherwise treat as inline JS. Paths are
 // canonicalised via weakly_canonical against baseDir and rejected if outside
 // root. File size capped at 1 MiB.
-[[nodiscard]] std::expected<std::string, ChainApiError> resolveHookScript(const std::string& value,
-                                                                          const fs::path& baseDir) {
+[[nodiscard]] std::expected<std::string, ReqloomError> resolveHookScript(const std::string& value,
+                                                                         const fs::path& baseDir) {
     if (value.empty()) {
         return value;
     }
 
-    const auto looksLikeRelativePath = [](std::string_view s) {
-        if (s.starts_with("./") || s.starts_with("../")) {
-            return true;
-        }
-        if (s.find('\n') != std::string_view::npos) {
-            return false;
-        }
-        if (s.find('{') != std::string_view::npos) {
-            return false;
-        }
-        if (s.find('(') != std::string_view::npos) {
-            return false;
-        }
-        if (s.find('=') != std::string_view::npos) {
-            return false;
-        }
-        return s.ends_with(".js") || s.ends_with(".mjs");
-    };
-    if (!looksLikeRelativePath(value)) {
+    if (!hookValueIsFileRef(value)) {
         return value;
     }
 
@@ -366,15 +443,15 @@ TransportConfig parseTransport(const YAML::Node& node) {
     };
     if (raw.is_absolute() || hasRootedPrefix(value)) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script path must be relative to the project root: " + value});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script path must be relative to the project root: " + value});
     }
 
     std::error_code ec;
     const auto canonical = fs::weakly_canonical(baseDir / raw, ec);
     if (ec) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid,
             ErrorClass::Schema,
             "hook script path is not resolvable: " + value + " (" + ec.message() + ")"});
@@ -387,9 +464,9 @@ TransportConfig parseTransport(const YAML::Node& node) {
     const auto canonicalBase = fs::canonical(baseDir, ec);
     if (ec) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "could not canonicalise project root: " + ec.message()});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "could not canonicalise project root: " + ec.message()});
     }
     {
         const auto canonStr = canonical.lexically_normal().string();
@@ -400,52 +477,52 @@ TransportConfig parseTransport(const YAML::Node& node) {
              canonStr[baseStr.size()] == fs::path::preferred_separator);
         if (!contained) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "hook script path escapes the project root: " + value});
+                ReqloomError{ErrorCode::SchemaInvalid,
+                             ErrorClass::Schema,
+                             "hook script path escapes the project root: " + value});
         }
     }
 
     if (!fs::exists(canonical, ec) || ec) {
-        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
-                                             ErrorClass::Schema,
-                                             "hook script not found: " + canonical.string()});
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            "hook script not found: " + canonical.string()});
     }
     if (!fs::is_regular_file(canonical, ec) || ec) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script is not a regular file: " + canonical.string()});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script is not a regular file: " + canonical.string()});
     }
 
     constexpr std::uintmax_t kMaxHookBytes = std::uintmax_t{1} * 1024 * 1024;  // 1 MiB
     const auto size = fs::file_size(canonical, ec);
     if (ec) {
-        return std::unexpected(ChainApiError{
-            ErrorCode::SchemaInvalid,
-            ErrorClass::Schema,
-            "could not stat hook script " + canonical.string() + ": " + ec.message()});
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "could not stat hook script " + canonical.string() + ": " + ec.message()});
     }
     if (size > kMaxHookBytes) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script exceeds 1 MiB cap: " + canonical.string()});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script exceeds 1 MiB cap: " + canonical.string()});
     }
 
     std::ifstream in(canonical, std::ios::binary);
     if (!in) {
         return std::unexpected(
-            ChainApiError{ErrorCode::SchemaInvalid,
-                          ErrorClass::Schema,
-                          "hook script could not be opened: " + canonical.string()});
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script could not be opened: " + canonical.string()});
     }
     std::string contents(static_cast<std::size_t>(size), '\0');
     in.read(contents.data(), static_cast<std::streamsize>(size));
     if (in.gcount() != static_cast<std::streamsize>(size)) {
-        return std::unexpected(ChainApiError{ErrorCode::SchemaInvalid,
-                                             ErrorClass::Schema,
-                                             "hook script read truncated: " + canonical.string()});
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            "hook script read truncated: " + canonical.string()});
     }
     return contents;
 }
@@ -605,9 +682,76 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
 
 // ─── Resource/Operation parsing ──────────────────────────────────────────────
 
-std::expected<Resource, ChainApiError> parseResource(const std::string& resourceId,
-                                                     const YAML::Node& node,
-                                                     const fs::path& baseDir) {
+Provenance::Source provenanceSourceFromString(const std::string& s) {
+    if (s == "openapi_import") {
+        return Provenance::Source::OpenApiImport;
+    }
+    if (s == "postman_import") {
+        return Provenance::Source::PostmanImport;
+    }
+    if (s == "bruno_import") {
+        return Provenance::Source::BrunoImport;
+    }
+    if (s == "insomnia_import") {
+        return Provenance::Source::InsomniaImport;
+    }
+    if (s == "har_import") {
+        return Provenance::Source::HarImport;
+    }
+    if (s == "ai_import") {
+        return Provenance::Source::AiImport;
+    }
+    return Provenance::Source::HandWritten;
+}
+
+Provenance::VerifiedAgainst verifiedAgainstFromString(const std::string& s) {
+    if (s == "openapi_example") {
+        return Provenance::VerifiedAgainst::OpenApiExample;
+    }
+    if (s == "postman_response") {
+        return Provenance::VerifiedAgainst::PostmanResponse;
+    }
+    if (s == "insomnia_response") {
+        return Provenance::VerifiedAgainst::InsomniaResponse;
+    }
+    if (s == "har_entry") {
+        return Provenance::VerifiedAgainst::HarEntry;
+    }
+    if (s == "synthetic") {
+        return Provenance::VerifiedAgainst::Synthetic;
+    }
+    if (s == "live_capture") {
+        return Provenance::VerifiedAgainst::LiveCapture;
+    }
+    return Provenance::VerifiedAgainst::None;
+}
+
+// Parse the `_provenance` block written by the importer/writer. Pure metadata
+// — the runtime ignores it — but it must survive parse→write→parse so an app
+// save doesn't strip an AI-imported op's audit trail.
+Provenance parseProvenance(const YAML::Node& node) {
+    Provenance prov;
+    if (!node || !node.IsMap()) {
+        return prov;
+    }
+    prov.source = provenanceSourceFromString(node["source"].as<std::string>("hand_written"));
+    if (node["verified_against"]) {
+        prov.verifiedAgainst =
+            verifiedAgainstFromString(node["verified_against"].as<std::string>("none"));
+    }
+    if (node["model"]) {
+        prov.model = node["model"].as<std::string>("");
+    }
+    if (node["imported_at"]) {
+        prov.importedAt = node["imported_at"].as<std::string>("");
+    }
+    prov.evidence = parseStringMap(node["evidence"]);
+    return prov;
+}
+
+std::expected<Resource, ReqloomError> parseResource(const std::string& resourceId,
+                                                    const YAML::Node& node,
+                                                    const fs::path& baseDir) {
     Resource resource;
     resource.id = ResourceId{resourceId};
     resource.description = node["description"].as<std::string>("");
@@ -693,7 +837,17 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
             op.pollUntil = std::move(poll);
         }
 
+        if (opNode["for_each"]) {
+            const auto over = opNode["for_each"]["over"].as<std::string>("");
+            if (!over.empty()) {
+                ForEach forEach{ResourceId{over}};
+                forEach.continueOnError = opNode["for_each"]["continue_on_error"].as<bool>(false);
+                op.forEach = forEach;
+            }
+        }
+
         op.extractions = parseExtractions(opNode["extract"]);
+        op.assertions = parseAssertions(opNode["assert"]);
 
         if (opNode["depends_on"] && opNode["depends_on"].IsSequence()) {
             for (const auto& dep : opNode["depends_on"]) {
@@ -705,18 +859,26 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
         // else is treated as inline JS. See `resolveHookScript` for the
         // heuristic and security checks.
         if (opNode["pre_request"]) {
-            auto resolved = resolveHookScript(opNode["pre_request"].as<std::string>(), baseDir);
+            const auto raw = opNode["pre_request"].as<std::string>();
+            auto resolved = resolveHookScript(raw, baseDir);
             if (!resolved) {
                 return std::unexpected(resolved.error());
             }
             op.preRequestScript = std::move(*resolved);
+            if (hookValueIsFileRef(raw)) {
+                op.preRequestScriptRef = raw;
+            }
         }
         if (opNode["post_response"]) {
-            auto resolved = resolveHookScript(opNode["post_response"].as<std::string>(), baseDir);
+            const auto raw = opNode["post_response"].as<std::string>();
+            auto resolved = resolveHookScript(raw, baseDir);
             if (!resolved) {
                 return std::unexpected(resolved.error());
             }
             op.postResponseScript = std::move(*resolved);
+            if (hookValueIsFileRef(raw)) {
+                op.postResponseScriptRef = raw;
+            }
         }
 
         if (opNode["retry"]) {
@@ -735,6 +897,10 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
 
         op.force = opNode["force"].as<bool>(false);
 
+        if (opNode["_provenance"]) {
+            op.provenance = parseProvenance(opNode["_provenance"]);
+        }
+
         resource.operations[opName] = std::move(op);
     }
 
@@ -749,24 +915,24 @@ std::expected<Resource, ChainApiError> parseResource(const std::string& resource
 // above any legitimate hand-written schema.
 constexpr std::uintmax_t kMaxYamlBytes = std::uintmax_t{8} * 1024 * 1024;
 
-[[nodiscard]] std::expected<YAML::Node, ChainApiError> loadYamlCapped(const fs::path& file) {
+[[nodiscard]] std::expected<YAML::Node, ReqloomError> loadYamlCapped(const fs::path& file) {
     std::error_code ec;
     const auto size = fs::file_size(file, ec);
     if (ec) {
         return std::unexpected(
-            ChainApiError{ErrorCode::YamlParse,
-                          ErrorClass::Schema,
-                          "could not stat schema file " + file.string() + ": " + ec.message()});
+            ReqloomError{ErrorCode::YamlParse,
+                         ErrorClass::Schema,
+                         "could not stat schema file " + file.string() + ": " + ec.message()});
     }
     if (size > kMaxYamlBytes) {
-        return std::unexpected(ChainApiError{ErrorCode::YamlParse,
-                                             ErrorClass::Schema,
-                                             "schema file exceeds 8 MiB cap: " + file.string()});
+        return std::unexpected(ReqloomError{ErrorCode::YamlParse,
+                                            ErrorClass::Schema,
+                                            "schema file exceeds 8 MiB cap: " + file.string()});
     }
     try {
         return YAML::LoadFile(file.string());
     } catch (const YAML::Exception& e) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::YamlParse, ErrorClass::Schema, file.string() + ": " + e.what()});
     }
 }
@@ -808,14 +974,14 @@ YamlSchemaParser::~YamlSchemaParser() = default;
 
 SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
     if (!fs::exists(rootYaml)) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::YamlParse, ErrorClass::Schema, "File not found: " + rootYaml.string()});
     }
 
     // yaml-cpp's Node::as<T>() (without a default) throws YAML::Exception on
     // a type mismatch. Those calls are scattered across the parse helpers
     // below on attacker-controlled input; this guard keeps every one of them
-    // inside the std::expected<Project, ChainApiError> contract instead of
+    // inside the std::expected<Project, ReqloomError> contract instead of
     // unwinding out of the engine.
     try {
         auto loadedRoot = loadYamlCapped(rootYaml);
@@ -827,19 +993,25 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         auto version = root["version"].as<int>(0);
         if (version < 1 || version > 3) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SchemaVersion,
-                              ErrorClass::Schema,
-                              "Unsupported schema version " + std::to_string(version) +
-                                  " (supported: 1–3). Run `chainapi migrate` to upgrade."});
+                ReqloomError{ErrorCode::SchemaVersion,
+                             ErrorClass::Schema,
+                             "Unsupported schema version " + std::to_string(version) +
+                                 " (supported: 1–3). Run `reqloom migrate` to upgrade."});
         }
 
         Project project;
         project.name = root["name"].as<std::string>("Unnamed Project");
         project.defaultEnvironment = root["default_environment"].as<std::string>("local");
 
+        // Optional latency SLO: latency_slo: { p95_ms: 800 }. Negative or
+        // missing → unset (0). Surfaced on the desktop latency chart.
+        if (root["latency_slo"] && root["latency_slo"]["p95_ms"]) {
+            project.latencySloP95Ms = std::max(0, root["latency_slo"]["p95_ms"].as<int>(0));
+        }
+
         const auto baseDir = rootYaml.parent_path();
 
-        auto loadSubFile = [&](const fs::path& file) -> std::optional<ChainApiError> {
+        auto loadSubFile = [&](const fs::path& file) -> std::optional<ReqloomError> {
             auto loadedSub = loadYamlCapped(file);
             if (!loadedSub) {
                 return loadedSub.error();
@@ -918,7 +1090,7 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
             return std::nullopt;
         };
 
-        auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ChainApiError> {
+        auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ReqloomError> {
             if (!importsNode) {
                 return std::nullopt;
             }
@@ -995,9 +1167,9 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
 
         return project;
     } catch (const YAML::Exception& e) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::YamlParse, ErrorClass::Schema, rootYaml.string() + ": " + e.what()});
     }
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

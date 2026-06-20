@@ -7,8 +7,8 @@ operations:
     actor: member
     depends_on: [category.create]
     body:
-      title: "ChainAPI test topic {{$.uuid}}"
-      raw: "This topic was created by ChainAPI validation."
+      title: "Reqloom test topic {{$.uuid}}"
+      raw: "This topic was created by Reqloom validation."
       category: "{{category.category_id}}"
     expect_status: 200
     extract:

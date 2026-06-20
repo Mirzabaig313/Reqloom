@@ -1,7 +1,7 @@
 // Formatting — see header. Enum→display-string maps for the UI panels.
 #include "Formatting.h"
 
-namespace chainapi::desktop::format {
+namespace reqloom::desktop::format {
 
 QString method(engine::HttpMethod method) {
     switch (method) {
@@ -139,4 +139,4 @@ QString skipReason(engine::SkipReason reason) {
     return QStringLiteral("cached");
 }
 
-}  // namespace chainapi::desktop::format
+}  // namespace reqloom::desktop::format

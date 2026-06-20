@@ -1,22 +1,26 @@
 // @ts-check
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import remarkBaseLinks from "./src/plugins/remark-base-links.mjs";
 
 // Site URL is set per-deploy via the SITE/BASE env vars (see deploy-docs.yml).
-// Defaults target the project page at https://mirzabaig313.github.io/ChainAPi/
+// Defaults target the project page at https://mirzabaig313.github.io/Reqloom/
 // so a local or non-CI build still produces correct, prefixed internal links.
 // CI overrides these:
-//   SITE = https://<user>.github.io   BASE = /ChainAPi/   (project page)
+//   SITE = https://<user>.github.io   BASE = /Reqloom/   (project page)
 //   SITE = https://<user>.github.io   BASE = /            (org page)
 const site = process.env.SITE ?? "https://mirzabaig313.github.io";
-const base = process.env.BASE ?? "/ChainAPi/";
+const base = process.env.BASE ?? "/Reqloom/";
 
 export default defineConfig({
     site,
     base,
+    markdown: {
+        remarkPlugins: [[remarkBaseLinks, { base }]],
+    },
     integrations: [
         starlight({
-            title: "ChainAPI",
+            title: "Reqloom",
             description:
                 "Workflow-aware API testing tool that auto-resolves request dependency chains.",
             logo: { src: "./src/assets/logo.svg", replacesTitle: false },
@@ -25,12 +29,12 @@ export default defineConfig({
                 {
                     icon: "github",
                     label: "GitHub",
-                    href: "https://github.com/Mirzabaig313/ChainAPi",
+                    href: "https://github.com/Mirzabaig313/Reqloom",
                 },
             ],
             editLink: {
                 baseUrl:
-                    "https://github.com/Mirzabaig313/ChainAPi/edit/main/docs-site/",
+                    "https://github.com/Mirzabaig313/Reqloom/edit/main/docs-site/",
             },
             customCss: ["./src/styles/custom.css"],
             head: [
@@ -46,7 +50,7 @@ export default defineConfig({
                 {
                     label: "Start Here",
                     items: [
-                        { label: "What is ChainAPI?", slug: "start/overview" },
+                        { label: "What is Reqloom?", slug: "start/overview" },
                         { label: "Installation", slug: "start/install" },
                         { label: "5-minute tour", slug: "start/tour" },
                     ],
@@ -76,9 +80,9 @@ export default defineConfig({
                     label: "CLI",
                     items: [
                         { label: "Overview", slug: "cli/overview" },
-                        { label: "chainapi run", slug: "cli/run" },
-                        { label: "chainapi lint", slug: "cli/lint" },
-                        { label: "chainapi import", slug: "cli/import" },
+                        { label: "reqloom run", slug: "cli/run" },
+                        { label: "reqloom lint", slug: "cli/lint" },
+                        { label: "reqloom import", slug: "cli/import" },
                     ],
                 },
                 {

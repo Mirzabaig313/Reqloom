@@ -6,13 +6,16 @@
 // Each test fails on the parent commit if the resolver is broken.
 #include "domain/DependencyResolver.h"
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/ExecutionEngine.h>
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/ExecutionEngine.h>
+#include <reqloom/engine/Operation.h>
 
 #include <gtest/gtest.h>
 
-namespace ce = chainapi::engine;
+#include <set>
+#include <string>
+
+namespace ce = reqloom::engine;
 
 namespace {
 
@@ -109,8 +112,119 @@ TEST(DependencyResolver, implicit_dep_from_path_template_is_resolved) {
     EXPECT_EQ(chain->back().value, "order.pay");
 }
 
+// ─── resolvePlan: edges (explicit vs implicit) ───────────────────────────────
+
+TEST(DependencyResolver, resolve_plan_tags_implicit_edge_with_flowing_variable) {
+    // order.pay references {{product.product_id}}; product.create extracts it.
+    auto productCreate = makeOp("product", "create", {jsonExt("product_id", "$.id")});
+    auto orderPay = makeOp("order", "pay");
+    orderPay.pathTemplate = "/api/v1/orders/{{product.product_id}}/pay";
+
+    auto project = makeProject({
+        {"product", {{"create", std::move(productCreate)}}},
+        {"order", {{"pay", std::move(orderPay)}}},
+    });
+
+    ce::DependencyResolver resolver;
+    auto plan = resolver.resolvePlan(project, ce::OperationId{"order.pay"});
+
+    ASSERT_TRUE(plan.has_value()) << plan.error().detail;
+    EXPECT_EQ(plan->order.front().value, "product.create");
+    EXPECT_EQ(plan->order.back().value, "order.pay");
+
+    ASSERT_EQ(plan->edges.size(), 1u);
+    const auto& edge = plan->edges.front();
+    EXPECT_EQ(edge.consumer.value, "order.pay");
+    EXPECT_EQ(edge.producer.value, "product.create");
+    EXPECT_TRUE(edge.implicit);
+    EXPECT_EQ(edge.variable, "product.product_id");
+}
+
+TEST(DependencyResolver, resolve_plan_marks_explicit_edge_without_variable) {
+    auto productPublish = makeOp("product", "publish");
+    productPublish.explicitDependencies = {ce::OperationId{"product.create"}};
+    auto productCreate = makeOp("product", "create", {jsonExt("product_id", "$.id")});
+
+    auto project = makeProject({
+        {"product", {{"publish", std::move(productPublish)}, {"create", std::move(productCreate)}}},
+    });
+
+    ce::DependencyResolver resolver;
+    auto plan = resolver.resolvePlan(project, ce::OperationId{"product.publish"});
+
+    ASSERT_TRUE(plan.has_value()) << plan.error().detail;
+    ASSERT_EQ(plan->edges.size(), 1u);
+    const auto& edge = plan->edges.front();
+    EXPECT_EQ(edge.consumer.value, "product.publish");
+    EXPECT_EQ(edge.producer.value, "product.create");
+    EXPECT_FALSE(edge.implicit);
+    EXPECT_TRUE(edge.variable.empty());
+}
+
 // ─── Explicit dependency ──────────────────────────────────────────────────────
 
+TEST(DependencyResolver, suggest_variables_includes_extracts_actor_env_and_builtins) {
+    // order.pay references {{product.product_id}}; product.create extracts it.
+    auto productCreate = makeOp("product", "create", {jsonExt("product_id", "$.id")});
+    auto orderPay = makeOp("order", "pay");
+    orderPay.pathTemplate = "/api/v1/orders/{{product.product_id}}/pay";
+
+    auto project = makeProject({
+        {"product", {{"create", std::move(productCreate)}}},
+        {"order", {{"pay", std::move(orderPay)}}},
+    });
+
+    ce::DependencyResolver resolver;
+    const ce::OperationId target{"order.pay"};
+    auto plan = resolver.resolvePlan(project, target);
+    ASSERT_TRUE(plan.has_value()) << plan.error().detail;
+
+    const auto suggestions = ce::collectVariableSuggestions(project, target, *plan, "");
+
+    std::set<std::string> tokens;
+    for (const auto& s : suggestions) {
+        tokens.insert(s.token);
+    }
+    EXPECT_TRUE(tokens.contains("product.product_id"));  // upstream extract
+    EXPECT_TRUE(tokens.contains("user.token"));          // actor session token
+    EXPECT_TRUE(tokens.contains("env.baseUrl"));         // environment var
+    EXPECT_TRUE(tokens.contains("$.uuid"));              // built-in
+    EXPECT_TRUE(tokens.contains("$.now"));
+
+    // The producing op is named as the detail of its extract suggestion.
+    for (const auto& s : suggestions) {
+        if (s.token == "product.product_id") {
+            EXPECT_EQ(s.kind, ce::VariableSuggestion::Kind::Extract);
+            EXPECT_EQ(s.detail, "product.create");
+        }
+    }
+}
+
+TEST(DependencyResolver, suggest_variables_excludes_the_targets_own_extractions) {
+    // A target can't reference a value it hasn't produced yet, so its own
+    // extractions are not suggested (only upstream producers' are).
+    auto orderCreate =
+        makeOp("order", "create", {jsonExt("order_id", "$.id"), jsonExt("total", "$.total")});
+
+    auto project = makeProject({
+        {"order", {{"create", std::move(orderCreate)}}},
+    });
+
+    ce::DependencyResolver resolver;
+    const ce::OperationId target{"order.create"};
+    auto plan = resolver.resolvePlan(project, target);
+    ASSERT_TRUE(plan.has_value()) << plan.error().detail;
+
+    const auto suggestions = ce::collectVariableSuggestions(project, target, *plan, "");
+    std::set<std::string> tokens;
+    for (const auto& s : suggestions) {
+        tokens.insert(s.token);
+    }
+    EXPECT_FALSE(tokens.contains("order.order_id"));
+    EXPECT_FALSE(tokens.contains("order.total"));
+}
+
+// ─── Explicit dependency ──────────────────────────────────────────────────────
 TEST(DependencyResolver, explicit_depends_on_is_included_in_chain) {
     auto productPublish = makeOp("product", "publish");
     auto productCreate = makeOp("product", "create", {jsonExt("product_id", "$.id")});

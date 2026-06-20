@@ -1,17 +1,17 @@
-// Engine-internal interface for writing a Project back to chainapi.yaml.
+// Engine-internal interface for writing a Project back to reqloom.yaml.
 // Concrete impl: YamlSchemaWriter (yaml-cpp).
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/ExecutionEngine.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/ExecutionEngine.h>
 
 #include <expected>
 #include <filesystem>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// Returns the written root yaml path on success.
-using SchemaWriteResult = std::expected<std::filesystem::path, ChainApiError>;
+using SchemaWriteResult = std::expected<std::filesystem::path, ReqloomError>;
 
 class SchemaWriter {
 public:
@@ -26,7 +26,7 @@ public:
     /// refuses to overwrite existing files unless `overwrite` is set.
     ///
     /// Layout produced:
-    ///   targetDir/chainapi.yaml
+    ///   targetDir/reqloom.yaml
     ///   targetDir/actors/<id>.yaml
     ///   targetDir/resources/<id>.yaml
     ///   targetDir/environments/<n>.yaml
@@ -35,4 +35,4 @@ public:
                                     bool overwrite = false) = 0;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

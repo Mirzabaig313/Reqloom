@@ -1,7 +1,7 @@
 // Unit tests for the VariableResolver grammar upgrade.
 #include "domain/VariableResolver.h"
 
-#include <chainapi/engine/RunContext.h>
+#include <reqloom/engine/RunContext.h>
 
 #include <gtest/gtest.h>
 
@@ -12,7 +12,7 @@
 #include <regex>
 #include <sstream>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 
@@ -51,7 +51,7 @@ TEST(VariableResolver, resolves_now_plus_offset_to_iso_in_the_future) {
     ASSERT_FALSE(is.fail()) << "could not parse: " << m[1].str();
 
     const auto resolvedTime =
-        std::chrono::system_clock::from_time_t(chainapi::tests::timegmUtc(&tm));
+        std::chrono::system_clock::from_time_t(reqloom::tests::timegmUtc(&tm));
     EXPECT_GE(resolvedTime - before, std::chrono::seconds{5 * 60 - 1});
     EXPECT_LE(resolvedTime - after, std::chrono::seconds{5 * 60 + 5});
 }
@@ -71,7 +71,7 @@ TEST(VariableResolver, resolves_now_minus_offset_to_iso_in_the_past) {
     ASSERT_FALSE(is.fail()) << "could not parse: " << result.output;
 
     const auto resolvedTime =
-        std::chrono::system_clock::from_time_t(chainapi::tests::timegmUtc(&tm));
+        std::chrono::system_clock::from_time_t(reqloom::tests::timegmUtc(&tm));
     EXPECT_LE(resolvedTime, before - std::chrono::seconds{3600 - 5});
 }
 
@@ -152,6 +152,32 @@ TEST(VariableResolver, preserves_indexed_resource_lookup) {
     EXPECT_FALSE(miss.unresolved.empty());
 }
 
+TEST(VariableResolver, for_each_iteration_binding_selects_the_bound_instance) {
+    // While a for-each iteration is bound, a bare `{{order.id}}` resolves to
+    // that iteration's instance instead of the most-recent — this is what lets
+    // a for-each body iterate the list.
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const ce::ResourceId order{"order"};
+    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-1"}}});
+    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-2"}}});
+    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-3"}}});
+
+    // No binding → most-recent.
+    EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-3");
+
+    ctx.setIteration(order, 0);
+    EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-1");
+    ctx.setIteration(order, 1);
+    EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-2");
+
+    // Clearing the binding restores most-recent resolution.
+    ctx.setIteration(order, std::nullopt);
+    EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-3");
+}
+
 TEST(VariableResolver, preserves_secret_and_env_resolution) {
     ce::VariableResolver resolver;
     ce::RunContext ctx;
@@ -195,14 +221,14 @@ TEST(VariableResolver, base64_encode_decode_round_trip) {
     ce::VariableResolver resolver;
     ce::RunContext ctx;
     auto rctx = makeResolveCtx();
-    rctx.envVars["RAW"] = "Hello, ChainAPI!";
-    rctx.envVars["B64"] = "SGVsbG8sIENoYWluQVBJIQ==";
+    rctx.envVars["RAW"] = "Hello, Reqloom!";
+    rctx.envVars["B64"] = "SGVsbG8sIFJlcWxvb20h";
 
     const auto enc = resolver.resolve("{{$.base64.encode(env.RAW)}}", ctx, rctx);
-    EXPECT_EQ(enc.output, "SGVsbG8sIENoYWluQVBJIQ==");
+    EXPECT_EQ(enc.output, "SGVsbG8sIFJlcWxvb20h");
 
     const auto dec = resolver.resolve("{{$.base64.decode(env.B64)}}", ctx, rctx);
-    EXPECT_EQ(dec.output, "Hello, ChainAPI!");
+    EXPECT_EQ(dec.output, "Hello, Reqloom!");
 }
 
 TEST(VariableResolver, base64_decode_rejects_invalid_input) {

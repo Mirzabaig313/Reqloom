@@ -4,13 +4,13 @@
 
 #include "../theming/Theme.h"
 
-#include <chainapi/engine/Events.h>
-#include <chainapi/engine/Operation.h>
-#include <chainapi/engine/RunContext.h>
+#include <reqloom/engine/Events.h>
+#include <reqloom/engine/Operation.h>
+#include <reqloom/engine/RunContext.h>
 
 #include <QtCore/QString>
 
-namespace chainapi::desktop::format {
+namespace reqloom::desktop::format {
 
 /// Uppercase HTTP verb, e.g. "POST".
 [[nodiscard]] QString method(engine::HttpMethod method);
@@ -45,4 +45,4 @@ namespace chainapi::desktop::format {
 /// Label for a skip reason ("session valid", "extraction cached").
 [[nodiscard]] QString skipReason(engine::SkipReason reason);
 
-}  // namespace chainapi::desktop::format
+}  // namespace reqloom::desktop::format

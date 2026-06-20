@@ -1,7 +1,7 @@
 // Unit tests for YamlSchemaParser multi-file project layout.
 //
 // Every existing SchemaParser test embeds everything in a single
-// chainapi.yaml. This file covers the `imports:` mechanism that loads
+// reqloom.yaml. This file covers the `imports:` mechanism that loads
 // actors, resources, and environments from sub-directories.
 //
 // Covered paths:
@@ -17,8 +17,8 @@
 //   - force: flag
 //   - session.ttl: with all four duration suffixes (s, m, h, d)
 //   - session.refresh: block with all fields
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -28,7 +28,7 @@
 #include <fstream>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -36,7 +36,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-multifile");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-multifile");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -95,7 +95,7 @@ variables:
   baseUrl: http://localhost:8080
 )YAML");
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: MultiFileFormA
 default_environment: local
@@ -150,7 +150,7 @@ user:
       expect_status: 200
 )YAML");
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: MultiFileFormB
 default_environment: local
@@ -187,7 +187,7 @@ service:
     name: X-API-Key
 )YAML");
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: StemFallback
 default_environment: local
@@ -218,7 +218,7 @@ admin_email: admin@staging.example.com
 )YAML");
 
     // No inline `environment:` block — only the imported file defines envs.
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: FlatEnv
 default_environment: staging
@@ -235,7 +235,7 @@ imports:
 }
 
 TEST(SchemaParserMultiFile, inline_and_imported_definitions_coexist) {
-    // Inline actors/resources in chainapi.yaml plus imported ones from files.
+    // Inline actors/resources in reqloom.yaml plus imported ones from files.
     ScratchDir scratch;
 
     scratch.write("actors/external.yaml", R"YAML(
@@ -245,7 +245,7 @@ auth:
   key: "ext-key"
 )YAML");
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: MixedInlineImport
 default_environment: local
@@ -278,7 +278,7 @@ imports:
 
 TEST(SchemaParserOperationFields, depends_on_populates_explicit_dependencies) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: DependsOn
 default_environment: local
@@ -320,7 +320,7 @@ resources:
 
 TEST(SchemaParserOperationFields, depends_on_accepts_multiple_entries) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: MultiDependsOn
 default_environment: local
@@ -374,9 +374,53 @@ resources:
 
 // ─── retry: block ────────────────────────────────────────────────────────────
 
+// ─── body: quoted scalar type preservation ───────────────────────────────────
+
+TEST(SchemaParserOperationFields, quoted_body_values_keep_string_type) {
+    // A quoted value in a YAML map body must stay a JSON string — never get
+    // retyped to a number/bool — so a zip code "01234" or a flag-shaped string
+    // "true" survives. Unquoted scalars still resolve to their natural type.
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: QuotedBody
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+    inject: { headers: { Authorization: "Bearer {{user.token}}" } }
+
+resources:
+  account:
+    operations:
+      create:
+        method: POST
+        path: /api/v1/accounts
+        actor: user
+        expect_status: 201
+        body:
+          zip: "01234"
+          flag: "true"
+          qty: 5
+          enabled: true
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& create = result->resources.at(ce::ResourceId{"account"}).operations.at("create");
+    ASSERT_TRUE(create.bodyTemplate.has_value());
+    // Quoted values stay strings; unquoted scalars keep their natural JSON type.
+    EXPECT_EQ(*create.bodyTemplate, R"({"enabled":true,"flag":"true","qty":5,"zip":"01234"})");
+}
+
 TEST(SchemaParserOperationFields, retry_block_sets_max_attempts_and_backoff) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: RetryBlock
 default_environment: local
@@ -412,7 +456,7 @@ resources:
 
 TEST(SchemaParserOperationFields, operation_without_retry_block_uses_defaults) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: DefaultRetry
 default_environment: local
@@ -448,7 +492,7 @@ resources:
 
 TEST(SchemaParserOperationFields, operation_timeout_is_parsed_in_milliseconds) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OpTimeout
 default_environment: local
@@ -482,7 +526,7 @@ resources:
 
 TEST(SchemaParserOperationFields, operation_without_timeout_has_nullopt) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: NoTimeout
 default_environment: local
@@ -515,7 +559,7 @@ resources:
 
 TEST(SchemaParserOperationFields, force_true_is_parsed) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ForceFlag
 default_environment: local
@@ -549,7 +593,7 @@ resources:
 
 TEST(SchemaParserOperationFields, force_defaults_to_false_when_absent) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: NoForce
 default_environment: local
@@ -582,7 +626,7 @@ resources:
 
 TEST(SchemaParserSessionFields, session_ttl_parses_seconds_suffix) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: TtlSeconds
 default_environment: local
@@ -615,7 +659,7 @@ resources:
 
 TEST(SchemaParserSessionFields, session_ttl_parses_minutes_suffix) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: TtlMinutes
 default_environment: local
@@ -648,7 +692,7 @@ resources:
 
 TEST(SchemaParserSessionFields, session_ttl_parses_hours_suffix) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: TtlHours
 default_environment: local
@@ -681,7 +725,7 @@ resources:
 
 TEST(SchemaParserSessionFields, session_ttl_parses_days_suffix) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: TtlDays
 default_environment: local
@@ -714,7 +758,7 @@ resources:
 
 TEST(SchemaParserSessionFields, actor_without_session_block_uses_default_ttl) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: DefaultTtl
 default_environment: local
@@ -748,7 +792,7 @@ resources:
 
 TEST(SchemaParserSessionFields, session_refresh_block_is_parsed_with_all_fields) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: RefreshBlock
 default_environment: local
@@ -802,7 +846,7 @@ resources:
 
 TEST(SchemaParserSessionFields, actor_without_refresh_block_has_nullopt) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: NoRefresh
 default_environment: local
@@ -833,7 +877,7 @@ resources:
 
 TEST(SchemaParserSessionFields, session_refresh_expect_status_scalar_is_parsed) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: RefreshExpectStatusScalar
 default_environment: local
@@ -876,7 +920,7 @@ resources:
 
 TEST(SchemaParserSessionFields, session_refresh_expect_status_list_is_parsed) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: RefreshExpectStatusList
 default_environment: local
@@ -923,7 +967,7 @@ TEST(SchemaParserSessionFields, session_refresh_without_expect_status_leaves_bot
     // must continue to parse cleanly. runRefresh's "any 2xx is success"
     // default keeps their behaviour unchanged.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: RefreshNoExpectStatus
 default_environment: local
@@ -967,7 +1011,7 @@ resources:
 
 TEST(SchemaParserVersion, version_zero_is_rejected) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 0
 name: BadVersion
 environment:
@@ -981,7 +1025,7 @@ environment:
 
 TEST(SchemaParserVersion, version_4_is_rejected) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 4
 name: FutureVersion
 environment:
@@ -995,7 +1039,7 @@ environment:
 }
 
 TEST(SchemaParserVersion, missing_file_returns_yaml_parse_error) {
-    const fs::path nonexistent = fs::temp_directory_path() / "does-not-exist-chainapi.yaml";
+    const fs::path nonexistent = fs::temp_directory_path() / "does-not-exist-reqloom.yaml";
     auto result = ce::parseProject(nonexistent);
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::YamlParse);
@@ -1010,7 +1054,7 @@ TEST(SchemaParserVersion, missing_file_returns_yaml_parse_error) {
 
 TEST(SchemaParserExtractionSource, jsonpath_is_the_default) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ExtSrcDefault
 default_environment: local
@@ -1041,7 +1085,7 @@ resources:
 
 TEST(SchemaParserExtractionSource, dollar_headers_prefix_tags_header_source) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ExtSrcHeader
 default_environment: local
@@ -1072,7 +1116,7 @@ resources:
 
 TEST(SchemaParserExtractionSource, dollar_cookies_prefix_tags_cookie_source) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ExtSrcCookie
 default_environment: local
@@ -1103,7 +1147,7 @@ resources:
 
 TEST(SchemaParserExtractionSource, exact_dollar_status_code_tags_status_code_source) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ExtSrcStatus
 default_environment: local
@@ -1142,7 +1186,7 @@ resources:
 
 TEST(SchemaParserTransport, root_transport_block_parses_all_fields) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: TransportRoot
 default_environment: local
@@ -1188,7 +1232,7 @@ TEST(SchemaParserTransport, missing_block_yields_default_constructed_config) {
     // back to a default-constructed TransportConfig, which is exactly
     // what the engine did before this slice landed.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: NoTransport
 default_environment: local
@@ -1206,7 +1250,7 @@ actors:
 
 TEST(SchemaParserTransport, accepts_milliseconds_for_connect_timeout) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: TransportMs
 default_environment: local
@@ -1228,7 +1272,7 @@ actors:
 
 TEST(SchemaParserTransport, environment_file_transport_block_is_picked_up) {
     ScratchDir scratch;
-    scratch.write("chainapi.yaml", R"YAML(
+    scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: TransportPerEnv
 default_environment: local
@@ -1254,7 +1298,7 @@ transport:
 )YAML";
     }
 
-    auto result = ce::parseProject(scratch.path() / "chainapi.yaml");
+    auto result = ce::parseProject(scratch.path() / "reqloom.yaml");
     ASSERT_TRUE(result.has_value()) << result.error().detail;
     ASSERT_TRUE(result->transport.contains("local"));
     const auto& t = result->transport.at("local");

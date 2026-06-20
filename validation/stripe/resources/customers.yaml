@@ -11,7 +11,7 @@ operations:
     body_form:                 # SCHEMA FINDING #5: see findings.md
       email: "test+{{$.uuid}}@{{env.test_email_domain}}"
       name: "Test Customer {{$.uuid}}"
-      "metadata[source]": "chainapi-validation"
+      "metadata[source]": "reqloom-validation"
     expect_status: 200
     extract:
       customer_id: $.id
@@ -32,7 +32,7 @@ operations:
       Content-Type: "application/x-www-form-urlencoded"
       Idempotency-Key: "{{$.uuid}}"
     body_form:
-      description: "Updated by ChainAPI validation"
+      description: "Updated by Reqloom validation"
     expect_status: 200
 
   list:
