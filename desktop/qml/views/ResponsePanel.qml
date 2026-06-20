@@ -262,44 +262,103 @@ Rectangle {
             ColumnLayout {
                 spacing: DesignTokens.spaceMd
 
-                // Status line + Save-as-example + examples dropdown.
+                // Status tray + Copy + Save-as-example.
                 RowLayout {
                     Layout.fillWidth: true
                     visible: AppController.hasResponse
                     spacing: DesignTokens.spaceMd
-                    Label {
-                        text: AppController.respStatus > 0 ? ("HTTP " + AppController.respStatus) : AppController.runOutcome
-                        color: panel.statusColor(AppController.respStatus)
-                        font.pixelSize: DesignTokens.fontSubtitle
-                        font.weight: DesignTokens.weightSemiBold
+
+                    // Grouped status tray: code + example + timing + size read
+                    // as one unit instead of four loose labels (UI/UX review §5).
+                    Rectangle {
+                        Layout.alignment: Qt.AlignVCenter
+                        implicitHeight: 32
+                        implicitWidth: statusTray.implicitWidth + DesignTokens.spaceMd * 2
+                        radius: DesignTokens.radiusPill
+                        color: DesignTokens.surfaceSunken
+                        border.width: 1
+                        border.color: DesignTokens.borderSubtle
+                        RowLayout {
+                            id: statusTray
+                            anchors.centerIn: parent
+                            spacing: DesignTokens.spaceSm
+                            Label {
+                                text: AppController.respStatus > 0 ? ("HTTP " + AppController.respStatus) : AppController.runOutcome
+                                color: panel.statusColor(AppController.respStatus)
+                                font.pixelSize: DesignTokens.fontBody
+                                font.weight: DesignTokens.weightSemiBold
+                            }
+                            Rectangle {
+                                visible: AppController.shownExample.length > 0
+                                Layout.alignment: Qt.AlignVCenter
+                                implicitWidth: 1
+                                implicitHeight: 14
+                                color: DesignTokens.borderSubtle
+                            }
+                            Label {
+                                visible: AppController.shownExample.length > 0
+                                text: AppController.shownExample
+                                color: DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontLabel
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: 160
+                            }
+                            Rectangle {
+                                Layout.alignment: Qt.AlignVCenter
+                                implicitWidth: 1
+                                implicitHeight: 14
+                                color: DesignTokens.borderSubtle
+                            }
+                            Label {
+                                text: AppController.respElapsedMs + qsTr(" ms")
+                                color: DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontLabel
+                                // Tabular figures so the ms value doesn't shift
+                                // width as digits change between runs.
+                                font.features: ({
+                                        "tnum": 1
+                                    })
+                            }
+                            Label {
+                                text: AppController.respBodySize + qsTr(" B")
+                                color: DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.features: ({
+                                        "tnum": 1
+                                    })
+                            }
+                        }
                     }
-                    Label {
-                        visible: AppController.shownExample.length > 0
-                        text: "· " + AppController.shownExample
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
-                        elide: Text.ElideRight
-                    }
-                    Label {
-                        text: AppController.respElapsedMs + " ms"
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
-                        // Tabular figures so the ms value doesn't shift width
-                        // as digits change between runs.
-                        font.features: ({
-                                "tnum": 1
-                            })
-                    }
-                    Label {
-                        text: AppController.respBodySize + " B"
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
-                        font.features: ({
-                                "tnum": 1
-                            })
-                    }
+
                     Item {
                         Layout.fillWidth: true
+                    }
+                    Button {
+                        id: copyBodyBtn
+                        text: qsTr("Copy")
+                        implicitHeight: 28
+                        leftPadding: DesignTokens.spaceSm
+                        rightPadding: DesignTokens.spaceSm
+                        enabled: AppController.respBody.length > 0
+                        GlassToolTip {
+                            active: copyBodyBtn.hovered
+                            text: qsTr("Copy the full response body")
+                        }
+                        onClicked: AppController.copyToClipboard(AppController.respBody, qsTr("response body"))
+                        contentItem: Text {
+                            text: copyBodyBtn.text
+                            color: copyBodyBtn.enabled ? DesignTokens.accent : DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            font.weight: DesignTokens.weightSemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: copyBodyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                            border.width: 1
+                            border.color: DesignTokens.borderSubtle
+                        }
                     }
                     Button {
                         id: saveExampleBtn
@@ -334,10 +393,16 @@ Rectangle {
                     }
                     GlassComboBox {
                         id: examplesCombo
-                        Layout.fillWidth: true
+                        // A compact dropdown reads as a picker; full-width it
+                        // looked like an empty input field (UI/UX review §5).
+                        Layout.preferredWidth: 260
+                        Layout.maximumWidth: 320
                         model: AppController.examples
                         textRole: "name"
                         onActivated: AppController.showExample(currentText)
+                    }
+                    Item {
+                        Layout.fillWidth: true
                     }
                 }
 

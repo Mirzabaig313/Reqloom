@@ -39,6 +39,7 @@ Summary summarize(std::vector<double> samples) {
     out.mean = sum / static_cast<double>(samples.size());
     out.median = percentileSorted(samples, 0.5);
     out.p95 = percentileSorted(samples, 0.95);
+    out.p99 = percentileSorted(samples, 0.99);
     return out;
 }
 

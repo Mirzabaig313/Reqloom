@@ -109,9 +109,22 @@ Rectangle {
                 required property string statusToken
                 required property string statusLabel
                 required property string value
+                required property string method
+                required property string path
+                required property string size
+                required property string clock
+                required property string duration
+                required property string subLabel
 
                 readonly property bool isChild: kind === "request" || kind === "response" || kind === "extraction"
+                // Request / response rows render as columns (method/status · path
+                // · size · clock · duration) rather than one packed detail line.
+                readonly property bool isColumnar: kind === "request" || kind === "response"
                 readonly property bool isHeader: kind === "runStart" || kind === "runEnd"
+                readonly property bool isStep: kind === "step"
+                // Status-keyed accent for the left stripe + step badge, so each
+                // step group reads pass/fail at a glance (not text-only).
+                readonly property color accentColor: statusToken.length > 0 ? DesignTokens.statusColor(statusToken) : DesignTokens.borderSubtle
                 // A row can reveal more than fits on one line: a payload
                 // (masked headers / response headers / raw error code). Those
                 // rows get a chevron + click-to-open.
@@ -127,9 +140,27 @@ Rectangle {
                 width: ListView.view.width
                 implicitHeight: contentCol.implicitHeight + DesignTokens.spaceSm
                 radius: DesignTokens.radiusSm
-                color: expanded ? DesignTokens.surfaceSunken : isHeader ? DesignTokens.surfaceSunken : "transparent"
+                color: expanded ? DesignTokens.surfaceSunken : (isHeader || isStep) ? DesignTokens.surfaceSunken : "transparent"
+                // Card outline on step / run rows so each group reads as a
+                // bordered card (mockup parity); status-tinted on failures.
+                border.width: (row.isStep || row.isHeader) ? 1 : 0
+                border.color: row.statusToken === "error" ? Qt.rgba(DesignTokens.statusError.r, DesignTokens.statusError.g, DesignTokens.statusError.b, 0.45) : DesignTokens.borderSubtle
                 Behavior on color {
                     ColorMotion {}
+                }
+
+                // Status accent stripe on step / header rows — the colored left
+                // edge that lets a step group read pass/fail at a glance.
+                Rectangle {
+                    visible: row.isStep || row.kind === "runEnd"
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.topMargin: 2
+                    anchors.bottomMargin: 2
+                    width: 3
+                    radius: 1.5
+                    color: row.accentColor
                 }
 
                 ColumnLayout {
@@ -137,7 +168,7 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: row.isChild ? DesignTokens.spaceLg : DesignTokens.spaceXs
+                    anchors.leftMargin: row.isChild ? DesignTokens.spaceLg : DesignTokens.spaceMd
                     anchors.rightMargin: DesignTokens.spaceXs
                     spacing: DesignTokens.spaceXs
 
@@ -162,6 +193,46 @@ Rectangle {
                             font.pixelSize: DesignTokens.fontCaption
                         }
 
+                        // Numbered sub-step badge ("1.1", "1.2") on request /
+                        // response rows, mirroring the mockup.
+                        Rectangle {
+                            visible: row.subLabel.length > 0
+                            Layout.alignment: Qt.AlignVCenter
+                            implicitHeight: 18
+                            implicitWidth: subBadge.implicitWidth + DesignTokens.spaceSm * 2
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.accentMuted
+                            Label {
+                                id: subBadge
+                                anchors.centerIn: parent
+                                text: row.subLabel
+                                color: DesignTokens.accent
+                                font.pixelSize: DesignTokens.fontCaption
+                                font.family: DesignTokens.fontMono
+                                font.weight: DesignTokens.weightSemiBold
+                            }
+                        }
+
+                        // Circular pass/fail glyph on step rows, mirroring the
+                        // mockup's check / cross before the operation name.
+                        Rectangle {
+                            visible: row.isStep && (row.statusToken === "success" || row.statusToken === "error")
+                            Layout.alignment: Qt.AlignVCenter
+                            implicitWidth: 16
+                            implicitHeight: 16
+                            radius: 8
+                            color: "transparent"
+                            border.width: 1.5
+                            border.color: row.accentColor
+                            Text {
+                                anchors.centerIn: parent
+                                text: row.statusToken === "error" ? "\u2717" : "\u2713"
+                                color: row.accentColor
+                                font.pixelSize: 9
+                                font.weight: DesignTokens.weightBold
+                            }
+                        }
+
                         Label {
                             text: row.title
                             color: row.kind === "runEnd" ? (row.statusToken === "error" ? DesignTokens.statusError : row.statusToken === "success" ? DesignTokens.statusSuccess : row.statusToken === "cancelled" ? DesignTokens.statusWarning : DesignTokens.textPrimary) : row.isChild ? DesignTokens.textSecondary : DesignTokens.textPrimary
@@ -177,7 +248,33 @@ Rectangle {
                             label: row.statusLabel
                         }
 
+                        // Method pill for request rows (mirrors the sidebar verb badge).
+                        MethodBadge {
+                            visible: row.method.length > 0
+                            method: row.method.length > 0 ? row.method : "GET"
+                            minWidth: 54
+                        }
+
+                        // Request path column (request rows). Mono; elides when
+                        // the panel is too narrow so it can never overrun the
+                        // size / clock columns. The full URL is in the row's
+                        // expansion (click the chevron).
                         Label {
+                            visible: row.isColumnar && row.path.length > 0
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.alignment: Qt.AlignVCenter
+                            text: row.path
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.family: DesignTokens.fontMono
+                            elide: Text.ElideRight
+                        }
+
+                        // Non-columnar rows keep the single packed detail line
+                        // (step status, extraction value, failure summary, …).
+                        Label {
+                            visible: !row.isColumnar
                             Layout.fillWidth: true
                             Layout.alignment: Qt.AlignVCenter
                             text: row.detail
@@ -191,6 +288,71 @@ Rectangle {
                             elide: Text.ElideRight
                             maximumLineCount: 1
                             horizontalAlignment: Text.AlignRight
+                        }
+
+                        // Step-header total response time, right-aligned (the
+                        // detail label above takes the slack and pushes it right).
+                        Label {
+                            visible: row.isStep && row.duration.length > 0
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.rightMargin: DesignTokens.spaceXs
+                            text: row.duration
+                            color: row.statusToken === "error" ? DesignTokens.statusError : row.statusToken === "warning" ? DesignTokens.statusWarning : DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.family: DesignTokens.fontMono
+                            font.weight: DesignTokens.weightMedium
+                            font.features: ({
+                                    "tnum": 1
+                                })
+                        }
+
+                        // Right-aligned metrics cluster for request / response
+                        // rows: size · clock · duration. Fixed-width, right-
+                        // aligned columns so the values line up cleanly down the
+                        // list (clean data separation, mockup parity).
+                        RowLayout {
+                            visible: row.isColumnar
+                            Layout.alignment: Qt.AlignVCenter
+                            spacing: DesignTokens.spaceMd
+                            Label {
+                                visible: row.size.length > 0
+                                Layout.preferredWidth: 56
+                                horizontalAlignment: Text.AlignRight
+                                text: row.size
+                                color: DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontCaption
+                                font.family: DesignTokens.fontMono
+                                font.features: ({
+                                        "tnum": 1
+                                    })
+                            }
+                            Label {
+                                visible: row.clock.length > 0
+                                Layout.preferredWidth: 64
+                                horizontalAlignment: Text.AlignRight
+                                text: row.clock
+                                color: DesignTokens.textSecondary
+                                opacity: 0.75
+                                font.pixelSize: DesignTokens.fontCaption
+                                font.family: DesignTokens.fontMono
+                                font.features: ({
+                                        "tnum": 1
+                                    })
+                            }
+                            Label {
+                                Layout.preferredWidth: 48
+                                horizontalAlignment: Text.AlignRight
+                                text: row.duration
+                                // Duration carries the row's status hue so a slow
+                                // / failed response reads at a glance.
+                                color: row.statusToken === "error" ? DesignTokens.statusError : row.statusToken === "warning" ? DesignTokens.statusWarning : DesignTokens.statusSuccess
+                                font.pixelSize: DesignTokens.fontCaption
+                                font.family: DesignTokens.fontMono
+                                font.weight: DesignTokens.weightSemiBold
+                                font.features: ({
+                                        "tnum": 1
+                                    })
+                            }
                         }
                     }
 
@@ -234,6 +396,28 @@ Rectangle {
                 iconName: "zap"
                 heading: qsTr("No run yet")
                 body: qsTr("Send or Dry Run an endpoint to watch each step, request, response, and extraction stream in here.")
+            }
+        }
+
+        // Footer hint bar (mockup parity): explains the dot ↔ step link.
+        Rectangle {
+            Layout.fillWidth: true
+            visible: timelineList.count > 0
+            radius: DesignTokens.radiusSm
+            color: DesignTokens.surfaceSunken
+            border.width: 1
+            border.color: DesignTokens.borderSubtle
+            implicitHeight: hintLabel.implicitHeight + DesignTokens.spaceMd
+            Label {
+                id: hintLabel
+                anchors.fill: parent
+                anchors.leftMargin: DesignTokens.spaceMd
+                anchors.rightMargin: DesignTokens.spaceMd
+                verticalAlignment: Text.AlignVCenter
+                text: qsTr("Each dot in the latency chart is a request — click one to jump to its step.")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontCaption
+                wrapMode: Text.WordWrap
             }
         }
     }

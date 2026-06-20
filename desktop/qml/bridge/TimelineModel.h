@@ -51,6 +51,12 @@ public:
         StatusTokenRole,  ///< QString: status vocabulary token (→ DesignTokens colour)
         StatusLabelRole,  ///< QString: short badge label ("running", "HTTP 200", …)
         ValueRole,        ///< QString: tooltip payload (masked headers / full value)
+        MethodRole,       ///< QString: HTTP method for request rows ("GET"/"POST"); else empty
+        PathRole,         ///< QString: request URL path for request rows; else empty
+        SizeRole,         ///< QString: pre-formatted payload size ("66 B", "3.9 KB")
+        ClockRole,        ///< QString: wall-clock time the row was recorded ("10:24:10")
+        DurationRole,     ///< QString: pre-formatted duration (response rows + step totals)
+        SubLabelRole,     ///< QString: sub-step badge for child rows ("1.1", "1.2")
     };
 
     explicit TimelineModel(QObject* parent = nullptr);
@@ -101,6 +107,12 @@ private:
         QString statusToken;
         QString statusLabel;
         QString value;
+        QString method;        ///< Request rows only.
+        QString path;          ///< Request rows only (URL path).
+        QString sizeText;      ///< Request + response rows.
+        QString clockText;     ///< Request + response rows.
+        QString durationText;  ///< Response rows + step-header totals.
+        QString subLabel;      ///< Child rows: "1.1", "1.2", …
     };
 
     /// Find the existing top-level step row for `index`, or append one. Mirrors
@@ -119,6 +131,14 @@ private:
     // stepIndex → position in rows_. Positions are stable: rows are only ever
     // appended (never removed) within a run, so settling a step is O(1).
     QHash<int, int> stepRowByIndex_;
+    // Per-step running child counter (request/response) for "N.M" sub-badges,
+    // and per-step accumulated response time for the step-header total.
+    QHash<int, int> stepChildSeq_;
+    QHash<int, double> stepMs_;
+    // Whole-run totals + the run header's reconstructable parts.
+    double runTotalMs_{0.0};
+    int runChainSize_{0};
+    QString runEnv_;
     // Position of the run header row, so onRunEnded can settle its stale
     // "running" badge to the final outcome instead of leaving it spinning.
     int runStartRow_{-1};
