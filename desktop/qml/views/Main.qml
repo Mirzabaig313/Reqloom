@@ -933,6 +933,121 @@ ApplicationWindow {
         }
     }
 
+    // Per-actor cookie jar inspector. Refreshed on open and after each run.
+    Dialog {
+        id: cookieDialog
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: 560
+        padding: DesignTokens.spaceLg
+        title: qsTr("Cookies")
+
+        property var jars: []
+        function refresh() {
+            jars = AppController.cookieJars();
+        }
+        function openDialog() {
+            refresh();
+            open();
+        }
+
+        header: DialogHeader {
+            title: qsTr("Cookies")
+        }
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        Connections {
+            target: AppController
+            function onCookiesChanged() {
+                if (cookieDialog.visible) {
+                    cookieDialog.refresh();
+                }
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: DesignTokens.spaceSm
+
+            Label {
+                Layout.fillWidth: true
+                visible: cookieDialog.jars.length === 0
+                text: qsTr("No cookies yet. Run a request whose actor receives a Set-Cookie.")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontBody
+                wrapMode: Text.WordWrap
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 320
+                visible: cookieDialog.jars.length > 0
+                clip: true
+
+                ColumnLayout {
+                    width: parent.width
+                    spacing: DesignTokens.spaceMd
+
+                    Repeater {
+                        model: cookieDialog.jars
+                        delegate: ColumnLayout {
+                            id: jarBlock
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: DesignTokens.spaceXs
+
+                            Label {
+                                text: jarBlock.modelData.actor
+                                color: DesignTokens.textPrimary
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.weight: DesignTokens.weightSemiBold
+                            }
+                            Repeater {
+                                model: jarBlock.modelData.cookies
+                                delegate: RowLayout {
+                                    id: cookieRow
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    spacing: DesignTokens.spaceSm
+                                    Label {
+                                        text: cookieRow.modelData.name
+                                        color: DesignTokens.textSecondary
+                                        font.family: DesignTokens.fontMono
+                                        font.pixelSize: DesignTokens.fontCaption
+                                        Layout.preferredWidth: 160
+                                        elide: Text.ElideRight
+                                    }
+                                    Label {
+                                        text: cookieRow.modelData.value
+                                        color: DesignTokens.textPrimary
+                                        font.family: DesignTokens.fontMono
+                                        font.pixelSize: DesignTokens.fontCaption
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                        textFormat: Text.PlainText
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Done")
+            showCancel: false
+            onAccepted: cookieDialog.accept()
+            onRejected: cookieDialog.reject()
+        }
+    }
+
     GlassMenu {
         id: envMenu
         GlassMenuItem {
@@ -1082,6 +1197,10 @@ ApplicationWindow {
                                 itemAction: "secrets"
                             },
                             {
+                                itemLabel: qsTr("View Cookies"),
+                                itemAction: "cookies"
+                            },
+                            {
                                 itemLabel: qsTr("New Module…"),
                                 itemAction: "newModule"
                             },
@@ -1146,6 +1265,9 @@ ApplicationWindow {
                             break;
                         case "secrets":
                             secretsDialog.openDialog();
+                            break;
+                        case "cookies":
+                            cookieDialog.openDialog();
                             break;
                         case "newModule":
                             explorerPanel.openNewModule();

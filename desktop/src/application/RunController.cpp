@@ -113,6 +113,13 @@ void RunController::clearExtractionCache() {
     }
 }
 
+std::map<std::string, std::string> RunController::cookies(const ce::ActorId& actor) const {
+    if (!context_) {
+        return {};
+    }
+    return context_->cookies(actor);
+}
+
 namespace {
 
 /// Map a method label to the engine enum. Unknown → GET (the safe default).

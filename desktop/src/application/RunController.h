@@ -108,6 +108,11 @@ public:
     /// a pin changes so a stale pinned value can't linger into the next run.
     void clearExtractionCache();
 
+    /// Snapshot of an actor's accumulated cookie jar (name → value) for the
+    /// current run context, or empty when no run has populated a context yet.
+    /// Read-only view for a cookie inspector.
+    [[nodiscard]] std::map<std::string, std::string> cookies(const engine::ActorId& actor) const;
+
 public slots:
     /// Kick off a run ending at `target` against `environment` (empty → project
     /// default). `dryRun` previews the resolved chain without sending requests.
