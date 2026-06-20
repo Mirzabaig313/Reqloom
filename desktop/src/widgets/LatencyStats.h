@@ -17,6 +17,7 @@ struct Summary {
     double mean{0.0};
     double median{0.0};
     double p95{0.0};
+    double p99{0.0};
 };
 
 /// A histogram: `counts[i]` samples fall in `[start + i*binWidth, start +

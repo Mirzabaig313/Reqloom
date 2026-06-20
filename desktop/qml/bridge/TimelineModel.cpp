@@ -5,9 +5,30 @@
 
 #include <reqloom/engine/ErrorCodes.h>
 
+#include <QtCore/QTime>
+#include <QtCore/QUrl>
+
 namespace reqloom::desktop::qml {
 
 namespace {
+
+/// Pre-format a byte count for the timeline's size column (B / KB / MB), with
+/// one decimal under 10 of each unit so values stay compact and aligned.
+[[nodiscard]] QString formatBytes(int bytes) {
+    if (bytes < 1024) {
+        return QStringLiteral("%1 B").arg(bytes);
+    }
+    const double kb = static_cast<double>(bytes) / 1024.0;
+    if (kb < 1024.0) {
+        return QStringLiteral("%1 KB").arg(QString::number(kb, 'f', kb < 10.0 ? 1 : 0));
+    }
+    const double mb = kb / 1024.0;
+    return QStringLiteral("%1 MB").arg(QString::number(mb, 'f', mb < 10.0 ? 1 : 0));
+}
+
+[[nodiscard]] QString nowClock() {
+    return QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
+}
 
 [[nodiscard]] QString kindToken(TimelineModel::Kind kind) {
     switch (kind) {
@@ -82,6 +103,18 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
             return row.statusLabel;
         case ValueRole:
             return row.value;
+        case MethodRole:
+            return row.method;
+        case PathRole:
+            return row.path;
+        case SizeRole:
+            return row.sizeText;
+        case ClockRole:
+            return row.clockText;
+        case DurationRole:
+            return row.durationText;
+        case SubLabelRole:
+            return row.subLabel;
         default:
             return {};
     }
@@ -96,6 +129,12 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
         {StatusTokenRole, "statusToken"},
         {StatusLabelRole, "statusLabel"},
         {ValueRole, "value"},
+        {MethodRole, "method"},
+        {PathRole, "path"},
+        {SizeRole, "size"},
+        {ClockRole, "clock"},
+        {DurationRole, "duration"},
+        {SubLabelRole, "subLabel"},
     };
 }
 
@@ -127,6 +166,11 @@ void TimelineModel::reset() {
     beginResetModel();
     rows_.clear();
     stepRowByIndex_.clear();
+    stepChildSeq_.clear();
+    stepMs_.clear();
+    runTotalMs_ = 0.0;
+    runChainSize_ = 0;
+    runEnv_.clear();
     runStartRow_ = -1;
     endResetModel();
     if (!latencyMs_.empty() || !latencyBars_.isEmpty()) {
@@ -151,6 +195,7 @@ QVariantMap TimelineModel::latencyStats() const {
     out.insert(QStringLiteral("mean"), s.mean);
     out.insert(QStringLiteral("median"), s.median);
     out.insert(QStringLiteral("p95"), s.p95);
+    out.insert(QStringLiteral("p99"), s.p99);
 
     const stats::Histogram h = stats::histogram(latencyMs_);
     out.insert(QStringLiteral("start"), h.start);
@@ -166,6 +211,8 @@ QVariantMap TimelineModel::latencyStats() const {
 
 void TimelineModel::onRunStarted(QString target, int chainSize, QString environment) {
     reset();
+    runChainSize_ = chainSize;
+    runEnv_ = environment;
     Row row;
     row.kind = Kind::RunStart;
     row.title = target;
@@ -203,11 +250,19 @@ void TimelineModel::onRequestPrepared(
     Row row;
     row.kind = Kind::Request;
     row.stepIndex = index + 1;
-    row.title = QStringLiteral("\u2192 request");  // → request
+    row.subLabel = QStringLiteral("%1.%2").arg(index + 1).arg(++stepChildSeq_[index]);
+    row.title = QStringLiteral("\u2192 Request");  // → Request
     // Keep the summary short so it never elides; the fully-resolved URL lives
     // in the expansion below (open the row to read / copy it).
     row.detail = QStringLiteral("%1  ·  %2 body bytes").arg(method).arg(bodySize);
     row.statusToken = QStringLiteral("neutral");
+    // Structured columns for the timeline's columnar layout: method pill, the
+    // request path, the body size, and a wall-clock stamp.
+    row.method = method;
+    const QString path = QUrl(url).path();
+    row.path = path.isEmpty() ? url : path;
+    row.sizeText = formatBytes(bodySize);
+    row.clockText = nowClock();
     // Expansion: the fully-resolved URL (base URL + path) up top, then the
     // masked request headers. Lets the user confirm exactly where the call
     // went without squinting at the elided one-liner.
@@ -221,7 +276,10 @@ void TimelineModel::onRequestPrepared(
 
 void TimelineModel::onResponseReceived(
     int index, int status, QString headers, int bodySize, qint64 elapsedMs, QString body) {
-    // Settle the parent step row to a terminal status by HTTP class (§2.5).
+    // Settle the parent step row to a terminal status by HTTP class (§2.5),
+    // and accumulate the step's response time for the step-header total.
+    stepMs_[index] += static_cast<double>(elapsedMs);
+    runTotalMs_ += static_cast<double>(elapsedMs);
     const auto it = stepRowByIndex_.constFind(index);
     if (it != stepRowByIndex_.constEnd()) {
         Row& step = rows_[static_cast<std::size_t>(it.value())];
@@ -229,6 +287,7 @@ void TimelineModel::onResponseReceived(
                            : status >= 300 ? QStringLiteral("warning")
                                            : QStringLiteral("success");
         step.statusLabel = QStringLiteral("HTTP %1").arg(status);
+        step.durationText = QStringLiteral("%1 ms").arg(static_cast<qint64>(stepMs_[index]));
         const QModelIndex idx = rowIndex(it.value());
         emit dataChanged(idx, idx);
     }
@@ -236,13 +295,19 @@ void TimelineModel::onResponseReceived(
     Row row;
     row.kind = Kind::Response;
     row.stepIndex = index + 1;
-    row.title = QStringLiteral("\u2190 response");  // ← response
+    row.subLabel = QStringLiteral("%1.%2").arg(index + 1).arg(++stepChildSeq_[index]);
+    row.title = QStringLiteral("\u2190 Response");  // ← Response
     row.detail =
         QStringLiteral("HTTP %1  ·  %2 bytes  ·  %3 ms").arg(status).arg(bodySize).arg(elapsedMs);
     // Colour the response row by HTTP class so a non-2xx stands out.
     row.statusToken = status >= 500   ? QStringLiteral("error")
                       : status >= 300 ? QStringLiteral("warning")
                                       : QStringLiteral("success");
+    // Structured columns: HTTP status pill, size, duration, wall-clock stamp.
+    row.statusLabel = QStringLiteral("HTTP %1").arg(status);
+    row.sizeText = formatBytes(bodySize);
+    row.durationText = QStringLiteral("%1 ms").arg(elapsedMs);
+    row.clockText = nowClock();
     // Expansion: status line, headers, and the body when the run captured it
     // (off by default — see RunOptions::captureResponseBodies).
     QString expanded = QStringLiteral("Status\nHTTP %1").arg(status);
@@ -358,11 +423,16 @@ void TimelineModel::onRunEnded(QString outcome) {
     }
 
     // Settle the run header so its "running" badge reflects the final state
-    // instead of spinning forever after the run ends.
+    // instead of spinning forever after the run ends, and fold the total
+    // response time into its detail line ("N steps · Total time X ms · env=Y").
     if (runStartRow_ >= 0 && runStartRow_ < static_cast<int>(rows_.size())) {
         Row& header = rows_[static_cast<std::size_t>(runStartRow_)];
         header.statusToken = token;
         header.statusLabel = badge;
+        header.detail = QStringLiteral("%1 steps  ·  Total time %2 ms  ·  env=%3")
+                            .arg(runChainSize_)
+                            .arg(static_cast<qint64>(runTotalMs_))
+                            .arg(runEnv_);
         const QModelIndex idx = rowIndex(runStartRow_);
         emit dataChanged(idx, idx);
     }

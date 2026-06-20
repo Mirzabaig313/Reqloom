@@ -39,6 +39,28 @@ Rectangle {
         newModuleDialog.openDialog();
     }
 
+    // Human-readable label for the trailing operation status dot, so the colour
+    // isn't the only signal (accessibility, UI/UX review §4 + §7).
+    function statusDotTip(token, hasChildren) {
+        switch (token) {
+        case "success":
+            return qsTr("Last run passed");
+        case "error":
+        case "failed":
+            return qsTr("Last run failed");
+        case "running":
+            return qsTr("Running…");
+        case "blocked":
+            return qsTr("Blocked — an upstream step failed");
+        case "skipped":
+            return qsTr("Skipped — satisfied from cache");
+        case "cancelled":
+            return qsTr("Last run cancelled");
+        default:
+            return hasChildren ? qsTr("Has saved responses — not run this session") : qsTr("Never run");
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: DesignTokens.spaceLg
@@ -66,6 +88,25 @@ Rectangle {
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
                     color: addBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                }
+            }
+            ToolButton {
+                id: collapseAllBtn
+                implicitWidth: 28
+                implicitHeight: 28
+                GlassToolTip {
+                    active: collapseAllBtn.hovered
+                    text: qsTr("Collapse all groups")
+                }
+                onClicked: tree.collapseRecursively()
+                contentItem: AppIcon {
+                    name: "chevron-up"
+                    size: 16
+                    anchors.centerIn: parent
+                }
+                background: Rectangle {
+                    radius: DesignTokens.radiusSm
+                    color: collapseAllBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
                 }
             }
             ToolButton {
@@ -277,6 +318,7 @@ Rectangle {
                     // Operation status dot: live run status when available, else
                     // a subtle marker that the endpoint has captured responses.
                     Rectangle {
+                        id: statusDot
                         visible: del.isOperation && (del.opRunToken.length > 0 || del.hasChildren)
                         Layout.alignment: Qt.AlignVCenter
                         Layout.rightMargin: DesignTokens.spaceSm
@@ -284,6 +326,13 @@ Rectangle {
                         implicitHeight: 8
                         radius: 4
                         color: del.opRunToken.length > 0 ? DesignTokens.statusColor(del.opRunToken) : DesignTokens.statusSuccess
+                        HoverHandler {
+                            id: dotHover
+                        }
+                        GlassToolTip {
+                            active: dotHover.hovered
+                            text: panel.statusDotTip(del.opRunToken, del.hasChildren)
+                        }
                     }
                 }
 
