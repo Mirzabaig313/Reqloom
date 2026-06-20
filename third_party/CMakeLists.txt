@@ -72,9 +72,12 @@ endif()
 # Scintilla's container-lexer notifications, so we don't compile ~100 lexers.
 if(REQLOOM_BUILD_DESKTOP AND NOT TARGET scintilla)
     include(FetchContent)
+    # Source the vendored in-tree tarball so the build needs no network
+    # access (CI runners with restricted egress cannot reach scintilla.org).
+    # A single local path is a valid URL entry; the file is hash-verified.
     FetchContent_Declare(
         scintilla
-        URL https://www.scintilla.org/scintilla563.tgz
+        URL "${CMAKE_CURRENT_SOURCE_DIR}/vendor/scintilla563.tgz"
         URL_HASH SHA256=f64339c504960c5a95510e6c3306ab5e95f23abaf8aed82897e57bff78e74616
     )
     FetchContent_MakeAvailable(scintilla)
