@@ -31,34 +31,6 @@ ColumnLayout {
         return "json";
     }
 
-    // Render a path template with {{variable}} segments tinted (display-only
-    // string formatting, mirrors the old highlightVariables helper).
-    function escapeHtml(s) {
-        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-    function highlightPath(path) {
-        const accent = "" + DesignTokens.statusWarning;
-        let out = "";
-        let i = 0;
-        while (i < path.length) {
-            const open = path.indexOf("{{", i);
-            if (open < 0) {
-                out += escapeHtml(path.substring(i));
-                break;
-            }
-            out += escapeHtml(path.substring(i, open));
-            const close = path.indexOf("}}", open);
-            if (close < 0) {
-                out += escapeHtml(path.substring(open));
-                break;
-            }
-            const v = path.substring(open, close + 2);
-            out += "<span style='color:" + accent + "; font-weight:600;'>" + escapeHtml(v) + "</span>";
-            i = close + 2;
-        }
-        return out;
-    }
-
     // ── Breadcrumb + actor chip ──
     RowLayout {
         Layout.fillWidth: true
@@ -601,10 +573,20 @@ ColumnLayout {
             KeyValueList {
                 model: AppController.opHeaders
                 emptyText: qsTr("No headers.")
+                actionText: qsTr("＋ Add header")
+                onActionTriggered: {
+                    AppController.beginEdit();
+                    editTabs.currentIndex = 1;
+                }
             }
             KeyValueList {
                 model: AppController.opQuery
                 emptyText: qsTr("No query parameters.")
+                actionText: qsTr("＋ Add parameter")
+                onActionTriggered: {
+                    AppController.beginEdit();
+                    editTabs.currentIndex = 0;
+                }
             }
             CodeView {
                 text: AppController.opBody
@@ -657,10 +639,20 @@ ColumnLayout {
             KeyValueList {
                 model: AppController.opExtractions
                 emptyText: qsTr("No extractions.")
+                actionText: qsTr("＋ Add variable")
+                onActionTriggered: {
+                    AppController.beginEdit();
+                    editTabs.currentIndex = 5;
+                }
             }
             KeyValueList {
                 model: AppController.opAssertions
                 emptyText: qsTr("No assertions.")
+                actionText: qsTr("＋ Add assertion")
+                onActionTriggered: {
+                    AppController.beginEdit();
+                    editTabs.currentIndex = 6;
+                }
             }
         }
     }
