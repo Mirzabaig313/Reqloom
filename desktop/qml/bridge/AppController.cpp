@@ -255,6 +255,8 @@ AppController::AppController(QObject* parent)
         emit responseChanged();
         // The run was just persisted; surface it in the history view.
         refreshHistory();
+        // A run may have absorbed Set-Cookie headers into the actor jars.
+        emit cookiesChanged();
     });
 
     // Bridge ALL streamed RunController signals into the timeline model so the
@@ -1179,6 +1181,31 @@ QVariantMap AppController::previewFormBody() const {
         parts.append(entry);
     }
     out.insert(QStringLiteral("parts"), parts);
+    return out;
+}
+
+QVariantList AppController::cookieJars() const {
+    QVariantList out;
+    if (!project_->hasProject() || !runController_) {
+        return out;
+    }
+    for (const auto& [actorId, _] : project_->project().actors) {
+        const auto jar = runController_->cookies(actorId);
+        if (jar.empty()) {
+            continue;
+        }
+        QVariantList cookies;
+        for (const auto& [name, value] : jar) {
+            QVariantMap cookie;
+            cookie.insert(QStringLiteral("name"), QString::fromStdString(name));
+            cookie.insert(QStringLiteral("value"), QString::fromStdString(value));
+            cookies.append(cookie);
+        }
+        QVariantMap entry;
+        entry.insert(QStringLiteral("actor"), QString::fromStdString(actorId.value));
+        entry.insert(QStringLiteral("cookies"), cookies);
+        out.append(entry);
+    }
     return out;
 }
 

@@ -287,7 +287,7 @@ ColumnLayout {
         }
     }
 
-    // ── Secondary actions: Edit toggle + Dry Run / Send Cleanly / Save ──
+    // ── Secondary actions: Edit / Save / Cancel + unsaved cue + More menu ──
     RowLayout {
         Layout.fillWidth: true
         spacing: DesignTokens.spaceSm
@@ -334,13 +334,29 @@ ColumnLayout {
                 radius: DesignTokens.radiusSm
                 color: !saveButton.enabled ? DesignTokens.borderStrong : saveButton.down ? DesignTokens.accentHover : DesignTokens.accent
             }
-            contentItem: Text {
-                text: saveButton.text
-                color: DesignTokens.textInverse
-                font.pixelSize: DesignTokens.fontBody
-                font.weight: DesignTokens.weightSemiBold
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
+            // Unsaved-dot + label: a slim, always-true-in-edit-mode cue that the
+            // live edits have not yet been written to the project (replaces the
+            // old full-width amber banner per UI/UX review §3).
+            contentItem: RowLayout {
+                spacing: DesignTokens.spaceXs
+                Rectangle {
+                    Layout.alignment: Qt.AlignVCenter
+                    implicitWidth: 6
+                    implicitHeight: 6
+                    radius: 3
+                    color: DesignTokens.textInverse
+                }
+                Text {
+                    text: saveButton.text
+                    color: DesignTokens.textInverse
+                    font.pixelSize: DesignTokens.fontBody
+                    font.weight: DesignTokens.weightSemiBold
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+            GlassToolTip {
+                active: saveButton.hovered
+                text: qsTr("Write these edits to the project. Until you save, Send only applies them to the next run.")
             }
             onClicked: AppController.saveOperation()
         }
@@ -368,24 +384,76 @@ ColumnLayout {
             onClicked: AppController.cancelEdit()
         }
 
+        // Slim inline cue (edit mode): replaces the persistent amber banner.
+        // The Save button carries the unsaved-dot; this one-liner spells out the
+        // Send-vs-Save model without pushing the editor content down.
+        Label {
+            visible: editor.editing
+            Layout.alignment: Qt.AlignVCenter
+            verticalAlignment: Text.AlignVCenter
+            text: qsTr("Unsaved edits — Send runs them once; Save commits to the project.")
+            color: DesignTokens.statusWarning
+            font.pixelSize: DesignTokens.fontLabel
+            elide: Text.ElideRight
+        }
+
         Item {
             Layout.fillWidth: true
         }
 
+        // Hierarchy (UI/UX review §3): Send is the single primary action. Hooks
+        // stays a discrete button (a distinct task, not a run-variant); the
+        // run-variants live in the overflow menu so the row reads primary +
+        // secondary, not four equal buttons.
         SecondaryButton {
             text: qsTr("Hooks…")
             tip: qsTr("Edit the pre-request and post-response scripts for this endpoint")
+            enabled: true
             onClicked: AppController.openHookEditor()
         }
         SecondaryButton {
-            text: qsTr("Dry Run")
-            tip: qsTr("Preview the resolved chain and built requests — nothing is actually sent")
-            onClicked: editor.editing ? AppController.applyAndRun(false, true) : AppController.runSelected(false, true)
+            id: moreButton
+            text: qsTr("More  ▾")
+            tip: qsTr("Other ways to run this request")
+            onClicked: overflowMenu.popup(moreButton, 0, moreButton.height + DesignTokens.spaceXs)
         }
-        SecondaryButton {
-            text: qsTr("Send Cleanly")
-            tip: qsTr("Clear cached sessions and extracted values first, then send from scratch")
-            onClicked: editor.editing ? AppController.applyAndRun(true, false) : AppController.runSelected(true, false)
+    }
+
+    Menu {
+        id: overflowMenu
+        padding: DesignTokens.spaceXs
+        background: Rectangle {
+            implicitWidth: 240
+            radius: DesignTokens.radiusSm
+            color: DesignTokens.surfaceSunken
+            border.width: 1
+            border.color: DesignTokens.borderStrong
+        }
+
+        OverflowItem {
+            text: qsTr("Dry Run — preview without sending")
+            onTriggered: editor.editing ? AppController.applyAndRun(false, true) : AppController.runSelected(false, true)
+        }
+        OverflowItem {
+            text: qsTr("Send (fresh session)")
+            onTriggered: editor.editing ? AppController.applyAndRun(true, false) : AppController.runSelected(true, false)
+        }
+    }
+
+    component OverflowItem: MenuItem {
+        id: overflowItem
+        enabled: !AppController.running
+        implicitHeight: 32
+        contentItem: Text {
+            leftPadding: DesignTokens.spaceSm
+            text: overflowItem.text
+            color: !overflowItem.enabled ? DesignTokens.borderStrong : (overflowItem.highlighted ? DesignTokens.textPrimary : DesignTokens.textSecondary)
+            font.pixelSize: DesignTokens.fontBody
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: DesignTokens.radiusSm
+            color: overflowItem.highlighted ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
         }
     }
 
@@ -414,28 +482,6 @@ ColumnLayout {
             font.pixelSize: DesignTokens.fontBody
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-        }
-    }
-
-    // ── Edit banner (edit mode only) ──
-    Rectangle {
-        Layout.fillWidth: true
-        visible: editor.editing
-        radius: DesignTokens.radiusSm
-        color: Qt.rgba(DesignTokens.statusWarning.r, DesignTokens.statusWarning.g, DesignTokens.statusWarning.b, 0.12)
-        border.width: 1
-        border.color: DesignTokens.statusWarning
-        implicitHeight: bannerLabel.implicitHeight + DesignTokens.spaceMd
-        Label {
-            id: bannerLabel
-            anchors.fill: parent
-            anchors.leftMargin: DesignTokens.spaceMd
-            anchors.rightMargin: DesignTokens.spaceMd
-            verticalAlignment: Text.AlignVCenter
-            text: qsTr("Editing — Send applies changes to the next run; Save writes them to the project.")
-            color: DesignTokens.statusWarning
-            font.pixelSize: DesignTokens.fontLabel
-            wrapMode: Text.WordWrap
         }
     }
 

@@ -464,6 +464,11 @@ public:
     /// {valid, error, multipart, contentType, totalBytes, parts:[...]}.
     Q_INVOKABLE [[nodiscard]] QVariantMap previewFormBody() const;
 
+    /// Per-actor cookie jars accumulated during the current run context, for a
+    /// cookie inspector. Returns a list of {actor, cookies:[{name,value}]},
+    /// omitting actors with an empty jar. Empty until a run populates cookies.
+    Q_INVOKABLE [[nodiscard]] QVariantList cookieJars() const;
+
     /// Open a project directory (the folder containing reqloom.yaml).
     Q_INVOKABLE void openProject(const QUrl& directory);
 
@@ -648,6 +653,10 @@ signals:
     /// caller did not pass `overwrite`. Carries the original arguments so the
     /// UI can confirm and re-invoke `importOpenApi(..., true)`.
     void importNeedsOverwrite(QUrl specFile, QUrl targetDir);
+
+    /// Fired after a run completes, when the per-actor cookie jars may have
+    /// changed, so a cookie inspector can refresh.
+    void cookiesChanged();
 
 private:
     void onLoaded();
