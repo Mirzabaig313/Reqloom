@@ -9,6 +9,10 @@ Rectangle {
     id: root
     property alias model: list.model
     property string emptyText: qsTr("Nothing here yet.")
+    // Optional call-to-action shown under the empty text (e.g. "+ Add header").
+    // Emits actionTriggered() when clicked; the host wires it to enter Edit mode.
+    property string actionText: ""
+    signal actionTriggered
 
     radius: DesignTokens.radiusSm
     color: DesignTokens.surfaceSunken
@@ -62,12 +66,33 @@ Rectangle {
             }
         }
 
-        Label {
+        // Actionable empty state: a friendly line plus an optional "+ Add …"
+        // affordance instead of just a blank panel (UI/UX review §5 / §7).
+        ColumnLayout {
             anchors.centerIn: parent
             visible: list.count === 0
-            text: root.emptyText
-            color: DesignTokens.textSecondary
-            font.pixelSize: DesignTokens.fontLabel
+            spacing: DesignTokens.spaceXs
+            Label {
+                Layout.alignment: Qt.AlignHCenter
+                text: root.emptyText
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontLabel
+            }
+            Label {
+                visible: root.actionText.length > 0
+                Layout.alignment: Qt.AlignHCenter
+                text: root.actionText
+                color: addHover.hovered ? DesignTokens.accentHover : DesignTokens.accent
+                font.pixelSize: DesignTokens.fontLabel
+                font.weight: DesignTokens.weightSemiBold
+                HoverHandler {
+                    id: addHover
+                    cursorShape: Qt.PointingHandCursor
+                }
+                TapHandler {
+                    onTapped: root.actionTriggered()
+                }
+            }
         }
     }
 }
