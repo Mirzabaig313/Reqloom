@@ -6,7 +6,7 @@
 #include <cmath>
 #include <numbers>
 
-namespace chainapi::desktop::theming {
+namespace reqloom::desktop::theming {
 
 namespace {
 
@@ -59,4 +59,71 @@ QString oklchHex(double lightness, double chroma, double hueDegrees) {
     return oklch(lightness, chroma, hueDegrees).name(QColor::HexRgb);
 }
 
-}  // namespace chainapi::desktop::theming
+namespace {
+
+/// sRGB 8-bit channel → linear light (WCAG relative-luminance definition).
+[[nodiscard]] double srgbToLinear(int channel8) {
+    const double c = channel8 / 255.0;
+    return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+}
+
+}  // namespace
+
+double relativeLuminance(const QColor& color) {
+    return (0.2126 * srgbToLinear(color.red())) + (0.7152 * srgbToLinear(color.green())) +
+           (0.0722 * srgbToLinear(color.blue()));
+}
+
+double contrastRatio(const QColor& a, const QColor& b) {
+    const double la = relativeLuminance(a);
+    const double lb = relativeLuminance(b);
+    const double lighter = std::max(la, lb);
+    const double darker = std::min(la, lb);
+    return (lighter + 0.05) / (darker + 0.05);
+}
+
+QColor oklchForContrast(double chroma,
+                        double hueDegrees,
+                        const QColor& background,
+                        double targetRatio,
+                        double startLightness) {
+    startLightness = std::clamp(startLightness, 0.0, 1.0);
+
+    // Already accessible at the designed lightness → keep the design.
+    if (contrastRatio(oklch(startLightness, chroma, hueDegrees), background) >= targetRatio) {
+        return oklch(startLightness, chroma, hueDegrees);
+    }
+
+    // On a light background contrast grows as the foreground darkens; on a dark
+    // background as it lightens. Move toward the extreme that increases it.
+    const bool darken = relativeLuminance(background) >= 0.5;
+    const double extreme = darken ? 0.0 : 1.0;
+    const double designEdge = darken ? 1.0 : 0.0;
+
+    // Relax chroma only if even the extreme lightness can't reach the target at
+    // the full designed chroma (keeps colours as vivid as accessibility allows).
+    for (int step = 0; step <= 10; ++step) {
+        const double c = chroma * (1.0 - (static_cast<double>(step) * 0.1));
+        if (contrastRatio(oklch(extreme, c, hueDegrees), background) < targetRatio) {
+            continue;  // unreachable at this chroma — desaturate and retry
+        }
+        // Binary-search the lightness boundary closest to the designed value:
+        // `meet` always satisfies the target, `fail` does not.
+        double meet = extreme;
+        double fail = designEdge;
+        for (int i = 0; i < 40; ++i) {
+            const double mid = 0.5 * (meet + fail);
+            if (contrastRatio(oklch(mid, c, hueDegrees), background) >= targetRatio) {
+                meet = mid;
+            } else {
+                fail = mid;
+            }
+        }
+        return oklch(meet, c, hueDegrees);
+    }
+
+    // Fallback: pure black/white guarantees any reasonable ratio.
+    return oklch(extreme, 0.0, hueDegrees);
+}
+
+}  // namespace reqloom::desktop::theming

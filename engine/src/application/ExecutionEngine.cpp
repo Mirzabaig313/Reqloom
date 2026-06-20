@@ -1,6 +1,6 @@
 // ExecutionEngine — resolves dependency chains, authenticates actors, executes steps.
 
-#include <chainapi/engine/ExecutionEngine.h>
+#include <reqloom/engine/ExecutionEngine.h>
 
 #include "../domain/Codecs.h"
 #include "../domain/DependencyResolver.h"
@@ -14,6 +14,8 @@
 #include "Cookies.h"
 #include "HeaderMasking.h"
 #include "JsonExtraction.h"
+
+#include <reqloom/engine/JsonValues.h>
 #include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
 #include "RequestSigners.h"
@@ -31,7 +33,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 using json = nlohmann::json;
 
@@ -254,23 +256,23 @@ struct ExecutionEngine::Impl {
     // Run the polling phase for an operation. Returns the FINAL poll response on
     // success. Errors: PollFailPredicate, PollTimeout, PollMaxAttemptsExceeded,
     // SchemaInvalid. Cancellation is checked each iteration.
-    std::expected<HttpResponse, ChainApiError> runPollLoop(const Operation& op,
-                                                           const PollUntil& poll,
-                                                           const Project& project,
-                                                           RunContext& ctx,
-                                                           const ResolveContext& rctx,
-                                                           RunId runId,
-                                                           std::size_t stepIndex,
-                                                           const HttpResponse& /*initialResponse*/,
-                                                           std::vector<StepResult>& attemptRows) {
+    std::expected<HttpResponse, ReqloomError> runPollLoop(const Operation& op,
+                                                          const PollUntil& poll,
+                                                          const Project& project,
+                                                          RunContext& ctx,
+                                                          const ResolveContext& rctx,
+                                                          RunId runId,
+                                                          std::size_t stepIndex,
+                                                          const HttpResponse& /*initialResponse*/,
+                                                          std::vector<StepResult>& attemptRows) {
         PredicateEvaluator const evaluator;
 
         auto successPredicate = evaluator.parse(poll.successWhen);
         if (!successPredicate) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "poll_until.success_when: " + successPredicate.error().detail});
+                ReqloomError{ErrorCode::SchemaInvalid,
+                             ErrorClass::Schema,
+                             "poll_until.success_when: " + successPredicate.error().detail});
         }
 
         std::optional<ParsedPredicate> failPredicate;
@@ -278,9 +280,9 @@ struct ExecutionEngine::Impl {
             auto parsed = evaluator.parse(*poll.failWhen);
             if (!parsed) {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::SchemaInvalid,
-                                  ErrorClass::Schema,
-                                  "poll_until.fail_when: " + parsed.error().detail});
+                    ReqloomError{ErrorCode::SchemaInvalid,
+                                 ErrorClass::Schema,
+                                 "poll_until.fail_when: " + parsed.error().detail});
             }
             failPredicate = std::move(*parsed);
         }
@@ -302,9 +304,9 @@ struct ExecutionEngine::Impl {
         }
 
         if ((pollActor != nullptr) && !ensureSession(*pollActor, ctx, rctx, runId, stepIndex)) {
-            return std::unexpected(ChainApiError{ErrorCode::SessionRefreshFailed,
-                                                 ErrorClass::Auth,
-                                                 "poll_until: actor session refresh failed"});
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "poll_until: actor session refresh failed"});
         }
 
         const auto deadline = std::chrono::steady_clock::now() + poll.timeout;
@@ -314,7 +316,7 @@ struct ExecutionEngine::Impl {
         for (int attempt = 0; attempt < poll.maxAttempts; ++attempt) {
             if (isCancelled(runId)) {
                 return std::unexpected(
-                    ChainApiError{ErrorCode::Cancelled, ErrorClass::Run, "poll_until: cancelled"});
+                    ReqloomError{ErrorCode::Cancelled, ErrorClass::Run, "poll_until: cancelled"});
             }
 
             HttpRequest req;
@@ -322,7 +324,7 @@ struct ExecutionEngine::Impl {
             req.transport = rctx.transport;
             auto resolvedPath = varResolver.resolve(poll.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
-                return std::unexpected(ChainApiError{
+                return std::unexpected(ReqloomError{
                     ErrorCode::VarUnresolved,
                     ErrorClass::Resolution,
                     "poll_until: unresolved variable in path: " + resolvedPath.unresolved.front()});
@@ -368,19 +370,19 @@ struct ExecutionEngine::Impl {
                     if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
                         if (!signOAuth1Request(req, *session)) {
                             return std::unexpected(
-                                ChainApiError{ErrorCode::SessionRefreshFailed,
-                                              ErrorClass::Auth,
-                                              "poll_until: oauth1 signing failed (missing "
-                                              "consumer credentials or malformed URL)"});
+                                ReqloomError{ErrorCode::SessionRefreshFailed,
+                                             ErrorClass::Auth,
+                                             "poll_until: oauth1 signing failed (missing "
+                                             "consumer credentials or malformed URL)"});
                         }
                     } else if (session->signingScheme == ActorSession::SigningScheme::AwsSigV4) {
                         if (!signSigV4Request(req, *session)) {
                             return std::unexpected(
-                                ChainApiError{ErrorCode::SessionRefreshFailed,
-                                              ErrorClass::Auth,
-                                              "poll_until: aws_sigv4 signing failed "
-                                              "(missing access_key/secret_key/region/service "
-                                              "or malformed URL)"});
+                                ReqloomError{ErrorCode::SessionRefreshFailed,
+                                             ErrorClass::Auth,
+                                             "poll_until: aws_sigv4 signing failed "
+                                             "(missing access_key/secret_key/region/service "
+                                             "or malformed URL)"});
                         }
                     }
                 }
@@ -454,11 +456,10 @@ struct ExecutionEngine::Impl {
             attemptRows.push_back(std::move(attemptRow));
 
             if (failMatched) {
-                return std::unexpected(ChainApiError{ErrorCode::PollFailPredicate,
-                                                     ErrorClass::Polling,
-                                                     "poll_until.fail_when matched (HTTP " +
-                                                         std::to_string(lastResponse.status) +
-                                                         ")"});
+                return std::unexpected(ReqloomError{ErrorCode::PollFailPredicate,
+                                                    ErrorClass::Polling,
+                                                    "poll_until.fail_when matched (HTTP " +
+                                                        std::to_string(lastResponse.status) + ")"});
             }
             if (successMatched) {
                 return lastResponse;
@@ -480,7 +481,7 @@ struct ExecutionEngine::Impl {
 
             const auto remaining = deadline - std::chrono::steady_clock::now();
             if (remaining <= std::chrono::milliseconds{0}) {
-                return std::unexpected(ChainApiError{
+                return std::unexpected(ReqloomError{
                     ErrorCode::PollTimeout,
                     ErrorClass::Polling,
                     haveLastResponse ? "poll_until: timeout exceeded — last response: HTTP " +
@@ -492,7 +493,7 @@ struct ExecutionEngine::Impl {
             std::this_thread::sleep_for(sleepFor);
         }
 
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::PollMaxAttemptsExceeded,
             ErrorClass::Polling,
             haveLastResponse
@@ -655,7 +656,7 @@ struct ExecutionEngine::Impl {
 
         const int maxAttempts = op.retry.maxAttempts;
         std::optional<HttpResponse> httpResp;
-        ChainApiError lastError{};
+        ReqloomError lastError{};
         int attemptCount = 0;
 
         for (int attempt = 0; attempt <= maxAttempts; ++attempt) {
@@ -916,79 +917,147 @@ struct ExecutionEngine::Impl {
         }
 
         if (httpResp && !op.extractions.empty()) {
-            auto detailed = extractFromResponseDetailed(
-                op.id, httpResp->body, httpResp->status, httpResp->headers, op.extractions);
-            if (!detailed) {
-                result.status = StepResult::Status::Failed;
-                result.error = detailed.error().code;
-                auto elapsed = std::chrono::steady_clock::now() - startTime;
-                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
-                return result;
+            // Partition extractions: list (`[*]` JSONPath, fan-out) vs scalar.
+            std::vector<Extraction> scalarExts;
+            std::vector<Extraction> listExts;
+            for (const auto& ext : op.extractions) {
+                if (ext.source == Extraction::Source::JsonPath &&
+                    ext.sourcePath.find("[*]") != std::string::npos) {
+                    listExts.push_back(ext);
+                } else {
+                    scalarExts.push_back(ext);
+                }
             }
 
-            // Trace every extraction outcome — including misses — so the
-            // timeline shows nulls and missing fields. The op still fails
-            std::optional<std::string> firstMiss;
-            for (auto& t : detailed->traces) {
-                const bool isMissLike = t.outcome == ExtractionTrace::Outcome::Missing ||
-                                        t.outcome == ExtractionTrace::Outcome::InvalidPattern;
-                if (!firstMiss && isMissLike) {
-                    firstMiss = t.variableName;
+            std::map<std::string, std::string> scalarValues;
+            if (!scalarExts.empty()) {
+                auto detailed = extractFromResponseDetailed(
+                    op.id, httpResp->body, httpResp->status, httpResp->headers, scalarExts);
+                if (!detailed) {
+                    result.status = StepResult::Status::Failed;
+                    result.error = detailed.error().code;
+                    auto elapsed = std::chrono::steady_clock::now() - startTime;
+                    result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                    return result;
                 }
 
-                ExtractionCompleted ev;
-                ev.runId = runId;
-                ev.stepIndex = stepIndex;
-                ev.op = t.op;
-                ev.variableName = t.variableName;
-                ev.sourcePath = t.sourcePath;
-                ev.at = std::chrono::system_clock::now();
-                switch (t.outcome) {
-                    case ExtractionTrace::Outcome::Resolved:
-                        // RunContext keeps the real value for downstream
-                        // templating; the event copy (timeline + disk) is
-                        // masked when the variable name looks secret.
-                        ev.outcome = ExtractionCompleted::Outcome::Resolved;
-                        ev.value = isSensitiveName(t.variableName)
-                                       ? std::string{kRedactedHeaderValue}
-                                       : t.value;
-                        break;
-                    case ExtractionTrace::Outcome::Null:
-                        ev.outcome = ExtractionCompleted::Outcome::Null;
-                        break;
-                    case ExtractionTrace::Outcome::Missing:
-                        ev.outcome = ExtractionCompleted::Outcome::Missing;
-                        break;
-                    case ExtractionTrace::Outcome::InvalidPattern:
-                        ev.outcome = ExtractionCompleted::Outcome::InvalidPattern;
-                        break;
-                    case ExtractionTrace::Outcome::Unsupported:
-                        ev.outcome = ExtractionCompleted::Outcome::Unsupported;
-                        break;
+                // Trace every extraction outcome — including misses — so the
+                // timeline shows nulls and missing fields. The op still fails
+                std::optional<std::string> firstMiss;
+                for (auto& t : detailed->traces) {
+                    const bool isMissLike = t.outcome == ExtractionTrace::Outcome::Missing ||
+                                            t.outcome == ExtractionTrace::Outcome::InvalidPattern;
+                    if (!firstMiss && isMissLike) {
+                        firstMiss = t.variableName;
+                    }
+
+                    ExtractionCompleted ev;
+                    ev.runId = runId;
+                    ev.stepIndex = stepIndex;
+                    ev.op = t.op;
+                    ev.variableName = t.variableName;
+                    ev.sourcePath = t.sourcePath;
+                    ev.at = std::chrono::system_clock::now();
+                    switch (t.outcome) {
+                        case ExtractionTrace::Outcome::Resolved:
+                            // RunContext keeps the real value for downstream
+                            // templating; the event copy (timeline + disk) is
+                            // masked when the variable name looks secret.
+                            ev.outcome = ExtractionCompleted::Outcome::Resolved;
+                            ev.value = isSensitiveName(t.variableName)
+                                           ? std::string{kRedactedHeaderValue}
+                                           : t.value;
+                            break;
+                        case ExtractionTrace::Outcome::Null:
+                            ev.outcome = ExtractionCompleted::Outcome::Null;
+                            break;
+                        case ExtractionTrace::Outcome::Missing:
+                            ev.outcome = ExtractionCompleted::Outcome::Missing;
+                            break;
+                        case ExtractionTrace::Outcome::InvalidPattern:
+                            ev.outcome = ExtractionCompleted::Outcome::InvalidPattern;
+                            break;
+                        case ExtractionTrace::Outcome::Unsupported:
+                            ev.outcome = ExtractionCompleted::Outcome::Unsupported;
+                            break;
+                    }
+                    emit(std::move(ev));
+
+                    ctx.recordExtraction(std::move(t));
                 }
-                emit(std::move(ev));
-
-                ctx.recordExtraction(std::move(t));
-            }
-            if (firstMiss) {
-                result.status = StepResult::Status::Failed;
-                result.error = ErrorCode::ExtractionFailed;
-                result.detail = "extract '" + *firstMiss + "' missed for " + op.id.value;
-                auto elapsed = std::chrono::steady_clock::now() - startTime;
-                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
-                return result;
+                if (firstMiss) {
+                    result.status = StepResult::Status::Failed;
+                    result.error = ErrorCode::ExtractionFailed;
+                    result.detail = "extract '" + *firstMiss + "' missed for " + op.id.value;
+                    auto elapsed = std::chrono::steady_clock::now() - startTime;
+                    result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                    return result;
+                }
+                scalarValues = std::move(detailed->values);
             }
 
-            if (!detailed->values.empty()) {
-                ResourceInstance instance;
-                instance.variables = std::move(detailed->values);
+            if (listExts.empty()) {
+                // Plain extraction: one instance from the scalar values.
+                if (!scalarValues.empty()) {
+                    ResourceInstance instance;
+                    instance.variables = std::move(scalarValues);
 
-                // Names only — the per-extraction ExtractionCompleted
-                // events above carry the values (masked when sensitive).
+                    std::vector<std::string> names;
+                    names.reserve(instance.variables.size());
+                    for (const auto& [k, _] : instance.variables) {
+                        names.push_back(k);
+                    }
+                    emit(ExtractionApplied{runId,
+                                           stepIndex,
+                                           op.resource,
+                                           std::move(names),
+                                           std::chrono::system_clock::now()});
+                    ctx.appendInstance(op.resource, std::move(instance));
+                }
+            } else {
+                // List extraction (for-each producer): each `[*]` path yields a
+                // vector; we append one instance per item (scalars broadcast
+                // into every instance), so a downstream for_each can iterate.
+                std::size_t count = 0;
+                std::vector<std::pair<std::string, std::vector<std::string>>> lists;
+                std::optional<std::string> emptyList;
+                for (const auto& ext : listExts) {
+                    auto values = extractValues(httpResp->body, ext.sourcePath);
+                    count = std::max(count, values.size());
+                    if (values.empty() && !emptyList) {
+                        emptyList = ext.variableName;
+                    }
+                    ExtractionCompleted ev;
+                    ev.runId = runId;
+                    ev.stepIndex = stepIndex;
+                    ev.op = op.id;
+                    ev.variableName = ext.variableName;
+                    ev.sourcePath = ext.sourcePath;
+                    ev.at = std::chrono::system_clock::now();
+                    ev.outcome = values.empty() ? ExtractionCompleted::Outcome::Missing
+                                                : ExtractionCompleted::Outcome::Resolved;
+                    ev.value =
+                        values.empty() ? std::string{} : std::to_string(values.size()) + " items";
+                    emit(std::move(ev));
+                    lists.emplace_back(ext.variableName, std::move(values));
+                }
+                if (emptyList) {
+                    result.status = StepResult::Status::Failed;
+                    result.error = ErrorCode::ExtractionFailed;
+                    result.detail =
+                        "list extract '" + *emptyList + "' matched no items for " + op.id.value;
+                    auto elapsed = std::chrono::steady_clock::now() - startTime;
+                    result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                    return result;
+                }
+
                 std::vector<std::string> names;
-                names.reserve(instance.variables.size());
-                for (const auto& [k, _] : instance.variables) {
+                names.reserve(scalarValues.size() + lists.size());
+                for (const auto& [k, _] : scalarValues) {
                     names.push_back(k);
+                }
+                for (const auto& [var, _] : lists) {
+                    names.push_back(var);
                 }
                 emit(ExtractionApplied{runId,
                                        stepIndex,
@@ -996,7 +1065,54 @@ struct ExecutionEngine::Impl {
                                        std::move(names),
                                        std::chrono::system_clock::now()});
 
-                ctx.appendInstance(op.resource, std::move(instance));
+                for (std::size_t k = 0; k < count; ++k) {
+                    ResourceInstance instance;
+                    instance.variables = scalarValues;  // broadcast scalars
+                    for (const auto& [var, values] : lists) {
+                        if (k < values.size()) {
+                            instance.variables[var] = values[k];
+                        }
+                    }
+                    ctx.appendInstance(op.resource, std::move(instance));
+                }
+            }
+        }
+
+        // Response assertions: evaluate each declared predicate against the
+        // final (post-poll, post-hook, post-extraction) response. Record every
+        // outcome; the first failure fails the step. Reuses the predicate
+        // grammar that poll_until.success_when uses.
+        if (httpResp && !op.assertions.empty()) {
+            const PredicateEvaluator assertionEval;
+            const auto parsedBody = assertionEval.parseBody(httpResp->body);
+            std::optional<std::string> firstFail;
+            for (const auto& assertion : op.assertions) {
+                AssertionResult ar;
+                ar.expr = assertion.expr;
+                ar.name = assertion.name.value_or(assertion.expr);
+                const auto parsed = assertionEval.parse(assertion.expr);
+                ar.passed =
+                    parsed && assertionEval.evaluate(*parsed, parsedBody, httpResp->status) ==
+                                  PredicateValue::True;
+                if (!ar.passed && !firstFail) {
+                    firstFail = ar.name;
+                }
+                emit(AssertionCompleted{runId,
+                                        stepIndex,
+                                        op.id,
+                                        ar.name,
+                                        ar.expr,
+                                        ar.passed,
+                                        std::chrono::system_clock::now()});
+                result.assertions.push_back(std::move(ar));
+            }
+            if (firstFail) {
+                result.status = StepResult::Status::Failed;
+                result.error = ErrorCode::AssertionFailed;
+                result.detail = "assertion failed: " + *firstFail + " for " + op.id.value;
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
             }
         }
 
@@ -1016,12 +1132,13 @@ ExecutionEngine::~ExecutionEngine() = default;
 ExecutionEngine::ExecutionEngine(ExecutionEngine&&) noexcept = default;
 ExecutionEngine& ExecutionEngine::operator=(ExecutionEngine&&) noexcept = default;
 
-std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& project,
-                                                             const OperationId& target,
-                                                             RunContext& ctx,
-                                                             const RunOptions& options) {
+std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& project,
+                                                            const OperationId& target,
+                                                            RunContext& ctx,
+                                                            const RunOptions& options) {
     impl_->cancelledRunId.store(0, std::memory_order_release);
     impl_->captureResponseBodies = options.captureResponseBodies;
+    const auto runStart = std::chrono::steady_clock::now();
 
     if (options.resetExtractions) {
         ctx.clearExtractions();
@@ -1066,7 +1183,7 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
         for (const auto& name : DependencyResolver::collectSecretReferences(project)) {
             auto value = impl_->deps.secrets->read(name);
             if (!value) {
-                return std::unexpected(ChainApiError{
+                return std::unexpected(ReqloomError{
                     ErrorCode::SecretAccessFailed,
                     ErrorClass::Auth,
                     "secret store: failed to read '" + name + "': " + value.error().detail});
@@ -1148,15 +1265,75 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
 
         impl_->emit(StepStarted{runId, i, opId, 1, std::chrono::system_clock::now()});
 
-        std::vector<StepResult> pollAttemptRows;
-        auto stepResult = impl_->executeStep(op, project, ctx, rctx, runId, i, pollAttemptRows);
-        // Per-attempt rows precede the parent step row so renderers can
-        // group them under the operation that owned the poll loop.
-        for (auto& row : pollAttemptRows) {
-            result.steps.push_back(std::move(row));
+        StepResult stepResult;
+        if (op.forEach) {
+            // Data-driven fan-out: run once per instance of the `over` resource
+            // (populated by an upstream list extraction). Each iteration binds
+            // `{{<over>.field}}` to that item; iteration rows are tagged with
+            // forEachIndex and grouped under this step, like poll attempts.
+            const ResourceId overRes = op.forEach->over;
+            const std::size_t itemCount = ctx.instances(overRes).size();
+            stepResult.op = opId;
+            if (itemCount == 0) {
+                stepResult.status = StepResult::Status::Succeeded;
+                stepResult.detail = "for_each: no items in " + overRes.value;
+            } else {
+                bool anyFailed = false;
+                bool anyCancelled = false;
+                const bool continueOnError = op.forEach->continueOnError;
+                std::size_t failedCount = 0;
+                for (std::size_t k = 0; k < itemCount; ++k) {
+                    ctx.setIteration(overRes, k);
+                    std::vector<StepResult> iterPollRows;
+                    auto iter = impl_->executeStep(op, project, ctx, rctx, runId, i, iterPollRows);
+                    for (auto& row : iterPollRows) {
+                        row.forEachIndex = static_cast<int>(k + 1);
+                        result.steps.push_back(std::move(row));
+                    }
+                    iter.forEachIndex = static_cast<int>(k + 1);
+                    if (iter.status == StepResult::Status::Failed) {
+                        anyFailed = true;
+                        ++failedCount;
+                        stepResult.error = iter.error;
+                        stepResult.detail = iter.detail;
+                    }
+                    if (iter.status == StepResult::Status::Cancelled) {
+                        anyCancelled = true;
+                    }
+                    ctx.record(iter);
+                    result.steps.push_back(std::move(iter));
+                    // A cancel always stops the fan-out. A failure stops it only
+                    // when continue-on-error is off.
+                    if (anyCancelled || (anyFailed && !continueOnError)) {
+                        break;
+                    }
+                }
+                ctx.setIteration(overRes, std::nullopt);
+                stepResult.status = anyCancelled ? StepResult::Status::Cancelled
+                                    : anyFailed  ? StepResult::Status::Failed
+                                                 : StepResult::Status::Succeeded;
+                if (stepResult.status == StepResult::Status::Succeeded) {
+                    stepResult.detail = "for_each over " + overRes.value + " — " +
+                                        std::to_string(itemCount) + " iterations";
+                } else if (anyFailed && continueOnError) {
+                    stepResult.detail = "for_each over " + overRes.value + " — " +
+                                        std::to_string(failedCount) + " of " +
+                                        std::to_string(itemCount) + " iterations failed";
+                }
+            }
+            result.steps.push_back(stepResult);
+            ctx.record(stepResult);
+        } else {
+            std::vector<StepResult> pollAttemptRows;
+            stepResult = impl_->executeStep(op, project, ctx, rctx, runId, i, pollAttemptRows);
+            // Per-attempt rows precede the parent step row so renderers can
+            // group them under the operation that owned the poll loop.
+            for (auto& row : pollAttemptRows) {
+                result.steps.push_back(std::move(row));
+            }
+            result.steps.push_back(stepResult);
+            ctx.record(stepResult);
         }
-        result.steps.push_back(stepResult);
-        ctx.record(stepResult);
 
         if (stepResult.status == StepResult::Status::Failed) {
             impl_->emit(StepFailed{runId,
@@ -1191,9 +1368,24 @@ std::expected<RunResult, ChainApiError> ExecutionEngine::run(const Project& proj
         }
     }
 
-    impl_->emit(RunEnded{
-        runId, result.outcome, std::chrono::milliseconds{0}, std::chrono::system_clock::now()});
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - runStart);
+    impl_->emit(RunEnded{runId, result.outcome, elapsed, std::chrono::system_clock::now()});
     return result;
+}
+
+std::expected<ResolvedPlan, ReqloomError> ExecutionEngine::resolvePlan(
+    const Project& project, const OperationId& target) const {
+    return impl_->resolver.resolvePlan(project, target);
+}
+
+std::expected<std::vector<VariableSuggestion>, ReqloomError> ExecutionEngine::suggestVariables(
+    const Project& project, const OperationId& target, const std::string& environment) const {
+    auto plan = impl_->resolver.resolvePlan(project, target);
+    if (!plan) {
+        return std::unexpected(plan.error());
+    }
+    return collectVariableSuggestions(project, target, *plan, environment);
 }
 
 void ExecutionEngine::cancel(RunId run) {
@@ -1205,4 +1397,54 @@ void ExecutionEngine::subscribe(EventCallback callback) {
     impl_->subscribers.push_back(std::move(callback));
 }
 
-}  // namespace chainapi::engine
+std::expected<void, ReqloomError> ExecutionEngine::openHistory(
+    const std::filesystem::path& dbPath) {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    return impl_->deps.history->open(dbPath);
+}
+
+std::expected<std::vector<RunHistoryEntry>, ReqloomError> ExecutionEngine::listRuns(
+    std::size_t limit) const {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    auto rows = impl_->deps.history->listRuns(limit);
+    if (!rows) {
+        return std::unexpected(rows.error());
+    }
+    std::vector<RunHistoryEntry> entries;
+    entries.reserve(rows->size());
+    for (auto& row : *rows) {
+        entries.emplace_back(RunHistoryEntry{row.runId,
+                                             std::move(row.targetOp),
+                                             std::move(row.envName),
+                                             std::move(row.startedAt),
+                                             std::move(row.endedAt),
+                                             std::move(row.outcome),
+                                             row.chainSize,
+                                             row.elapsedMs});
+    }
+    return entries;
+}
+
+std::expected<std::vector<RunEvent>, ReqloomError> ExecutionEngine::historyEvents(RunId run) const {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    return impl_->deps.history->eventsFor(run);
+}
+
+std::expected<void, ReqloomError> ExecutionEngine::clearHistory() {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    return impl_->deps.history->clear();
+}
+
+}  // namespace reqloom::engine

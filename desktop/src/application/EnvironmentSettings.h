@@ -8,7 +8,7 @@
 
 class QSettings;
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 class EnvironmentSettings {
 public:
@@ -21,4 +21,4 @@ public:
     [[nodiscard]] static QString load(QSettings& settings, const QString& projectKey);
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

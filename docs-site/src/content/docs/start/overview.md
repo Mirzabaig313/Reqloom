@@ -1,5 +1,5 @@
 ---
-title: What is ChainAPI?
+title: What is Reqloom?
 description: "A workflow-aware API testing tool that auto-resolves request dependency chains. Built for backend developers and QAs who work with multi-actor SaaS APIs."
 ---
 
@@ -45,9 +45,9 @@ mechanical work per test cycle.
 None of them model the API as a dependency graph. They treat it as a
 flat list of requests.
 
-## What ChainAPI does
+## What Reqloom does
 
-ChainAPI treats your API as a graph of **resources**, **actors**, and
+Reqloom treats your API as a graph of **resources**, **actors**, and
 **dependencies**. Define each actor (auth flow) and each resource
 (endpoints + dependencies) **once**. Then click any endpoint and the
 engine auto-resolves the entire chain — login, prerequisites, target
@@ -72,14 +72,14 @@ project in minutes.
 
 ## How it compares
 
-ChainAPI's wedge is **multi-actor SaaS APIs** — the dominant shape of
+Reqloom's wedge is **multi-actor SaaS APIs** — the dominant shape of
 modern backend work. Tools that don't model actors as a first-class
-concept end up with a forest of scripts that nobody owns. ChainAPI's
+concept end up with a forest of scripts that nobody owns. Reqloom's
 schema makes the actor abstraction load-bearing, so the dependency
 graph becomes maintainable.
 
 ## Next steps
 
-- [Install ChainAPI](/start/install/)
+- [Install Reqloom](/start/install/)
 - [Take the 5-minute tour](/start/tour/)
 - [Read the schema authoring guide](/schema/authoring/)

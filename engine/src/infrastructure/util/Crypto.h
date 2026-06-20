@@ -6,7 +6,7 @@
 //
 // Inputs / outputs are `std::string` carrying raw bytes (NOT hex-encoded).
 // Callers that want hex/base64 wrap the result with
-// `chainapi::engine::codecs::{hexEncode,base64Encode}`.
+// `reqloom::engine::codecs::{hexEncode,base64Encode}`.
 //
 // All functions are total — they return an empty string on OpenSSL failure
 // rather than throwing. Auth strategies can sanity-check the output length
@@ -16,7 +16,7 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::engine::crypto {
+namespace reqloom::engine::crypto {
 
 // ─── HMAC ───────────────────────────────────────────────────────────────────
 //
@@ -42,4 +42,4 @@ namespace chainapi::engine::crypto {
 /// HS512: same shape, HMAC-SHA512.
 [[nodiscard]] std::string jwtSignHs512(std::string_view payloadJson, std::string_view key);
 
-}  // namespace chainapi::engine::crypto
+}  // namespace reqloom::engine::crypto

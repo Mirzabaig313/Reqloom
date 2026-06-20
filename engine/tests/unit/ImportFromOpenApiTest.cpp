@@ -1,7 +1,7 @@
 // Direct (non-LLM) OpenAPI 3.x importer tests. Each test fails on the
 // parent commit (importer was a stub returning SchemaInvalid).
 
-#include <chainapi/engine/Factories.h>
+#include <reqloom/engine/Factories.h>
 
 #include <gtest/gtest.h>
 
@@ -11,7 +11,7 @@
 #include <fstream>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -19,7 +19,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-openapi-import");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-openapi-import");
         fs::create_directories(path_);
     }
     ~ScratchDir() {

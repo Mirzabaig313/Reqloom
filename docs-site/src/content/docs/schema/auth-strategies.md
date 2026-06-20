@@ -3,7 +3,7 @@ title: Auth strategies
 description: "Six auth strategies: simple, chain, api_key, oauth2_client_credentials, oauth2_password, oauth1."
 ---
 
-ChainAPI ships six auth strategies covering the patterns 95% of APIs use:
+Reqloom ships six auth strategies covering the patterns 95% of APIs use:
 
 | Strategy | When to use |
 |---|---|

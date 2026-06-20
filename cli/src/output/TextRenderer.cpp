@@ -1,4 +1,4 @@
-// TextRenderer — see header. Default human-readable format for `chainapi run`.
+// TextRenderer — see header. Default human-readable format for `reqloom run`.
 
 #include "TextRenderer.h"
 
@@ -9,11 +9,11 @@
 #include <utility>
 #include <variant>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 namespace {
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 }  // namespace
 
@@ -105,6 +105,16 @@ void TextRenderer::render(const ce::OperationId& target,
                          step.detail.empty() ? std::string{} : "  " + step.detail);
             continue;
         }
+        if (step.forEachIndex) {
+            std::println(summary_,
+                         "    iter #{:<2} {:<6} {} ({}ms){}",
+                         *step.forEachIndex,
+                         std::string(statusGlyph(step.status)),
+                         step.op.value,
+                         step.elapsed.count(),
+                         step.detail.empty() ? std::string{} : "  " + step.detail);
+            continue;
+        }
         std::println(summary_,
                      "  {:<6} {} ({}ms) err={}",
                      std::string(statusGlyph(step.status)),
@@ -114,7 +124,13 @@ void TextRenderer::render(const ce::OperationId& target,
         if (!step.detail.empty()) {
             std::println(summary_, "         {}", step.detail);
         }
+        for (const auto& a : step.assertions) {
+            std::println(summary_,
+                         "         {} assert: {}",
+                         a.passed ? std::string{"\u2713"} : std::string{"\u2717"},
+                         a.name);
+        }
     }
 }
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

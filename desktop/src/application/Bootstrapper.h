@@ -1,10 +1,10 @@
 #pragma once
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <memory>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 /// Constructs an ExecutionEngine with concrete infrastructure implementations
 /// and exposes it to the rest of the desktop. Centralising the wiring here
@@ -24,4 +24,4 @@ private:
     std::unique_ptr<engine::ExecutionEngine> engine_;
 };
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

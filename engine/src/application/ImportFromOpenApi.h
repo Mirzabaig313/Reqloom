@@ -2,14 +2,14 @@
 // an OpenAPI 3.x document.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/ExecutionEngine.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/ExecutionEngine.h>
 
 #include <expected>
 #include <filesystem>
 #include <string>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 class ImportFromOpenApi {
 public:
@@ -28,14 +28,14 @@ public:
     /// `projectRoot`. The importer rejects anything outside that root —
     /// blocks `--spec /etc/passwd` style invocations and `..` traversal
     /// out of the project. CLI/desktop callers typically pass the
-    /// directory that will hold the generated `chainapi.yaml`; tests
+    /// directory that will hold the generated `reqloom.yaml`; tests
     /// pass a scratch dir.
     ///
     /// Returns `SchemaInvalid` for malformed input (not a YAML map, missing
     /// `openapi` field, no `paths`, etc.) or `YamlParse` for a YAML/JSON
     /// syntax error.
-    [[nodiscard]] std::expected<Outcome, ChainApiError> run(
+    [[nodiscard]] std::expected<Outcome, ReqloomError> run(
         const std::filesystem::path& spec, const std::filesystem::path& projectRoot) const;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

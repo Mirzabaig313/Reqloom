@@ -2,8 +2,8 @@
 
 //   - poll_until block is silently dropped → pollUntil stays nullopt
 //   - expect_status: [200, 202] → as<int>() throws inside YamlSchemaParser
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -14,7 +14,7 @@
 #include <fstream>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -25,7 +25,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-schema-poll");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-schema-poll");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -50,7 +50,7 @@ private:
 
 TEST(SchemaParserPolling, parses_poll_until_block_with_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: PollSample
 environment:
@@ -111,7 +111,7 @@ resources:
 
 TEST(SchemaParserPolling, parses_poll_until_with_backoff_and_actor_override) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: PollSample
 environment:
@@ -163,9 +163,145 @@ resources:
     EXPECT_TRUE(submit.expectStatusList.empty());
 }
 
+TEST(SchemaParserForEach, parses_for_each_over_resource_and_round_trips) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: ForEachSample
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  org:
+    operations:
+      list:
+        method: GET
+        path: /api/v1/orgs
+        extract:
+          org_id: $.data.items[*].id
+  org_detail:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/orgs/{{org.org_id}}
+        for_each:
+          over: org
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+
+    const auto& get = result->resources.at(ce::ResourceId{"org_detail"}).operations.at("get");
+    ASSERT_TRUE(get.forEach.has_value()) << "for_each should be parsed";
+    EXPECT_EQ(get.forEach->over.value, "org");
+
+    // Round-trip: write the project back out and re-parse — for_each survives.
+    const auto out = scratch.path() / "out";
+    fs::create_directories(out);
+    ASSERT_TRUE(ce::writeProject(out, *result).has_value());
+    auto reloaded = ce::parseProject(out / "reqloom.yaml");
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& reget = reloaded->resources.at(ce::ResourceId{"org_detail"}).operations.at("get");
+    ASSERT_TRUE(reget.forEach.has_value());
+    EXPECT_EQ(reget.forEach->over.value, "org");
+    EXPECT_FALSE(reget.forEach->continueOnError) << "default is stop-on-first-failure";
+}
+
+TEST(SchemaParserForEach, parses_continue_on_error_flag_and_round_trips) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: ForEachContinue
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  org:
+    operations:
+      list:
+        method: GET
+        path: /api/v1/orgs
+        extract:
+          org_id: $.data.items[*].id
+  org_detail:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/orgs/{{org.org_id}}
+        for_each:
+          over: org
+          continue_on_error: true
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& get = result->resources.at(ce::ResourceId{"org_detail"}).operations.at("get");
+    ASSERT_TRUE(get.forEach.has_value());
+    EXPECT_TRUE(get.forEach->continueOnError);
+
+    const auto out = scratch.path() / "out";
+    fs::create_directories(out);
+    ASSERT_TRUE(ce::writeProject(out, *result).has_value());
+    auto reloaded = ce::parseProject(out / "reqloom.yaml");
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& reget = reloaded->resources.at(ce::ResourceId{"org_detail"}).operations.at("get");
+    ASSERT_TRUE(reget.forEach.has_value());
+    EXPECT_TRUE(reget.forEach->continueOnError) << "continue_on_error should survive round-trip";
+}
+
+TEST(SchemaParserAssertions, parses_named_and_bare_assertions_and_round_trips) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: AssertSample
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  order:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/orders/1
+        assert:
+          - $.status_code == 200
+          - expr: $.data.id
+            name: has id
+)YAML");
+
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& get = result->resources.at(ce::ResourceId{"order"}).operations.at("get");
+    ASSERT_EQ(get.assertions.size(), 2u);
+    EXPECT_EQ(get.assertions[0].expr, "$.status_code == 200");
+    EXPECT_FALSE(get.assertions[0].name.has_value());
+    EXPECT_EQ(get.assertions[1].expr, "$.data.id");
+    ASSERT_TRUE(get.assertions[1].name.has_value());
+    EXPECT_EQ(*get.assertions[1].name, "has id");
+
+    const auto out = scratch.path() / "out";
+    fs::create_directories(out);
+    ASSERT_TRUE(ce::writeProject(out, *result).has_value());
+    auto reloaded = ce::parseProject(out / "reqloom.yaml");
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& reget = reloaded->resources.at(ce::ResourceId{"order"}).operations.at("get");
+    ASSERT_EQ(reget.assertions.size(), 2u);
+    EXPECT_EQ(reget.assertions[0].expr, "$.status_code == 200");
+    EXPECT_FALSE(reget.assertions[0].name.has_value());
+    EXPECT_EQ(reget.assertions[1].expr, "$.data.id");
+    ASSERT_TRUE(reget.assertions[1].name.has_value());
+    EXPECT_EQ(*reget.assertions[1].name, "has id");
+}
+
 TEST(SchemaParserPolling, ops_without_poll_until_remain_nullopt) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: NoPolling
 environment:
@@ -200,7 +336,7 @@ resources:
 
 TEST(SchemaParserBasicAuth, parses_basic_strategy_into_authConfig) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: BasicSample
 default_environment: local
@@ -242,7 +378,7 @@ resources:
 
 TEST(SchemaParserApiKeyAuth, parses_api_key_strategy_with_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ApiKeySample
 default_environment: local
@@ -282,7 +418,7 @@ resources:
 TEST(SchemaParserApiKeyAuth, parses_api_key_with_only_required_key) {
     // Manual-inject form: just `key`, no `location`/`name`.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: ApiKeyManualSample
 default_environment: local
@@ -322,7 +458,7 @@ resources:
 
 TEST(SchemaParserOAuth2ClientCreds, parses_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth2Sample
 default_environment: local
@@ -363,7 +499,7 @@ resources:
 
 TEST(SchemaParserOAuth2ClientCreds, scope_is_optional) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth2NoScope
 default_environment: local
@@ -400,7 +536,7 @@ resources:
 
 TEST(SchemaParserOAuth2Password, parses_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth2PasswordSample
 default_environment: local
@@ -458,7 +594,7 @@ TEST(SchemaParserHooks, loads_sibling_js_file_for_pre_request) {
             << "}\n";
     hookOut.close();
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookFromFile
 default_environment: local
@@ -498,7 +634,7 @@ TEST(SchemaParserHooks, loads_post_response_from_file_too) {
     hookOut << "export default function (ctx) { return ctx.response; }\n";
     hookOut.close();
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookPostResponseFromFile
 default_environment: local
@@ -535,7 +671,7 @@ TEST(SchemaParserHooks, inline_js_with_braces_falls_through_unchanged) {
     // write something like `const x = 1; // foo.js` from being
     // mis-parsed as a path.
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookInline
 default_environment: local
@@ -573,7 +709,7 @@ TEST(SchemaParserHooks, rejects_path_traversal_outside_project_root) {
     // AGENTS.md "Reading user input" §"Path inputs".
     ScratchDir scratch;
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookEscape
 default_environment: local
@@ -604,7 +740,7 @@ resources:
 
 TEST(SchemaParserHooks, rejects_absolute_path) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookAbsolute
 default_environment: local
@@ -635,7 +771,7 @@ resources:
 
 TEST(SchemaParserHooks, rejects_missing_hook_file) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookMissing
 default_environment: local
@@ -676,7 +812,7 @@ TEST(SchemaParserHooks, rejects_oversized_hook_file) {
         }
     }
 
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: HookOversized
 default_environment: local
@@ -709,7 +845,7 @@ resources:
 
 TEST(SchemaParserOAuth1, parses_three_legged_with_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth1Sample
 default_environment: local
@@ -751,7 +887,7 @@ resources:
 
 TEST(SchemaParserOAuth1, parses_two_legged_minimal) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: OAuth1TwoLegged
 default_environment: local
@@ -791,7 +927,7 @@ resources:
 
 TEST(SchemaParserAwsSigV4, parses_full_options) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: AwsSample
 default_environment: local
@@ -833,7 +969,7 @@ resources:
 
 TEST(SchemaParserAwsSigV4, optional_fields_are_omitted_when_absent) {
     ScratchDir scratch;
-    const auto yaml = scratch.write("chainapi.yaml", R"YAML(
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
 version: 1
 name: AwsMinimal
 default_environment: local

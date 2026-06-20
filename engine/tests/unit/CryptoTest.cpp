@@ -15,7 +15,7 @@
 #include <string>
 #include <string_view>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 // ─── HMAC vectors ───────────────────────────────────────────────────────────
 //

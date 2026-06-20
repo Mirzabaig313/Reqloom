@@ -1,6 +1,6 @@
 ---
 title: Actors
-description: "Actor abstraction in ChainAPI: identities with their own auth flows, session caches, and injected headers."
+description: "Actor abstraction in Reqloom: identities with their own auth flows, session caches, and injected headers."
 ---
 
 Actors are identities with their own auth flows. Each actor defines a sequence of HTTP requests that produce a session, and a set of headers to inject into every operation that runs as this actor.

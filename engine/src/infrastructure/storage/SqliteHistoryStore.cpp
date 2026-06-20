@@ -18,8 +18,8 @@
 
 #include "../../domain/Codecs.h"
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Events.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Events.h>
 
 #include <sqlite3.h>
 #include <nlohmann/json.hpp>
@@ -38,7 +38,7 @@
 #include <variant>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
@@ -220,11 +220,11 @@ private:
     bool active_{false};
 };
 
-[[nodiscard]] ChainApiError sqliteError(sqlite3* db, std::string_view what) {
+[[nodiscard]] ReqloomError sqliteError(sqlite3* db, std::string_view what) {
     const char* msg = (db != nullptr) ? sqlite3_errmsg(db) : "no database";
-    return ChainApiError{ErrorCode::SchemaInvalid,
-                         ErrorClass::Schema,
-                         std::string{what} + ": " + (msg != nullptr ? msg : "?")};
+    return ReqloomError{ErrorCode::SchemaInvalid,
+                        ErrorClass::Schema,
+                        std::string{what} + ": " + (msg != nullptr ? msg : "?")};
 }
 
 // ─── Event → JSON (per variant) ──────────────────────────────────────────────
@@ -321,6 +321,12 @@ struct EventEnvelope {
                              {"sourcePath", v.sourcePath},
                              {"outcome", outcome},
                              {"value", v.value}};
+            } else if constexpr (std::is_same_v<T, AssertionCompleted>) {
+                e.eventType = "AssertionCompleted";
+                e.stepIndex = v.stepIndex;
+                e.opId = v.op.value;
+                e.payload = {
+                    {"op", v.op.value}, {"name", v.name}, {"expr", v.expr}, {"passed", v.passed}};
             } else if constexpr (std::is_same_v<T, StepFailed>) {
                 e.eventType = "StepFailed";
                 e.stepIndex = v.stepIndex;
@@ -464,6 +470,17 @@ struct EventEnvelope {
         ev.at = at;
         return ev;
     }
+    if (eventType == "AssertionCompleted") {
+        AssertionCompleted ev;
+        ev.runId = runId;
+        ev.stepIndex = stepIndex.value_or(0);
+        ev.op = OperationId{p.value("op", std::string{})};
+        ev.name = p.value("name", std::string{});
+        ev.expr = p.value("expr", std::string{});
+        ev.passed = p.value("passed", false);
+        ev.at = at;
+        return ev;
+    }
     if (eventType == "StepFailed") {
         // Unknown codes (written by a newer build) fall back to
         // SchemaInvalid so the row still shows up.
@@ -523,20 +540,20 @@ struct SqliteHistoryStore::Impl {
     StmtPtr updateRunEndedStmt;
     StmtPtr nextSeqStmt;
 
-    [[nodiscard]] std::expected<void, ChainApiError> exec(std::string_view sql) const {
+    [[nodiscard]] std::expected<void, ReqloomError> exec(std::string_view sql) const {
         char* err = nullptr;
         const int rc = sqlite3_exec(db.get(), std::string{sql}.c_str(), nullptr, nullptr, &err);
         if (rc != SQLITE_OK) {
-            ChainApiError e{ErrorCode::SchemaInvalid,
-                            ErrorClass::Schema,
-                            std::string{"history: exec failed: "} + (err != nullptr ? err : "?")};
+            ReqloomError e{ErrorCode::SchemaInvalid,
+                           ErrorClass::Schema,
+                           std::string{"history: exec failed: "} + (err != nullptr ? err : "?")};
             sqlite3_free(err);
             return std::unexpected(std::move(e));
         }
         return {};
     }
 
-    [[nodiscard]] std::expected<StmtPtr, ChainApiError> prepare(std::string_view sql) const {
+    [[nodiscard]] std::expected<StmtPtr, ReqloomError> prepare(std::string_view sql) const {
         sqlite3_stmt* raw = nullptr;
         const int rc =
             sqlite3_prepare_v2(db.get(), sql.data(), static_cast<int>(sql.size()), &raw, nullptr);
@@ -546,7 +563,7 @@ struct SqliteHistoryStore::Impl {
         return StmtPtr{raw};
     }
 
-    [[nodiscard]] std::expected<void, ChainApiError> ensureSchema() const {
+    [[nodiscard]] std::expected<void, ReqloomError> ensureSchema() const {
         if (auto r = exec("PRAGMA journal_mode = WAL;"); !r) {
             return r;
         }
@@ -568,7 +585,8 @@ struct SqliteHistoryStore::Impl {
                 started_at  TEXT,
                 ended_at    TEXT,
                 outcome     TEXT,
-                chain_size  INTEGER
+                chain_size  INTEGER,
+                elapsed_ms  INTEGER
             );
             CREATE TABLE IF NOT EXISTS run_events (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -590,6 +608,16 @@ struct SqliteHistoryStore::Impl {
             return r;
         }
 
+        // Migration for databases created before elapsed_ms existed: add the
+        // column so accurate run durations (from RunEnded) can be stored.
+        // ALTER fails harmlessly with "duplicate column name" on DBs that
+        // already have it (including freshly-created ones above), so the
+        // error is intentionally ignored.
+        {
+            auto migrated = exec("ALTER TABLE runs ADD COLUMN elapsed_ms INTEGER;");
+            (void)migrated;
+        }
+
         // v1 is the only version today; future migrations check this
         // row before applying ALTERs and bump it.
         if (auto r = exec("INSERT OR IGNORE INTO schema_version(version) VALUES (1);"); !r) {
@@ -599,7 +627,7 @@ struct SqliteHistoryStore::Impl {
         return {};
     }
 
-    [[nodiscard]] std::expected<void, ChainApiError> prepareStatements() {
+    [[nodiscard]] std::expected<void, ReqloomError> prepareStatements() {
         auto p1 = prepare(
             "INSERT INTO run_events"
             "  (run_id, seq, event_type, step_index, op_id, payload, at) "
@@ -626,7 +654,8 @@ struct SqliteHistoryStore::Impl {
         }
         updateRunStartedStmt = std::move(*p3);
 
-        auto p4 = prepare("UPDATE runs SET ended_at = ?, outcome = ? WHERE run_id = ?;");
+        auto p4 =
+            prepare("UPDATE runs SET ended_at = ?, outcome = ?, elapsed_ms = ? WHERE run_id = ?;");
         if (!p4) {
             return std::unexpected(p4.error());
         }
@@ -656,16 +685,21 @@ struct SqliteHistoryStore::Impl {
 SqliteHistoryStore::SqliteHistoryStore() : impl_(std::make_unique<Impl>()) {}
 SqliteHistoryStore::~SqliteHistoryStore() = default;
 
-std::expected<void, ChainApiError> SqliteHistoryStore::open(const fs::path& dbPath) {
+std::expected<void, ReqloomError> SqliteHistoryStore::open(const fs::path& dbPath) {
+    // Re-openable: drop any previous connection + prepared statements first so
+    // switching projects (a new DB path) doesn't leak the old handle or leave
+    // statements bound to a closed database.
+    close();
+
     // Make sure the parent dir exists; sqlite3_open won't create it.
     if (dbPath.has_parent_path()) {
         std::error_code ec;
         fs::create_directories(dbPath.parent_path(), ec);
         if (ec) {
             return std::unexpected(
-                ChainApiError{ErrorCode::SchemaInvalid,
-                              ErrorClass::Schema,
-                              "history: cannot create parent dir: " + ec.message()});
+                ReqloomError{ErrorCode::SchemaInvalid,
+                             ErrorClass::Schema,
+                             "history: cannot create parent dir: " + ec.message()});
         }
     }
 
@@ -676,7 +710,7 @@ std::expected<void, ChainApiError> SqliteHistoryStore::open(const fs::path& dbPa
                                    SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
                                    nullptr);
     if (rc != SQLITE_OK) {
-        ChainApiError e = sqliteError(raw, "history: open");
+        ReqloomError e = sqliteError(raw, "history: open");
         sqlite3_close(raw);
         return std::unexpected(std::move(e));
     }
@@ -692,9 +726,9 @@ std::expected<void, ChainApiError> SqliteHistoryStore::open(const fs::path& dbPa
     return {};
 }
 
-std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& event) {
+std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& event) {
     if (!impl_->db) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: append before open"});
     }
 
@@ -761,8 +795,11 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
         const auto outcome = env.payload.value("outcome", std::string{"Failed"});
         sqlite3_bind_text(
             impl_->updateRunEndedStmt.get(), 2, outcome.c_str(), -1, SQLITE_TRANSIENT);
+        const auto elapsedMs = env.payload.value("elapsedMs", std::int64_t{0});
         sqlite3_bind_int64(
-            impl_->updateRunEndedStmt.get(), 3, static_cast<sqlite3_int64>(env.runId));
+            impl_->updateRunEndedStmt.get(), 3, static_cast<sqlite3_int64>(elapsedMs));
+        sqlite3_bind_int64(
+            impl_->updateRunEndedStmt.get(), 4, static_cast<sqlite3_int64>(env.runId));
         if (sqlite3_step(impl_->updateRunEndedStmt.get()) != SQLITE_DONE) {
             return std::unexpected(sqliteError(impl_->db.get(), "history: update run end"));
         }
@@ -798,9 +835,9 @@ std::expected<void, ChainApiError> SqliteHistoryStore::append(const RunEvent& ev
     return {};
 }
 
-std::expected<std::vector<RunEvent>, ChainApiError> SqliteHistoryStore::eventsFor(RunId run) const {
+std::expected<std::vector<RunEvent>, ReqloomError> SqliteHistoryStore::eventsFor(RunId run) const {
     if (!impl_->db) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: eventsFor before open"});
     }
 
@@ -843,17 +880,18 @@ std::expected<std::vector<RunEvent>, ChainApiError> SqliteHistoryStore::eventsFo
     return out;
 }
 
-std::expected<std::vector<RunHistoryRow>, ChainApiError> SqliteHistoryStore::listRuns(
+std::expected<std::vector<RunHistoryRow>, ReqloomError> SqliteHistoryStore::listRuns(
     std::size_t limit) const {
     if (!impl_->db) {
-        return std::unexpected(ChainApiError{
+        return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: listRuns before open"});
     }
 
     std::string sql =
         "SELECT run_id, COALESCE(target_op, ''), COALESCE(env_name, ''), "
         "       COALESCE(started_at, ''), COALESCE(ended_at, ''), "
-        "       COALESCE(outcome, ''), COALESCE(chain_size, 0) "
+        "       COALESCE(outcome, ''), COALESCE(chain_size, 0), "
+        "       COALESCE(elapsed_ms, -1) "
         "FROM runs ORDER BY started_at DESC, run_id DESC";
     if (limit > 0) {
         sql += " LIMIT " + std::to_string(limit);
@@ -877,9 +915,33 @@ std::expected<std::vector<RunHistoryRow>, ChainApiError> SqliteHistoryStore::lis
         row.endedAt = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 4));
         row.outcome = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 5));
         row.chainSize = static_cast<std::size_t>(sqlite3_column_int64(stmt.get(), 6));
+        row.elapsedMs = static_cast<std::int64_t>(sqlite3_column_int64(stmt.get(), 7));
         out.push_back(std::move(row));
     }
     return out;
+}
+
+std::expected<void, ReqloomError> SqliteHistoryStore::clear() {
+    if (!impl_->db) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: clear before open"});
+    }
+    // Both deletes commit as one unit so a failure can't leave orphaned
+    // events behind a deleted run (or vice-versa).
+    SqliteTransaction txn{impl_->db.get()};
+    if (!txn.began()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: begin clear txn"));
+    }
+    if (auto r = impl_->exec("DELETE FROM run_events;"); !r) {
+        return r;
+    }
+    if (auto r = impl_->exec("DELETE FROM runs;"); !r) {
+        return r;
+    }
+    if (!txn.commit()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: commit clear txn"));
+    }
+    return {};
 }
 
 void SqliteHistoryStore::close() {
@@ -891,4 +953,4 @@ void SqliteHistoryStore::close() {
     impl_->db.reset();
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

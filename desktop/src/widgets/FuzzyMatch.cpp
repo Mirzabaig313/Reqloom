@@ -3,7 +3,7 @@
 // Smith-Waterman.
 #include "FuzzyMatch.h"
 
-namespace chainapi::desktop::widgets::fuzzy {
+namespace reqloom::desktop::widgets::fuzzy {
 
 namespace {
 
@@ -75,4 +75,4 @@ int score(const QString& query, const QString& candidate) {
     return total;
 }
 
-}  // namespace chainapi::desktop::widgets::fuzzy
+}  // namespace reqloom::desktop::widgets::fuzzy

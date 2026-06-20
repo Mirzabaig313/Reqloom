@@ -1,6 +1,6 @@
 ---
 title: Dependency resolution
-description: "How ChainAPI builds the prerequisite chain for any target operation: implicit edges from variable references plus explicit depends_on declarations."
+description: "How Reqloom builds the prerequisite chain for any target operation: implicit edges from variable references plus explicit depends_on declarations."
 ---
 
 When you ask to run an operation, the engine resolves the dependency chain by combining:

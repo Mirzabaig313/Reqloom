@@ -2,9 +2,9 @@
 // CurlHttpClient. No Qt types leak.
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Operation.h>
-#include <chainapi/engine/Transport.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Operation.h>
+#include <reqloom/engine/Transport.h>
 
 #include <chrono>
 #include <expected>
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// One part of a multipart/form-data request body.
 ///
@@ -31,10 +31,10 @@ struct MultipartPart {
 /// Per-send transport configuration. The executor resolves these from
 /// the active environment (`environments.<name>.transport:`) and stamps
 /// them onto every outbound request. Same shape as the public
-/// `chainapi::engine::TransportConfig` — re-aliased here so callers
+/// `reqloom::engine::TransportConfig` — re-aliased here so callers
 /// inside the infrastructure layer don't have to reach into the public
 /// include path.
-using TransportConfig = ::chainapi::engine::TransportConfig;
+using TransportConfig = ::reqloom::engine::TransportConfig;
 
 struct HttpRequest {
     HttpMethod method{HttpMethod::Get};
@@ -72,10 +72,10 @@ public:
     HttpClient& operator=(HttpClient&&) = delete;
     virtual ~HttpClient() = default;
 
-    /// Synchronous. Network failures are surfaced as `ChainApiError`
+    /// Synchronous. Network failures are surfaced as `ReqloomError`
     /// (NetworkTimeout / NetworkDns / NetworkTls); HTTP status codes are
     /// not — those are the caller's concern.
-    virtual std::expected<HttpResponse, ChainApiError> send(const HttpRequest& request) = 0;
+    virtual std::expected<HttpResponse, ReqloomError> send(const HttpRequest& request) = 0;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

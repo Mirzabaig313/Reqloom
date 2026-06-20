@@ -6,21 +6,22 @@
 // surface as a structural mismatch.
 //
 // Each test fails on the parent commit (no SchemaWriter existed):
-// `chainapi::engine::writeProject` is a brand-new public symbol.
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+// `reqloom::engine::writeProject` is a brand-new public symbol.
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
 #include <support/TempPath.h>
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -28,7 +29,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-writer");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-writer");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -129,6 +130,33 @@ TEST(SchemaWriter, refuses_to_overwrite_existing_root) {
     EXPECT_TRUE(third.has_value()) << (third ? "" : third.error().detail);
 }
 
+TEST(SchemaWriter, unchanged_files_are_not_rewritten_on_overwrite) {
+    // A re-write with identical content must leave untouched files alone, so a
+    // single edit doesn't churn every project file. Verified via mtime: stamp
+    // an unchanged resource file with an old sentinel, re-write, and confirm
+    // the sentinel survives (file skipped) — but a genuine change rewrites it.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+
+    const fs::path resourceFile = scratch.path() / "resources" / "payment.yaml";
+    ASSERT_TRUE(fs::exists(resourceFile));
+
+    const auto sentinel = fs::last_write_time(resourceFile) - std::chrono::hours{1};
+    fs::last_write_time(resourceFile, sentinel);
+    const auto stamped = fs::last_write_time(resourceFile);
+
+    // Re-write the identical project: the resource file must be skipped.
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+    EXPECT_EQ(fs::last_write_time(resourceFile), stamped);
+
+    // Now change that resource: the file must be rewritten (mtime moves off
+    // the sentinel).
+    project.resources.at(ce::ResourceId{"payment"}).description = "changed";
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+    EXPECT_NE(fs::last_write_time(resourceFile), stamped);
+}
+
 TEST(SchemaWriter, round_trips_actor_resource_environment) {
     ScratchDir scratch;
     auto original = makeRoundTripProject();
@@ -184,6 +212,133 @@ TEST(SchemaWriter, round_trips_actor_resource_environment) {
     EXPECT_EQ(payOut.extractions[0].sourcePath, "$.id");
 }
 
+TEST(SchemaWriter, json_object_body_survives_repeated_saves_without_escaping) {
+    // Regression: the writer used to emit `body` as a raw scalar, so each parse
+    // re-JSON-encoded it, adding a layer of quotes on every save (the
+    // over-escaping bug seen in actor auth bodies). A JSON object body must
+    // round-trip unchanged across repeated write → parse cycles.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    const std::string canonical = R"({"email":"a@b.test"})";
+    project.resources.at(ce::ResourceId{"payment"}).operations.at("pay").bodyTemplate = canonical;
+
+    auto written1 = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written1.has_value()) << written1.error().detail;
+    auto parsed1 = ce::parseProject(*written1);
+    ASSERT_TRUE(parsed1.has_value()) << parsed1.error().detail;
+    const auto& body1 =
+        parsed1->resources.at(ce::ResourceId{"payment"}).operations.at("pay").bodyTemplate;
+    ASSERT_TRUE(body1.has_value());
+    EXPECT_EQ(*body1, canonical);
+
+    // Second cycle from the reloaded project: still canonical, not re-escaped.
+    auto written2 = ce::writeProject(scratch.path(), *parsed1, /*overwrite=*/true);
+    ASSERT_TRUE(written2.has_value()) << written2.error().detail;
+    auto parsed2 = ce::parseProject(*written2);
+    ASSERT_TRUE(parsed2.has_value()) << parsed2.error().detail;
+    const auto& body2 =
+        parsed2->resources.at(ce::ResourceId{"payment"}).operations.at("pay").bodyTemplate;
+    ASSERT_TRUE(body2.has_value());
+    EXPECT_EQ(*body2, canonical);
+}
+
+TEST(SchemaWriter, prunes_orphaned_files_on_overwrite) {
+    // Deleting a resource must remove its file, not leave it to reload as a
+    // ghost on the next parse.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+    const auto resFile = scratch.path() / "resources" / "payment.yaml";
+    ASSERT_TRUE(fs::exists(resFile));
+
+    project.resources.erase(ce::ResourceId{"payment"});
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+    EXPECT_FALSE(fs::exists(resFile));
+
+    auto reloaded = ce::parseProject(scratch.path() / "reqloom.yaml");
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    EXPECT_FALSE(reloaded->resources.contains(ce::ResourceId{"payment"}));
+}
+
+TEST(SchemaWriter, retry_policy_round_trips) {
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& pay = project.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    pay.retry.maxAttempts = 7;
+    pay.retry.baseBackoff = std::chrono::milliseconds{1234};
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& out = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    EXPECT_EQ(out.retry.maxAttempts, 7);
+    EXPECT_EQ(out.retry.baseBackoff, std::chrono::milliseconds{1234});
+}
+
+TEST(SchemaWriter, provenance_round_trips_through_parser) {
+    // makeRoundTripProject stamps the pay op with AI-import provenance. A save
+    // must not strip it — the parser now reads `_provenance` back.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& out = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    ASSERT_TRUE(out.provenance.has_value());
+    EXPECT_EQ(out.provenance->source, ce::Provenance::Source::AiImport);
+    EXPECT_EQ(out.provenance->verifiedAgainst, ce::Provenance::VerifiedAgainst::OpenApiExample);
+    ASSERT_TRUE(out.provenance->model.has_value());
+    EXPECT_EQ(*out.provenance->model, "gpt-4o");
+    EXPECT_EQ(out.provenance->evidence.at("actor"), "inferred from BearerAuth security scheme");
+}
+
+TEST(SchemaWriter, xpath_extraction_source_round_trips) {
+    // XPath has no detectable path prefix; without the explicit map form it
+    // would silently degrade to JsonPath on reload.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& pay = project.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    pay.extractions.push_back({"node", "//book/title", ce::Extraction::Source::XPath});
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& out = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    bool found = false;
+    for (const auto& ext : out.extractions) {
+        if (ext.variableName == "node") {
+            found = true;
+            EXPECT_EQ(ext.source, ce::Extraction::Source::XPath);
+            EXPECT_EQ(ext.sourcePath, "//book/title");
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST(SchemaWriter, hook_file_reference_is_preserved_not_inlined) {
+    // A hook loaded from "./hooks/pre.js" must be re-emitted as the path, not
+    // inlined — inlining orphans the sidecar and loses the indirection.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& pay = project.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    pay.preRequestScript = "console.log('inlined content that must NOT be written');";
+    pay.preRequestScriptRef = "./hooks/pre.js";
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    std::string content;
+    {
+        std::ifstream in(scratch.path() / "resources" / "payment.yaml", std::ios::binary);
+        ASSERT_TRUE(in.good());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_NE(content.find("./hooks/pre.js"), std::string::npos);
+    EXPECT_EQ(content.find("inlined content that must NOT be written"), std::string::npos);
+}
+
 TEST(SchemaWriter, provenance_round_trips_unaffected_by_runtime) {
     // Provenance is what 6c will write for AI-imported ops. Round-tripping
     // it cleanly is the prerequisite for §10.3.4 runtime diagnostics.
@@ -220,7 +375,7 @@ TEST(SchemaWriter, written_yaml_emits_all_three_sub_directories) {
     auto written = ce::writeProject(scratch.path(), project);
     ASSERT_TRUE(written.has_value()) << written.error().detail;
 
-    EXPECT_TRUE(fs::exists(scratch.path() / "chainapi.yaml"));
+    EXPECT_TRUE(fs::exists(scratch.path() / "reqloom.yaml"));
     EXPECT_TRUE(fs::is_directory(scratch.path() / "actors"));
     EXPECT_TRUE(fs::is_directory(scratch.path() / "resources"));
     EXPECT_TRUE(fs::is_directory(scratch.path() / "environments"));
@@ -745,4 +900,39 @@ TEST(SchemaWriter, transport_emits_only_non_default_fields) {
     EXPECT_EQ(content.find("connect_timeout"), std::string::npos)
         << "default connect_timeout should not be emitted; got:\n"
         << content;
+}
+
+TEST(SchemaWriter, latency_slo_round_trips) {
+    ScratchDir scratch;
+    auto original = makeRoundTripProject();
+    original.latencySloP95Ms = 800;
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    EXPECT_EQ(reloaded->latencySloP95Ms, 800);
+}
+
+TEST(SchemaWriter, latency_slo_absent_when_unset) {
+    ScratchDir scratch;
+    auto original = makeRoundTripProject();  // latencySloP95Ms defaults to 0
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    std::string content;
+    {
+        std::ifstream in(*written, std::ios::binary);
+        ASSERT_TRUE(in.good());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_EQ(content.find("latency_slo"), std::string::npos)
+        << "an unset SLO must not be emitted; got:\n"
+        << content;
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value());
+    EXPECT_EQ(reloaded->latencySloP95Ms, 0);
 }

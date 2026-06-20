@@ -13,11 +13,11 @@
 #include <variant>
 #include <vector>
 
-namespace chainapi::desktop {
+namespace reqloom::desktop {
 
 namespace {
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 /// Roll a header pair list into a single newline-joined string for display.
 [[nodiscard]] QString joinHeaders(const std::vector<std::pair<std::string, std::string>>& headers) {
@@ -100,6 +100,24 @@ void RunController::run(const QString& target,
                         bool clean,
                         bool dryRun) {
     runWithOverride(target, environment, clean, dryRun, RequestOverride{});
+}
+
+void RunController::setVariableOverrides(
+    std::vector<std::pair<std::string, std::string>> overrides) {
+    variableOverrides_ = std::move(overrides);
+}
+
+void RunController::clearExtractionCache() {
+    if (context_ && !running_) {
+        context_->clearExtractions();
+    }
+}
+
+std::map<std::string, std::string> RunController::cookies(const ce::ActorId& actor) const {
+    if (!context_) {
+        return {};
+    }
+    return context_->cookies(actor);
 }
 
 namespace {
@@ -213,6 +231,19 @@ void applyOverrideToOperation(ce::Operation& op, const RequestOverride& ov) {
         op.timeout.reset();
     }
     op.force = ov.forceReRun;
+
+    // Chain edits are opt-in: only touch depends_on / extract when the editor
+    // actually loaded and re-snapshotted them, so a request-only override
+    // leaves an operation's wiring intact.
+    if (ov.chainEdited) {
+        op.explicitDependencies.clear();
+        op.explicitDependencies.reserve(ov.dependencies.size());
+        for (const auto& dep : ov.dependencies) {
+            op.explicitDependencies.push_back(ce::OperationId{dep});
+        }
+        op.extractions = ov.extractions;
+        op.assertions = ov.assertions;
+    }
 }
 
 void RunController::runWithOverride(const QString& target,
@@ -244,6 +275,20 @@ void RunController::runWithOverride(const QString& target,
         requestOverride.active ? patchedProject(project_.project(), targetId, requestOverride)
                                : project_.projectPtr();
     ce::RunContext& ctx = *context_;
+
+    // Value-picker pins (Option A): seed each chosen value as the resource's
+    // most-recent instance so the producing op is extraction-cache-skipped and
+    // the chain uses the pinned value. A clean run resets extractions inside
+    // the engine, so pins are intentionally ignored there (truly fresh).
+    for (const auto& [token, value] : variableOverrides_) {
+        const auto dot = token.find('.');
+        if (dot == std::string::npos) {
+            continue;
+        }
+        ce::ResourceInstance instance;
+        instance.variables[token.substr(dot + 1)] = value;
+        ctx.appendInstance(ce::ResourceId{token.substr(0, dot)}, std::move(instance));
+    }
 
     running_ = true;
     emit runningChanged(true);
@@ -323,6 +368,12 @@ void RunController::publishEvent(const ce::RunEvent& event) {
                                          QString::fromStdString(e.sourcePath),
                                          format::extractionOutcome(e.outcome),
                                          QString::fromStdString(e.value));
+            } else if constexpr (std::is_same_v<T, ce::AssertionCompleted>) {
+                emit assertionCompleted(static_cast<int>(e.stepIndex),
+                                        QString::fromStdString(e.op.value),
+                                        QString::fromStdString(e.name),
+                                        QString::fromStdString(e.expr),
+                                        e.passed);
             } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
                 emit stepFailed(static_cast<int>(e.stepIndex),
                                 QString::fromStdString(e.op.value),
@@ -338,4 +389,4 @@ void RunController::publishEvent(const ce::RunEvent& event) {
         event);
 }
 
-}  // namespace chainapi::desktop
+}  // namespace reqloom::desktop

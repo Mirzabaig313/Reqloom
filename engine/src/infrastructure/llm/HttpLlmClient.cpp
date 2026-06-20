@@ -8,18 +8,18 @@
 #include <string_view>
 #include <utility>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
 using json = nlohmann::json;
 
-ChainApiError requestFailed(std::string detail) {
-    return ChainApiError{ErrorCode::LlmRequestFailed, ErrorClass::Llm, std::move(detail)};
+ReqloomError requestFailed(std::string detail) {
+    return ReqloomError{ErrorCode::LlmRequestFailed, ErrorClass::Llm, std::move(detail)};
 }
 
-ChainApiError responseInvalid(std::string detail) {
-    return ChainApiError{ErrorCode::LlmResponseInvalid, ErrorClass::Llm, std::move(detail)};
+ReqloomError responseInvalid(std::string detail) {
+    return ReqloomError{ErrorCode::LlmResponseInvalid, ErrorClass::Llm, std::move(detail)};
 }
 
 constexpr std::string_view kBodyExcerptCap = "... (truncated)";
@@ -46,7 +46,7 @@ std::string_view roleAsString(LlmMessage::Role role) noexcept {
 
 /// OpenAI Chat Completions: every message rides in `messages[]`, system
 /// prompt included.
-std::expected<HttpRequest, ChainApiError> buildOpenAiRequest(const LlmRequest& req) {
+std::expected<HttpRequest, ReqloomError> buildOpenAiRequest(const LlmRequest& req) {
     if (req.config.apiKey.empty()) {
         return std::unexpected(requestFailed("openai: API key is required"));
     }
@@ -78,7 +78,7 @@ std::expected<HttpRequest, ChainApiError> buildOpenAiRequest(const LlmRequest& r
 
 /// Anthropic Messages API: `system` is a top-level field; `max_tokens` is
 /// required by the spec.
-std::expected<HttpRequest, ChainApiError> buildAnthropicRequest(const LlmRequest& req) {
+std::expected<HttpRequest, ReqloomError> buildAnthropicRequest(const LlmRequest& req) {
     if (req.config.apiKey.empty()) {
         return std::unexpected(requestFailed("anthropic: API key is required"));
     }
@@ -117,7 +117,7 @@ std::expected<HttpRequest, ChainApiError> buildAnthropicRequest(const LlmRequest
 }
 
 /// Ollama: local-only, no API key, JSON mode via `format: "json"`.
-std::expected<HttpRequest, ChainApiError> buildOllamaRequest(const LlmRequest& req) {
+std::expected<HttpRequest, ReqloomError> buildOllamaRequest(const LlmRequest& req) {
     json body;
     body["model"] = req.config.model;
     body["messages"] = json::array();
@@ -140,7 +140,7 @@ std::expected<HttpRequest, ChainApiError> buildOllamaRequest(const LlmRequest& r
     return http;
 }
 
-std::expected<LlmResponse, ChainApiError> parseOpenAi(const json& doc) {
+std::expected<LlmResponse, ReqloomError> parseOpenAi(const json& doc) {
     if (!doc.contains("choices") || !doc["choices"].is_array() || doc["choices"].empty()) {
         return std::unexpected(responseInvalid("openai: response missing `choices[0]`"));
     }
@@ -168,7 +168,7 @@ std::expected<LlmResponse, ChainApiError> parseOpenAi(const json& doc) {
     return out;
 }
 
-std::expected<LlmResponse, ChainApiError> parseAnthropic(const json& doc) {
+std::expected<LlmResponse, ReqloomError> parseAnthropic(const json& doc) {
     if (!doc.contains("content") || !doc["content"].is_array() || doc["content"].empty()) {
         return std::unexpected(responseInvalid("anthropic: response missing `content[0]`"));
     }
@@ -199,7 +199,7 @@ std::expected<LlmResponse, ChainApiError> parseAnthropic(const json& doc) {
     return out;
 }
 
-std::expected<LlmResponse, ChainApiError> parseOllama(const json& doc) {
+std::expected<LlmResponse, ReqloomError> parseOllama(const json& doc) {
     if (!doc.contains("message") || !doc["message"].contains("content")) {
         return std::unexpected(responseInvalid("ollama: response missing `message.content`"));
     }
@@ -219,7 +219,7 @@ std::expected<LlmResponse, ChainApiError> parseOllama(const json& doc) {
 
 }  // namespace
 
-std::expected<LlmResponse, ChainApiError> HttpLlmClient::complete(const LlmRequest& request) {
+std::expected<LlmResponse, ReqloomError> HttpLlmClient::complete(const LlmRequest& request) {
     if (transport_ == nullptr) {
         return std::unexpected(requestFailed("LlmClient wired without a transport"));
     }
@@ -233,7 +233,7 @@ std::expected<LlmResponse, ChainApiError> HttpLlmClient::complete(const LlmReque
         return std::unexpected(requestFailed("messages list is empty"));
     }
 
-    std::expected<HttpRequest, ChainApiError> built;
+    std::expected<HttpRequest, ReqloomError> built;
     switch (request.config.provider) {
         case LlmProvider::OpenAI:
             built = buildOpenAiRequest(request);
@@ -267,7 +267,7 @@ std::expected<LlmResponse, ChainApiError> HttpLlmClient::complete(const LlmReque
             responseInvalid(std::string{"could not parse provider JSON: "} + e.what()));
     }
 
-    std::expected<LlmResponse, ChainApiError> parsed;
+    std::expected<LlmResponse, ReqloomError> parsed;
     // The provider parsers below call nlohmann::json get<T>(), which throws
     // json::type_error / json::out_of_range when an untrusted provider
     // response has the right keys but wrong value types. Contain those here
@@ -298,4 +298,4 @@ std::expected<LlmResponse, ChainApiError> HttpLlmClient::complete(const LlmReque
     return parsed;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

@@ -1,5 +1,6 @@
 // Factories — concrete-implementation factory entry points.
-#include <chainapi/engine/Factories.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/Hook.h>
 
 #include "ImportFromOpenApi.h"
 
@@ -20,7 +21,29 @@
 #include "../infrastructure/storage/SqliteHistoryStore.h"
 #include "../infrastructure/typings/StaticHookTypingsEmitter.h"
 
-namespace chainapi::engine {
+namespace reqloom::engine {
+
+namespace {
+
+/// Convert the public sample request to the engine-internal view used by
+/// HookRunner. The two mirror each other field-for-field.
+[[nodiscard]] HookRequestView toInternal(const HookSampleRequest& req) {
+    return HookRequestView{req.method, req.url, req.headers, req.body};
+}
+
+[[nodiscard]] HookResponseView toInternal(const HookSampleResponse& resp) {
+    return HookResponseView{resp.status, resp.headers, resp.body};
+}
+
+[[nodiscard]] HookSampleRequest fromInternal(const HookRequestView& req) {
+    return HookSampleRequest{req.method, req.url, req.headers, req.body};
+}
+
+[[nodiscard]] HookSampleResponse fromInternal(const HookResponseView& resp) {
+    return HookSampleResponse{resp.status, resp.headers, resp.body};
+}
+
+}  // namespace
 
 // Dependencies special members (out-of-line for incomplete-type users)
 
@@ -82,28 +105,32 @@ ExecutionEngine::Dependencies makeDefaultDependencies() {
     };
 }
 
-std::expected<Project, ChainApiError> parseProject(const std::filesystem::path& chainapiYaml) {
+std::expected<Project, ReqloomError> parseProject(const std::filesystem::path& reqloomYaml) {
     YamlSchemaParser parser;
-    return parser.parse(chainapiYaml);
+    return parser.parse(reqloomYaml);
+}
+
+std::expected<void, ReqloomError> validateProject(const Project& project) {
+    return DependencyResolver{}.validate(project);
 }
 
 std::vector<std::string> collectSecretReferences(const Project& project) {
     return DependencyResolver::collectSecretReferences(project);
 }
 
-std::expected<std::filesystem::path, ChainApiError> writeProject(
+std::expected<std::filesystem::path, ReqloomError> writeProject(
     const std::filesystem::path& targetDir, const Project& project, bool overwrite) {
     YamlSchemaWriter writer;
     return writer.write(targetDir, project, overwrite);
 }
 
-std::expected<std::filesystem::path, ChainApiError> emitHookTypings(
+std::expected<std::filesystem::path, ReqloomError> emitHookTypings(
     const std::filesystem::path& targetDir, const Project& project, bool overwrite) {
     StaticHookTypingsEmitter emitter;
     return emitter.emit(targetDir, project, overwrite);
 }
 
-std::expected<OpenApiImportOutcome, ChainApiError> importFromOpenApi(
+std::expected<OpenApiImportOutcome, ReqloomError> importFromOpenApi(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
     ImportFromOpenApi const importer;
     auto inner = importer.run(spec, projectRoot);
@@ -113,4 +140,40 @@ std::expected<OpenApiImportOutcome, ChainApiError> importFromOpenApi(
     return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
 }
 
-}  // namespace chainapi::engine
+std::expected<HookDryRunResult, ReqloomError> dryRunHook(const HookDryRunInput& input) {
+    if (input.script.empty()) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::HookFailure, ErrorClass::Hook, "hook script is empty"});
+    }
+    if (input.phase == HookPhase::PostResponse && !input.response) {
+        return std::unexpected(ReqloomError{ErrorCode::HookFailure,
+                                            ErrorClass::Hook,
+                                            "post_response dry-run requires a sample response"});
+    }
+
+    HookContext ctx;
+    ctx.request = toInternal(input.request);
+    if (input.response) {
+        ctx.response = toInternal(*input.response);
+    }
+    ctx.variables = input.variables;
+    ctx.env = input.env;
+    ctx.secrets = input.secrets;
+
+    QuickJsHookRunner runner;
+    auto outcome = input.phase == HookPhase::PreRequest
+                       ? runner.runPreRequest(input.script, std::move(ctx))
+                       : runner.runPostResponse(input.script, std::move(ctx));
+    if (!outcome) {
+        return std::unexpected(outcome.error());
+    }
+
+    HookDryRunResult result;
+    result.request = fromInternal(outcome->mutatedRequest);
+    if (outcome->mutatedResponse) {
+        result.response = fromInternal(*outcome->mutatedResponse);
+    }
+    return result;
+}
+
+}  // namespace reqloom::engine
