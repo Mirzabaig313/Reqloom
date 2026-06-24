@@ -7,40 +7,30 @@
 
 #include <QtCore/QSettings>
 #include <QtCore/QString>
-#include <QtCore/QTemporaryFile>
+#include <QtCore/QTemporaryDir>
 
 namespace reqloom::desktop::tests {
 
 namespace {
 
-/// A QSettings backed by a unique temp INI file, so reads/writes are
-/// isolated from the real application settings and from other tests.
+/// A QSettings backed by an INI file inside a unique temp directory, so
+/// reads/writes are isolated from the real application settings and from
+/// other tests. The file path is handed to QSettings but never pre-created:
+/// QSettings owns and creates it. This matters on Windows, where QSettings'
+/// IniFormat sync() writes by atomically renaming a scratch file over the
+/// target — replacing a file created/held by something else (e.g. a
+/// QTemporaryFile handle) fails there. Letting QSettings own the file avoids
+/// that entirely. The QTemporaryDir removes the file (and dir) on teardown.
 class ScopedSettings {
 public:
-    ScopedSettings() {
-        file_.setAutoRemove(true);
-        // Open to realise (create) the file and get a unique path, then
-        // close immediately. Keeping the QTemporaryFile handle open while
-        // QSettings writes causes a problem on Windows: QSettings::sync()
-        // for IniFormat renames a scratch file over the target, which fails
-        // silently when the target has an open handle. Closing here releases
-        // the handle so QSettings can write and rename freely; the file
-        // remains on disk until ~ScopedSettings because autoRemove is set.
-        if (file_.open()) {
-            file_.close();
-            opened_ = true;
-        }
-    }
-
-    [[nodiscard]] bool ok() const { return opened_; }
+    [[nodiscard]] bool ok() const { return dir_.isValid(); }
 
     [[nodiscard]] QSettings make() const {
-        return QSettings{file_.fileName(), QSettings::IniFormat};
+        return QSettings{dir_.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat};
     }
 
 private:
-    QTemporaryFile file_;
-    bool opened_{false};
+    QTemporaryDir dir_;
 };
 
 }  // namespace
