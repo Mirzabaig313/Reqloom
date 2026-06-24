@@ -136,6 +136,14 @@ if(REQLOOM_BUILD_DESKTOP AND NOT TARGET scintilla)
     )
     target_link_libraries(scintilla PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Core5Compat)
     target_compile_features(scintilla PRIVATE cxx_std_17)
+    # We compile Scintilla's Qt layer statically. On Windows its headers
+    # default ScintillaEditBase to __declspec(dllimport), which MOC rejects
+    # ("definition of dllimport static data member not allowed"). Neutralise
+    # the export macro to empty — matching Scintilla's own non-Windows path.
+    # PUBLIC so desktop sources including the headers stay consistent.
+    if(WIN32)
+        target_compile_definitions(scintilla PUBLIC EXPORT_IMPORT_API=)
+    endif()
     # Vendored third-party: silence its warnings (we don't lint upstream code).
     if(MSVC)
         target_compile_options(scintilla PRIVATE /w)
