@@ -1,10 +1,18 @@
-# Build artefacts
+# ─── Build artefacts ──────────────────────────────────────────────────────────
 build/
 build-*/
 out/
 cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
 
-# IDE / editor
+# ─── CMake user overrides (not shared) ────────────────────────────────────────
+CMakeUserPresets.json
+compile_commands.json
+
+# ─── IDE / editor ─────────────────────────────────────────────────────────────
 .vs/
 .vscode/
 .idea/
@@ -12,23 +20,21 @@ cmake-build-*/
 *.swo
 .DS_Store
 
-# CMake
-CMakeCache.txt
-CMakeFiles/
-CMakeUserPresets.json
-cmake_install.cmake
-compile_commands.json
-install_manifest.txt
+# GitHub ruleset JSON files (managed in the UI, not in source) ────────────────
+.github/rulesets
 
-# vcpkg
+# ─── Kiro workspace state (local per-machine) ─────────────────────────────────
+.kiro/
+
+# ─── vcpkg ────────────────────────────────────────────────────────────────────
 vcpkg_installed/
 .vcpkg-root
+# vcpkg checkout when bootstrapped at the repo root by CI/local.
+/vcpkg/
 
-# Conan
-.conan/
-conan.lock
-
-# Qt
+# ─── Qt (installed via tools/setup-qt.sh into ~/Qt; ignored if installed
+#     inside the repo tree) ────────────────────────────────────────────────────
+/Qt/
 *.user
 *.user.*
 moc_*.cpp
@@ -36,20 +42,40 @@ moc_*.h
 qrc_*.cpp
 ui_*.h
 
-# Clang tooling
+# ─── Conan (unused but silenced if accidentally initialised) ──────────────────
+.conan/
+conan.lock
+
+# ─── Clang tooling caches ─────────────────────────────────────────────────────
 .cache/
 .clangd/
 
-# Coverage
+# ─── Coverage artefacts ───────────────────────────────────────────────────────
 *.gcno
 *.gcda
 *.profraw
 *.profdata
 coverage/
 
-# Logs
+# ─── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 
-# local 
-.kiro/hooks
-doc/local
+# ─── Local development notes (private, per-author) ────────────────────────────
+doc/local/
+doc/adr/
+tools/reqloom-smoke.sh
+tools/reqloom-full-flow.sh
+tools/reqloom-onboarding-flow.sh
+
+# ─── Validation — raw results and per-API working notes ───────────────────────
+validation/llm-feasibility/runs/
+validation/design-partners/results-template.md
+validation/testreuslt.md
+validation/github/findings.md
+validation/stripe/findings.md
+validation/discourse/findings.md
+
+# ─── Reqloom working-project directory ────────────────────────────────────────
+# Anchored to repo root so only the top-level reqloom/ sample/working project
+# is ignored; test fixtures under engine/tests/fixtures/ are tracked normally.
+/reqloom/

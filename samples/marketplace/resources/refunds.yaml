@@ -8,11 +8,39 @@ operations:
     depends_on: [order.pay]
     body:
       reason: "Item not as described"
+      amount: 999
+    expect_status: 201
     extract:
       refund_id: $.data.id
+
+  get:
+    method: GET
+    path: /api/v1/refunds/{{refund.refund_id}}
+    actor: customer
+    depends_on: [refund.request]
+    expect_status: 200
 
   approve:
     method: POST
     path: /api/v1/admin/refunds/{{refund.refund_id}}/approve
     actor: admin
     depends_on: [refund.request]
+    expect_status: 200
+
+  reject:
+    method: POST
+    path: /api/v1/admin/refunds/{{refund.refund_id}}/reject
+    actor: admin
+    depends_on: [refund.request]
+    body:
+      reason: "Insufficient evidence"
+    expect_status: 200
+
+  list_pending:
+    method: GET
+    path: /api/v1/admin/refunds
+    actor: admin
+    query_params:
+      status: "pending"
+      limit: "20"
+    expect_status: 200

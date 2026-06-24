@@ -1,0 +1,50 @@
+// EnvironmentSettings — see header. Thin QSettings group accessor.
+#include "EnvironmentSettings.h"
+
+#include <QtCore/QSettings>
+
+namespace reqloom::desktop {
+
+namespace {
+
+// All per-project environment selections live under one settings group so
+// they're easy to inspect and don't collide with other preferences.
+constexpr const char* kGroup = "activeEnvironment";
+
+// QSettings uses '/' as a key-path separator, so a project key that starts
+// with or contains '/' (e.g. "/projects/alpha") would be misinterpreted as
+// an absolute path or nested subgroups. Replace every '/' with '|', which
+// QSettings treats as a plain character on all backends.
+QString sanitizeKey(const QString& projectKey) {
+    QString k = projectKey;
+    k.replace(QLatin1Char('/'), QLatin1Char('|'));
+    return k;
+}
+
+}  // namespace
+
+void EnvironmentSettings::save(QSettings& settings, const QString& projectKey, const QString& env) {
+    if (projectKey.isEmpty() || env.isEmpty()) {
+        return;
+    }
+    settings.beginGroup(QString::fromUtf8(kGroup));
+    settings.setValue(sanitizeKey(projectKey), env);
+    settings.endGroup();
+    // Flush to backing store immediately. Without this a second QSettings
+    // instance opened over the same file (as the round-trip test does) can
+    // read stale content on Windows, where the write is otherwise buffered
+    // until destruction.
+    settings.sync();
+}
+
+QString EnvironmentSettings::load(QSettings& settings, const QString& projectKey) {
+    if (projectKey.isEmpty()) {
+        return QString{};
+    }
+    settings.beginGroup(QString::fromUtf8(kGroup));
+    const QString env = settings.value(sanitizeKey(projectKey)).toString();
+    settings.endGroup();
+    return env;
+}
+
+}  // namespace reqloom::desktop

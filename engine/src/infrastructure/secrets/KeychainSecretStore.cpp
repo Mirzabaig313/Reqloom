@@ -1,28 +1,154 @@
 // KeychainSecretStore — OS-keychain-backed secret storage via QtKeychain.
-// PRD §5.1 / NFR-3.2.
 //
-// Implementation is gated on CHAINAPI_HAS_QTKEYCHAIN; if QtKeychain is not
-// available at configure time the store falls back to a placeholder that
-// refuses writes (so the absence is loud, not silent).
+// Gated on REQLOOM_HAS_QTKEYCHAIN: when QtKeychain is found at configure
+// time the real backend below is compiled (macOS Keychain, Windows
+// Credential Store, libsecret/KWallet on Linux). Otherwise a no-op
+// placeholder is compiled so the engine still links — `read` reports no
+// secret, writes are dropped. The no-op path exists for build
+// environments without QtKeychain; it must never be the production path.
 #include "KeychainSecretStore.h"
 
-namespace chainapi::engine {
+#ifdef REQLOOM_HAS_QTKEYCHAIN
+
+#include <qt6keychain/keychain.h>
+
+#include <QtCore/QCoreApplication>
+#include <QtCore/QEventLoop>
+#include <QtCore/QString>
+
+#include <string>
+
+namespace reqloom::engine {
+
+namespace {
+
+// All Reqloom secrets share one logical service so they're grouped in
+// the OS keychain and don't collide with other apps' entries.
+constexpr const char* kKeychainService = "com.reqloom.secrets";
+
+// Runs an async QtKeychain job to completion on a local event loop.
+// Returns false when there is no QCoreApplication — QtKeychain jobs need
+// one to deliver `finished`, and without it loop.exec() would block
+// forever. Callers treat that as a backend-unavailable condition rather
+// than hanging (e.g. headless test binaries that never spin a Qt app).
+template <typename Job>
+[[nodiscard]] bool runJobBlocking(Job& job) {
+    if (QCoreApplication::instance() == nullptr) {
+        return false;
+    }
+    QEventLoop loop;
+    bool done = false;
+    QObject::connect(&job, &Job::finished, &loop, [&loop, &done]() {
+        done = true;
+        loop.quit();
+    });
+    job.start();
+    if (!done) {
+        loop.exec();
+    }
+    return true;
+}
+
+[[nodiscard]] QString toQt(const std::string& s) {
+    return QString::fromStdString(s);
+}
+
+}  // namespace
 
 KeychainSecretStore::KeychainSecretStore() = default;
 KeychainSecretStore::~KeychainSecretStore() = default;
 
-std::expected<std::optional<std::string>, ChainApiError> KeychainSecretStore::read(
+bool KeychainSecretStore::backendAvailable() noexcept {
+    return true;
+}
+
+std::expected<std::optional<std::string>, ReqloomError> KeychainSecretStore::read(
+    const std::string& name) {
+    QKeychain::ReadPasswordJob job{QString::fromUtf8(kKeychainService)};
+    job.setAutoDelete(false);
+    job.setKey(toQt(name));
+    if (!runJobBlocking(job)) {
+        // No event loop to drive the job — treat as "secret not present"
+        // rather than blocking. Surfaces downstream as VarUnresolved, the
+        // same as a genuinely missing key.
+        return std::optional<std::string>{};
+    }
+
+    if (job.error() == QKeychain::EntryNotFound) {
+        return std::optional<std::string>{};
+    }
+    if (job.error() != QKeychain::NoError) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SecretAccessFailed, ErrorClass::Auth, job.errorString().toStdString()});
+    }
+    return std::optional<std::string>{job.textData().toStdString()};
+}
+
+std::expected<void, ReqloomError> KeychainSecretStore::write(const std::string& name,
+                                                             const std::string& value) {
+    QKeychain::WritePasswordJob job{QString::fromUtf8(kKeychainService)};
+    job.setAutoDelete(false);
+    job.setKey(toQt(name));
+    job.setTextData(toQt(value));
+    if (!runJobBlocking(job)) {
+        return std::unexpected(ReqloomError{ErrorCode::SecretAccessFailed,
+                                            ErrorClass::Auth,
+                                            "keychain write requires a running QCoreApplication"});
+    }
+
+    if (job.error() != QKeychain::NoError) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SecretAccessFailed, ErrorClass::Auth, job.errorString().toStdString()});
+    }
+    return {};
+}
+
+std::expected<void, ReqloomError> KeychainSecretStore::remove(const std::string& name) {
+    QKeychain::DeletePasswordJob job{QString::fromUtf8(kKeychainService)};
+    job.setAutoDelete(false);
+    job.setKey(toQt(name));
+    if (!runJobBlocking(job)) {
+        return std::unexpected(ReqloomError{ErrorCode::SecretAccessFailed,
+                                            ErrorClass::Auth,
+                                            "keychain delete requires a running QCoreApplication"});
+    }
+
+    // A missing entry is not an error for remove() — the post-condition
+    // (the key is absent) already holds.
+    if (job.error() != QKeychain::NoError && job.error() != QKeychain::EntryNotFound) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SecretAccessFailed, ErrorClass::Auth, job.errorString().toStdString()});
+    }
+    return {};
+}
+
+}  // namespace reqloom::engine
+
+#else  // REQLOOM_HAS_QTKEYCHAIN
+
+namespace reqloom::engine {
+
+KeychainSecretStore::KeychainSecretStore() = default;
+KeychainSecretStore::~KeychainSecretStore() = default;
+
+bool KeychainSecretStore::backendAvailable() noexcept {
+    return false;
+}
+
+std::expected<std::optional<std::string>, ReqloomError> KeychainSecretStore::read(
     const std::string& /*name*/) {
     return std::optional<std::string>{};
 }
 
-std::expected<void, ChainApiError> KeychainSecretStore::write(const std::string& /*name*/,
-                                                              const std::string& /*value*/) {
+std::expected<void, ReqloomError> KeychainSecretStore::write(const std::string& /*name*/,
+                                                             const std::string& /*value*/) {
     return {};
 }
 
-std::expected<void, ChainApiError> KeychainSecretStore::remove(const std::string& /*name*/) {
+std::expected<void, ReqloomError> KeychainSecretStore::remove(const std::string& /*name*/) {
     return {};
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine
+
+#endif  // REQLOOM_HAS_QTKEYCHAIN
