@@ -80,6 +80,12 @@ qt_add_executable(reqloom-desktop
 qt_add_qml_module(reqloom-desktop
     URI Reqloom
     VERSION 1.0
+    # The default on-disk module dir is <bindir>/Reqloom, which collides with
+    # the executable's OUTPUT_NAME ("Reqloom") on Linux (bare ELF) — the linker
+    # fails with "cannot open output file: Is a directory". Place the module
+    # files under a distinct dir. The module is embedded via Qt resources
+    # (qrc:/qt/qml/Reqloom), so `import Reqloom` resolution is unaffected.
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qml_modules/Reqloom
     QML_FILES
         qml/views/Main.qml
         qml/views/ExplorerPanel.qml
