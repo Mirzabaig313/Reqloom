@@ -150,7 +150,7 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.name }}-release
 
-      # ----- Package: Linux (AppImage + CLI tarball) ----------------------
+      # ----- Package: Linux (AppImage + tarball) --------------------------
       - name: Package (Linux)
         if: runner.os == 'Linux'
         shell: bash
@@ -161,7 +161,6 @@ jobs:
           out="dist"
           mkdir -p "$out"
 
-          # Desktop AppImage via linuxdeploy + the Qt plugin.
           curl -fsSL -o linuxdeploy \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           curl -fsSL -o linuxdeploy-plugin-qt \
@@ -170,11 +169,11 @@ jobs:
 
           appdir="AppDir"
           rm -rf "$appdir"
-          mkdir -p "$appdir/usr/bin"
+          mkdir -p "$appdir/usr/bin" \
+                   "$appdir/usr/share/applications" \
+                   "$appdir/usr/share/icons/hicolor/256x256/apps"
           cp "$build/desktop/Reqloom" "$appdir/usr/bin/Reqloom"
 
-          # Minimal .desktop + icon so linuxdeploy is happy.
-          mkdir -p "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps"
           cat > "$appdir/usr/share/applications/Reqloom.desktop" <<'EOF'
           [Desktop Entry]
           Type=Application
@@ -184,20 +183,30 @@ jobs:
           Categories=Development;
           Terminal=false
           EOF
-          # Placeholder 1x1 PNG icon (linuxdeploy requires an icon to exist).
-          printf '\x89PNG\r\n\x1a\n' > "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png"
+          # A real (1x1) PNG — linuxdeploy validates the icon is a decodable
+          # image, so the earlier fake-header placeholder made it bail.
+          base64 -d > "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png" <<'PNG'
+          iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==
+          PNG
 
+          # APPIMAGE_EXTRACT_AND_RUN=1: GitHub runners often can't mount FUSE,
+          # which appimagetool/linuxdeploy need; this extracts instead.
+          export APPIMAGE_EXTRACT_AND_RUN=1
           export QML_SOURCES_PATHS="$PWD/desktop/qml"
           export QMAKE="${QT_ROOT_DIR}/bin/qmake"
+
+          # Single run deploys Qt into AppDir and produces the AppImage.
           ./linuxdeploy --appdir "$appdir" \
             --plugin qt \
             --output appimage \
             --desktop-file "$appdir/usr/share/applications/Reqloom.desktop" \
-            --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png" || true
-          mv Reqloom*.AppImage "$out/Reqloom-${tag}-linux-x86_64.AppImage" 2>/dev/null || \
-            echo "::warning::AppImage not produced; desktop packaging may need attention"
+            --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png"
+          mv Reqloom*.AppImage "$out/Reqloom-${tag}-linux-x86_64.AppImage"
 
-      # ----- Package: macOS (.app zip + CLI) ------------------------------
+          # Guaranteed fallback artifact: the fully-deployed AppDir as a tarball.
+          tar -czf "$out/Reqloom-${tag}-linux-x86_64.tar.gz" -C "$appdir" .
+
+      # ----- Package: macOS (.dmg + .app zip) -----------------------------
       - name: Package (macOS)
         if: runner.os == 'macOS'
         shell: bash
@@ -208,9 +217,14 @@ jobs:
           out="dist"
           mkdir -p "$out"
 
-          # Bundle Qt frameworks + QML into the .app.
+          # Bundle Qt frameworks + QML into the .app and build a .dmg in one
+          # pass (-dmg). macdeployqt writes Reqloom.dmg next to the .app.
           "${QT_ROOT_DIR}/bin/macdeployqt" "$build/desktop/Reqloom.app" \
-            -qmldir="$PWD/desktop/qml"
+            -qmldir="$PWD/desktop/qml" \
+            -dmg
+          mv "$build/desktop/Reqloom.dmg" "$out/Reqloom-${tag}-macos.dmg"
+
+          # Also ship the bundle as a zip (some users prefer drag-from-zip).
           ditto -c -k --sequesterRsrc --keepParent \
             "$build/desktop/Reqloom.app" "$out/Reqloom-${tag}-macos.zip"
 
@@ -229,7 +243,53 @@ jobs:
           New-Item -ItemType Directory -Force -Path $deskDir | Out-Null
           Copy-Item "$build/desktop/Reqloom.exe" $deskDir
           & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release --qmldir desktop/qml "$deskDir/Reqloom.exe"
+
+          # windeployqt only bundles Qt DLLs. The non-Qt runtime deps come from
+          # vcpkg (dynamic on the x64-windows triplet): sqlite3.dll, libcurl,
+          # libcrypto/libssl, zlib, etc. Copy the vcpkg release bin DLLs next to
+          # the exe so it runs on a clean machine. Triplet dir name is detected
+          # rather than hard-coded.
+          $vbin = Get-ChildItem -Path "$build/vcpkg_installed" -Directory -ErrorAction Stop |
+            Where-Object { $_.Name -ne 'vcpkg' } |
+            ForEach-Object { Join-Path $_.FullName 'bin' } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+          if (-not $vbin) { throw "vcpkg bin dir not found under $build/vcpkg_installed" }
+          Copy-Item "$vbin/*.dll" $deskDir -Force
+
           Compress-Archive -Path "$deskDir/*" -DestinationPath "dist/Reqloom-$tag-windows-x64.zip" -Force
+
+          # Installer (.exe) via Inno Setup, which is pre-installed on the
+          # GitHub windows-latest image. The zip above is the fallback artifact
+          # in case the installer step ever fails.
+          $iss = @"
+          [Setup]
+          AppName=Reqloom
+          AppVersion=$tag
+          DefaultDirName={autopf}\Reqloom
+          DefaultGroupName=Reqloom
+          DisableProgramGroupPage=yes
+          OutputDir=dist
+          OutputBaseFilename=Reqloom-$tag-windows-x64-setup
+          Compression=lzma2
+          SolidCompression=yes
+          ArchitecturesAllowed=x64
+          ArchitecturesInstallIn64BitMode=x64
+          [Files]
+          Source: "$deskDir\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+          [Icons]
+          Name: "{group}\Reqloom"; Filename: "{app}\Reqloom.exe"
+          Name: "{commondesktop}\Reqloom"; Filename: "{app}\Reqloom.exe"
+          [Run]
+          Filename: "{app}\Reqloom.exe"; Description: "Launch Reqloom"; Flags: nowait postinstall skipifsilent
+          "@
+          $iss | Out-File -Encoding ascii -FilePath reqloom.iss
+
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          & $iscc reqloom.iss
 
       # ----- Upload artifacts ---------------------------------------------
       - name: Upload artifacts
@@ -241,7 +301,7 @@ jobs:
 
   # ==========================================================================
   # Publish — gather all platform artifacts, create the GitHub Release.
-  # test-v* tags publish as a hidden DRAFT pre-release.
+  # Published as a (non-draft) pre-release.
   # ==========================================================================
   publish:
     name: Publish Release
@@ -261,11 +321,6 @@ jobs:
             tag="${GITHUB_REF#refs/tags/}"
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          if [[ "${tag}" == test-* ]]; then
-            echo "draft=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "draft=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -279,6 +334,6 @@ jobs:
           tag_name: ${{ steps.rel.outputs.tag }}
           name: ${{ steps.rel.outputs.tag }}
           prerelease: true
-          draft: ${{ steps.rel.outputs.draft }}
+          draft: false
           fail_on_unmatched_files: false
           files: artifacts/*
