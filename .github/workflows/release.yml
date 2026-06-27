@@ -47,7 +47,12 @@ jobs:
             name: linux
           - os: windows-latest
             name: windows
-          - os: macos-latest
+          # Pinned to macos-14, not macos-latest: macOS 15 / Xcode 16 dropped
+          # AGL.framework from the SDK, which Qt 6.8's QtGui still references at
+          # link time ("ld: framework 'AGL' not found"). macos-14 keeps the
+          # Xcode 15 SDK (AGL present) and stays arm64. Revisit when Qt drops
+          # the AGL reference.
+          - os: macos-14
             name: macos
 
     steps:
