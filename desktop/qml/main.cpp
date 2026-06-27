@@ -11,6 +11,7 @@
 #include <QtCore/QStringList>
 #include <QtGui/QFont>
 #include <QtGui/QFontDatabase>
+#include <QtGui/QIcon>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQuickControls2/QQuickStyle>
 #include <QtWidgets/QApplication>
@@ -53,6 +54,13 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName(QStringLiteral("Reqloom"));
     QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
     QApplication::setOrganizationName(QStringLiteral("Reqloom"));
+
+    // Window / taskbar / dock icon, bundled via the Reqloom QML module
+    // resources (desktop/branding). Platforms that derive the icon from the
+    // app bundle (.app/.exe) ignore this, but it covers X11/Wayland and the
+    // window title bar.
+    QApplication::setWindowIcon(
+        QIcon(QStringLiteral(":/qt/qml/Reqloom/branding/Reqloom-app-icon.png")));
 
     // Load bundled fonts before setting the default font so their families
     // ("Geist", "Noto Sans JP") resolve instead of substituting.

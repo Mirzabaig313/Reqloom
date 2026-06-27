@@ -183,11 +183,10 @@ jobs:
           Categories=Development;
           Terminal=false
           EOF
-          # A real (1x1) PNG — linuxdeploy validates the icon is a decodable
-          # image, so the earlier fake-header placeholder made it bail.
-          base64 -d > "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png" <<'PNG'
-          iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==
-          PNG
+          # Use the committed 256x256 brand icon. No runtime generation, so
+          # nothing can corrupt it (base64-in-YAML mangling broke this twice).
+          cp desktop/branding/Reqloom-app-icon.png \
+            "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png"
 
           # APPIMAGE_EXTRACT_AND_RUN=1: GitHub runners often can't mount FUSE,
           # which appimagetool/linuxdeploy need; this extracts instead.
