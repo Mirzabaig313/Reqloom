@@ -109,6 +109,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/FieldError.qml
         qml/widgets/DialogHeader.qml
         qml/widgets/AppIcon.qml
+        qml/widgets/BrandLogo.qml
         qml/widgets/PanelHeader.qml
         qml/widgets/SectionLabel.qml
         qml/widgets/LineTabBar.qml
@@ -156,6 +157,10 @@ qt_add_qml_module(reqloom-desktop
         qml/icons/zap.svg
         qml/icons/arrow-down.svg
         qml/icons/paperclip.svg
+        # Brand marks (theme-aware in-app logo) and the window/taskbar icon.
+        branding/Reqloom-mark-dark.png
+        branding/Reqloom-mark-light.png
+        branding/Reqloom-app-icon.png
 )
 
 target_link_libraries(reqloom-desktop

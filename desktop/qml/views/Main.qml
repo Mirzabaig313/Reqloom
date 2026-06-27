@@ -600,6 +600,7 @@ ApplicationWindow {
                 EmptyState {
                     visible: !AppController.hasOperation && AppController.resourceCount === 0
                     anchors.centerIn: parent
+                    useBrandLogo: true
                     actionText: qsTr("Open Project")
                     onActionTriggered: folderDialog.open()
                 }
