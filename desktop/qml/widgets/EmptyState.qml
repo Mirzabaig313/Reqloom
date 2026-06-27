@@ -8,6 +8,9 @@ import Reqloom
 ColumnLayout {
     id: root
     property string iconName: "zap"
+    // When true, show the Reqloom brand mark instead of the line icon — used
+    // on the top-level zero state so the app's first screen is branded.
+    property bool useBrandLogo: false
     property string heading: qsTr("No project open")
     property string body: qsTr("Open a project to start building and running API chains.")
     // Optional primary action. When actionText is set, a button is shown and
@@ -23,8 +26,19 @@ ColumnLayout {
 
     AppIcon {
         Layout.alignment: Qt.AlignHCenter
+        visible: !root.useBrandLogo
         name: root.iconName
         size: 40
+    }
+    // Loader, not a plain BrandLogo: a hidden Image still decodes its source,
+    // and EmptyState is reused on several screens that show a small line icon.
+    // active gating avoids decoding the multi-MB brand PNG where it isn't shown.
+    Loader {
+        Layout.alignment: Qt.AlignHCenter
+        active: root.useBrandLogo
+        sourceComponent: BrandLogo {
+            size: 88
+        }
     }
     Text {
         Layout.alignment: Qt.AlignHCenter
