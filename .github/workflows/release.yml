@@ -230,16 +230,28 @@ jobs:
           out="dist"
           mkdir -p "$out"
 
-          # Bundle Qt frameworks + QML into the .app and build a .dmg in one
-          # pass (-dmg). macdeployqt writes Reqloom.dmg next to the .app.
-          "${QT_ROOT_DIR}/bin/macdeployqt" "$build/desktop/Reqloom.app" \
-            -qmldir="$PWD/desktop/qml" \
-            -dmg
-          mv "$build/desktop/Reqloom.dmg" "$out/Reqloom-${tag}-macos.dmg"
+          app="$build/desktop/Reqloom.app"
+          "${QT_ROOT_DIR}/bin/macdeployqt" "$app" -qmldir="$PWD/desktop/qml"
+
+          # Ad-hoc sign: macdeployqt rewrites libraries, which invalidates any
+          # signature; an unsigned arm64 bundle reads as "damaged" after a
+          # download (quarantine). Ad-hoc (-s -, free, no Apple account) makes
+          # it a valid bundle, downgrading that to the normal "unidentified
+          # developer" prompt (right-click -> Open). Real Developer ID signing
+          # + notarization needs a paid account and is a later step.
+          codesign --force --deep --sign - "$app"
+
+          # DMG with an /Applications symlink so users can drag to install.
+          stage="$(mktemp -d)"
+          cp -R "$app" "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "Reqloom" -srcfolder "$stage" \
+            -ov -format UDZO "$out/Reqloom-${tag}-macos.dmg"
+          rm -rf "$stage"
 
           # Also ship the bundle as a zip (some users prefer drag-from-zip).
           ditto -c -k --sequesterRsrc --keepParent \
-            "$build/desktop/Reqloom.app" "$out/Reqloom-${tag}-macos.zip"
+            "$app" "$out/Reqloom-${tag}-macos.zip"
 
       # ----- Package: Windows (deployed folder zips) ----------------------
       - name: Package (Windows)
