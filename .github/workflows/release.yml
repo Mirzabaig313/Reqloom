@@ -56,7 +56,7 @@ jobs:
             name: macos
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ----- Resolve tag / version ----------------------------------------
       - name: Resolve release tag

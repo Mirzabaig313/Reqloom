@@ -30,7 +30,7 @@ jobs:
     name: Static Checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Architectural boundary check
         run: ./tools/ci/boundary-check.sh
@@ -52,7 +52,7 @@ jobs:
             name: windows
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ----- Resolve preset from branch -----------------------------------
       - name: Resolve preset
