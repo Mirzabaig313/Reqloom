@@ -190,7 +190,16 @@ target_include_directories(reqloom-desktop
 set_target_properties(reqloom-desktop PROPERTIES
     OUTPUT_NAME "Reqloom"
     MACOSX_BUNDLE ON
+    # Build as a GUI-subsystem app on Windows so launching it does not also
+    # open a console window (the GUI app has no use for an attached console).
+    WIN32_EXECUTABLE ON
 )
+
+# Windows: embed the application icon (.ico) via a resource script so the exe,
+# taskbar, and title bar show the brand icon. No-op on other platforms.
+if(WIN32)
+    target_sources(reqloom-desktop PRIVATE Reqloom.rc)
+endif()
 
 reqloom_set_warnings(reqloom-desktop)
 reqloom_apply_sanitizers(reqloom-desktop)
