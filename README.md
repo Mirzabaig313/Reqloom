@@ -5,12 +5,13 @@
 **A workflow-aware API testing tool that auto-resolves request dependency chains.**
 
 [![Build & Test](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml/badge.svg)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml)
-[![Build Status](https://dev.azure.com/mirza4ever/chainapi/_apis/build/status%2FMirzabaig313.Reqloom?branchName=main)](https://dev.azure.com/mirza4ever/chainapi/_build/latest?definitionId=3&branchName=main)
+![Build Status](https://dev.azure.com/mirza4ever/chainapi/_apis/build/status%2FMirzabaig313.Reqloom?branchName=main)
 [![Docs](https://img.shields.io/badge/docs-online-2496ED.svg)](https://reqloom.dev/docs/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)](https://en.cppreference.com/w/cpp/23)
 [![CMake](https://img.shields.io/badge/CMake-4.0%2B-064F8C.svg)](https://cmake.org/)
 [![Qt](https://img.shields.io/badge/Qt-6.8_LTS-41CD52.svg)](https://www.qt.io/)
+[![Latest release](https://img.shields.io/github/v/release/Mirzabaig313/Reqloom?include_prereleases&label=download)](https://github.com/Mirzabaig313/Reqloom/releases)
 
 </div>
 
@@ -24,6 +25,8 @@ login, prerequisites, target call — and executes them in the correct order.
 > Postman is an HTTP client. Reqloom is an API workflow engine.
 
 📖 **Full documentation: [mirzabaig313.github.io/Reqloom](https://mirzabaig313.github.io/Reqloom/)**
+
+📦 **Download:** grab the latest build for macOS (`.dmg`), Windows (`.exe` installer), or Linux (`.AppImage`) from the [Releases page](https://github.com/Mirzabaig313/Reqloom/releases).
 
 ## How it works
 
