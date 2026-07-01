@@ -123,6 +123,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/DependencyEditor.qml
         qml/widgets/ChainDependencyTable.qml
         qml/widgets/VariableAutocomplete.qml
+        qml/widgets/PathAutocomplete.qml
         qml/widgets/ValuePicker.qml
         qml/widgets/PathTokenBar.qml
         qml/widgets/ExtractionEditor.qml

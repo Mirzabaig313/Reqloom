@@ -130,26 +130,80 @@ ColumnLayout {
                     spacing: DesignTokens.spaceXs
                     Repeater {
                         model: step.extractModel
-                        delegate: RowLayout {
+                        delegate: ColumnLayout {
                             id: exRow
                             required property int index
                             required property string key
                             required property string value
                             Layout.fillWidth: true
-                            spacing: DesignTokens.spaceSm
-                            CellField {
-                                Layout.fillWidth: true
-                                Layout.preferredWidth: 1
-                                text: exRow.key
-                                placeholderText: qsTr("variable_name")
-                                onTextEdited: step.extractModel.setKey(exRow.index, text)
+                            spacing: 2
+                            // Live validity of the path against the step's
+                            // available response (debounced to avoid re-parsing
+                            // on every keystroke).
+                            property var pathEval: ({
+                                    state: "neutral"
+                                })
+                            Timer {
+                                id: evalTimer
+                                interval: 250
+                                onTriggered: exRow.pathEval = AppController.evaluateExtractionPath(step.operationId, exRow.value)
                             }
-                            CellField {
+                            onValueChanged: evalTimer.restart()
+                            Component.onCompleted: evalTimer.restart()
+
+                            RowLayout {
                                 Layout.fillWidth: true
-                                Layout.preferredWidth: 1
-                                text: exRow.value
-                                placeholderText: qsTr("$.body.path / $.headers.X")
-                                onTextEdited: step.extractModel.setValue(exRow.index, text)
+                                spacing: DesignTokens.spaceSm
+                                CellField {
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 1
+                                    text: exRow.key
+                                    placeholderText: qsTr("variable_name")
+                                    onTextEdited: step.extractModel.setKey(exRow.index, text)
+                                }
+                                CellField {
+                                    id: pathField
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 1
+                                    text: exRow.value
+                                    placeholderText: qsTr("$.body.path / $.headers.X")
+                                    rightPadding: 22
+                                    onTextEdited: {
+                                        step.extractModel.setValue(exRow.index, text);
+                                        evalTimer.restart();
+                                    }
+                                    // Path autocomplete from the step's response.
+                                    PathAutocomplete {
+                                        field: pathField
+                                        operationId: step.operationId
+                                        onPicked: function (p) {
+                                            step.extractModel.setValue(exRow.index, p);
+                                            pathField.text = p;
+                                            exRow.pathEval = AppController.evaluateExtractionPath(step.operationId, p);
+                                        }
+                                    }
+                                    // Resolves (green) / no match (amber); hidden when neutral.
+                                    Rectangle {
+                                        width: 8
+                                        height: 8
+                                        radius: 4
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: DesignTokens.spaceSm
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        visible: exRow.pathEval.state === "match" || exRow.pathEval.state === "nomatch"
+                                        color: exRow.pathEval.state === "match" ? DesignTokens.statusSuccess : DesignTokens.statusWarning
+                                    }
+                                }
+                            }
+                            // Resolved value preview (the "= 9f7e…" confirmation).
+                            Label {
+                                Layout.fillWidth: true
+                                visible: exRow.pathEval.state === "match"
+                                text: qsTr("= %1").arg(exRow.pathEval.value !== undefined ? exRow.pathEval.value : "")
+                                color: DesignTokens.statusSuccess
+                                font.pixelSize: DesignTokens.fontCaption
+                                font.family: DesignTokens.fontMono
+                                elide: Text.ElideRight
                             }
                         }
                     }

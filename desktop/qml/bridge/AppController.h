@@ -443,6 +443,20 @@ public:
     Q_INVOKABLE void chainSetForEachContinueOnError(const QString& operationId,
                                                     bool continueOnError);
 
+    /// Validate an extraction path against the step operation's available
+    /// response (the live body when it's the open op, else its latest saved
+    /// example). Returns {state: "match"|"nomatch"|"neutral", value: "<first
+    /// match>"} so the chain editor can flag the path and preview its resolved
+    /// value before running. "neutral" when there's nothing to check against.
+    Q_INVOKABLE [[nodiscard]] QVariantMap evaluateExtractionPath(const QString& operationId,
+                                                                 const QString& path) const;
+
+    /// Leaf JSONPaths in the step's available response matching `prefix`
+    /// (case-insensitive substring; empty = all), for the path field's
+    /// autocomplete. Empty when there's no response/example to draw from.
+    Q_INVOKABLE [[nodiscard]] QStringList suggestExtractionPaths(const QString& operationId,
+                                                                 const QString& prefix) const;
+
     /// Save a value from the current operation's response as an extracted
     /// variable (the response-driven picker). `sourcePath` is a JSONPath such
     /// as "$.data[2].id"; `variableName` is the bare name. Persists immediately
@@ -694,6 +708,9 @@ private:
     /// whether the variable was named plainly or with dots. Returns
     /// {operationId, sourcePath}, both empty if nothing produces it.
     [[nodiscard]] std::pair<QString, QString> findVariableProducer(const QString& token) const;
+    /// Best response body to check a step's extraction against without a
+    /// re-run: the live body when it's the open op, else its latest example.
+    [[nodiscard]] QString responseBodyFor(const QString& operationId) const;
     /// Fully-qualified id of the open operation ("<module>.<op>"), or empty.
     [[nodiscard]] QString currentOperationId() const;
     /// Assemble a one-shot RequestOverride from the current edit state. Mirrors

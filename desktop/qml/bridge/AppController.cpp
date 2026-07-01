@@ -5,6 +5,7 @@
 #include "../../src/application/ProjectModel.h"
 #include "../../src/views/Formatting.h"
 #include "../../src/views/HookEditorDialog.h"
+#include "../../src/views/PathEval.h"
 #include "../../src/widgets/GraphLayout.h"
 #include "../../src/widgets/LineDiff.h"
 #include "ThemeController.h"
@@ -966,6 +967,41 @@ QStringList AppController::candidateValues(const QString& token) const {
 
 QString AppController::producerOpFor(const QString& token) const {
     return findVariableProducer(token).first;
+}
+
+QString AppController::responseBodyFor(const QString& operationId) const {
+    if (operationId == currentOperationId() && !respBody_.isEmpty()) {
+        return respBody_;
+    }
+    const QList<SavedResponse> saved = exampleStore_.list(operationId);
+    return saved.isEmpty() ? QString() : saved.back().body;  // newest last
+}
+
+QVariantMap AppController::evaluateExtractionPath(const QString& operationId,
+                                                  const QString& path) const {
+    const QString body = responseBodyFor(operationId);
+    const auto result =
+        views::classifyExtractionPath(body.toStdString(), path.trimmed().toStdString());
+
+    QVariantMap out;
+    switch (result.state) {
+        case views::PathState::Match:
+            out.insert(QStringLiteral("state"), QStringLiteral("match"));
+            out.insert(QStringLiteral("value"), QString::fromStdString(result.value).left(120));
+            break;
+        case views::PathState::NoMatch:
+            out.insert(QStringLiteral("state"), QStringLiteral("nomatch"));
+            break;
+        case views::PathState::Neutral:
+            out.insert(QStringLiteral("state"), QStringLiteral("neutral"));
+            break;
+    }
+    return out;
+}
+
+QStringList AppController::suggestExtractionPaths(const QString& operationId,
+                                                  const QString& prefix) const {
+    return views::collectJsonPaths(responseBodyFor(operationId), prefix.trimmed());
 }
 
 void AppController::setVariableOverride(const QString& token, const QString& value) {
