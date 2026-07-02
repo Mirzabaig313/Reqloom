@@ -383,4 +383,50 @@ TEST(ProjectModel, save_operation_rejects_dependency_cycle) {
     EXPECT_TRUE(reloaded.hasProject());
 }
 
+TEST(ProjectModel, create_project_scaffolds_empty_project_and_loads_it) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const fs::path root{dir.path().toStdString()};
+    const auto sub = QString::fromStdString((root / "fresh").string());
+
+    ProjectModel model;
+    QString error;
+    // Target folder doesn't exist yet — createProject must create it, write
+    // reqloom.yaml, and load the result.
+    ASSERT_TRUE(model.createProject(sub, "My API", error)) << error.toStdString();
+    EXPECT_TRUE(error.isEmpty());
+    ASSERT_TRUE(model.hasProject());
+    EXPECT_EQ(model.name().toStdString(), "My API");
+    EXPECT_TRUE(fs::exists(fs::path{sub.toStdString()} / "reqloom.yaml"));
+
+    // A freshly scaffolded project has no modules — the "+" create surface
+    // takes over from here.
+    EXPECT_TRUE(model.project().resources.empty());
+}
+
+TEST(ProjectModel, create_project_blank_name_falls_back_to_folder_name) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const auto sub =
+        QString::fromStdString((fs::path{dir.path().toStdString()} / "checkout").string());
+
+    ProjectModel model;
+    QString error;
+    ASSERT_TRUE(model.createProject(sub, "   ", error)) << error.toStdString();
+    EXPECT_EQ(model.name().toStdString(), "checkout");
+}
+
+TEST(ProjectModel, create_project_refuses_to_clobber_existing_project) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    // Seed a real project in the dir, then try to scaffold over it.
+    const fs::path root{dir.path().toStdString()};
+    ASSERT_TRUE(ce::writeProject(root, buildProject(), /*overwrite=*/true).has_value());
+
+    ProjectModel model;
+    QString error;
+    EXPECT_FALSE(model.createProject(dir.path(), "New", error));
+    EXPECT_FALSE(error.isEmpty());
+}
+
 }  // namespace reqloom::desktop::tests

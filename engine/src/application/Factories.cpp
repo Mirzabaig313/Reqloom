@@ -3,6 +3,7 @@
 #include <reqloom/engine/Hook.h>
 
 #include "ImportFromOpenApi.h"
+#include "ImportFromPostman.h"
 
 #include "../domain/DependencyResolver.h"
 #include "../infrastructure/hooks/HookRunner.h"
@@ -134,6 +135,16 @@ std::expected<OpenApiImportOutcome, ReqloomError> importFromOpenApi(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
     ImportFromOpenApi const importer;
     auto inner = importer.run(spec, projectRoot);
+    if (!inner) {
+        return std::unexpected(inner.error());
+    }
+    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+}
+
+std::expected<OpenApiImportOutcome, ReqloomError> importFromPostman(
+    const std::filesystem::path& collection, const std::filesystem::path& projectRoot) {
+    ImportFromPostman const importer;
+    auto inner = importer.run(collection, projectRoot);
     if (!inner) {
         return std::unexpected(inner.error());
     }

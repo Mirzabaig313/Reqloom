@@ -114,8 +114,13 @@ ColumnLayout {
                     }
                     Label {
                         Layout.fillWidth: true
-                        text: root.isFileValue(row.value) ? root.fileBaseName(row.value) : ""
-                        color: DesignTokens.textPrimary
+                        // A bare "@" is an imported file slot with no path yet
+                        // (Postman doesn't export file contents/paths). Show a
+                        // prompt instead of a blank chip so it's clear the row
+                        // needs a file attached.
+                        readonly property bool hasPath: root.isFileValue(row.value) && row.value.length > 1
+                        text: hasPath ? root.fileBaseName(row.value) : qsTr("Choose a file…")
+                        color: hasPath ? DesignTokens.textPrimary : DesignTokens.textSecondary
                         font.pixelSize: DesignTokens.fontLabel
                         font.family: DesignTokens.fontMono
                         elide: Text.ElideMiddle

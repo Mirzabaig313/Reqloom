@@ -106,8 +106,16 @@ ApplicationWindow {
         Menu {
             title: qsTr("File")
             MenuItem {
+                text: qsTr("New Project…")
+                onTriggered: newProjectFolderDialog.open()
+            }
+            MenuItem {
                 text: qsTr("Open Project…")
                 onTriggered: folderDialog.open()
+            }
+            MenuItem {
+                text: qsTr("Import…")
+                onTriggered: importSpecDialog.open()
             }
             MenuItem {
                 text: qsTr("Manage Secrets")
@@ -257,51 +265,77 @@ ApplicationWindow {
             anchors.rightMargin: DesignTokens.spaceLg
             spacing: DesignTokens.spaceMd
 
-            // Open Project
+            // Workspace switcher — every opened/imported collection lives here,
+            // so many projects share one window (click to switch).
             Button {
-                id: openProjectBtn
-                text: qsTr("Open Project")
+                id: projectSwitcher
                 implicitHeight: 32
                 leftPadding: DesignTokens.spaceSm
                 rightPadding: DesignTokens.spaceSm
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
-                    color: "transparent"
+                    color: projectSwitcher.hovered ? DesignTokens.accentMuted : "transparent"
                     border.width: 1
                     border.color: DesignTokens.borderSubtle
                 }
-                contentItem: Text {
-                    text: openProjectBtn.text
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                contentItem: RowLayout {
+                    spacing: DesignTokens.spaceXs
+                    AppIcon {
+                        name: "folder"
+                        size: 14
+                    }
+                    Text {
+                        text: AppController.projectName.length > 0 ? AppController.projectName : qsTr("No project")
+                        color: DesignTokens.textPrimary
+                        font.pixelSize: DesignTokens.fontLabel
+                        font.weight: DesignTokens.weightMedium
+                        elide: Text.ElideRight
+                        Layout.maximumWidth: 180
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    Text {
+                        text: "▾"
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontLabel
+                    }
                 }
-                onClicked: folderDialog.open()
+                onClicked: {
+                    switcherMenu.reload();
+                    switcherMenu.popup(projectSwitcher, 0, projectSwitcher.height);
+                }
             }
 
-            // Import OpenAPI
-            Button {
-                id: importBtn
-                text: qsTr("Import OpenAPI")
-                implicitHeight: 32
-                leftPadding: DesignTokens.spaceSm
-                rightPadding: DesignTokens.spaceSm
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: "transparent"
-                    border.width: 1
-                    border.color: DesignTokens.borderSubtle
+            GlassMenu {
+                id: switcherMenu
+                property var items: []
+                function reload() {
+                    items = AppController.recentProjects();
                 }
-                contentItem: Text {
-                    text: importBtn.text
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                Instantiator {
+                    model: switcherMenu.items
+                    delegate: GlassMenuItem {
+                        required property var modelData
+                        text: modelData.name
+                        onTriggered: AppController.openProjectPath(modelData.path)
+                    }
+                    onObjectAdded: (index, object) => switcherMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => switcherMenu.removeItem(object)
                 }
-                onClicked: importSpecDialog.open()
+                MenuSeparator {}
+                GlassMenuItem {
+                    text: qsTr("New Project…")
+                    onTriggered: newProjectFolderDialog.open()
+                }
+                GlassMenuItem {
+                    text: qsTr("Open Project…")
+                    onTriggered: folderDialog.open()
+                }
+                GlassMenuItem {
+                    text: qsTr("Import…")
+                    onTriggered: importSpecDialog.open()
+                }
             }
+
             Button {
                 id: manageSecretsBtn
                 text: qsTr("Manage Secrets")
@@ -601,8 +635,14 @@ ApplicationWindow {
                     visible: !AppController.hasOperation && AppController.resourceCount === 0
                     anchors.centerIn: parent
                     useBrandLogo: true
-                    actionText: qsTr("Open Project")
-                    onActionTriggered: folderDialog.open()
+                    heading: qsTr("Welcome to Reqloom")
+                    body: qsTr("Create a new project to start building requests, open an existing one, or import an OpenAPI spec or Postman collection.")
+                    actionText: qsTr("New Project")
+                    onActionTriggered: newProjectFolderDialog.open()
+                    secondaryActionText: qsTr("Open Project")
+                    onSecondaryActionTriggered: folderDialog.open()
+                    tertiaryActionText: qsTr("Import…")
+                    onTertiaryActionTriggered: importSpecDialog.open()
                 }
 
                 // Endpoint list for the selected module.
@@ -816,26 +856,98 @@ ApplicationWindow {
         onAccepted: AppController.openProject(selectedFolder)
     }
 
-    // ── OpenAPI import flow: pick a spec, then a destination folder ──────────
-    FileDialog {
-        id: importSpecDialog
-        title: qsTr("Choose an OpenAPI spec")
-        nameFilters: [qsTr("OpenAPI specs (*.yaml *.yml *.json)"), qsTr("All files (*)")]
+    // ── New Project flow: pick a folder, then name it ───────────────────────
+    FolderDialog {
+        id: newProjectFolderDialog
+        title: qsTr("Choose a folder for the new project")
         onAccepted: {
-            importTargetDialog.specUrl = selectedFile;
-            importTargetDialog.open();
+            newProjectNameDialog.folderUrl = selectedFolder;
+            newProjectNameDialog.open();
         }
     }
 
-    FolderDialog {
-        id: importTargetDialog
-        title: qsTr("Choose a destination folder")
-        property url specUrl
+    Dialog {
+        id: newProjectNameDialog
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: 420
+        padding: DesignTokens.spaceLg
+        title: qsTr("Name your project")
 
-        onAccepted: AppController.importOpenApi(specUrl, selectedFolder, false)
+        property url folderUrl
+
+        onOpened: {
+            projectNameField.text = "";
+            projectNameField.forceActiveFocus();
+        }
+
+        header: DialogHeader {
+            title: qsTr("New Project")
+        }
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: ColumnLayout {
+            spacing: DesignTokens.spaceSm
+            Label {
+                text: qsTr("Project name")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontLabel
+            }
+            TextField {
+                id: projectNameField
+                Layout.fillWidth: true
+                placeholderText: qsTr("My API project")
+                color: DesignTokens.textPrimary
+                placeholderTextColor: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontBody
+                background: Rectangle {
+                    radius: DesignTokens.radiusSm
+                    color: DesignTokens.surfaceSunken
+                    border.width: 1
+                    border.color: projectNameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                }
+                onAccepted: if (AppController.isValidName(text)) {
+                    newProjectNameDialog.accept();
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("A reqloom.yaml is created in the chosen folder.")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontLabel
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Create")
+            okEnabled: AppController.isValidName(projectNameField.text)
+            onAccepted: newProjectNameDialog.accept()
+            onRejected: newProjectNameDialog.reject()
+        }
+
+        onAccepted: AppController.createProject(folderUrl, projectNameField.text)
     }
 
-    // Confirm overwriting an existing project in the chosen destination.
+    // ── Import flow: pick a spec/collection; the project is created in a
+    //    named sub-folder next to the chosen file (no destination prompt). ────
+    FileDialog {
+        id: importSpecDialog
+        title: qsTr("Import an API definition")
+        nameFilters: [qsTr("OpenAPI or Postman (*.yaml *.yml *.json)"), qsTr("All files (*)")]
+        // Empty destination → the engine defaults it to the file's own folder
+        // and creates a project sub-folder named after the collection.
+        onAccepted: AppController.importOpenApi(selectedFile, "", false)
+    }
+
+    // Confirm overwriting an existing imported project folder.
     Dialog {
         id: importOverwriteDialog
         modal: true
@@ -867,7 +979,7 @@ ApplicationWindow {
         }
 
         contentItem: Label {
-            text: qsTr("This folder already contains a reqloom.yaml. Replace it with the imported project?")
+            text: qsTr("A project already exists at this location. Replace it with the imported project?")
             color: DesignTokens.textPrimary
             font.pixelSize: DesignTokens.fontBody
             wrapMode: Text.WordWrap
@@ -1182,11 +1294,15 @@ ApplicationWindow {
                         clear();
                         const all = [
                             {
+                                itemLabel: qsTr("New Project…"),
+                                itemAction: "newProject"
+                            },
+                            {
                                 itemLabel: qsTr("Open Project…"),
                                 itemAction: "openProject"
                             },
                             {
-                                itemLabel: qsTr("Import OpenAPI…"),
+                                itemLabel: qsTr("Import (OpenAPI or Postman)…"),
                                 itemAction: "importOpenApi"
                             },
                             {
@@ -1255,6 +1371,9 @@ ApplicationWindow {
                     onClicked: {
                         commandPalette.close();
                         switch (paletteItem.itemAction) {
+                        case "newProject":
+                            newProjectFolderDialog.open();
+                            break;
                         case "openProject":
                             folderDialog.open();
                             break;

@@ -51,6 +51,7 @@ class AppController : public QObject {
     QML_SINGLETON
 
     Q_PROPERTY(QString projectName READ projectName NOTIFY projectChanged)
+    Q_PROPERTY(QString projectRoot READ projectRoot NOTIFY projectChanged)
     Q_PROPERTY(int resourceCount READ resourceCount NOTIFY projectChanged)
     Q_PROPERTY(int latencySloP95Ms READ latencySloP95Ms NOTIFY projectChanged)
     Q_PROPERTY(QString status READ status NOTIFY projectChanged)
@@ -187,6 +188,7 @@ public:
     static AppController* create(QQmlEngine*, QJSEngine*) { return new AppController; }
 
     [[nodiscard]] QString projectName() const { return projectName_; }
+    [[nodiscard]] QString projectRoot() const;
     [[nodiscard]] int resourceCount() const;
     [[nodiscard]] int latencySloP95Ms() const;
     [[nodiscard]] QString status() const { return status_; }
@@ -486,6 +488,19 @@ public:
     /// Open a project directory (the folder containing reqloom.yaml).
     Q_INVOKABLE void openProject(const QUrl& directory);
 
+    /// Switch to a known project by its absolute directory path. Used by the
+    /// workspace switcher, which lists every project opened/imported this and
+    /// prior sessions so many collections live in one window.
+    Q_INVOKABLE void openProjectPath(const QString& path);
+
+    /// The workspace's recent projects, newest first, as a list of
+    /// {name, path} maps. Stale entries (no reqloom.yaml on disk) are filtered
+    /// out. Persisted across sessions via QSettings.
+    Q_INVOKABLE [[nodiscard]] QVariantList recentProjects() const;
+
+    /// Drop a project from the workspace switcher list (does not touch disk).
+    Q_INVOKABLE void removeRecentProject(const QString& path);
+
     /// Import an OpenAPI 3.x document (`specFile`) into a Reqloom project
     /// written to `targetDir`, then load it. `overwrite` must be true to
     /// replace an existing reqloom.yaml in `targetDir`. The parse + write run
@@ -594,6 +609,13 @@ public:
 
     Q_INVOKABLE void createResource(const QString& name, const QString& description);
 
+    /// Scaffold and open a brand-new empty project in `directory` named `name`.
+    /// This is the "New Project" onboarding entry point: it gives a first-time
+    /// user a way to go from an empty app to a loaded project without an
+    /// existing reqloom.yaml to open. Toasts success/failure; on success the
+    /// `loaded` chain refreshes the whole UI.
+    Q_INVOKABLE void createProject(const QUrl& directory, const QString& name);
+
     /// Reset the New Endpoint dialog's chain editors and dependency candidates.
     /// `preselectedResource` selects a module up-front (empty = none).
     Q_INVOKABLE void prepareNewEndpoint(const QString& preselectedResource);
@@ -626,6 +648,9 @@ public:
 
 signals:
     void projectChanged();
+    /// Emitted when the workspace's recent-projects list changes (a project was
+    /// opened, imported, or removed), so the switcher refreshes.
+    void recentProjectsChanged();
     void selectionChanged();
     void operationChanged();
     void environmentChanged();
@@ -686,6 +711,10 @@ private:
     /// derived from a hash of the project root and lives under the app-data
     /// dir, so each project keeps its own history and the repo stays clean.
     void openProjectHistory(const QString& projectRoot);
+    /// Persist the just-loaded project into the workspace switcher's recent
+    /// list (newest first, de-duplicated by path, capped). Emits
+    /// `recentProjectsChanged`.
+    void recordRecentProject(const QString& name, const QString& path);
     /// Refresh `exampleList_` for the open operation, and rebuild the explorer
     /// tree's example child rows from the store. Called on load + after any
     /// example mutation so the panel and explorer stay in sync.
@@ -729,13 +758,17 @@ private:
     /// Result of an off-thread OpenAPI import, handed back to the GUI thread
     /// by `importWatcher_` so the project load + toasts run where they're safe.
     struct ImportOutcome {
-        enum class Status : std::uint8_t { Success, ImportFailed, WriteFailed };
+        enum class Status : std::uint8_t { Success, ImportFailed, WriteFailed, NeedsOverwrite };
         Status status{Status::ImportFailed};
         QString errorDetail;
         int resources{0};
         int operations{0};
         QString notes;
         QString loadDir;
+        /// Echoed back so a NeedsOverwrite outcome can re-invoke the import with
+        /// overwrite=true against the same source + destination base.
+        QString specPath;
+        QString baseDir;
     };
     QFutureWatcher<ImportOutcome> importWatcher_;
     SavedResponseStore exampleStore_;

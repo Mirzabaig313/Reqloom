@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <fstream>
 #include <print>
 #include <ranges>
 #include <string>
@@ -32,7 +33,8 @@ struct ImportArgs {
 void printUsage(std::FILE* stream) {
     std::println(stream,
                  "Usage: reqloom import <spec> [options]\n"
-                 "Import an OpenAPI 3.0.x / 3.1.x document (YAML or JSON) into a project.\n"
+                 "Import an OpenAPI 3.0.x / 3.1.x document or a Postman Collection v2.1\n"
+                 "export (YAML or JSON) into a project. The format is auto-detected.\n"
                  "Options:\n"
                  "  --out <dir>           Directory to write the project into (default: cwd)\n"
                  "  --project-root <dir>  Containment root the spec must resolve under\n"
@@ -87,6 +89,20 @@ void printUsage(std::FILE* stream) {
     return total;
 }
 
+/// Cheap content sniff to pick the importer: a Postman collection export is
+/// routed to the Postman parser, everything else to the OpenAPI parser.
+[[nodiscard]] bool looksLikePostman(const fs::path& spec) {
+    std::ifstream in{spec, std::ios::binary};
+    if (!in) {
+        return false;
+    }
+    std::string head(8192, '\0');
+    in.read(head.data(), static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(in.gcount()));
+    return head.find("schema.getpostman.com") != std::string::npos ||
+           head.find("_postman_id") != std::string::npos;
+}
+
 }  // namespace
 
 int importCommand(const QStringList& args) {
@@ -106,7 +122,8 @@ int importCommand(const QStringList& args) {
     // caller wants to confine the import to a known project tree.
     const fs::path projectRoot = cfg.projectRoot.empty() ? cfg.spec.parent_path() : cfg.projectRoot;
 
-    auto imported = ce::importFromOpenApi(cfg.spec, projectRoot);
+    auto imported = looksLikePostman(cfg.spec) ? ce::importFromPostman(cfg.spec, projectRoot)
+                                               : ce::importFromOpenApi(cfg.spec, projectRoot);
     if (!imported) {
         std::println(stderr,
                      "Import error [{}]: {}",

@@ -37,6 +37,15 @@ public:
     /// `project()`), or `loadFailed` with a stable code + detail otherwise.
     void loadFromDirectory(const QString& directory);
 
+    /// Scaffold a brand-new, empty project: create `directory` if needed, write
+    /// a minimal `reqloom.yaml` there via the engine writer, then load it so
+    /// the model rebinds to the fresh project (emitting `loaded`). `name` is
+    /// the project name; blank falls back to the folder's own name. Returns
+    /// false (with `error` set and nothing loaded) if the folder can't be
+    /// created or already contains a `reqloom.yaml` — the caller keeps its
+    /// dialog open so the user's input isn't lost.
+    [[nodiscard]] bool createProject(const QString& directory, const QString& name, QString& error);
+
     [[nodiscard]] bool hasProject() const noexcept;
     [[nodiscard]] const engine::Project& project() const noexcept;
 

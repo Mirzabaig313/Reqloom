@@ -23,6 +23,7 @@ add_executable(reqloom-engine-unit-tests
     unit/CryptoTest.cpp
     unit/HookTypingsEmitterTest.cpp
     unit/ImportFromOpenApiTest.cpp
+    unit/ImportFromPostmanTest.cpp
     unit/JsonExtractionTest.cpp
     unit/HttpLlmClientTest.cpp
     unit/TopologyTest.cpp

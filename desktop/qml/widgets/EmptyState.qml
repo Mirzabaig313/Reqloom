@@ -17,6 +17,13 @@ ColumnLayout {
     // clicking it emits actionTriggered — saves the user hunting the toolbar.
     property string actionText: ""
     signal actionTriggered
+    // Optional secondary / tertiary actions, shown as flat link-style buttons
+    // in a row beneath the primary. Used by the top-level onboarding state to
+    // offer "New Project" (primary) alongside "Open Project" and "Import".
+    property string secondaryActionText: ""
+    signal secondaryActionTriggered
+    property string tertiaryActionText: ""
+    signal tertiaryActionTriggered
 
     anchors.centerIn: parent
     spacing: DesignTokens.spaceMd
@@ -76,6 +83,43 @@ ColumnLayout {
             font.weight: DesignTokens.weightSemiBold
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+        }
+    }
+    // Secondary / tertiary link-style actions (e.g. Open Project, Import).
+    RowLayout {
+        Layout.alignment: Qt.AlignHCenter
+        spacing: DesignTokens.spaceMd
+        visible: root.secondaryActionText.length > 0 || root.tertiaryActionText.length > 0
+
+        Button {
+            id: secondaryBtn
+            visible: root.secondaryActionText.length > 0
+            flat: true
+            onClicked: root.secondaryActionTriggered()
+            background: null
+            contentItem: Text {
+                text: root.secondaryActionText
+                color: secondaryBtn.hovered ? DesignTokens.accent : DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontBody
+                font.weight: DesignTokens.weightMedium
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+        }
+        Button {
+            id: tertiaryBtn
+            visible: root.tertiaryActionText.length > 0
+            flat: true
+            onClicked: root.tertiaryActionTriggered()
+            background: null
+            contentItem: Text {
+                text: root.tertiaryActionText
+                color: tertiaryBtn.hovered ? DesignTokens.accent : DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontBody
+                font.weight: DesignTokens.weightMedium
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
         }
     }
 }
