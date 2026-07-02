@@ -77,9 +77,11 @@ namespace {
 
     if (head.find("schema.getpostman.com") != std::string::npos ||
         head.find("_postman_id") != std::string::npos) {
+        // Postman is supported — but if the importer still failed, the export
+        // is likely malformed or an unsupported schema version.
         return QStringLiteral(
-            "This looks like a Postman collection, which isn't supported. Reqloom imports "
-            "OpenAPI 3.0/3.1 specs (YAML or JSON) only.");
+            "This Postman collection couldn't be imported. Re-export it as Collection v2.1 "
+            "and try again.");
     }
     if (head.find("\"swagger\"") != std::string::npos ||
         head.find("swagger:") != std::string::npos) {
@@ -87,6 +89,44 @@ namespace {
             "Swagger 2.0 isn't supported. Convert the spec to OpenAPI 3.x and try again.");
     }
     return {};
+}
+
+/// Cheap content sniff to pick the importer: a Postman collection export is
+/// routed to the Postman parser, everything else to the OpenAPI parser.
+[[nodiscard]] bool looksLikePostman(const std::filesystem::path& spec) {
+    std::ifstream in{spec, std::ios::binary};
+    if (!in) {
+        return false;
+    }
+    std::string head(8192, '\0');
+    in.read(head.data(), static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(in.gcount()));
+    return head.find("schema.getpostman.com") != std::string::npos ||
+           head.find("_postman_id") != std::string::npos;
+}
+
+/// Turn a project name into a filesystem-safe folder name: lowercase, runs of
+/// non-alphanumeric characters collapse to a single '-', trimmed. So "RHP
+/// Falls back to
+/// "imported-project" when nothing usable remains.
+[[nodiscard]] std::string projectFolderSlug(std::string_view name) {
+    std::string out;
+    out.reserve(name.size());
+    bool pendingDash = false;
+    for (const char c : name) {
+        const bool alnum =
+            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        if (alnum) {
+            if (pendingDash && !out.empty()) {
+                out.push_back('-');
+            }
+            pendingDash = false;
+            out.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c));
+        } else {
+            pendingDash = true;
+        }
+    }
+    return out.empty() ? std::string{"imported-project"} : out;
 }
 
 [[nodiscard]] QString methodLabel(engine::HttpMethod method) {
@@ -188,6 +228,12 @@ AppController::AppController(QObject* parent)
                 return;
             case ImportOutcome::Status::WriteFailed:
                 emit notify(tr("Could not write project: %1").arg(out.errorDetail), true);
+                return;
+            case ImportOutcome::Status::NeedsOverwrite:
+                // The target project folder already exists — ask the UI to
+                // confirm, then it re-invokes importOpenApi(..., overwrite=true).
+                emit importNeedsOverwrite(QUrl::fromLocalFile(out.specPath),
+                                          QUrl::fromLocalFile(out.baseDir));
                 return;
             case ImportOutcome::Status::Success:
                 break;
@@ -415,29 +461,109 @@ void AppController::openProject(const QUrl& directory) {
     project_->loadFromDirectory(path);
 }
 
+void AppController::openProjectPath(const QString& path) {
+    if (path.isEmpty()) {
+        return;
+    }
+    project_->loadFromDirectory(path);
+}
+
+QString AppController::projectRoot() const {
+    return project_ ? project_->rootPath() : QString{};
+}
+
+QVariantList AppController::recentProjects() const {
+    QSettings settings;
+    const int count = settings.beginReadArray(QStringLiteral("workspace/recentProjects"));
+    QVariantList out;
+    out.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        settings.setArrayIndex(i);
+        const QString path = settings.value(QStringLiteral("path")).toString();
+        // Skip stale entries whose project was moved or deleted on disk.
+        if (path.isEmpty() || !QFileInfo::exists(path + QStringLiteral("/reqloom.yaml"))) {
+            continue;
+        }
+        const QString name = settings.value(QStringLiteral("name")).toString();
+        QVariantMap entry;
+        entry.insert(QStringLiteral("name"), name.isEmpty() ? QFileInfo(path).fileName() : name);
+        entry.insert(QStringLiteral("path"), path);
+        out.append(entry);
+    }
+    settings.endArray();
+    return out;
+}
+
+namespace {
+// Persist a {name, path} list to the workspace recent-projects array, clearing
+// any prior entries first so a shrunk list doesn't leave stale indices behind.
+void writeRecentProjects(const QVariantList& entries) {
+    QSettings settings;
+    settings.remove(QStringLiteral("workspace/recentProjects"));
+    settings.beginWriteArray(QStringLiteral("workspace/recentProjects"));
+    for (int i = 0; i < entries.size(); ++i) {
+        const auto entry = entries[i].toMap();
+        settings.setArrayIndex(i);
+        settings.setValue(QStringLiteral("name"), entry.value(QStringLiteral("name")));
+        settings.setValue(QStringLiteral("path"), entry.value(QStringLiteral("path")));
+    }
+    settings.endArray();
+    settings.sync();
+}
+}  // namespace
+
+void AppController::recordRecentProject(const QString& name, const QString& path) {
+    if (path.isEmpty()) {
+        return;
+    }
+    // ponytail: capped at 15 entries — a flat rewrite is fine at this size; a
+    // larger list would want an LRU structure instead of a linear rebuild.
+    constexpr int kMaxRecent = 15;
+    QVariantMap current;
+    current.insert(QStringLiteral("name"), name.isEmpty() ? QFileInfo(path).fileName() : name);
+    current.insert(QStringLiteral("path"), path);
+
+    QVariantList merged;
+    merged.append(current);
+    for (const auto& v : recentProjects()) {
+        if (merged.size() >= kMaxRecent) {
+            break;
+        }
+        if (v.toMap().value(QStringLiteral("path")).toString() != path) {
+            merged.append(v);
+        }
+    }
+    writeRecentProjects(merged);
+    emit recentProjectsChanged();
+}
+
+void AppController::removeRecentProject(const QString& path) {
+    QVariantList kept;
+    for (const auto& v : recentProjects()) {
+        if (v.toMap().value(QStringLiteral("path")).toString() != path) {
+            kept.append(v);
+        }
+    }
+    writeRecentProjects(kept);
+    emit recentProjectsChanged();
+}
+
 void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, bool overwrite) {
     if (importWatcher_.isRunning()) {
         return;  // an import is already in flight
     }
 
     const QString specPath = specFile.isLocalFile() ? specFile.toLocalFile() : specFile.toString();
+    if (specPath.isEmpty()) {
+        emit notify(tr("Choose a spec or collection file to import."), true);
+        return;
+    }
+    // The destination is optional: when omitted (the default flow), the project
+    // is created next to the source file. A named sub-folder is always created
+    // under the base, so we never scatter reqloom.yaml into the base directory
+    // itself. `targetDir` is only supplied when re-invoked to overwrite.
     const QString dirPath =
         targetDir.isLocalFile() ? targetDir.toLocalFile() : targetDir.toString();
-    if (specPath.isEmpty() || dirPath.isEmpty()) {
-        emit notify(tr("Choose both a spec file and a destination folder."), true);
-        return;
-    }
-
-    // Cheap, GUI-thread guard: don't silently clobber an existing project —
-    // ask the UI to confirm first before spinning up the worker. A stat error
-    // on existsEc is intentionally ignored: we fall through to the import, and
-    // writeProject still refuses to overwrite without `overwrite=true`.
-    std::error_code existsEc;
-    const std::filesystem::path dir{dirPath.toStdString()};
-    if (!overwrite && std::filesystem::exists(dir / "reqloom.yaml", existsEc)) {
-        emit importNeedsOverwrite(specFile, targetDir);
-        return;
-    }
 
     // Parse + verify + write off the GUI thread (AGENTS.md threading rule): a
     // large spec can take noticeable time. These engine free functions touch
@@ -450,21 +576,45 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
                                      overwrite]() -> ImportOutcome {
         ImportOutcome out;
         const std::filesystem::path spec{specStd};
+        out.specPath = QString::fromStdString(specStd);
+
+        // Base directory the project folder is created under: the caller's
+        // choice, else the source file's own directory.
+        const std::filesystem::path base =
+            dirStd.empty() ? spec.parent_path() : std::filesystem::path{dirStd};
+        out.baseDir = QString::fromStdString(base.string());
+
         // Containment root: the spec's own directory, so an explicitly
         // chosen file always resolves inside it while the engine still
         // rejects `..` traversal.
-        auto imported = engine::importFromOpenApi(spec, spec.parent_path());
+        auto imported = looksLikePostman(spec)
+                            ? engine::importFromPostman(spec, spec.parent_path())
+                            : engine::importFromOpenApi(spec, spec.parent_path());
         if (!imported) {
             out.status = ImportOutcome::Status::ImportFailed;
-            // Prefer an actionable hint for recognizable non-OpenAPI files
-            // (Postman / Swagger 2.0); otherwise surface the engine detail.
+            // Prefer an actionable hint for recognizable files (Postman /
+            // Swagger 2.0); otherwise surface the engine detail.
             const QString hint = importFailureHint(spec);
             out.errorDetail =
                 hint.isEmpty() ? QString::fromStdString(imported.error().detail) : hint;
             return out;
         }
-        auto written =
-            engine::writeProject(std::filesystem::path{dirStd}, imported->project, overwrite);
+
+        // Everything lands in a named sub-folder derived from the project name,
+        // so importing never litters the chosen/base directory's root.
+        const std::filesystem::path projectDir = base / projectFolderSlug(imported->project.name);
+
+        std::error_code existsEc;
+        if (!overwrite && std::filesystem::exists(projectDir / "reqloom.yaml", existsEc)) {
+            out.status = ImportOutcome::Status::NeedsOverwrite;
+            return out;
+        }
+
+        // writeProject doesn't create the target directory, so ensure it exists.
+        std::error_code mkEc;
+        std::filesystem::create_directories(projectDir, mkEc);
+
+        auto written = engine::writeProject(projectDir, imported->project, overwrite);
         if (!written) {
             out.status = ImportOutcome::Status::WriteFailed;
             out.errorDetail = QString::fromStdString(written.error().detail);
@@ -476,7 +626,7 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
         out.status = ImportOutcome::Status::Success;
         out.resources = static_cast<int>(imported->project.resources.size());
         out.notes = QString::fromStdString(imported->warnings);
-        out.loadDir = QString::fromStdString(dirStd);
+        out.loadDir = QString::fromStdString(projectDir.string());
         return out;
     });
     importWatcher_.setFuture(future);
@@ -521,6 +671,7 @@ void AppController::onLoaded() {
         selectModule(QString::fromStdString(project_->project().resources.begin()->first.value));
     }
     refreshExamples();
+    recordRecentProject(projectName_, project_->rootPath());
     emit projectChanged();
 }
 
@@ -2874,6 +3025,21 @@ void AppController::createResource(const QString& name, const QString& descripti
     QString error;
     if (project_->createResource(name, description, error)) {
         emit notify(QStringLiteral("Created module “%1”").arg(name.trimmed()), false);
+    } else {
+        emit notify(error, true);
+    }
+}
+
+void AppController::createProject(const QUrl& directory, const QString& name) {
+    const QString path = directory.isLocalFile() ? directory.toLocalFile() : directory.toString();
+    if (path.isEmpty()) {
+        emit notify(tr("Choose a folder for the new project."), true);
+        return;
+    }
+    QString error;
+    if (project_->createProject(path, name, error)) {
+        const QString shown = name.trimmed().isEmpty() ? tr("project") : name.trimmed();
+        emit notify(QStringLiteral("Created project “%1”").arg(shown), false);
     } else {
         emit notify(error, true);
     }

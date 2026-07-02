@@ -96,4 +96,16 @@ struct OpenApiImportOutcome {
 [[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromOpenApi(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot);
 
+/// Parse a Postman Collection v2.1 export (JSON) into a Project skeleton.
+/// Top-level folders become resources, requests become operations, the
+/// collection's variables seed the `default` environment, and a request URL's
+/// scheme+host becomes that environment's `baseUrl`. Reuses `OpenApiImportOutcome`
+/// (project + per-operation review warnings); `provenance.source` is
+/// `PostmanImport`.
+///
+/// `projectRoot` defines the containment scope: the collection must resolve to
+/// a file under this directory, defending against `..` traversal.
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromPostman(
+    const std::filesystem::path& collection, const std::filesystem::path& projectRoot);
+
 }  // namespace reqloom::engine
