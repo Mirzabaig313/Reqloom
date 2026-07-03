@@ -45,6 +45,8 @@ qt_add_executable(reqloom-desktop
     qml/bridge/AppController.h
     src/application/ProjectModel.cpp
     src/application/ProjectModel.h
+    src/application/WorkspaceModel.cpp
+    src/application/WorkspaceModel.h
     src/application/Bootstrapper.cpp
     src/application/Bootstrapper.h
     src/application/RunController.cpp

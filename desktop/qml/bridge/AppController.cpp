@@ -3,6 +3,7 @@
 
 #include "../../src/application/EnvironmentSettings.h"
 #include "../../src/application/ProjectModel.h"
+#include "../../src/application/WorkspaceModel.h"
 #include "../../src/views/Formatting.h"
 #include "../../src/views/HookEditorDialog.h"
 #include "../../src/views/PathEval.h"
@@ -210,12 +211,11 @@ namespace {
 
 AppController::AppController(QObject* parent)
     : QObject(parent),
-      project_(std::make_unique<ProjectModel>()),
+      workspace_(std::make_unique<WorkspaceModel>()),
       bootstrapper_(std::make_unique<Bootstrapper>()),
-      runController_(std::make_unique<RunController>(bootstrapper_->engine(), *project_, this)) {
-    connect(project_.get(), &ProjectModel::loaded, this, &AppController::onLoaded);
-    connect(project_.get(), &ProjectModel::saved, this, &AppController::onSaved);
-    connect(project_.get(), &ProjectModel::loadFailed, this, &AppController::onLoadFailed);
+      runController_(
+          std::make_unique<RunController>(bootstrapper_->engine(), *workspace_->active(), this)) {
+    bindProject(workspace_->active());
 
     // Deliver an off-thread OpenAPI import's result back on the GUI thread:
     // load the written project and surface the summary / review notes here,
@@ -426,27 +426,29 @@ AppController::AppController(QObject* parent)
     connect(&editDependencies_, &QAbstractItemModel::rowsRemoved, this, onDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::modelReset, this, onDepsChanged);
 
-    loadSampleIfPresent();
+    restoreOpenProjects();
     refreshHistory();
 }
 
 AppController::~AppController() = default;
 
 int AppController::resourceCount() const {
-    return project_->hasProject() ? static_cast<int>(project_->project().resources.size()) : 0;
+    return activeProject().hasProject()
+               ? static_cast<int>(activeProject().project().resources.size())
+               : 0;
 }
 
 int AppController::latencySloP95Ms() const {
-    return project_->hasProject() ? project_->project().latencySloP95Ms : 0;
+    return activeProject().hasProject() ? activeProject().project().latencySloP95Ms : 0;
 }
 
 void AppController::setLatencySlo(int ms) {
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         emit notify(QStringLiteral("Open a project before setting a latency SLO."), true);
         return;
     }
     QString error;
-    if (project_->setLatencySloP95Ms(ms, error)) {
+    if (activeProject().setLatencySloP95Ms(ms, error)) {
         emit projectChanged();
         emit notify(ms > 0 ? QStringLiteral("Latency SLO set: p95 < %1 ms").arg(ms)
                            : QStringLiteral("Latency SLO cleared"),
@@ -458,18 +460,177 @@ void AppController::setLatencySlo(int ms) {
 
 void AppController::openProject(const QUrl& directory) {
     const QString path = directory.isLocalFile() ? directory.toLocalFile() : directory.toString();
-    project_->loadFromDirectory(path);
+    openProjectPath(path);
+}
+
+ProjectModel& AppController::activeProject() noexcept {
+    return *workspace_->active();
+}
+
+const ProjectModel& AppController::activeProject() const noexcept {
+    return *workspace_->active();
+}
+
+void AppController::bindProject(ProjectModel* project) {
+    // UniqueConnection so re-binding the same project (e.g. via rebindActiveProject
+    // on every activation) never stacks duplicate connections.
+    connect(project, &ProjectModel::loaded, this, &AppController::onLoaded, Qt::UniqueConnection);
+    connect(project, &ProjectModel::saved, this, &AppController::onSaved, Qt::UniqueConnection);
+    connect(project,
+            &ProjectModel::loadFailed,
+            this,
+            &AppController::onLoadFailed,
+            Qt::UniqueConnection);
 }
 
 void AppController::openProjectPath(const QString& path) {
     if (path.isEmpty()) {
         return;
     }
-    project_->loadFromDirectory(path);
+    if (runController_->isRunning()) {
+        emit notify(tr("Finish the current run before opening another project."), true);
+        return;
+    }
+
+    // Canonicalize so dedup + persistence use a stable key that matches
+    // ProjectModel::rootPath() after the load.
+    std::error_code ec;
+    const std::filesystem::path canon =
+        std::filesystem::weakly_canonical(std::filesystem::path{path.toStdString()}, ec);
+    const QString canonical = ec ? path : QString::fromStdString(canon.string());
+
+    // Already open? Just activate it — no duplicate collections.
+    if (const int existing = workspace_->indexOfRoot(canonical); existing >= 0) {
+        activateProject(existing);
+        return;
+    }
+
+    // Reuse the current slot when it's an empty sentinel (first open, or after
+    // a failed load); otherwise add a new collection and activate it up-front
+    // so the synchronous `loaded` rebinds to the right project.
+    const int prevActive = workspace_->activeIndex();
+    const bool reuse = !activeProject().hasProject();
+    ProjectModel* target = nullptr;
+    if (reuse) {
+        target = workspace_->active();
+    } else {
+        target = workspace_->addProject();
+        bindProject(target);
+        workspace_->setActiveIndex(workspace_->count() - 1);
+    }
+
+    // Synchronous: emits `loaded` (→ onLoaded rebinds) or `loadFailed` (→ toast).
+    target->loadFromDirectory(canonical);
+
+    if (!target->hasProject() && !reuse) {
+        // Load failed on a freshly added slot: drop it and rebind to the
+        // project that was active before, so a bad open doesn't strand the UI.
+        workspace_->removeProject(workspace_->count() - 1);
+        workspace_->setActiveIndex(prevActive);
+        rebindActiveProject();
+    }
+}
+
+void AppController::activateProject(int index) {
+    if (index < 0 || index >= workspace_->count()) {
+        return;
+    }
+    if (runController_->isRunning()) {
+        emit notify(tr("Finish the current run before switching projects."), true);
+        return;
+    }
+    workspace_->setActiveIndex(index);
+    persistActiveProject();
+    rebindActiveProject();
+}
+
+void AppController::closeProject(int index) {
+    if (index < 0 || index >= workspace_->count()) {
+        return;
+    }
+    const bool wasActive = index == workspace_->activeIndex();
+    if (runController_->isRunning() && wasActive) {
+        emit notify(tr("Finish the current run before closing this project."), true);
+        return;
+    }
+    workspace_->removeProject(index);
+    persistOpenProjects();
+    persistActiveProject();
+    if (wasActive) {
+        // Active project changed (to a neighbour or a fresh empty slot) — rebind
+        // the whole UI to it.
+        rebindActiveProject();
+    } else {
+        emit openProjectsChanged();
+    }
+}
+
+void AppController::rebindActiveProject() {
+    // Ensure the active project's signals are connected. Cheap + idempotent
+    // (UniqueConnection), and the single choke point that guarantees even a
+    // freshly-minted sentinel (from closing the last project) is bound before
+    // the next open/create loads into it.
+    bindProject(workspace_->active());
+
+    // Point the run controller at the active project first — every run + cookie
+    // query resolves against it.
+    runController_->setProject(activeProject());
+
+    if (!activeProject().hasProject()) {
+        // The active slot has no project (e.g. the last collection was closed).
+        // Show the empty state rather than dereferencing an unloaded project.
+        projectName_.clear();
+        resources_.reset();
+        operations_.reset();
+        tree_.clear();
+        selectedModule_.clear();
+        status_.clear();
+        emit projectChanged();
+        emit selectionChanged();
+        emit openProjectsChanged();
+        return;
+    }
+
+    projectName_ = activeProject().name();
+    resources_.reload(activeProject().project());
+    tree_.populate(activeProject().project());
+    status_ = QStringLiteral("%1 modules").arg(resourceCount());
+    // Point the saved-example store at this project (per-project isolation) and
+    // re-apply the explorer's example child rows from disk.
+    exampleStore_.setProjectRoot(activeProject().rootPath());
+    // Open this project's own run-history database so runs are isolated between
+    // projects. Keyed by a hash of the project root under the app-data dir.
+    openProjectHistory(activeProject().rootPath());
+    environments_ = activeProject().environmentNames();
+    if (environment_.isEmpty() || !environments_.contains(environment_)) {
+        // Restore the per-project saved environment first, then fall back to
+        // the project default.
+        QSettings settings;
+        const QString saved = EnvironmentSettings::load(settings, activeProject().rootPath());
+        if (!saved.isEmpty() && environments_.contains(saved)) {
+            environment_ = saved;
+        } else {
+            environment_ = activeProject().defaultEnvironment();
+            if (environment_.isEmpty() && !environments_.isEmpty()) {
+                environment_ = environments_.front();
+            }
+        }
+        emit environmentChanged();
+    }
+    // Auto-select the first module so the center pane isn't empty on open.
+    selectedModule_.clear();
+    operations_.reset();
+    if (!activeProject().project().resources.empty()) {
+        selectModule(
+            QString::fromStdString(activeProject().project().resources.begin()->first.value));
+    }
+    refreshExamples();
+    emit projectChanged();
+    emit openProjectsChanged();
 }
 
 QString AppController::projectRoot() const {
-    return project_ ? project_->rootPath() : QString{};
+    return activeProject().rootPath();
 }
 
 QVariantList AppController::recentProjects() const {
@@ -546,6 +707,84 @@ void AppController::removeRecentProject(const QString& path) {
     }
     writeRecentProjects(kept);
     emit recentProjectsChanged();
+}
+
+QVariantList AppController::openProjects() {
+    QVariantList out;
+    for (int i = 0; i < workspace_->count(); ++i) {
+        const ProjectModel* p = workspace_->at(i);
+        if (p == nullptr || !p->hasProject()) {
+            continue;  // skip the unloaded sentinel
+        }
+        QVariantMap entry;
+        entry.insert(QStringLiteral("name"), p->name());
+        entry.insert(QStringLiteral("path"), p->rootPath());
+        entry.insert(QStringLiteral("index"), i);
+        entry.insert(QStringLiteral("active"), i == workspace_->activeIndex());
+        out.append(entry);
+    }
+    return out;
+}
+
+void AppController::persistOpenProjects() {
+    QSettings settings;
+    settings.remove(QStringLiteral("workspace/openProjects"));
+    settings.beginWriteArray(QStringLiteral("workspace/openProjects"));
+    int written = 0;
+    for (int i = 0; i < workspace_->count(); ++i) {
+        const ProjectModel* p = workspace_->at(i);
+        if (p == nullptr || !p->hasProject()) {
+            continue;
+        }
+        settings.setArrayIndex(written++);
+        settings.setValue(QStringLiteral("name"), p->name());
+        settings.setValue(QStringLiteral("path"), p->rootPath());
+    }
+    settings.endArray();
+    settings.sync();
+    emit openProjectsChanged();
+}
+
+void AppController::persistActiveProject() {
+    QSettings settings;
+    settings.setValue(QStringLiteral("workspace/activeProject"), activeProject().rootPath());
+    settings.sync();
+}
+
+void AppController::restoreOpenProjects() {
+    // Read the saved open set, dropping stale entries (project moved/deleted).
+    QStringList paths;
+    QString activePath;
+    {
+        QSettings settings;
+        const int count = settings.beginReadArray(QStringLiteral("workspace/openProjects"));
+        for (int i = 0; i < count; ++i) {
+            settings.setArrayIndex(i);
+            const QString p = settings.value(QStringLiteral("path")).toString();
+            if (!p.isEmpty() && QFileInfo::exists(p + QStringLiteral("/reqloom.yaml"))) {
+                paths.append(p);
+            }
+        }
+        settings.endArray();
+        activePath = settings.value(QStringLiteral("workspace/activeProject")).toString();
+    }
+
+    if (paths.isEmpty()) {
+        // No saved workspace — fall back to the dev sample (if any) so a
+        // first run / developer checkout still opens something.
+        loadSampleIfPresent();
+        return;
+    }
+
+    // Eager-load each saved collection. openProjectPath handles reuse of the
+    // sentinel for the first, and appends the rest; a bad one is dropped
+    // without aborting the others.
+    for (const QString& p : paths) {
+        openProjectPath(p);
+    }
+    if (const int idx = workspace_->indexOfRoot(activePath); idx >= 0) {
+        activateProject(idx);
+    }
 }
 
 void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, bool overwrite) {
@@ -633,46 +872,11 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
 }
 
 void AppController::onLoaded() {
-    projectName_ = project_->name();
-    resources_.reload(project_->project());
-    tree_.populate(project_->project());
-    status_ = QStringLiteral("%1 modules").arg(resourceCount());
-
-    // Point the saved-example store at this project (per-project isolation) and
-    // re-apply the explorer's example child rows from disk.
-    exampleStore_.setProjectRoot(project_->rootPath());
-
-    // Open this project's own run-history database so runs are isolated between
-    // projects. Keyed by a hash of the project root under the app-data dir, so
-    // the repo stays clean and two projects never share history.
-    openProjectHistory(project_->rootPath());
-
-    environments_ = project_->environmentNames();
-    if (environment_.isEmpty() || !environments_.contains(environment_)) {
-        // Restore the per-project saved environment first, then fall back to
-        // the project default (parity gap T-D9 from the QML Migration Roadmap).
-        QSettings settings;
-        const QString saved = EnvironmentSettings::load(settings, project_->rootPath());
-        if (!saved.isEmpty() && environments_.contains(saved)) {
-            environment_ = saved;
-        } else {
-            environment_ = project_->defaultEnvironment();
-            if (environment_.isEmpty() && !environments_.isEmpty()) {
-                environment_ = environments_.front();
-            }
-        }
-        emit environmentChanged();
-    }
-
-    // Auto-select the first module so the center pane isn't empty on open.
-    selectedModule_.clear();
-    operations_.reset();
-    if (project_->hasProject() && !project_->project().resources.empty()) {
-        selectModule(QString::fromStdString(project_->project().resources.begin()->first.value));
-    }
-    refreshExamples();
-    recordRecentProject(projectName_, project_->rootPath());
-    emit projectChanged();
+    // A fresh load: record it in recents + the open set, then rebind the UI.
+    recordRecentProject(activeProject().name(), activeProject().rootPath());
+    persistOpenProjects();
+    persistActiveProject();
+    rebindActiveProject();
 }
 
 void AppController::onSaved() {
@@ -680,17 +884,17 @@ void AppController::onSaved() {
     // Unlike a fresh load, keep the user where they are: refresh project-derived
     // models but preserve the selected module + open operation so saving from
     // the response/chain editor doesn't bounce them back to the first module.
-    resources_.reload(project_->project());
-    tree_.populate(project_->project());
+    resources_.reload(activeProject().project());
+    tree_.populate(activeProject().project());
     status_ = QStringLiteral("%1 modules").arg(resourceCount());
-    exampleStore_.setProjectRoot(project_->rootPath());
+    exampleStore_.setProjectRoot(activeProject().rootPath());
 
-    environments_ = project_->environmentNames();
+    environments_ = activeProject().environmentNames();
 
     const QString openModule = selectedModule_;
     const QString openOp = hasOperation_ ? opName_ : QString{};
     if (!openModule.isEmpty()) {
-        const auto& resources = project_->project().resources;
+        const auto& resources = activeProject().project().resources;
         const auto it = resources.find(engine::ResourceId{openModule.toStdString()});
         if (it != resources.end()) {
             operations_.reload(it->second);
@@ -703,7 +907,7 @@ void AppController::onSaved() {
     // Refresh the open operation's read fields from the saved project, but only
     // when not editing (re-selecting would discard an in-progress edit).
     if (!editing_ && !openModule.isEmpty() && !openOp.isEmpty()) {
-        const auto& resources = project_->project().resources;
+        const auto& resources = activeProject().project().resources;
         const auto it = resources.find(engine::ResourceId{openModule.toStdString()});
         if (it != resources.end() && it->second.operations.contains(openOp.toStdString())) {
             selectOperation(openModule, openOp);
@@ -712,10 +916,10 @@ void AppController::onSaved() {
 }
 
 void AppController::selectModule(const QString& moduleName) {
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return;
     }
-    const auto& resources = project_->project().resources;
+    const auto& resources = activeProject().project().resources;
     const auto it = resources.find(engine::ResourceId{moduleName.toStdString()});
     if (it == resources.end()) {
         return;
@@ -727,10 +931,10 @@ void AppController::selectModule(const QString& moduleName) {
 }
 
 void AppController::selectOperation(const QString& moduleName, const QString& opName) {
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return;
     }
-    const auto& resources = project_->project().resources;
+    const auto& resources = activeProject().project().resources;
     const auto resIt = resources.find(engine::ResourceId{moduleName.toStdString()});
     if (resIt == resources.end()) {
         return;
@@ -826,9 +1030,9 @@ void AppController::setEnvironment(const QString& env) {
     }
     environment_ = env;
     // Persist the selection for this project so it's restored on next load.
-    if (!project_->rootPath().isEmpty()) {
+    if (!activeProject().rootPath().isEmpty()) {
         QSettings settings;
-        EnvironmentSettings::save(settings, project_->rootPath(), env);
+        EnvironmentSettings::save(settings, activeProject().rootPath(), env);
     }
     emit environmentChanged();
 }
@@ -993,10 +1197,10 @@ QStringList AppController::editDependencyCandidates() const {
 
 QStringList AppController::extractedVariablesFor(const QString& operationId) const {
     QStringList tokens;
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return tokens;
     }
-    const auto* op = project_->findOperation(engine::OperationId{operationId.toStdString()});
+    const auto* op = activeProject().findOperation(engine::OperationId{operationId.toStdString()});
     if (op == nullptr) {
         return tokens;
     }
@@ -1015,10 +1219,10 @@ QStringList AppController::extractedVariablesFor(const QString& operationId) con
 
 QVariantList AppController::extractionPairsFor(const QString& operationId) const {
     QVariantList pairs;
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return pairs;
     }
-    const auto* op = project_->findOperation(engine::OperationId{operationId.toStdString()});
+    const auto* op = activeProject().findOperation(engine::OperationId{operationId.toStdString()});
     if (op == nullptr) {
         return pairs;
     }
@@ -1033,11 +1237,11 @@ QVariantList AppController::extractionPairsFor(const QString& operationId) const
 
 QVariantList AppController::variableSuggestions(const QString& operationId) const {
     QVariantList out;
-    if (!project_->hasProject() || !bootstrapper_ || operationId.isEmpty()) {
+    if (!activeProject().hasProject() || !bootstrapper_ || operationId.isEmpty()) {
         return out;
     }
     auto result =
-        bootstrapper_->engine().suggestVariables(project_->project(),
+        bootstrapper_->engine().suggestVariables(activeProject().project(),
                                                  engine::OperationId{operationId.toStdString()},
                                                  environment_.toStdString());
     if (!result) {
@@ -1069,10 +1273,10 @@ QVariantList AppController::variableSuggestions(const QString& operationId) cons
 }
 
 std::pair<QString, QString> AppController::findVariableProducer(const QString& token) const {
-    if (!project_->hasProject() || token.isEmpty()) {
+    if (!activeProject().hasProject() || token.isEmpty()) {
         return {};
     }
-    const auto& proj = project_->project();
+    const auto& proj = activeProject().project();
     for (const auto& [resId, resource] : proj.resources) {
         const QString resName = QString::fromStdString(resId.value);
         for (const auto& [opName, op] : resource.operations) {
@@ -1184,7 +1388,7 @@ QString AppController::variableOverride(const QString& token) const {
 }
 
 void AppController::refreshCandidates(const QString& token) {
-    if (!project_->hasProject() || runController_ == nullptr || runController_->isRunning()) {
+    if (!activeProject().hasProject() || runController_ == nullptr || runController_->isRunning()) {
         return;
     }
     const QString producerOpId = findVariableProducer(token).first;
@@ -1260,11 +1464,11 @@ void AppController::chainSetForEachContinueOnError(const QString& operationId,
 }
 
 bool AppController::addExtraction(const QString& variableName, const QString& sourcePath) {
-    if (!project_->hasProject() || !hasOperation_) {
+    if (!activeProject().hasProject() || !hasOperation_) {
         return false;
     }
     const QString opId = currentOperationId();
-    const auto* op = project_->findOperation(engine::OperationId{opId.toStdString()});
+    const auto* op = activeProject().findOperation(engine::OperationId{opId.toStdString()});
     if (op == nullptr) {
         return false;
     }
@@ -1297,7 +1501,7 @@ bool AppController::addExtraction(const QString& variableName, const QString& so
     }
 
     QString error;
-    if (!project_->saveOperation(engine::OperationId{opId.toStdString()}, updated, error)) {
+    if (!activeProject().saveOperation(engine::OperationId{opId.toStdString()}, updated, error)) {
         emit notify(error.isEmpty() ? QStringLiteral("Could not save the variable.") : error, true);
         return false;
     }
@@ -1374,10 +1578,10 @@ QVariantMap AppController::previewFormBody() const {
 
 QVariantList AppController::cookieJars() const {
     QVariantList out;
-    if (!project_->hasProject() || !runController_) {
+    if (!activeProject().hasProject() || !runController_) {
         return out;
     }
-    for (const auto& [actorId, _] : project_->project().actors) {
+    for (const auto& [actorId, _] : activeProject().project().actors) {
         const auto jar = runController_->cookies(actorId);
         if (jar.empty()) {
             continue;
@@ -1434,11 +1638,11 @@ QVariantList AppController::chainNodes() const {
     // updates as the user wires the chain. Implicit ({{var}}) deps and the
     // full topological order are resolved by the engine after a Dry Run.
     QVariantList nodes;
-    if (!project_->hasProject() || !hasOperation_) {
+    if (!activeProject().hasProject() || !hasOperation_) {
         return nodes;
     }
     const QString opId = currentOperationId();
-    const auto* op = project_->findOperation(engine::OperationId{opId.toStdString()});
+    const auto* op = activeProject().findOperation(engine::OperationId{opId.toStdString()});
     if (op == nullptr) {
         return nodes;
     }
@@ -1460,7 +1664,7 @@ QVariantList AppController::chainNodes() const {
     const auto nodeFor = [this](const QString& id, bool isTarget) {
         QVariantMap node;
         node.insert(QStringLiteral("operationId"), id);
-        const auto* depOp = project_->findOperation(engine::OperationId{id.toStdString()});
+        const auto* depOp = activeProject().findOperation(engine::OperationId{id.toStdString()});
         node.insert(QStringLiteral("method"),
                     depOp != nullptr ? methodLabel(depOp->method) : QString{});
         node.insert(QStringLiteral("isTarget"), isTarget);
@@ -1482,12 +1686,12 @@ QVariantMap AppController::chainGraph() const {
     // re-derivation here, so the drawn graph always matches what the engine
     // actually executes.
     QVariantMap graph;
-    if (!project_->hasProject() || !hasOperation_ || !bootstrapper_) {
+    if (!activeProject().hasProject() || !hasOperation_ || !bootstrapper_) {
         return graph;
     }
     const QString targetId = currentOperationId();
     const engine::OperationId targetOpId{targetId.toStdString()};
-    if (project_->findOperation(targetOpId) == nullptr) {
+    if (activeProject().findOperation(targetOpId) == nullptr) {
         return graph;
     }
 
@@ -1495,9 +1699,9 @@ QVariantMap AppController::chainGraph() const {
     // against a patched copy so the preview tracks the live wiring; otherwise
     // resolve the persisted project directly.
     engine::Project patched;
-    const engine::Project* proj = &project_->project();
+    const engine::Project* proj = &activeProject().project();
     if (editing_ && chainFieldsLoaded_) {
-        patched = project_->project();
+        patched = activeProject().project();
         const qsizetype dot = targetId.indexOf(QLatin1Char('.'));
         if (dot > 0) {
             const engine::ResourceId resId{targetId.left(dot).toStdString()};
@@ -1652,12 +1856,13 @@ QVariantMap AppController::chainStatus() const {
 }
 
 void AppController::prepareChainEditor() {
-    if (!project_->hasProject() || !hasOperation_) {
+    if (!activeProject().hasProject() || !hasOperation_) {
         chainEditor_.rebuild({});
         return;
     }
     const QString targetId = currentOperationId();
-    const auto* targetOp = project_->findOperation(engine::OperationId{targetId.toStdString()});
+    const auto* targetOp =
+        activeProject().findOperation(engine::OperationId{targetId.toStdString()});
     if (targetOp == nullptr) {
         chainEditor_.rebuild({});
         return;
@@ -1673,7 +1878,7 @@ void AppController::prepareChainEditor() {
     while (!pending.empty()) {
         const QString id = pending.front();
         pending.pop();
-        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        const auto* op = activeProject().findOperation(engine::OperationId{id.toStdString()});
         if (op == nullptr) {
             continue;
         }
@@ -1691,7 +1896,7 @@ void AppController::prepareChainEditor() {
     std::vector<ChainEditorModel::OpSeed> seeds;
     seeds.reserve(static_cast<std::size_t>(ids.size()));
     for (const QString& id : ids) {
-        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        const auto* op = activeProject().findOperation(engine::OperationId{id.toStdString()});
         ChainEditorModel::OpSeed seed;
         seed.operationId = id;
         seed.method = op != nullptr ? methodLabel(op->method) : QString{};
@@ -1720,7 +1925,7 @@ void AppController::prepareChainEditor() {
 }
 
 void AppController::syncChainEditorMembership() {
-    if (!project_->hasProject() || !hasOperation_ || chainEditor_.count() == 0) {
+    if (!activeProject().hasProject() || !hasOperation_ || chainEditor_.count() == 0) {
         return;
     }
     const QString targetId = currentOperationId();
@@ -1753,7 +1958,7 @@ void AppController::syncChainEditorMembership() {
         if (editedDeps.contains(id)) {
             deps = editedDeps.value(id);
         } else if (const auto* op =
-                       project_->findOperation(engine::OperationId{id.toStdString()})) {
+                       activeProject().findOperation(engine::OperationId{id.toStdString()})) {
             for (const auto& dep : op->explicitDependencies) {
                 deps.push_back(dep.value);
             }
@@ -1783,7 +1988,7 @@ void AppController::syncChainEditorMembership() {
     std::vector<ChainEditorModel::OpSeed> seeds;
     seeds.reserve(static_cast<std::size_t>(ids.size()));
     for (const QString& id : ids) {
-        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        const auto* op = activeProject().findOperation(engine::OperationId{id.toStdString()});
         ChainEditorModel::OpSeed seed;
         seed.operationId = id;
         seed.method = op != nullptr ? methodLabel(op->method) : QString{};
@@ -1859,13 +2064,13 @@ void AppController::chainRemoveStep(const QString& operationId) {
 }
 
 bool AppController::saveChainEdits() {
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return false;
     }
     std::map<std::string, engine::Operation> updates;
     for (int i = 0; i < chainEditor_.count(); ++i) {
         const QString id = chainEditor_.operationIdAt(i);
-        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        const auto* op = activeProject().findOperation(engine::OperationId{id.toStdString()});
         if (op == nullptr) {
             continue;
         }
@@ -1912,7 +2117,7 @@ bool AppController::saveChainEdits() {
     }
 
     QString error;
-    if (!project_->saveOperations(updates, error)) {
+    if (!activeProject().saveOperations(updates, error)) {
         emit notify(error.isEmpty() ? QStringLiteral("Could not save the chain.") : error, true);
         return false;
     }
@@ -1930,11 +2135,11 @@ bool AppController::saveChainEdits() {
 }
 
 void AppController::seedEditChainFromProject() {
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return;
     }
     const auto* op =
-        project_->findOperation(engine::OperationId{currentOperationId().toStdString()});
+        activeProject().findOperation(engine::OperationId{currentOperationId().toStdString()});
     if (op == nullptr) {
         return;
     }
@@ -1964,11 +2169,11 @@ void AppController::seedEditChainFromProject() {
 }
 
 void AppController::beginEdit() {
-    if (!hasOperation_ || !project_->hasProject()) {
+    if (!hasOperation_ || !activeProject().hasProject()) {
         return;
     }
     const auto* op =
-        project_->findOperation(engine::OperationId{currentOperationId().toStdString()});
+        activeProject().findOperation(engine::OperationId{currentOperationId().toStdString()});
     if (op == nullptr) {
         return;
     }
@@ -2146,12 +2351,12 @@ void AppController::applyAndRun(bool clean, bool dryRun) {
 }
 
 void AppController::saveOperation() {
-    if (!hasOperation_ || !project_->hasProject()) {
+    if (!hasOperation_ || !activeProject().hasProject()) {
         return;
     }
     const QString opId = currentOperationId();
     const engine::OperationId id{opId.toStdString()};
-    const auto* op = project_->findOperation(id);
+    const auto* op = activeProject().findOperation(id);
     if (op == nullptr) {
         emit notify(QStringLiteral("No operation to save"), true);
         return;
@@ -2165,7 +2370,7 @@ void AppController::saveOperation() {
     applyOverrideToOperation(updated, buildOverride());
 
     QString error;
-    if (project_->saveOperation(id, updated, error)) {
+    if (activeProject().saveOperation(id, updated, error)) {
         // saveOperation emits `saved` → onLoaded reset the selection; reopen
         // the operation and leave Edit mode so the read preview reflects disk.
         editing_ = false;
@@ -2188,7 +2393,7 @@ void AppController::openHookEditor() {
         return;
     }
     const engine::OperationId id{opId.toStdString()};
-    const auto* op = project_->findOperation(id);
+    const auto* op = activeProject().findOperation(id);
     if (op == nullptr) {
         emit notify(QStringLiteral("No operation to edit hooks for"), true);
         return;
@@ -2220,7 +2425,7 @@ void AppController::openHookEditor() {
     // Persist. A file-referenced hook is written back to its `.js` file (the
     // writer keeps the reference); an inline hook is stored on the operation
     // and saved as YAML. Empty inline content clears the hook.
-    const QString root = project_->rootPath();
+    const QString root = activeProject().rootPath();
     const auto applyHook = [&](std::optional<std::string>& script,
                                const QString& edited,
                                const QString& refPath) -> bool {
@@ -2270,7 +2475,7 @@ void AppController::openHookEditor() {
     }
 
     QString error;
-    if (project_->saveOperation(id, updated, error)) {
+    if (activeProject().saveOperation(id, updated, error)) {
         // saveOperation rebinds the project (its `saved` signal resets the
         // selection to the endpoint list), so reopen the operation to keep the
         // user where they were.
@@ -2282,12 +2487,12 @@ void AppController::openHookEditor() {
 }
 
 void AppController::refreshHookTypings() {
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return;
     }
     const auto written =
-        engine::emitHookTypings(std::filesystem::path{project_->rootPath().toStdString()},
-                                project_->project(),
+        engine::emitHookTypings(std::filesystem::path{activeProject().rootPath().toStdString()},
+                                activeProject().project(),
                                 /*overwrite=*/true);
     if (!written) {
         // Best-effort: typings are a convenience, never a blocker for editing.
@@ -2296,13 +2501,13 @@ void AppController::refreshHookTypings() {
 }
 
 void AppController::generateHookTypings() {
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         emit notify(QStringLiteral("Open a project before generating hook typings"), true);
         return;
     }
     const auto written =
-        engine::emitHookTypings(std::filesystem::path{project_->rootPath().toStdString()},
-                                project_->project(),
+        engine::emitHookTypings(std::filesystem::path{activeProject().rootPath().toStdString()},
+                                activeProject().project(),
                                 /*overwrite=*/true);
     if (!written) {
         emit notify(tr("Couldn't write hook typings: %1")
@@ -2444,29 +2649,30 @@ void AppController::onLoadFailed(const QString& code, const QString& detail) {
 
 void AppController::loadSampleIfPresent() {
     if (const QString sample = locateSampleProject(); !sample.isEmpty()) {
-        project_->loadFromDirectory(sample);
+        activeProject().loadFromDirectory(sample);
     }
 }
 
 int AppController::operationCount() const {
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return 0;
     }
     int count = 0;
-    for (const auto& [resId, resource] : project_->project().resources) {
+    for (const auto& [resId, resource] : activeProject().project().resources) {
         count += static_cast<int>(resource.operations.size());
     }
     return count;
 }
 
 int AppController::actorCount() const {
-    return project_->hasProject() ? static_cast<int>(project_->project().actors.size()) : 0;
+    return activeProject().hasProject() ? static_cast<int>(activeProject().project().actors.size())
+                                        : 0;
 }
 
 QStringList AppController::moduleNames() const {
     QStringList names;
-    if (project_->hasProject()) {
-        for (const auto& [resId, resource] : project_->project().resources) {
+    if (activeProject().hasProject()) {
+        for (const auto& [resId, resource] : activeProject().project().resources) {
             names.append(QString::fromStdString(resId.value));
         }
     }
@@ -2475,8 +2681,8 @@ QStringList AppController::moduleNames() const {
 
 QStringList AppController::actorNames() const {
     QStringList names;
-    if (project_->hasProject()) {
-        for (const auto& [actorId, actor] : project_->project().actors) {
+    if (activeProject().hasProject()) {
+        for (const auto& [actorId, actor] : activeProject().project().actors) {
             names.append(QString::fromStdString(actorId.value));
         }
     }
@@ -2487,10 +2693,10 @@ QString AppController::actorAuthLabel(const QString& actorName) const {
     if (actorName.isEmpty()) {
         return QStringLiteral("No authentication");
     }
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return {};
     }
-    const auto& actors = project_->project().actors;
+    const auto& actors = activeProject().project().actors;
     const auto it = actors.find(engine::ActorId{actorName.toStdString()});
     if (it == actors.end()) {
         return {};
@@ -2596,10 +2802,10 @@ QStringList AppController::actorStrategies() const {
 }
 
 QString AppController::actorDescription(const QString& actorId) const {
-    if (!project_->hasProject()) {
+    if (!activeProject().hasProject()) {
         return {};
     }
-    const auto& actors = project_->project().actors;
+    const auto& actors = activeProject().project().actors;
     const auto it = actors.find(engine::ActorId{actorId.toStdString()});
     return it == actors.end() ? QString{} : QString::fromStdString(it->second.description);
 }
@@ -2633,8 +2839,8 @@ void AppController::prepareEditActor(const QString& actorId) {
     std::vector<std::pair<QString, QString>> authEx;
     std::vector<std::pair<QString, QString>> refreshEx;
 
-    if (project_->hasProject()) {
-        const auto& actors = project_->project().actors;
+    if (activeProject().hasProject()) {
+        const auto& actors = activeProject().project().actors;
         const auto it = actors.find(engine::ActorId{actorId.toStdString()});
         if (it != actors.end()) {
             const engine::Actor& actor = it->second;
@@ -2689,8 +2895,8 @@ bool AppController::saveActorEdits(const QString& originalId,
     // Start from the existing actor (preserving inject headers, session TTL and
     // any chain steps beyond the first) when editing.
     engine::Actor actor;
-    if (!originalId.isEmpty() && project_->hasProject()) {
-        const auto& actors = project_->project().actors;
+    if (!originalId.isEmpty() && activeProject().hasProject()) {
+        const auto& actors = activeProject().project().actors;
         const auto it = actors.find(engine::ActorId{originalId.toStdString()});
         if (it != actors.end()) {
             actor = it->second;
@@ -2754,7 +2960,7 @@ bool AppController::saveActorEdits(const QString& originalId,
     }
 
     QString error;
-    if (project_->saveActor(originalId, actor, error)) {
+    if (activeProject().saveActor(originalId, actor, error)) {
         emit notify(QStringLiteral("Saved actor “%1”").arg(name.trimmed()), false);
         return true;
     }
@@ -2764,7 +2970,7 @@ bool AppController::saveActorEdits(const QString& originalId,
 
 void AppController::deleteActor(const QString& actorId) {
     QString error;
-    if (project_->deleteActor(engine::ActorId{actorId.toStdString()}, error)) {
+    if (activeProject().deleteActor(engine::ActorId{actorId.toStdString()}, error)) {
         emit notify(QStringLiteral("Deleted actor “%1”").arg(actorId), false);
     } else {
         emit notify(error, true);
@@ -2788,8 +2994,8 @@ void AppController::setEditEnvBaseUrl(const QString& url) {
 void AppController::prepareEditEnvironment(const QString& name) {
     std::vector<std::pair<QString, QString>> pairs;
     editEnvBaseUrl_.clear();
-    if (project_->hasProject()) {
-        const auto& envs = project_->project().environments;
+    if (activeProject().hasProject()) {
+        const auto& envs = activeProject().project().environments;
         const auto it = envs.find(name.toStdString());
         if (it != envs.end()) {
             for (const auto& [key, value] : it->second) {
@@ -2819,7 +3025,7 @@ bool AppController::saveEnvironmentEdits(const QString& originalName, const QStr
         variables.insert_or_assign(std::string{"baseUrl"}, baseUrl.toStdString());
     }
     QString error;
-    if (project_->saveEnvironment(originalName, name, variables, error)) {
+    if (activeProject().saveEnvironment(originalName, name, variables, error)) {
         setEnvironment(name.trimmed());
         emit notify(QStringLiteral("Saved environment “%1”").arg(name.trimmed()), false);
         return true;
@@ -2830,7 +3036,7 @@ bool AppController::saveEnvironmentEdits(const QString& originalName, const QStr
 
 void AppController::deleteEnvironment(const QString& name) {
     QString error;
-    if (project_->deleteEnvironment(name, error)) {
+    if (activeProject().deleteEnvironment(name, error)) {
         emit notify(QStringLiteral("Deleted environment “%1”").arg(name), false);
     } else {
         emit notify(error, true);
@@ -2975,8 +3181,8 @@ void AppController::replayRun(qulonglong runId) {
 
 QStringList AppController::operationIds() const {
     QStringList ids;
-    if (project_->hasProject()) {
-        for (const auto& [resId, resource] : project_->project().resources) {
+    if (activeProject().hasProject()) {
+        for (const auto& [resId, resource] : activeProject().project().resources) {
             for (const auto& [opName, op] : resource.operations) {
                 ids.append(QString::fromStdString(op.id.value));
             }
@@ -3023,7 +3229,7 @@ bool AppController::isValidName(const QString& name) const {
 
 void AppController::createResource(const QString& name, const QString& description) {
     QString error;
-    if (project_->createResource(name, description, error)) {
+    if (activeProject().createResource(name, description, error)) {
         emit notify(QStringLiteral("Created module “%1”").arg(name.trimmed()), false);
     } else {
         emit notify(error, true);
@@ -3037,7 +3243,7 @@ void AppController::createProject(const QUrl& directory, const QString& name) {
         return;
     }
     QString error;
-    if (project_->createProject(path, name, error)) {
+    if (activeProject().createProject(path, name, error)) {
         const QString shown = name.trimmed().isEmpty() ? tr("project") : name.trimmed();
         emit notify(QStringLiteral("Created project “%1”").arg(shown), false);
     } else {
@@ -3055,10 +3261,10 @@ void AppController::prepareNewEndpoint(const QString& /*preselectedResource*/) {
 
 void AppController::rebuildNewEndpointDepExtracts() {
     std::vector<ChainEditorModel::OpSeed> seeds;
-    if (project_->hasProject()) {
+    if (activeProject().hasProject()) {
         for (const auto& depStd : newEndpointDeps_.dependencies()) {
             const QString id = QString::fromStdString(depStd);
-            const auto* op = project_->findOperation(engine::OperationId{depStd});
+            const auto* op = activeProject().findOperation(engine::OperationId{depStd});
             ChainEditorModel::OpSeed seed;
             seed.operationId = id;
             seed.method = op != nullptr ? methodLabel(op->method) : QString{};
@@ -3118,14 +3324,14 @@ void AppController::createOperation(const QString& module,
     }
 
     QString error;
-    const auto created = project_->createOperation(engine::ResourceId{module.toStdString()},
-                                                   name,
-                                                   methodFromLabel(method),
-                                                   path,
-                                                   engine::ActorId{actor.toStdString()},
-                                                   dependencies,
-                                                   extractions,
-                                                   error);
+    const auto created = activeProject().createOperation(engine::ResourceId{module.toStdString()},
+                                                         name,
+                                                         methodFromLabel(method),
+                                                         path,
+                                                         engine::ActorId{actor.toStdString()},
+                                                         dependencies,
+                                                         extractions,
+                                                         error);
     if (!created) {
         emit notify(error, true);
         return;
@@ -3137,7 +3343,7 @@ void AppController::createOperation(const QString& module,
     std::map<std::string, engine::Operation> depUpdates;
     for (int i = 0; i < newEndpointDepExtracts_.count(); ++i) {
         const QString id = newEndpointDepExtracts_.operationIdAt(i);
-        const auto* op = project_->findOperation(engine::OperationId{id.toStdString()});
+        const auto* op = activeProject().findOperation(engine::OperationId{id.toStdString()});
         if (op == nullptr) {
             continue;
         }
@@ -3166,7 +3372,7 @@ void AppController::createOperation(const QString& module,
     }
     if (!depUpdates.empty()) {
         QString depError;
-        if (!project_->saveOperations(depUpdates, depError)) {
+        if (!activeProject().saveOperations(depUpdates, depError)) {
             emit notify(depError, true);
         }
     }
@@ -3178,7 +3384,8 @@ void AppController::createOperation(const QString& module,
 
 void AppController::renameOperation(const QString& operationId, const QString& newName) {
     QString error;
-    if (project_->renameOperation(engine::OperationId{operationId.toStdString()}, newName, error)) {
+    if (activeProject().renameOperation(
+            engine::OperationId{operationId.toStdString()}, newName, error)) {
         emit notify(QStringLiteral("Renamed endpoint"), false);
     } else {
         emit notify(error, true);
@@ -3187,7 +3394,7 @@ void AppController::renameOperation(const QString& operationId, const QString& n
 
 void AppController::deleteOperation(const QString& operationId) {
     QString error;
-    if (project_->deleteOperation(engine::OperationId{operationId.toStdString()}, error)) {
+    if (activeProject().deleteOperation(engine::OperationId{operationId.toStdString()}, error)) {
         emit notify(QStringLiteral("Deleted endpoint"), false);
     } else {
         emit notify(error, true);
@@ -3196,7 +3403,8 @@ void AppController::deleteOperation(const QString& operationId) {
 
 void AppController::renameResource(const QString& resourceId, const QString& newName) {
     QString error;
-    if (project_->renameResource(engine::ResourceId{resourceId.toStdString()}, newName, error)) {
+    if (activeProject().renameResource(
+            engine::ResourceId{resourceId.toStdString()}, newName, error)) {
         emit notify(QStringLiteral("Renamed module"), false);
     } else {
         emit notify(error, true);
@@ -3205,7 +3413,7 @@ void AppController::renameResource(const QString& resourceId, const QString& new
 
 void AppController::deleteResource(const QString& resourceId) {
     QString error;
-    if (project_->deleteResource(engine::ResourceId{resourceId.toStdString()}, error)) {
+    if (activeProject().deleteResource(engine::ResourceId{resourceId.toStdString()}, error)) {
         emit notify(QStringLiteral("Deleted module"), false);
     } else {
         emit notify(error, true);
