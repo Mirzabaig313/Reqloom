@@ -1040,6 +1040,7 @@ ApplicationWindow {
                     }
                 }
                 Button {
+                    id: npBrowseBtn
                     text: qsTr("Browse…")
                     implicitHeight: 34
                     leftPadding: DesignTokens.spaceMd
@@ -1052,7 +1053,7 @@ ApplicationWindow {
                         border.color: DesignTokens.borderSubtle
                     }
                     contentItem: Text {
-                        text: parent.text
+                        text: npBrowseBtn.text
                         color: DesignTokens.textSecondary
                         font.pixelSize: DesignTokens.fontLabel
                         horizontalAlignment: Text.AlignHCenter
