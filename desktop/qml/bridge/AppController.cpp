@@ -24,6 +24,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QSet>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QStringList>
 #include <QtGui/QClipboard>
@@ -104,6 +105,20 @@ namespace {
     head.resize(static_cast<std::size_t>(in.gcount()));
     return head.find("schema.getpostman.com") != std::string::npos ||
            head.find("_postman_id") != std::string::npos;
+}
+
+/// Normalize a project directory path to a stable comparison key: strips a
+/// trailing separator and resolves `.`/`..`/symlinks, so two spellings of the
+/// same project (`/x/proj` and `/x/proj/`) collapse to one. `weakly_canonical`
+/// keeps paths that no longer exist working.
+[[nodiscard]] QString canonicalProjectPath(const QString& path) {
+    if (path.isEmpty()) {
+        return path;
+    }
+    std::error_code ec;
+    const auto canon =
+        std::filesystem::weakly_canonical(std::filesystem::path{path.toStdString()}, ec);
+    return ec ? path : QString::fromStdString(canon.string());
 }
 
 /// Turn a project name into a filesystem-safe folder name: lowercase, runs of
@@ -527,7 +542,8 @@ void AppController::openProjectPath(const QString& path) {
         // project that was active before, so a bad open doesn't strand the UI.
         workspace_->removeProject(workspace_->count() - 1);
         workspace_->setActiveIndex(prevActive);
-        rebindActiveProject();
+        rebindActiveProject(/*repopulateTree=*/true);
+        selectFirstModule();
     }
 }
 
@@ -541,7 +557,10 @@ void AppController::activateProject(int index) {
     }
     workspace_->setActiveIndex(index);
     persistActiveProject();
-    rebindActiveProject();
+    // The tree already lists every collection; just rebind the active views and
+    // show the newly-active project's first module.
+    rebindActiveProject(/*repopulateTree=*/false);
+    selectFirstModule();
 }
 
 void AppController::closeProject(int index) {
@@ -557,15 +576,45 @@ void AppController::closeProject(int index) {
     persistOpenProjects();
     persistActiveProject();
     if (wasActive) {
-        // Active project changed (to a neighbour or a fresh empty slot) — rebind
-        // the whole UI to it.
-        rebindActiveProject();
+        // Active project changed (to a neighbour or a fresh empty slot) — rebuild
+        // the tree (the closed subtree is gone) and rebind the UI to the new one.
+        rebindActiveProject(/*repopulateTree=*/true);
+        selectFirstModule();
     } else {
+        // A background collection closed: drop its subtree from the tree.
+        populateWorkspaceTree();
         emit openProjectsChanged();
     }
 }
 
-void AppController::rebindActiveProject() {
+void AppController::populateWorkspaceTree() {
+    // Feed every open (loaded) collection to the aggregated explorer tree. The
+    // active flag drives the active-project highlight; ProjectRootRole on every
+    // row lets a click resolve the owning project.
+    std::vector<ProjectTreeModel::ProjectEntry> entries;
+    for (int i = 0; i < workspace_->count(); ++i) {
+        const ProjectModel* p = workspace_->at(i);
+        if (p == nullptr || !p->hasProject()) {
+            continue;
+        }
+        ProjectTreeModel::ProjectEntry entry;
+        entry.root = p->rootPath();
+        entry.name = p->name();
+        entry.project = p->projectPtr();
+        entry.active = i == workspace_->activeIndex();
+        entries.push_back(std::move(entry));
+    }
+    tree_.populate(entries);
+}
+
+void AppController::selectFirstModule() {
+    if (activeProject().hasProject() && !activeProject().project().resources.empty()) {
+        selectModule(
+            QString::fromStdString(activeProject().project().resources.begin()->first.value));
+    }
+}
+
+void AppController::rebindActiveProject(bool repopulateTree) {
     // Ensure the active project's signals are connected. Cheap + idempotent
     // (UniqueConnection), and the single choke point that guarantees even a
     // freshly-minted sentinel (from closing the last project) is bound before
@@ -576,14 +625,18 @@ void AppController::rebindActiveProject() {
     // query resolves against it.
     runController_->setProject(activeProject());
 
+    if (repopulateTree) {
+        populateWorkspaceTree();
+    }
+
     if (!activeProject().hasProject()) {
         // The active slot has no project (e.g. the last collection was closed).
         // Show the empty state rather than dereferencing an unloaded project.
         projectName_.clear();
         resources_.reset();
         operations_.reset();
-        tree_.clear();
         selectedModule_.clear();
+        closeOperation();
         status_.clear();
         emit projectChanged();
         emit selectionChanged();
@@ -593,7 +646,6 @@ void AppController::rebindActiveProject() {
 
     projectName_ = activeProject().name();
     resources_.reload(activeProject().project());
-    tree_.populate(activeProject().project());
     status_ = QStringLiteral("%1 modules").arg(resourceCount());
     // Point the saved-example store at this project (per-project isolation) and
     // re-apply the explorer's example child rows from disk.
@@ -617,16 +669,64 @@ void AppController::rebindActiveProject() {
         }
         emit environmentChanged();
     }
-    // Auto-select the first module so the center pane isn't empty on open.
+    // Reset the open operation — the previously-open op belonged to the prior
+    // active project. Callers select what comes next (first module on a fresh
+    // load / switcher activation; a specific op on a tree click).
     selectedModule_.clear();
     operations_.reset();
-    if (!activeProject().project().resources.empty()) {
-        selectModule(
-            QString::fromStdString(activeProject().project().resources.begin()->first.value));
-    }
+    closeOperation();
     refreshExamples();
     emit projectChanged();
+    emit selectionChanged();
     emit openProjectsChanged();
+}
+
+bool AppController::activateForRow(const QString& projectRoot) {
+    const int idx = workspace_->indexOfRoot(projectRoot);
+    if (idx < 0) {
+        return false;  // unknown collection
+    }
+    if (idx == workspace_->activeIndex()) {
+        return true;  // already active — safe to proceed
+    }
+    if (runController_->isRunning()) {
+        emit notify(tr("Finish the current run before switching projects."), true);
+        return false;  // can't switch mid-run
+    }
+    workspace_->setActiveIndex(idx);
+    persistActiveProject();
+    // No tree repopulate (the tree already shows every collection; the active
+    // highlight follows AppController.projectRoot reactively) and no
+    // auto-select (the caller opens a specific operation).
+    rebindActiveProject(/*repopulateTree=*/false);
+    return true;
+}
+
+void AppController::selectOperationInProject(const QString& projectRoot,
+                                             const QString& operationId) {
+    if (!activateForRow(projectRoot)) {
+        return;
+    }
+    selectOperationById(operationId);
+}
+
+void AppController::activateOperationInProject(const QString& projectRoot,
+                                               const QString& operationId) {
+    if (!activateForRow(projectRoot)) {
+        return;
+    }
+    activateOperationById(operationId);
+}
+
+bool AppController::activateProjectByRoot(const QString& projectRoot) {
+    return activateForRow(projectRoot);
+}
+
+void AppController::closeProjectByRoot(const QString& projectRoot) {
+    const int idx = workspace_->indexOfRoot(projectRoot);
+    if (idx >= 0) {
+        closeProject(idx);
+    }
 }
 
 QString AppController::projectRoot() const {
@@ -638,13 +738,19 @@ QVariantList AppController::recentProjects() const {
     const int count = settings.beginReadArray(QStringLiteral("workspace/recentProjects"));
     QVariantList out;
     out.reserve(count);
+    QSet<QString> seen;
     for (int i = 0; i < count; ++i) {
         settings.setArrayIndex(i);
-        const QString path = settings.value(QStringLiteral("path")).toString();
-        // Skip stale entries whose project was moved or deleted on disk.
-        if (path.isEmpty() || !QFileInfo::exists(path + QStringLiteral("/reqloom.yaml"))) {
+        // Normalize so legacy entries stored with/without a trailing slash
+        // collapse to one — otherwise the same project appears twice.
+        const QString path =
+            canonicalProjectPath(settings.value(QStringLiteral("path")).toString());
+        // Skip empties, duplicates, and stale entries (project moved/deleted).
+        if (path.isEmpty() || seen.contains(path) ||
+            !QFileInfo::exists(path + QStringLiteral("/reqloom.yaml"))) {
             continue;
         }
+        seen.insert(path);
         const QString name = settings.value(QStringLiteral("name")).toString();
         QVariantMap entry;
         entry.insert(QStringLiteral("name"), name.isEmpty() ? QFileInfo(path).fileName() : name);
@@ -680,9 +786,12 @@ void AppController::recordRecentProject(const QString& name, const QString& path
     // ponytail: capped at 15 entries — a flat rewrite is fine at this size; a
     // larger list would want an LRU structure instead of a linear rebuild.
     constexpr int kMaxRecent = 15;
+    // Normalize so a re-open under a differently-spelled path (trailing slash,
+    // `..`) doesn't create a second recent entry for the same project.
+    const QString canonical = canonicalProjectPath(path);
     QVariantMap current;
-    current.insert(QStringLiteral("name"), name.isEmpty() ? QFileInfo(path).fileName() : name);
-    current.insert(QStringLiteral("path"), path);
+    current.insert(QStringLiteral("name"), name.isEmpty() ? QFileInfo(canonical).fileName() : name);
+    current.insert(QStringLiteral("path"), canonical);
 
     QVariantList merged;
     merged.append(current);
@@ -690,7 +799,7 @@ void AppController::recordRecentProject(const QString& name, const QString& path
         if (merged.size() >= kMaxRecent) {
             break;
         }
-        if (v.toMap().value(QStringLiteral("path")).toString() != path) {
+        if (canonicalProjectPath(v.toMap().value(QStringLiteral("path")).toString()) != canonical) {
             merged.append(v);
         }
     }
@@ -872,11 +981,13 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
 }
 
 void AppController::onLoaded() {
-    // A fresh load: record it in recents + the open set, then rebind the UI.
+    // A fresh load: record it in recents + the open set, then rebind the UI
+    // (rebuilding the aggregated tree) and open the project's first module.
     recordRecentProject(activeProject().name(), activeProject().rootPath());
     persistOpenProjects();
     persistActiveProject();
-    rebindActiveProject();
+    rebindActiveProject(/*repopulateTree=*/true);
+    selectFirstModule();
 }
 
 void AppController::onSaved() {
@@ -885,7 +996,7 @@ void AppController::onSaved() {
     // models but preserve the selected module + open operation so saving from
     // the response/chain editor doesn't bounce them back to the first module.
     resources_.reload(activeProject().project());
-    tree_.populate(activeProject().project());
+    populateWorkspaceTree();
     status_ = QStringLiteral("%1 modules").arg(resourceCount());
     exampleStore_.setProjectRoot(activeProject().rootPath());
 
@@ -2617,12 +2728,15 @@ void AppController::refreshExamples() {
     // resets the tree model, so only call it on load + after example mutations
     // — never on plain selection (which would collapse the TreeView).
     QMap<QString, QList<ProjectTreeModel::ExampleRow>> byOperation;
+    // Scope example rows to the active project so identically-named operations
+    // in other open collections don't inherit them.
+    const QString activeRoot = activeProject().rootPath();
     for (const QString& id : exampleStore_.operationIds()) {
         QList<ProjectTreeModel::ExampleRow> rows;
         for (const SavedResponse& r : exampleStore_.list(id)) {
             rows.append(ProjectTreeModel::ExampleRow{r.name, r.status});
         }
-        byOperation.insert(id, rows);
+        byOperation.insert(ProjectTreeModel::exampleKey(activeRoot, id), rows);
     }
     tree_.setSavedExamples(byOperation);
 }
@@ -2640,8 +2754,9 @@ void AppController::onLoadFailed(const QString& code, const QString& detail) {
     projectName_.clear();
     resources_.reset();
     operations_.reset();
-    tree_.clear();
     selectedModule_.clear();
+    // Keep any other open collections visible — only the failed slot is empty.
+    populateWorkspaceTree();
     status_ = QStringLiteral("Load failed (%1): %2").arg(code, detail);
     emit projectChanged();
     emit selectionChanged();

@@ -515,6 +515,10 @@ public:
     /// not delete anything on disk). No-op while a run is in flight on it.
     Q_INVOKABLE void closeProject(int index);
 
+    /// Close the open collection identified by its root path. Used by the
+    /// aggregated tree's per-project context menu.
+    Q_INVOKABLE void closeProjectByRoot(const QString& projectRoot);
+
     /// Import an OpenAPI 3.x document (`specFile`) into a Reqloom project
     /// written to `targetDir`, then load it. `overwrite` must be true to
     /// replace an existing reqloom.yaml in `targetDir`. The parse + write run
@@ -608,6 +612,21 @@ public:
     Q_INVOKABLE void editOperationById(const QString& operationId);
     /// Activate an operation row (double-click / Enter): open it and run it.
     Q_INVOKABLE void activateOperationById(const QString& operationId);
+
+    // ── Multi-project selection (aggregated explorer tree) ───────────────────
+    /// Select an operation in a specific open collection: activate that project
+    /// (if not already active) then open the operation. Used by the aggregated
+    /// tree where a row's owning project may differ from the active one.
+    Q_INVOKABLE void selectOperationInProject(const QString& projectRoot,
+                                              const QString& operationId);
+    /// Like selectOperationInProject, then run it (double-click / Enter).
+    Q_INVOKABLE void activateOperationInProject(const QString& projectRoot,
+                                                const QString& operationId);
+    /// Make the collection with `projectRoot` active without opening an
+    /// operation. Returns true if the collection is now (or was already) active,
+    /// false if it couldn't switch (unknown root, or a run is in flight) — the
+    /// caller must not perform a project-scoped action when false.
+    Q_INVOKABLE bool activateProjectByRoot(const QString& projectRoot);
 
     // ── Live filter ────────────────────────────────────────────────────────
     /// Set the explorer's fuzzy filter text.
@@ -744,7 +763,16 @@ private:
     /// Rebind every per-active-project view + the run controller to the current
     /// active project. Shared by a fresh load (`onLoaded`) and a plain switch
     /// (`activateProject`).
-    void rebindActiveProject();
+    void rebindActiveProject(bool repopulateTree = true);
+    /// Rebuild the aggregated explorer tree from every open collection.
+    void populateWorkspaceTree();
+    /// Select the active project's first module (used after a fresh load or a
+    /// switcher activation so the centre pane isn't empty).
+    void selectFirstModule();
+    /// Make the collection with `projectRoot` active (no tree repopulate, no
+    /// auto-select) so a subsequent select/run/context action targets it.
+    /// Returns false if it couldn't switch (unknown root, or a run is running).
+    [[nodiscard]] bool activateForRow(const QString& projectRoot);
     /// Persist the open-project set + active project so the workspace restores
     /// on next launch. `restoreOpenProjects` re-opens them at construction.
     void persistOpenProjects();
