@@ -107,14 +107,14 @@ ApplicationWindow {
             title: qsTr("File")
             MenuItem {
                 text: qsTr("New Project…")
-                onTriggered: newProjectFolderDialog.open()
+                onTriggered: newProjectDialog.openDialog()
             }
             MenuItem {
                 text: qsTr("Open Project…")
                 onTriggered: folderDialog.open()
             }
             MenuItem {
-                text: qsTr("Import…")
+                text: qsTr("Import (OpenAPI, Postman)…")
                 onTriggered: importSpecDialog.open()
             }
             MenuItem {
@@ -347,17 +347,52 @@ ApplicationWindow {
                 }
                 Instantiator {
                     model: switcherMenu.items
-                    delegate: GlassMenuItem {
+                    // Custom delegate so a "header" row renders as a section
+                    // divider strip (small uppercase label + rule line) rather
+                    // than looking like a clickable project.
+                    delegate: MenuItem {
+                        id: swItem
                         required property var modelData
                         readonly property bool isHeader: modelData.kind === "header"
-                        // A header is a non-interactive section label.
                         enabled: !isHeader
-                        text: modelData.kind === "open" ? ((modelData.active ? "●  " : "") + modelData.label) : modelData.label
+                        implicitHeight: isHeader ? 26 : DesignTokens.controlHeight
+                        horizontalPadding: DesignTokens.spaceMd
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: (!swItem.isHeader && swItem.highlighted) ? DesignTokens.accentMuted : "transparent"
+                        }
+                        contentItem: Item {
+                            RowLayout {
+                                anchors.fill: parent
+                                visible: swItem.isHeader
+                                spacing: DesignTokens.spaceSm
+                                Label {
+                                    text: swItem.modelData.label.toUpperCase()
+                                    color: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.weight: DesignTokens.weightSemiBold
+                                }
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignVCenter
+                                    implicitHeight: 1
+                                    color: DesignTokens.borderSubtle
+                                }
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: !swItem.isHeader
+                                text: swItem.modelData.kind === "open" ? ((swItem.modelData.active ? "●  " : "") + swItem.modelData.label) : swItem.modelData.label
+                                color: DesignTokens.textPrimary
+                                font.pixelSize: DesignTokens.fontBody
+                                font.family: DesignTokens.fontSans
+                            }
+                        }
                         onTriggered: {
-                            if (modelData.kind === "open")
-                                AppController.activateProject(modelData.projectIndex);
-                            else if (modelData.kind === "recent")
-                                AppController.openProjectPath(modelData.path);
+                            if (swItem.modelData.kind === "open")
+                                AppController.activateProject(swItem.modelData.projectIndex);
+                            else if (swItem.modelData.kind === "recent")
+                                AppController.openProjectPath(swItem.modelData.path);
                         }
                     }
                     onObjectAdded: (index, object) => switcherMenu.insertItem(index, object)
@@ -379,14 +414,14 @@ ApplicationWindow {
                 MenuSeparator {}
                 GlassMenuItem {
                     text: qsTr("New Project…")
-                    onTriggered: newProjectFolderDialog.open()
+                    onTriggered: newProjectDialog.openDialog()
                 }
                 GlassMenuItem {
                     text: qsTr("Open Project…")
                     onTriggered: folderDialog.open()
                 }
                 GlassMenuItem {
-                    text: qsTr("Import…")
+                    text: qsTr("Import (OpenAPI, Postman)…")
                     onTriggered: importSpecDialog.open()
                 }
             }
@@ -693,10 +728,10 @@ ApplicationWindow {
                     heading: qsTr("Welcome to Reqloom")
                     body: qsTr("Create a new project to start building requests, open an existing one, or import an OpenAPI spec or Postman collection.")
                     actionText: qsTr("New Project")
-                    onActionTriggered: newProjectFolderDialog.open()
+                    onActionTriggered: newProjectDialog.openDialog()
                     secondaryActionText: qsTr("Open Project")
                     onSecondaryActionTriggered: folderDialog.open()
-                    tertiaryActionText: qsTr("Import…")
+                    tertiaryActionText: qsTr("Import (OpenAPI, Postman)…")
                     onTertiaryActionTriggered: importSpecDialog.open()
                 }
 
@@ -911,32 +946,36 @@ ApplicationWindow {
         onAccepted: AppController.openProject(selectedFolder)
     }
 
-    // ── New Project flow: pick a folder, then name it ───────────────────────
+    // ── New Project: a single modal with a name + a location (Browse) — no
+    //    surprise file manager opening before the user knows what's happening.
     FolderDialog {
         id: newProjectFolderDialog
-        title: qsTr("Choose a folder for the new project")
-        onAccepted: {
-            newProjectNameDialog.folderUrl = selectedFolder;
-            newProjectNameDialog.open();
-        }
+        title: qsTr("Choose a location for the new project")
+        // Only fills the dialog's location field; it never creates on its own.
+        onAccepted: newProjectDialog.folderUrl = selectedFolder
     }
 
     Dialog {
-        id: newProjectNameDialog
+        id: newProjectDialog
         modal: true
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 420
+        width: 460
         padding: DesignTokens.spaceLg
-        title: qsTr("Name your project")
+        title: qsTr("New Project")
 
         property url folderUrl
 
-        onOpened: {
-            projectNameField.text = "";
-            projectNameField.forceActiveFocus();
+        function openDialog() {
+            npNameField.text = "";
+            folderUrl = "";
+            open();
         }
+        onOpened: npNameField.forceActiveFocus()
+
+        readonly property string folderDisplay: folderUrl.toString().length > 0 ? decodeURIComponent(folderUrl.toString().replace(/^file:\/\//, "")) : ""
+        readonly property bool canCreate: AppController.isValidName(npNameField.text) && folderDisplay.length > 0
 
         header: DialogHeader {
             title: qsTr("New Project")
@@ -950,13 +989,14 @@ ApplicationWindow {
 
         contentItem: ColumnLayout {
             spacing: DesignTokens.spaceSm
+
             Label {
                 text: qsTr("Project name")
                 color: DesignTokens.textSecondary
                 font.pixelSize: DesignTokens.fontLabel
             }
             TextField {
-                id: projectNameField
+                id: npNameField
                 Layout.fillWidth: true
                 placeholderText: qsTr("My API project")
                 color: DesignTokens.textPrimary
@@ -966,12 +1006,61 @@ ApplicationWindow {
                     radius: DesignTokens.radiusSm
                     color: DesignTokens.surfaceSunken
                     border.width: 1
-                    border.color: projectNameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                    border.color: npNameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
                 }
-                onAccepted: if (AppController.isValidName(text)) {
-                    newProjectNameDialog.accept();
+                onAccepted: if (newProjectDialog.canCreate) {
+                    newProjectDialog.accept();
                 }
             }
+
+            Label {
+                text: qsTr("Location")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontLabel
+                Layout.topMargin: DesignTokens.spaceXs
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: DesignTokens.spaceSm
+                TextField {
+                    id: npLocationField
+                    Layout.fillWidth: true
+                    readOnly: true
+                    text: newProjectDialog.folderDisplay
+                    placeholderText: qsTr("Choose a folder…")
+                    color: DesignTokens.textPrimary
+                    placeholderTextColor: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    font.family: DesignTokens.fontMono
+                    background: Rectangle {
+                        radius: DesignTokens.radiusSm
+                        color: DesignTokens.surfaceSunken
+                        border.width: 1
+                        border.color: DesignTokens.borderSubtle
+                    }
+                }
+                Button {
+                    text: qsTr("Browse…")
+                    implicitHeight: 34
+                    leftPadding: DesignTokens.spaceMd
+                    rightPadding: DesignTokens.spaceMd
+                    onClicked: newProjectFolderDialog.open()
+                    background: Rectangle {
+                        radius: DesignTokens.radiusSm
+                        color: "transparent"
+                        border.width: 1
+                        border.color: DesignTokens.borderSubtle
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontLabel
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+
             Label {
                 Layout.fillWidth: true
                 text: qsTr("A reqloom.yaml is created in the chosen folder.")
@@ -983,12 +1072,12 @@ ApplicationWindow {
 
         footer: DialogButtons {
             okText: qsTr("Create")
-            okEnabled: AppController.isValidName(projectNameField.text)
-            onAccepted: newProjectNameDialog.accept()
-            onRejected: newProjectNameDialog.reject()
+            okEnabled: newProjectDialog.canCreate
+            onAccepted: newProjectDialog.accept()
+            onRejected: newProjectDialog.reject()
         }
 
-        onAccepted: AppController.createProject(folderUrl, projectNameField.text)
+        onAccepted: AppController.createProject(folderUrl, npNameField.text)
     }
 
     // ── Import flow: pick a spec/collection; the project is created in a
@@ -1427,7 +1516,7 @@ ApplicationWindow {
                         commandPalette.close();
                         switch (paletteItem.itemAction) {
                         case "newProject":
-                            newProjectFolderDialog.open();
+                            newProjectDialog.openDialog();
                             break;
                         case "openProject":
                             folderDialog.open();
