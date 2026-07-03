@@ -308,45 +308,18 @@ ApplicationWindow {
             GlassMenu {
                 id: switcherMenu
                 property var items: []
-                // Build a combined list: open collections first (active marked),
-                // then recent collections that aren't currently open (to reopen).
+                // The open collections only (active one marked). Recent/closed
+                // collections are reopened via Open Project — mixing them here
+                // made the same project appear twice.
                 function reload() {
-                    const open = AppController.openProjects();
-                    const openPaths = open.map(o => o.path);
-                    const list = [];
-                    for (const o of open) {
-                        list.push({
-                            kind: "open",
-                            label: o.name,
-                            projectIndex: o.index,
-                            active: o.active
-                        });
-                    }
-                    for (const r of AppController.recentProjects()) {
-                        if (!openPaths.includes(r.path)) {
-                            list.push({
-                                kind: "recent",
-                                label: r.name,
-                                path: r.path
-                            });
-                        }
-                    }
-                    items = list;
-                }
-                function hasActiveOpen() {
-                    return items.some(it => it.kind === "open" && it.active);
+                    items = AppController.openProjects();
                 }
                 Instantiator {
                     model: switcherMenu.items
                     delegate: GlassMenuItem {
                         required property var modelData
-                        text: (modelData.active ? "●  " : "") + modelData.label
-                        onTriggered: {
-                            if (modelData.kind === "open")
-                                AppController.activateProject(modelData.projectIndex);
-                            else
-                                AppController.openProjectPath(modelData.path);
-                        }
+                        text: (modelData.active ? "●  " : "") + modelData.name
+                        onTriggered: AppController.activateProject(modelData.index)
                     }
                     onObjectAdded: (index, object) => switcherMenu.insertItem(index, object)
                     onObjectRemoved: (index, object) => switcherMenu.removeItem(object)
@@ -357,8 +330,8 @@ ApplicationWindow {
                     enabled: AppController.projectName.length > 0
                     onTriggered: {
                         for (const it of switcherMenu.items) {
-                            if (it.kind === "open" && it.active) {
-                                AppController.closeProject(it.projectIndex);
+                            if (it.active) {
+                                AppController.closeProject(it.index);
                                 break;
                             }
                         }
