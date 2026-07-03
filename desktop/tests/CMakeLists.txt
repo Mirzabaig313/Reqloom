@@ -74,11 +74,14 @@ gtest_discover_tests(reqloom-desktop-ui-tests
 add_executable(reqloom-desktop-secret-tests
     unit/SecretManagerTest.cpp
     unit/ProjectModelTest.cpp
+    unit/WorkspaceModelTest.cpp
     unit/PathEvalTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/WorkspaceModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/WorkspaceModel.h
 )
 target_include_directories(reqloom-desktop-secret-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src

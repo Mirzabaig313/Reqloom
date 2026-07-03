@@ -21,6 +21,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 
 namespace reqloom::desktop {
 
@@ -85,6 +86,13 @@ public:
     RunController& operator=(RunController&&) = delete;
 
     [[nodiscard]] bool isRunning() const noexcept;
+
+    /// Point the controller at a different project (workspace switch). Each
+    /// project keeps its own RunContext (sessions + extraction cache), keyed by
+    /// project root, so switching collections preserves each one's logins.
+    /// Must not be called while a run is in flight (the caller blocks switches
+    /// during a run).
+    void setProject(const ProjectModel& project) noexcept;
 
     /// Resets the run context's session + extraction caches. Refused while
     /// a run is in flight.
@@ -159,10 +167,23 @@ signals:
 private:
     void publishEvent(const engine::RunEvent& event);
 
-    engine::ExecutionEngine& engine_;
-    const ProjectModel& project_;
+    /// The active project's RunContext, or nullptr when none has been created
+    /// yet (no run since this project became active). Read paths use this.
+    [[nodiscard]] engine::RunContext* findActiveContext() const;
+    /// The active project's RunContext, creating it on first use. Run paths
+    /// use this.
+    engine::RunContext& contextForActive();
 
-    std::unique_ptr<engine::RunContext> context_;
+    engine::ExecutionEngine& engine_;
+    const ProjectModel* project_;
+
+    // Per-project run contexts keyed by project root, so switching collections
+    // preserves each project's sessions + extraction cache. Node references are
+    // stable (no eviction), so a worker capturing `&ctx` stays valid across a
+    // switch (switches are blocked during a run anyway).
+    // ponytail: contexts are never evicted — session-lifetime memory. If a
+    // workspace churns through many projects, evict on close instead.
+    std::map<std::string, std::unique_ptr<engine::RunContext>> contexts_;
     QFutureWatcher<RunReport> watcher_;
     bool running_{false};
     bool captureResponseBodies_{false};

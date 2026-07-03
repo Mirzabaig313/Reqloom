@@ -38,6 +38,7 @@
 
 namespace reqloom::desktop {
 class ProjectModel;
+class WorkspaceModel;
 }  // namespace reqloom::desktop
 
 class QQmlEngine;
@@ -194,7 +195,7 @@ public:
     [[nodiscard]] QString status() const { return status_; }
     /// Returns a raw pointer to the current ProjectModel for C++ consumers
     /// such as SecretsController (never exposed as a QML property).
-    [[nodiscard]] const ProjectModel* projectRaw() const noexcept { return project_.get(); }
+    [[nodiscard]] const ProjectModel* projectRaw() const noexcept { return &activeProject(); }
     [[nodiscard]] ResourceListModel* resources() { return &resources_; }
     [[nodiscard]] OperationListModel* operations() { return &operations_; }
     [[nodiscard]] QString selectedModule() const { return selectedModule_; }
@@ -501,6 +502,19 @@ public:
     /// Drop a project from the workspace switcher list (does not touch disk).
     Q_INVOKABLE void removeRecentProject(const QString& path);
 
+    /// The projects currently OPEN in the workspace (loaded collections), as a
+    /// list of {name, path, index, active} maps, in workspace order. Drives the
+    /// switcher's open-collections section.
+    Q_INVOKABLE [[nodiscard]] QVariantList openProjects();
+
+    /// Switch the active project to the open project at `index` (rebinds all
+    /// views + the run controller). No-op while a run is in flight.
+    Q_INVOKABLE void activateProject(int index);
+
+    /// Close the open project at `index` (removes it from the workspace; does
+    /// not delete anything on disk). No-op while a run is in flight on it.
+    Q_INVOKABLE void closeProject(int index);
+
     /// Import an OpenAPI 3.x document (`specFile`) into a Reqloom project
     /// written to `targetDir`, then load it. `overwrite` must be true to
     /// replace an existing reqloom.yaml in `targetDir`. The parse + write run
@@ -651,6 +665,9 @@ signals:
     /// Emitted when the workspace's recent-projects list changes (a project was
     /// opened, imported, or removed), so the switcher refreshes.
     void recentProjectsChanged();
+    /// Emitted when the set of OPEN projects changes (opened, closed, or the
+    /// active one switched), so the switcher's open-collections list refreshes.
+    void openProjectsChanged();
     void selectionChanged();
     void operationChanged();
     void environmentChanged();
@@ -711,10 +728,28 @@ private:
     /// derived from a hash of the project root and lives under the app-data
     /// dir, so each project keeps its own history and the repo stays clean.
     void openProjectHistory(const QString& projectRoot);
+    /// The workspace's active project — the collection the UI currently edits
+    /// and runs. Never null (the workspace always holds at least one project),
+    /// so this is the single indirection every former `project_` call goes
+    /// through. Multi-Project Workspace Plan, Phase 1.
+    [[nodiscard]] ProjectModel& activeProject() noexcept;
+    [[nodiscard]] const ProjectModel& activeProject() const noexcept;
     /// Persist the just-loaded project into the workspace switcher's recent
     /// list (newest first, de-duplicated by path, capped). Emits
     /// `recentProjectsChanged`.
     void recordRecentProject(const QString& name, const QString& path);
+    /// Bind a project's load/save/failure signals to this controller's slots.
+    /// Called for the initial project and every one added to the workspace.
+    void bindProject(ProjectModel* project);
+    /// Rebind every per-active-project view + the run controller to the current
+    /// active project. Shared by a fresh load (`onLoaded`) and a plain switch
+    /// (`activateProject`).
+    void rebindActiveProject();
+    /// Persist the open-project set + active project so the workspace restores
+    /// on next launch. `restoreOpenProjects` re-opens them at construction.
+    void persistOpenProjects();
+    void persistActiveProject();
+    void restoreOpenProjects();
     /// Refresh `exampleList_` for the open operation, and rebuild the explorer
     /// tree's example child rows from the store. Called on load + after any
     /// example mutation so the panel and explorer stay in sync.
@@ -751,7 +786,7 @@ private:
     /// clobber a custom Content-Type the user typed.
     void setManagedContentType(const QString& desired);
 
-    std::unique_ptr<ProjectModel> project_;
+    std::unique_ptr<WorkspaceModel> workspace_;
     std::unique_ptr<Bootstrapper> bootstrapper_;
     std::unique_ptr<RunController> runController_;
 
