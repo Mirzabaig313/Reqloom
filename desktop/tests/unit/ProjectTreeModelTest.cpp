@@ -108,3 +108,26 @@ TEST(ProjectTreeModel, saved_examples_are_scoped_per_project) {
     EXPECT_EQ(model.rowCount(operationIndex(model, 0)), 1);
     EXPECT_EQ(model.rowCount(operationIndex(model, 1)), 0);
 }
+
+TEST(ProjectTreeModel, combined_populate_shows_examples_for_all_open_projects) {
+    // Phase 4: the tree carries every open collection's examples at once (not
+    // just the active project's), applied in a single reset.
+    ProjectTreeModel model;
+    const auto pa = makeProject("Alpha");
+    const auto pb = makeProject("Beta");
+
+    QMap<QString, QList<ProjectTreeModel::ExampleRow>> examples;
+    examples.insert(
+        ProjectTreeModel::exampleKey(QStringLiteral("/ws/alpha"), QStringLiteral("cart.add")),
+        {ProjectTreeModel::ExampleRow{QStringLiteral("a-ex"), 200}});
+    examples.insert(
+        ProjectTreeModel::exampleKey(QStringLiteral("/ws/beta"), QStringLiteral("cart.add")),
+        {ProjectTreeModel::ExampleRow{QStringLiteral("b-ex"), 201}});
+
+    model.populate({entry("/ws/alpha", "Alpha", pa, true), entry("/ws/beta", "Beta", pb, false)},
+                   examples);
+
+    // Both collections' operations carry their own example rows.
+    EXPECT_EQ(model.rowCount(operationIndex(model, 0)), 1);
+    EXPECT_EQ(model.rowCount(operationIndex(model, 1)), 1);
+}

@@ -588,23 +588,41 @@ void AppController::closeProject(int index) {
 }
 
 void AppController::populateWorkspaceTree() {
-    // Feed every open (loaded) collection to the aggregated explorer tree. The
-    // active flag drives the active-project highlight; ProjectRootRole on every
-    // row lets a click resolve the owning project.
+    // Feed every open (loaded) collection to the aggregated explorer tree, along
+    // with each collection's saved-example rows (read from its own store on
+    // disk), so examples show for ALL open projects — not just the active one.
+    // ProjectRootRole on every row lets a click resolve the owning project.
     std::vector<ProjectTreeModel::ProjectEntry> entries;
+    QMap<QString, QList<ProjectTreeModel::ExampleRow>> examples;
     for (int i = 0; i < workspace_->count(); ++i) {
         const ProjectModel* p = workspace_->at(i);
         if (p == nullptr || !p->hasProject()) {
             continue;
         }
+        const QString root = p->rootPath();
         ProjectTreeModel::ProjectEntry entry;
-        entry.root = p->rootPath();
+        entry.root = root;
         entry.name = p->name();
         entry.project = p->projectPtr();
         entry.active = i == workspace_->activeIndex();
         entries.push_back(std::move(entry));
+
+        // Each collection persists its examples under its own root; read them
+        // with a throwaway store so every project's rows appear in the tree.
+        // synchronous per-project disk read on the GUI thread, run on
+        // load/save/example-mutation (not on plain switch). Fine at expected
+        // scale; move to QtConcurrent if workspaces grow to many large projects.
+        SavedResponseStore store;
+        store.setProjectRoot(root);
+        for (const QString& id : store.operationIds()) {
+            QList<ProjectTreeModel::ExampleRow> rows;
+            for (const SavedResponse& r : store.list(id)) {
+                rows.append(ProjectTreeModel::ExampleRow{r.name, r.status});
+            }
+            examples.insert(ProjectTreeModel::exampleKey(root, id), rows);
+        }
     }
-    tree_.populate(entries);
+    tree_.populate(entries, examples);
 }
 
 void AppController::selectFirstModule() {
@@ -675,7 +693,11 @@ void AppController::rebindActiveProject(bool repopulateTree) {
     selectedModule_.clear();
     operations_.reset();
     closeOperation();
-    refreshExamples();
+    // Only refresh the open-op example panel here. The aggregated tree (with
+    // every collection's examples) is rebuilt by populateWorkspaceTree() above
+    // when repopulateTree is set; a plain project switch must NOT reset the
+    // tree (it would collapse/re-expand the whole thing).
+    refreshOpenOpExamples();
     emit projectChanged();
     emit selectionChanged();
     emit openProjectsChanged();
@@ -783,7 +805,7 @@ void AppController::recordRecentProject(const QString& name, const QString& path
     if (path.isEmpty()) {
         return;
     }
-    // ponytail: capped at 15 entries — a flat rewrite is fine at this size; a
+    // capped at 15 entries — a flat rewrite is fine at this size; a
     // larger list would want an LRU structure instead of a linear rebuild.
     constexpr int kMaxRecent = 15;
     // Normalize so a re-open under a differently-spelled path (trailing slash,
@@ -1011,7 +1033,9 @@ void AppController::onSaved() {
             operations_.reload(it->second);
         }
     }
-    refreshExamples();
+    // populateWorkspaceTree() above already rebuilt the tree (with examples);
+    // just refresh the open op's example panel here.
+    refreshOpenOpExamples();
     emit projectChanged();
     emit selectionChanged();
 
@@ -2723,22 +2747,12 @@ QString AppController::localFileFromUrl(const QUrl& url) const {
 }
 
 void AppController::refreshExamples() {
+    // An example was added/renamed/deleted: rebuild the tree (which re-reads
+    // every collection's examples) and refresh the open op's example list.
+    // Resets the tree model, so callers only use this on load / example
+    // mutation — never on a plain project switch (see rebindActiveProject).
+    populateWorkspaceTree();
     refreshOpenOpExamples();
-    // The explorer's example child rows: opId → ordered example names. This
-    // resets the tree model, so only call it on load + after example mutations
-    // — never on plain selection (which would collapse the TreeView).
-    QMap<QString, QList<ProjectTreeModel::ExampleRow>> byOperation;
-    // Scope example rows to the active project so identically-named operations
-    // in other open collections don't inherit them.
-    const QString activeRoot = activeProject().rootPath();
-    for (const QString& id : exampleStore_.operationIds()) {
-        QList<ProjectTreeModel::ExampleRow> rows;
-        for (const SavedResponse& r : exampleStore_.list(id)) {
-            rows.append(ProjectTreeModel::ExampleRow{r.name, r.status});
-        }
-        byOperation.insert(ProjectTreeModel::exampleKey(activeRoot, id), rows);
-    }
-    tree_.setSavedExamples(byOperation);
 }
 
 void AppController::refreshOpenOpExamples() {
