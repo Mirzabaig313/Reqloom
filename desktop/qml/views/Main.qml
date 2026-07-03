@@ -308,18 +308,57 @@ ApplicationWindow {
             GlassMenu {
                 id: switcherMenu
                 property var items: []
-                // The open collections only (active one marked). Recent/closed
-                // collections are reopened via Open Project — mixing them here
-                // made the same project appear twice.
+                // Open collections (active one marked ●), then a "Recent"
+                // section of collections not currently open (click to reopen).
+                // Paths are normalized upstream, so recent never duplicates an
+                // open collection.
                 function reload() {
-                    items = AppController.openProjects();
+                    const open = AppController.openProjects();
+                    const openPaths = open.map(o => o.path);
+                    const list = [];
+                    for (const o of open) {
+                        list.push({
+                            kind: "open",
+                            label: o.name,
+                            projectIndex: o.index,
+                            active: o.active
+                        });
+                    }
+                    const recents = [];
+                    for (const r of AppController.recentProjects()) {
+                        if (!openPaths.includes(r.path)) {
+                            recents.push({
+                                kind: "recent",
+                                label: r.name,
+                                path: r.path
+                            });
+                        }
+                    }
+                    if (recents.length > 0) {
+                        list.push({
+                            kind: "header",
+                            label: qsTr("Recent")
+                        });
+                        for (const r of recents) {
+                            list.push(r);
+                        }
+                    }
+                    items = list;
                 }
                 Instantiator {
                     model: switcherMenu.items
                     delegate: GlassMenuItem {
                         required property var modelData
-                        text: (modelData.active ? "●  " : "") + modelData.name
-                        onTriggered: AppController.activateProject(modelData.index)
+                        readonly property bool isHeader: modelData.kind === "header"
+                        // A header is a non-interactive section label.
+                        enabled: !isHeader
+                        text: modelData.kind === "open" ? ((modelData.active ? "●  " : "") + modelData.label) : modelData.label
+                        onTriggered: {
+                            if (modelData.kind === "open")
+                                AppController.activateProject(modelData.projectIndex);
+                            else if (modelData.kind === "recent")
+                                AppController.openProjectPath(modelData.path);
+                        }
                     }
                     onObjectAdded: (index, object) => switcherMenu.insertItem(index, object)
                     onObjectRemoved: (index, object) => switcherMenu.removeItem(object)
@@ -330,8 +369,8 @@ ApplicationWindow {
                     enabled: AppController.projectName.length > 0
                     onTriggered: {
                         for (const it of switcherMenu.items) {
-                            if (it.active) {
-                                AppController.closeProject(it.index);
+                            if (it.kind === "open" && it.active) {
+                                AppController.closeProject(it.projectIndex);
                                 break;
                             }
                         }

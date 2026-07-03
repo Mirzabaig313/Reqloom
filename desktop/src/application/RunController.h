@@ -181,7 +181,7 @@ private:
     // preserves each project's sessions + extraction cache. Node references are
     // stable (no eviction), so a worker capturing `&ctx` stays valid across a
     // switch (switches are blocked during a run anyway).
-    // ponytail: contexts are never evicted — session-lifetime memory. If a
+    // contexts are never evicted — session-lifetime memory. If a
     // workspace churns through many projects, evict on close instead.
     std::map<std::string, std::unique_ptr<engine::RunContext>> contexts_;
     QFutureWatcher<RunReport> watcher_;

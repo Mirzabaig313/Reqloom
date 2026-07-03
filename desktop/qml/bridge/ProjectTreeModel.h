@@ -90,6 +90,12 @@ public:
     /// the tree.
     void populate(const std::vector<ProjectEntry>& projects);
 
+    /// Rebuild from projects AND example rows in a single reset, so the tree
+    /// doesn't flash through two `beginResetModel` cycles when both change
+    /// together (a fresh load / edit). `examples` is keyed by `exampleKey`.
+    void populate(const std::vector<ProjectEntry>& projects,
+                  const QMap<QString, QList<ExampleRow>>& examples);
+
     /// Clear the tree (no project loaded).
     void clear();
 

@@ -188,6 +188,13 @@ void ProjectTreeModel::populate(const std::vector<ProjectEntry>& projects) {
     rebuild();
 }
 
+void ProjectTreeModel::populate(const std::vector<ProjectEntry>& projects,
+                                const QMap<QString, QList<ExampleRow>>& examples) {
+    projects_ = projects;
+    examples_ = examples;
+    rebuild();
+}
+
 void ProjectTreeModel::clear() {
     projects_.clear();
     rebuild();
