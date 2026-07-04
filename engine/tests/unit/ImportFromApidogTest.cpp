@@ -157,6 +157,34 @@ TEST(ImportFromApidog, importAny_routes_apidog_export) {
     EXPECT_TRUE(outcome->project.resources.contains(ce::ResourceId{"authentication"}));
 }
 
+TEST(ImportFromApidog, tolerates_non_object_parameter_elements) {
+    ScratchDir scratch;
+    // A crafted export with non-object entries in the parameter arrays must not
+    // crash (json::value throws on non-objects) — it should import cleanly.
+    const auto file = scratch.write("weird.apidog.json", R"JSON(
+{
+  "apidogProject": "1.0.0",
+  "info": { "name": "Weird" },
+  "apiCollection": [
+    { "name": "Root", "id": 1, "parentId": 0, "items": [
+      { "name": "Ping", "api": {
+        "method": "get", "path": "/ping",
+        "parameters": { "header": [ 42, "oops" ], "query": [ null ] },
+        "requestBody": { "type": "multipart/form-data", "parameters": [ 7 ] }
+      } }
+    ] }
+  ]
+}
+)JSON");
+
+    auto outcome = ce::importFromApidog(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* ping = findOp(outcome->project, "weird.ping");
+    ASSERT_NE(ping, nullptr);
+    EXPECT_TRUE(ping->headers.empty());
+    EXPECT_TRUE(ping->queryParams.empty());
+}
+
 TEST(ImportFromApidog, rejects_traversal_outside_project_root) {
     ScratchDir scratch;
     const auto outside = scratch.path().parent_path() / "reqloom-apidog-escape.json";

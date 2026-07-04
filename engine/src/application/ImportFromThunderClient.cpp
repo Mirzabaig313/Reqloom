@@ -389,7 +389,8 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
             // Query params — skip path variables (isPath) and disabled rows.
             if (item.contains("params") && item["params"].is_array()) {
                 for (const auto& q : item["params"]) {
-                    if (q.value("isPath", false) || q.value("isDisabled", false)) {
+                    if (!q.is_object() || q.value("isPath", false) ||
+                        q.value("isDisabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(q, "name");
@@ -402,7 +403,7 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
             // Headers.
             if (item.contains("headers") && item["headers"].is_array()) {
                 for (const auto& h : item["headers"]) {
-                    if (h.value("isDisabled", false)) {
+                    if (!h.is_object() || h.value("isDisabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(h, "name");
@@ -421,7 +422,7 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                     std::map<std::string, std::string> form;
                     if (body.contains("form") && body["form"].is_array()) {
                         for (const auto& f : body["form"]) {
-                            if (f.value("isDisabled", false)) {
+                            if (!f.is_object() || f.value("isDisabled", false)) {
                                 continue;
                             }
                             const auto key = jsonStr(f, "name");
