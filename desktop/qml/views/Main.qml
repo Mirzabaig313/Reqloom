@@ -362,7 +362,12 @@ ApplicationWindow {
                             color: (!swItem.isHeader && swItem.highlighted) ? DesignTokens.accentMuted : "transparent"
                         }
                         contentItem: Item {
+                            // Drive the menu width from the visible child so long
+                            // collection names widen the menu instead of clipping;
+                            // the row Text also elides as a safety net.
+                            implicitWidth: swItem.isHeader ? hdrRow.implicitWidth : rowText.implicitWidth
                             RowLayout {
+                                id: hdrRow
                                 anchors.fill: parent
                                 visible: swItem.isHeader
                                 spacing: DesignTokens.spaceSm
@@ -380,12 +385,16 @@ ApplicationWindow {
                                 }
                             }
                             Text {
+                                id: rowText
+                                anchors.left: parent.left
+                                anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
                                 visible: !swItem.isHeader
                                 text: swItem.modelData.kind === "open" ? ((swItem.modelData.active ? "●  " : "") + swItem.modelData.label) : swItem.modelData.label
                                 color: DesignTokens.textPrimary
                                 font.pixelSize: DesignTokens.fontBody
                                 font.family: DesignTokens.fontSans
+                                elide: Text.ElideRight
                             }
                         }
                         onTriggered: {
@@ -474,14 +483,16 @@ ApplicationWindow {
 
             Item {
                 Layout.fillWidth: true
-                Layout.maximumWidth: 200
             }
 
             // Global filter — a pill search that narrows the explorer tree,
-            // the prominent control the layout is built around.
+            // the prominent control the layout is built around. A stable
+            // preferred/min width keeps it a comfortable size; the flanking
+            // fill spacers absorb slack and centre it rather than starving it.
             Rectangle {
-                Layout.fillWidth: true
-                Layout.maximumWidth: 460
+                Layout.preferredWidth: 380
+                Layout.minimumWidth: 220
+                Layout.maximumWidth: 560
                 implicitHeight: 36
                 radius: DesignTokens.radiusPill
                 color: DesignTokens.surfaceSunken
@@ -523,7 +534,6 @@ ApplicationWindow {
 
             Item {
                 Layout.fillWidth: true
-                Layout.maximumWidth: 200
             }
             Row {
                 spacing: 0
@@ -722,7 +732,7 @@ ApplicationWindow {
 
                 // Empty state when no project loaded.
                 EmptyState {
-                    visible: !AppController.hasOperation && AppController.resourceCount === 0
+                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount === 0
                     anchors.centerIn: parent
                     useBrandLogo: true
                     heading: qsTr("Welcome to Reqloom")
@@ -740,7 +750,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     anchors.margins: DesignTokens.spaceXl
                     spacing: DesignTokens.spaceLg
-                    visible: !AppController.hasOperation && AppController.resourceCount > 0
+                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount > 0
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -828,6 +838,14 @@ ApplicationWindow {
                     anchors.fill: parent
                     anchors.margins: DesignTokens.spaceLg
                     visible: AppController.hasOperation
+                }
+
+                // Read-only actor detail (mutually exclusive with the editor;
+                // selectActor closes any open operation).
+                ActorDetail {
+                    anchors.fill: parent
+                    anchors.margins: DesignTokens.spaceLg
+                    visible: AppController.hasActor
                 }
             }
 
