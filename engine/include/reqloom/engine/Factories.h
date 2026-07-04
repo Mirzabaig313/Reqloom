@@ -108,4 +108,59 @@ struct OpenApiImportOutcome {
 [[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromPostman(
     const std::filesystem::path& collection, const std::filesystem::path& projectRoot);
 
+/// Parse an Insomnia v4 JSON export into a Project skeleton. Top-level request
+/// groups become resources, requests become operations, environment `data`
+/// blocks seed the `default` environment, and a request URL's scheme+host
+/// becomes that environment's `baseUrl`. Reuses `OpenApiImportOutcome`;
+/// `provenance.source` is `InsomniaImport`.
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromInsomnia(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot);
+
+/// Parse a Thunder Client (VS Code) collection export (JSON) into a Project.
+/// Folders become resources, requests become operations, and a request URL's
+/// scheme+host becomes the `default` environment's `baseUrl`. Reuses
+/// `OpenApiImportOutcome`.
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromThunderClient(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot);
+
+/// Parse a Hoppscotch collection export (JSON) into a Project. Folders become
+/// resources, requests become operations, and a request `endpoint`'s
+/// scheme+host becomes the `default` environment's `baseUrl`. `<<var>>`
+/// references are rewritten to `{{env.var}}`. Reuses `OpenApiImportOutcome`.
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromHoppscotch(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot);
+
+/// Parse a `.http` / `.rest` file (VS Code REST Client / JetBrains HTTP Client)
+/// into a Project. Requests separated by `###`; `@name = value` seeds the
+/// `default` environment; `{{var}}` → `{{env.var}}`. Reuses `OpenApiImportOutcome`.
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpFile(
+    const std::filesystem::path& file, const std::filesystem::path& projectRoot);
+
+/// Parse a Bruno collection into a Project. `input` may be the collection
+/// directory, its `bruno.json`, or a `.bru` file inside it. Top-level
+/// sub-directories become resources, request `.bru` files become operations,
+/// and `environments/*.bru` seed environments. Reuses `OpenApiImportOutcome`;
+/// `provenance.source` is `BrunoImport`.
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromBruno(
+    const std::filesystem::path& input, const std::filesystem::path& projectRoot);
+
+/// Parse an HTTPie client export (JSON) into a Project. The `entry` may be a
+/// workspace, collection, request, or environment. Collections become
+/// resources, requests become operations, and workspace environments seed the
+/// environments. Reuses `OpenApiImportOutcome`.
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpie(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot);
+
+/// Detect the format of `spec` (OpenAPI or a supported API-client export) and
+/// dispatch to the matching importer. This is the single entry point CLI and
+/// desktop should call so support for a new format needs no caller changes.
+/// Detection is by content sniff (and file extension where the format is
+/// text-based). Falls back to OpenAPI when nothing else matches, so the
+/// OpenAPI parser's own error surfaces for genuinely unrecognised input.
+///
+/// `projectRoot` is the containment scope: `spec` must resolve to a file under
+/// it, blocking `..` traversal.
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importAny(
+    const std::filesystem::path& spec, const std::filesystem::path& projectRoot);
+
 }  // namespace reqloom::engine

@@ -114,7 +114,7 @@ ApplicationWindow {
                 onTriggered: folderDialog.open()
             }
             MenuItem {
-                text: qsTr("Import (OpenAPI, Postman)…")
+                text: qsTr("Import (OpenAPI, Postman, Insomnia, …)…")
                 onTriggered: importSpecDialog.open()
             }
             MenuItem {
@@ -430,7 +430,7 @@ ApplicationWindow {
                     onTriggered: folderDialog.open()
                 }
                 GlassMenuItem {
-                    text: qsTr("Import (OpenAPI, Postman)…")
+                    text: qsTr("Import (OpenAPI, Postman, Insomnia, …)…")
                     onTriggered: importSpecDialog.open()
                 }
             }
@@ -741,7 +741,7 @@ ApplicationWindow {
                     onActionTriggered: newProjectDialog.openDialog()
                     secondaryActionText: qsTr("Open Project")
                     onSecondaryActionTriggered: folderDialog.open()
-                    tertiaryActionText: qsTr("Import (OpenAPI, Postman)…")
+                    tertiaryActionText: qsTr("Import (OpenAPI, Postman, Insomnia, …)…")
                     onTertiaryActionTriggered: importSpecDialog.open()
                 }
 
@@ -1104,7 +1104,7 @@ ApplicationWindow {
     FileDialog {
         id: importSpecDialog
         title: qsTr("Import an API definition")
-        nameFilters: [qsTr("OpenAPI or Postman (*.yaml *.yml *.json)"), qsTr("All files (*)")]
+        nameFilters: [qsTr("API definitions (*.yaml *.yml *.json *.http *.rest *.bru)"), qsTr("All files (*)")]
         // Empty destination → the engine defaults it to the file's own folder
         // and creates a project sub-folder named after the collection.
         onAccepted: AppController.importOpenApi(selectedFile, "", false)

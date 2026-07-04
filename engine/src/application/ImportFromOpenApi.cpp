@@ -242,6 +242,22 @@ std::string firstServerUrl(const YAML::Node& root) {
     return first["url"].as<std::string>("/");
 }
 
+/// Swagger 2.0 base URL from `schemes` + `host` + `basePath`. Falls back to
+/// `basePath` (or "/") when no host is declared — the user fills `baseUrl` in.
+std::string swagger2BaseUrl(const YAML::Node& root) {
+    const auto host = root["host"].as<std::string>("");
+    const auto basePath = root["basePath"].as<std::string>("");
+    std::string scheme = "https";
+    if (const auto& schemes = root["schemes"];
+        schemes && schemes.IsSequence() && schemes.size() > 0) {
+        scheme = schemes[0].as<std::string>("https");
+    }
+    if (host.empty()) {
+        return basePath.empty() ? "/" : basePath;
+    }
+    return scheme + "://" + host + basePath;
+}
+
 /// Rewrite `{name}` path parameters into `{{<resource>.<name>}}` template
 /// references. The engine's variable resolver will then pull the value
 /// from a previously-extracted upstream variable. Linking the upstream
@@ -521,9 +537,13 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
             invalid("openapi import: top-level document must be a YAML/JSON object"));
     }
     const auto openapiVersion = root["openapi"].as<std::string>("");
-    if (openapiVersion.empty() || !openapiVersion.starts_with("3.")) {
-        return std::unexpected(invalid("openapi import: only OpenAPI 3.x is supported (found '" +
-                                       openapiVersion + "')"));
+    const auto swaggerVersion = root["swagger"].as<std::string>("");
+    const bool isOpenApi3 = openapiVersion.starts_with("3.");
+    const bool isSwagger2 = swaggerVersion.starts_with("2.");
+    if (!isOpenApi3 && !isSwagger2) {
+        return std::unexpected(invalid(
+            "openapi import: only OpenAPI 3.x and Swagger 2.0 are supported (found openapi='" +
+            openapiVersion + "', swagger='" + swaggerVersion + "')"));
     }
 
     const auto& info = root["info"];
@@ -538,7 +558,8 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
     Outcome outcome;
     outcome.project.name = title;
     outcome.project.defaultEnvironment = "default";
-    outcome.project.environments["default"]["baseUrl"] = firstServerUrl(root);
+    outcome.project.environments["default"]["baseUrl"] =
+        isSwagger2 ? swagger2BaseUrl(root) : firstServerUrl(root);
 
     const auto importedAt = nowIso8601Utc();
     std::vector<std::string> warnings;

@@ -42,12 +42,35 @@ private:
 
 }  // namespace
 
-TEST(ImportFromOpenApi, rejects_non_openapi_3_documents) {
+TEST(ImportFromOpenApi, imports_swagger_2_0) {
     ScratchDir scratch;
     const auto spec = scratch.write("swagger2.yaml", R"YAML(
 swagger: "2.0"
 info:
-  title: Old
+  title: Old API
+host: api.example.com
+basePath: /v1
+schemes: [https]
+paths:
+  /things:
+    get: { responses: { "200": { description: ok } } }
+)YAML");
+
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    EXPECT_EQ(outcome->project.name, "Old API");
+    // schemes + host + basePath compose the baseUrl.
+    EXPECT_EQ(outcome->project.environments.at("default").at("baseUrl"),
+              "https://api.example.com/v1");
+    ASSERT_TRUE(outcome->project.resources.contains(ce::ResourceId{"thing"}));
+}
+
+TEST(ImportFromOpenApi, rejects_unrecognised_version) {
+    ScratchDir scratch;
+    const auto spec = scratch.write("weird.yaml", R"YAML(
+swagger: "1.2"
+info:
+  title: Ancient
 paths:
   /things:
     get: { responses: { "200": { description: ok } } }
@@ -55,7 +78,7 @@ paths:
 
     auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_FALSE(outcome.has_value());
-    EXPECT_NE(outcome.error().detail.find("OpenAPI 3.x"), std::string::npos);
+    EXPECT_NE(outcome.error().detail.find("Swagger 2.0"), std::string::npos);
 }
 
 TEST(ImportFromOpenApi, rejects_empty_paths) {
@@ -467,4 +490,24 @@ paths:
     auto outcome = ce::importFromOpenApi(spec, scratch.path());
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("8 MiB"), std::string::npos);
+}
+
+TEST(ImportFromOpenApi, accepts_openapi_3_2_0) {
+    ScratchDir scratch;
+    const auto spec = scratch.write("api.yaml", R"YAML(
+openapi: 3.2.0
+info:
+  title: Orders API
+paths:
+  /orders:
+    get:
+      responses:
+        '200':
+          description: ok
+)YAML");
+
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    EXPECT_EQ(outcome->project.name, "Orders API");
+    ASSERT_TRUE(outcome->project.resources.contains(ce::ResourceId{"order"}));
 }
