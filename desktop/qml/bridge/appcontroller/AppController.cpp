@@ -295,6 +295,16 @@ void AppController::setLatencySlo(int ms) {
     }
 }
 
+QStringList AppController::loadTreeExpansion() const {
+    QSettings settings;
+    return settings.value(QStringLiteral("explorer/expandedKeys")).toStringList();
+}
+
+void AppController::saveTreeExpansion(const QStringList& keys) const {
+    QSettings settings;
+    settings.setValue(QStringLiteral("explorer/expandedKeys"), keys);
+}
+
 void AppController::openProject(const QUrl& directory) {
     const QString path = directory.isLocalFile() ? directory.toLocalFile() : directory.toString();
     openProjectPath(path);
