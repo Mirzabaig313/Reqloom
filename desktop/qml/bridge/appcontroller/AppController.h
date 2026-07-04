@@ -3,10 +3,6 @@
 // state to QML. C++ owns logic/state; QML binds to these properties.
 #pragma once
 
-#include "../../src/application/Bootstrapper.h"
-#include "../../src/application/EnvironmentSettings.h"
-#include "../../src/application/RunController.h"
-#include "../../src/application/SavedResponseStore.h"
 #include "ChainEditorModel.h"
 #include "DependencyEditModel.h"
 #include "EditableKeyValueModel.h"
@@ -19,6 +15,10 @@
 #include "ResourceListModel.h"
 #include "ResponseBodyModel.h"
 #include "TimelineModel.h"
+#include "application/Bootstrapper.h"
+#include "application/EnvironmentSettings.h"
+#include "application/RunController.h"
+#include "application/SavedResponseStore.h"
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractItemModel>
@@ -81,9 +81,10 @@ class AppController : public QObject {
     // ── Actor detail (read-only panel in the centre pane) ───────────────────
     Q_PROPERTY(bool hasActor READ hasActor NOTIFY actorSelectionChanged)
     Q_PROPERTY(QString selectedActorName READ selectedActorName NOTIFY actorSelectionChanged)
-    Q_PROPERTY(QString selectedActorDescription READ selectedActorDescription
-                   NOTIFY actorSelectionChanged)
-    Q_PROPERTY(QString selectedActorStrategy READ selectedActorStrategy NOTIFY actorSelectionChanged)
+    Q_PROPERTY(
+        QString selectedActorDescription READ selectedActorDescription NOTIFY actorSelectionChanged)
+    Q_PROPERTY(
+        QString selectedActorStrategy READ selectedActorStrategy NOTIFY actorSelectionChanged)
 
     Q_PROPERTY(bool hasOperation READ hasOperation NOTIFY operationChanged)
     Q_PROPERTY(QString opName READ opName NOTIFY operationChanged)

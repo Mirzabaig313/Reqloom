@@ -83,13 +83,14 @@ add_executable(reqloom-desktop-secret-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/WorkspaceModel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/WorkspaceModel.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/ProjectTreeModel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/ProjectTreeModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/ProjectTreeModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/ProjectTreeModel.h
 )
 target_include_directories(reqloom-desktop-secret-tests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../src
         ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models
 )
 target_link_libraries(reqloom-desktop-secret-tests
     PRIVATE

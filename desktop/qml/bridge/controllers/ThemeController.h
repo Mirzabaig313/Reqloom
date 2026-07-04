@@ -5,7 +5,7 @@
 // and gets repainted on mode change via NOTIFY.
 #pragma once
 
-#include "../../src/theming/Theme.h"
+#include "theming/Theme.h"
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QObject>

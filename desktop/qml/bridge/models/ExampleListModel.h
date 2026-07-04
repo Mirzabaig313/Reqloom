@@ -4,7 +4,7 @@
 // example mutation. C++ owns the data; QML renders the rows.
 #pragma once
 
-#include "../../src/application/SavedResponseStore.h"
+#include "application/SavedResponseStore.h"
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractListModel>

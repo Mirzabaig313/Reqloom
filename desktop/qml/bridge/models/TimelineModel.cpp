@@ -1,7 +1,7 @@
 // TimelineModel — see header. Mirrors the old TimelinePanel.cpp content.
 #include "TimelineModel.h"
 
-#include "../../src/widgets/LatencyStats.h"
+#include "widgets/LatencyStats.h"
 
 #include <reqloom/engine/ErrorCodes.h>
 
