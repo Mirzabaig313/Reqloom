@@ -30,6 +30,7 @@ add_executable(reqloom-engine-unit-tests
     unit/ImportFromHttpFileTest.cpp
     unit/ImportFromBrunoTest.cpp
     unit/ImportFromHttpieTest.cpp
+    unit/ImportFromApidogTest.cpp
     unit/JsonExtractionTest.cpp
     unit/HttpLlmClientTest.cpp
     unit/TopologyTest.cpp

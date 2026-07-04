@@ -2,6 +2,7 @@
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/Hook.h>
 
+#include "ImportFromApidog.h"
 #include "ImportFromBruno.h"
 #include "ImportFromHoppscotch.h"
 #include "ImportFromHttpFile.h"
@@ -222,6 +223,16 @@ std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpie(
     return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
 }
 
+std::expected<OpenApiImportOutcome, ReqloomError> importFromApidog(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
+    ImportFromApidog const importer;
+    auto inner = importer.run(exportFile, projectRoot);
+    if (!inner) {
+        return std::unexpected(inner.error());
+    }
+    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+}
+
 namespace {
 
 /// Read up to 8 KiB of a file's head for content sniffing. Empty on error —
@@ -267,6 +278,10 @@ std::expected<OpenApiImportOutcome, ReqloomError> importAny(
     // HTTPie export ({"meta":{"format":"httpie",...}}).
     if (contains(head, "\"httpie\"")) {
         return importFromHttpie(spec, projectRoot);
+    }
+    // Apidog native export.
+    if (contains(head, "apidogProject")) {
+        return importFromApidog(spec, projectRoot);
     }
     // Postman collection export.
     if (contains(head, "schema.getpostman.com") || contains(head, "_postman_id")) {
