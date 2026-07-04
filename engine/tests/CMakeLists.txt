@@ -24,6 +24,12 @@ add_executable(reqloom-engine-unit-tests
     unit/HookTypingsEmitterTest.cpp
     unit/ImportFromOpenApiTest.cpp
     unit/ImportFromPostmanTest.cpp
+    unit/ImportFromInsomniaTest.cpp
+    unit/ImportFromThunderClientTest.cpp
+    unit/ImportFromHoppscotchTest.cpp
+    unit/ImportFromHttpFileTest.cpp
+    unit/ImportFromBrunoTest.cpp
+    unit/ImportFromHttpieTest.cpp
     unit/JsonExtractionTest.cpp
     unit/HttpLlmClientTest.cpp
     unit/TopologyTest.cpp

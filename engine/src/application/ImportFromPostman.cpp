@@ -567,7 +567,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
     // Set the environment baseUrl from the first request's host. A single
     // project-level baseUrl is a known simplification — collections that hit
     // multiple hosts get one baseUrl plus a warning (emitted above).
-    // ponytail: single baseUrl per project; multi-host would need per-op URLs.
+    // single baseUrl per project; multi-host would need per-op URLs.
     if (!projectBase.empty()) {
         env["baseUrl"] = projectBase;
     } else if (!env.contains("baseUrl")) {

@@ -2,8 +2,14 @@
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/Hook.h>
 
+#include "ImportFromBruno.h"
+#include "ImportFromHoppscotch.h"
+#include "ImportFromHttpFile.h"
+#include "ImportFromHttpie.h"
+#include "ImportFromInsomnia.h"
 #include "ImportFromOpenApi.h"
 #include "ImportFromPostman.h"
+#include "ImportFromThunderClient.h"
 
 #include "../domain/DependencyResolver.h"
 #include "../infrastructure/hooks/HookRunner.h"
@@ -21,6 +27,11 @@
 #include "../infrastructure/storage/HistoryStore.h"
 #include "../infrastructure/storage/SqliteHistoryStore.h"
 #include "../infrastructure/typings/StaticHookTypingsEmitter.h"
+
+#include <fstream>
+#include <string>
+#include <string_view>
+#include <utility>
 
 namespace reqloom::engine {
 
@@ -149,6 +160,133 @@ std::expected<OpenApiImportOutcome, ReqloomError> importFromPostman(
         return std::unexpected(inner.error());
     }
     return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+}
+
+std::expected<OpenApiImportOutcome, ReqloomError> importFromInsomnia(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
+    ImportFromInsomnia const importer;
+    auto inner = importer.run(exportFile, projectRoot);
+    if (!inner) {
+        return std::unexpected(inner.error());
+    }
+    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+}
+
+std::expected<OpenApiImportOutcome, ReqloomError> importFromThunderClient(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
+    ImportFromThunderClient const importer;
+    auto inner = importer.run(exportFile, projectRoot);
+    if (!inner) {
+        return std::unexpected(inner.error());
+    }
+    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+}
+
+std::expected<OpenApiImportOutcome, ReqloomError> importFromHoppscotch(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
+    ImportFromHoppscotch const importer;
+    auto inner = importer.run(exportFile, projectRoot);
+    if (!inner) {
+        return std::unexpected(inner.error());
+    }
+    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+}
+
+std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpFile(
+    const std::filesystem::path& file, const std::filesystem::path& projectRoot) {
+    ImportFromHttpFile const importer;
+    auto inner = importer.run(file, projectRoot);
+    if (!inner) {
+        return std::unexpected(inner.error());
+    }
+    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+}
+
+std::expected<OpenApiImportOutcome, ReqloomError> importFromBruno(
+    const std::filesystem::path& input, const std::filesystem::path& projectRoot) {
+    ImportFromBruno const importer;
+    auto inner = importer.run(input, projectRoot);
+    if (!inner) {
+        return std::unexpected(inner.error());
+    }
+    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+}
+
+std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpie(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
+    ImportFromHttpie const importer;
+    auto inner = importer.run(exportFile, projectRoot);
+    if (!inner) {
+        return std::unexpected(inner.error());
+    }
+    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+}
+
+namespace {
+
+/// Read up to 8 KiB of a file's head for content sniffing. Empty on error —
+/// the caller then falls back to the default (OpenAPI) importer.
+[[nodiscard]] std::string readHead(const std::filesystem::path& path) {
+    std::ifstream in{path, std::ios::binary};
+    if (!in) {
+        return {};
+    }
+    std::string head(8192, '\0');
+    in.read(head.data(), static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(in.gcount()));
+    return head;
+}
+
+[[nodiscard]] bool contains(const std::string& haystack, std::string_view needle) {
+    return haystack.find(needle) != std::string::npos;
+}
+
+}  // namespace
+
+std::expected<OpenApiImportOutcome, ReqloomError> importAny(
+    const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
+    // `.http` / `.rest` are text (not JSON), so route them by extension before
+    // the content sniffs.
+    std::string ext = spec.extension().string();
+    for (auto& c : ext) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c + ('a' - 'A'));
+        }
+    }
+    if (ext == ".http" || ext == ".rest") {
+        return importFromHttpFile(spec, projectRoot);
+    }
+    // Bruno: a collection directory, its bruno.json, or a .bru file.
+    std::error_code dirEc;
+    if (ext == ".bru" || spec.filename() == "bruno.json" ||
+        std::filesystem::is_directory(spec, dirEc)) {
+        return importFromBruno(spec, projectRoot);
+    }
+
+    const std::string head = readHead(spec);
+    // HTTPie export ({"meta":{"format":"httpie",...}}).
+    if (contains(head, "\"httpie\"")) {
+        return importFromHttpie(spec, projectRoot);
+    }
+    // Postman collection export.
+    if (contains(head, "schema.getpostman.com") || contains(head, "_postman_id")) {
+        return importFromPostman(spec, projectRoot);
+    }
+    // Insomnia v4 export.
+    if (contains(head, "__export_format") &&
+        (contains(head, "insomnia") || contains(head, "\"resources\""))) {
+        return importFromInsomnia(spec, projectRoot);
+    }
+    // Thunder Client (VS Code) collection export.
+    if (contains(head, "containerId") || contains(head, "colName")) {
+        return importFromThunderClient(spec, projectRoot);
+    }
+    // Hoppscotch collection export (requests carry an `endpoint` field).
+    if (contains(head, "\"endpoint\"")) {
+        return importFromHoppscotch(spec, projectRoot);
+    }
+    // Default: OpenAPI (its own error surfaces for unrecognised input).
+    return importFromOpenApi(spec, projectRoot);
 }
 
 std::expected<HookDryRunResult, ReqloomError> dryRunHook(const HookDryRunInput& input) {

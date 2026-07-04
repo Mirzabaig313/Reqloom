@@ -791,10 +791,8 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
 
         // Containment root: the spec's own directory, so an explicitly
         // chosen file always resolves inside it while the engine still
-        // rejects `..` traversal.
-        auto imported = looksLikePostman(spec)
-                            ? engine::importFromPostman(spec, spec.parent_path())
-                            : engine::importFromOpenApi(spec, spec.parent_path());
+        // rejects `..` traversal. importAny sniffs the format and dispatches.
+        auto imported = engine::importAny(spec, spec.parent_path());
         if (!imported) {
             out.status = ImportOutcome::Status::ImportFailed;
             // Prefer an actionable hint for recognizable files (Postman /

@@ -66,23 +66,10 @@ namespace reqloom::desktop::qml {
     if (head.find("\"swagger\"") != std::string::npos ||
         head.find("swagger:") != std::string::npos) {
         return QStringLiteral(
-            "Swagger 2.0 isn't supported. Convert the spec to OpenAPI 3.x and try again.");
+            "This Swagger 2.0 document couldn't be imported. Check that it's valid and has a "
+            "non-empty `paths` section.");
     }
     return {};
-}
-
-/// Cheap content sniff to pick the importer: a Postman collection export is
-/// routed to the Postman parser, everything else to the OpenAPI parser.
-[[nodiscard]] inline bool looksLikePostman(const std::filesystem::path& spec) {
-    std::ifstream in{spec, std::ios::binary};
-    if (!in) {
-        return false;
-    }
-    std::string head(8192, '\0');
-    in.read(head.data(), static_cast<std::streamsize>(head.size()));
-    head.resize(static_cast<std::size_t>(in.gcount()));
-    return head.find("schema.getpostman.com") != std::string::npos ||
-           head.find("_postman_id") != std::string::npos;
 }
 
 /// Normalize a project directory path to a stable comparison key: strips a
