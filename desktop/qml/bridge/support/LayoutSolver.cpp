@@ -1,7 +1,7 @@
 // LayoutSolver — see header. Bridges QML to ConstraintLayout + QFontMetricsF.
 #include "LayoutSolver.h"
 
-#include "../../src/widgets/ConstraintLayout.h"
+#include "widgets/ConstraintLayout.h"
 
 #include <QtGui/QFont>
 #include <QtGui/QFontMetricsF>

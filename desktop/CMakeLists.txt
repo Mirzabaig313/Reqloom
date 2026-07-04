@@ -9,40 +9,43 @@ qt_add_executable(reqloom-desktop
     qml/main.cpp
     qml/theming/DesignTokens.h
     qml/theming/DesignTokens.cpp
-    qml/bridge/ThemeController.h
-    qml/bridge/ThemeController.cpp
-    qml/bridge/SecretsController.h
-    qml/bridge/SecretsController.cpp
-    qml/bridge/ResourceListModel.cpp
-    qml/bridge/ResourceListModel.h
-    qml/bridge/ResponseBodyModel.cpp
-    qml/bridge/ResponseBodyModel.h
-    qml/bridge/OperationListModel.cpp
-    qml/bridge/OperationListModel.h
-    qml/bridge/KeyValueModel.cpp
-    qml/bridge/KeyValueModel.h
-    qml/bridge/ProjectTreeModel.cpp
-    qml/bridge/ProjectTreeModel.h
-    qml/bridge/ProjectTreeFilterModel.cpp
-    qml/bridge/ProjectTreeFilterModel.h
-    qml/bridge/DependencyEditModel.cpp
-    qml/bridge/DependencyEditModel.h
-    qml/bridge/EditableKeyValueModel.cpp
-    qml/bridge/EditableKeyValueModel.h
-    qml/bridge/TimelineModel.cpp
-    qml/bridge/TimelineModel.h
-    qml/bridge/HistoryModel.cpp
-    qml/bridge/HistoryModel.h
-    qml/bridge/BodyHighlighter.cpp
-    qml/bridge/BodyHighlighter.h
-    qml/bridge/ChainEditorModel.cpp
-    qml/bridge/ChainEditorModel.h
-    qml/bridge/LayoutSolver.cpp
-    qml/bridge/LayoutSolver.h
-    qml/bridge/ExampleListModel.cpp
-    qml/bridge/ExampleListModel.h
-    qml/bridge/AppController.cpp
-    qml/bridge/AppController.h
+    qml/bridge/controllers/ThemeController.h
+    qml/bridge/controllers/ThemeController.cpp
+    qml/bridge/controllers/SecretsController.h
+    qml/bridge/controllers/SecretsController.cpp
+    qml/bridge/models/ResourceListModel.cpp
+    qml/bridge/models/ResourceListModel.h
+    qml/bridge/models/ResponseBodyModel.cpp
+    qml/bridge/models/ResponseBodyModel.h
+    qml/bridge/models/OperationListModel.cpp
+    qml/bridge/models/OperationListModel.h
+    qml/bridge/models/KeyValueModel.cpp
+    qml/bridge/models/KeyValueModel.h
+    qml/bridge/models/ProjectTreeModel.cpp
+    qml/bridge/models/ProjectTreeModel.h
+    qml/bridge/models/ProjectTreeFilterModel.cpp
+    qml/bridge/models/ProjectTreeFilterModel.h
+    qml/bridge/models/DependencyEditModel.cpp
+    qml/bridge/models/DependencyEditModel.h
+    qml/bridge/models/EditableKeyValueModel.cpp
+    qml/bridge/models/EditableKeyValueModel.h
+    qml/bridge/models/TimelineModel.cpp
+    qml/bridge/models/TimelineModel.h
+    qml/bridge/models/HistoryModel.cpp
+    qml/bridge/models/HistoryModel.h
+    qml/bridge/support/BodyHighlighter.cpp
+    qml/bridge/support/BodyHighlighter.h
+    qml/bridge/models/ChainEditorModel.cpp
+    qml/bridge/models/ChainEditorModel.h
+    qml/bridge/support/LayoutSolver.cpp
+    qml/bridge/support/LayoutSolver.h
+    qml/bridge/models/ExampleListModel.cpp
+    qml/bridge/models/ExampleListModel.h
+    qml/bridge/appcontroller/AppController.cpp
+    qml/bridge/appcontroller/AppController.h
+    qml/bridge/appcontroller/AppControllerInternal.h
+    qml/bridge/appcontroller/AppControllerChain.cpp
+    qml/bridge/appcontroller/AppControllerEntities.cpp
     src/application/ProjectModel.cpp
     src/application/ProjectModel.h
     src/application/WorkspaceModel.cpp
@@ -187,6 +190,10 @@ target_include_directories(reqloom-desktop
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge/appcontroller
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge/controllers
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge/models
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge/support
         ${CMAKE_CURRENT_SOURCE_DIR}/qml/theming
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
