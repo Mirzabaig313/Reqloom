@@ -78,6 +78,13 @@ class AppController : public QObject {
     Q_PROPERTY(ChainEditorModel* newEndpointDepExtracts READ newEndpointDepExtracts CONSTANT)
 
     // Selected operation (request editor)
+    // ── Actor detail (read-only panel in the centre pane) ───────────────────
+    Q_PROPERTY(bool hasActor READ hasActor NOTIFY actorSelectionChanged)
+    Q_PROPERTY(QString selectedActorName READ selectedActorName NOTIFY actorSelectionChanged)
+    Q_PROPERTY(QString selectedActorDescription READ selectedActorDescription
+                   NOTIFY actorSelectionChanged)
+    Q_PROPERTY(QString selectedActorStrategy READ selectedActorStrategy NOTIFY actorSelectionChanged)
+
     Q_PROPERTY(bool hasOperation READ hasOperation NOTIFY operationChanged)
     Q_PROPERTY(QString opName READ opName NOTIFY operationChanged)
     Q_PROPERTY(QString opMethod READ opMethod NOTIFY operationChanged)
@@ -219,6 +226,11 @@ public:
     Q_INVOKABLE void prepareNewActor();
     /// Load an existing actor's config into the editor's config table.
     Q_INVOKABLE void prepareEditActor(const QString& actorId);
+
+    /// Show an actor's read-only detail in the centre pane. Activates the
+    /// owning collection, seeds the actor accessors (via prepareEditActor), and
+    /// clears any open operation (they share the centre pane).
+    Q_INVOKABLE void selectActor(const QString& projectRoot, const QString& actorId);
     /// Create-or-update an actor. `originalId` empty → create; otherwise edit
     /// (renaming when `name` differs). Config comes from `editActorConfig`; the
     /// login request from the auth* args + `actorAuthExtract`; the refresh block
@@ -283,6 +295,11 @@ public:
         return &newEndpointExtractions_;
     }
     [[nodiscard]] ChainEditorModel* newEndpointDepExtracts() { return &newEndpointDepExtracts_; }
+
+    [[nodiscard]] bool hasActor() const { return hasActor_; }
+    [[nodiscard]] QString selectedActorName() const { return selectedActorName_; }
+    [[nodiscard]] QString selectedActorDescription() const { return selectedActorDescription_; }
+    [[nodiscard]] QString selectedActorStrategy() const { return selectedActorStrategy_; }
 
     [[nodiscard]] bool hasOperation() const { return hasOperation_; }
     [[nodiscard]] QString opName() const { return opName_; }
@@ -704,6 +721,9 @@ signals:
     /// Fired after prepareNewActor/prepareEditActor seeds the actor editor, so
     /// the dialog's read-only bindings (auth method/path/body/refresh) refresh.
     void actorEditChanged();
+    /// Fired when the read-only actor detail selection changes (an actor was
+    /// selected, or cleared because an operation/module was opened).
+    void actorSelectionChanged();
 
     /// Fired when the env editor's Base URL field is seeded programmatically.
     void editEnvBaseUrlChanged();
@@ -769,6 +789,8 @@ private:
     /// Select the active project's first module (used after a fresh load or a
     /// switcher activation so the centre pane isn't empty).
     void selectFirstModule();
+    /// Clear the read-only actor detail (an operation/module took the pane).
+    void clearActorSelection();
     /// Make the collection with `projectRoot` active (no tree repopulate, no
     /// auto-select) so a subsequent select/run/context action targets it.
     /// Returns false if it couldn't switch (unknown root, or a run is running).
@@ -868,6 +890,13 @@ private:
     QString actorAuthBody_;
     QString actorAuthExpect_;
     bool actorHasRefresh_{false};
+
+    // Read-only actor detail selection (centre pane).
+    bool hasActor_{false};
+    QString selectedActorId_;
+    QString selectedActorName_;
+    QString selectedActorDescription_;
+    QString selectedActorStrategy_;
     QString actorRefreshMethod_;
     QString actorRefreshPath_;
     QString actorRefreshBody_;

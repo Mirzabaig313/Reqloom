@@ -347,6 +347,8 @@ Rectangle {
                         AppController.selectOperationInProject(del.projectRoot, del.operationId);
                     } else if (del.isExample) {
                         AppController.selectExample(del.operationId, del.exampleName);
+                    } else if (del.isActor) {
+                        AppController.selectActor(del.projectRoot, del.name);
                     } else if (del.isProject) {
                         AppController.activateProjectByRoot(del.projectRoot);
                         tree.toggleExpanded(del.row);

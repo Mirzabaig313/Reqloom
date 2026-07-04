@@ -643,6 +643,9 @@ void AppController::rebindActiveProject(bool repopulateTree) {
     // query resolves against it.
     runController_->setProject(activeProject());
 
+    // A read-only actor detail belongs to the previously-active collection.
+    clearActorSelection();
+
     if (repopulateTree) {
         populateWorkspaceTree();
     }
@@ -1024,6 +1027,23 @@ void AppController::onSaved() {
 
     environments_ = activeProject().environmentNames();
 
+    // Keep an open read-only actor detail in sync after an edit. If the actor
+    // was renamed/deleted, its old id no longer exists → clear the panel.
+    if (hasActor_) {
+        const bool stillExists =
+            activeProject().hasProject() &&
+            activeProject().project().actors.count(
+                engine::ActorId{selectedActorId_.toStdString()}) > 0;
+        if (stillExists) {
+            prepareEditActor(selectedActorId_);
+            selectedActorDescription_ = actorDescription(selectedActorId_);
+            selectedActorStrategy_ = actorAuthLabel(selectedActorId_);
+            emit actorSelectionChanged();
+        } else {
+            clearActorSelection();
+        }
+    }
+
     const QString openModule = selectedModule_;
     const QString openOp = hasOperation_ ? opName_ : QString{};
     if (!openModule.isEmpty()) {
@@ -1050,7 +1070,36 @@ void AppController::onSaved() {
     }
 }
 
+void AppController::selectActor(const QString& projectRoot, const QString& actorId) {
+    if (!activateForRow(projectRoot)) {
+        return;
+    }
+    if (!activeProject().hasProject() || actorId.isEmpty()) {
+        return;
+    }
+    // Seed the actor accessors + extract/config models for the read-only view.
+    prepareEditActor(actorId);
+    selectedActorId_ = actorId;
+    selectedActorName_ = actorId;
+    selectedActorDescription_ = actorDescription(actorId);
+    selectedActorStrategy_ = actorAuthLabel(actorId);
+    hasActor_ = true;
+    // The actor detail and the request editor share the centre pane.
+    closeOperation();
+    emit actorSelectionChanged();
+}
+
+void AppController::clearActorSelection() {
+    if (!hasActor_) {
+        return;
+    }
+    hasActor_ = false;
+    selectedActorId_.clear();
+    emit actorSelectionChanged();
+}
+
 void AppController::selectModule(const QString& moduleName) {
+    clearActorSelection();
     if (!activeProject().hasProject()) {
         return;
     }
@@ -1066,6 +1115,7 @@ void AppController::selectModule(const QString& moduleName) {
 }
 
 void AppController::selectOperation(const QString& moduleName, const QString& opName) {
+    clearActorSelection();
     if (!activeProject().hasProject()) {
         return;
     }
