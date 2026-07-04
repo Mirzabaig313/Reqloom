@@ -74,6 +74,14 @@ reqloom_apply_sanitizers(reqloom-engine-infrastructure)
 add_library(reqloom-engine-application OBJECT
     src/application/RunOperationUseCase.cpp
     src/application/ImportFromOpenApi.cpp
+    src/application/ImportFromPostman.cpp
+    src/application/ImportFromInsomnia.cpp
+    src/application/ImportFromThunderClient.cpp
+    src/application/ImportFromHoppscotch.cpp
+    src/application/ImportFromHttpFile.cpp
+    src/application/ImportFromBruno.cpp
+    src/application/ImportFromHttpie.cpp
+    src/application/ImportFromApidog.cpp
     src/application/ExecutionEngine.cpp
     src/application/Factories.cpp
     src/application/PredicateEvaluator.cpp

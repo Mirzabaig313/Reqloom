@@ -106,8 +106,16 @@ ApplicationWindow {
         Menu {
             title: qsTr("File")
             MenuItem {
+                text: qsTr("New Project…")
+                onTriggered: newProjectDialog.openDialog()
+            }
+            MenuItem {
                 text: qsTr("Open Project…")
                 onTriggered: folderDialog.open()
+            }
+            MenuItem {
+                text: qsTr("Import (OpenAPI, Postman, Insomnia, …)…")
+                onTriggered: importSpecDialog.open()
             }
             MenuItem {
                 text: qsTr("Manage Secrets")
@@ -257,51 +265,176 @@ ApplicationWindow {
             anchors.rightMargin: DesignTokens.spaceLg
             spacing: DesignTokens.spaceMd
 
-            // Open Project
+            // Workspace switcher — every opened/imported collection lives here,
+            // so many projects share one window (click to switch).
             Button {
-                id: openProjectBtn
-                text: qsTr("Open Project")
+                id: projectSwitcher
                 implicitHeight: 32
                 leftPadding: DesignTokens.spaceSm
                 rightPadding: DesignTokens.spaceSm
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
-                    color: "transparent"
+                    color: projectSwitcher.hovered ? DesignTokens.accentMuted : "transparent"
                     border.width: 1
                     border.color: DesignTokens.borderSubtle
                 }
-                contentItem: Text {
-                    text: openProjectBtn.text
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                contentItem: RowLayout {
+                    spacing: DesignTokens.spaceXs
+                    AppIcon {
+                        name: "folder"
+                        size: 14
+                    }
+                    Text {
+                        text: AppController.projectName.length > 0 ? AppController.projectName : qsTr("No project")
+                        color: DesignTokens.textPrimary
+                        font.pixelSize: DesignTokens.fontLabel
+                        font.weight: DesignTokens.weightMedium
+                        elide: Text.ElideRight
+                        Layout.maximumWidth: 180
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    Text {
+                        text: "▾"
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontLabel
+                    }
                 }
-                onClicked: folderDialog.open()
+                onClicked: {
+                    switcherMenu.reload();
+                    switcherMenu.popup(projectSwitcher, 0, projectSwitcher.height);
+                }
             }
 
-            // Import OpenAPI
-            Button {
-                id: importBtn
-                text: qsTr("Import OpenAPI")
-                implicitHeight: 32
-                leftPadding: DesignTokens.spaceSm
-                rightPadding: DesignTokens.spaceSm
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: "transparent"
-                    border.width: 1
-                    border.color: DesignTokens.borderSubtle
+            GlassMenu {
+                id: switcherMenu
+                property var items: []
+                // Open collections (active one marked ●), then a "Recent"
+                // section of collections not currently open (click to reopen).
+                // Paths are normalized upstream, so recent never duplicates an
+                // open collection.
+                function reload() {
+                    const open = AppController.openProjects();
+                    const openPaths = open.map(o => o.path);
+                    const list = [];
+                    for (const o of open) {
+                        list.push({
+                            kind: "open",
+                            label: o.name,
+                            projectIndex: o.index,
+                            active: o.active
+                        });
+                    }
+                    const recents = [];
+                    for (const r of AppController.recentProjects()) {
+                        if (!openPaths.includes(r.path)) {
+                            recents.push({
+                                kind: "recent",
+                                label: r.name,
+                                path: r.path
+                            });
+                        }
+                    }
+                    if (recents.length > 0) {
+                        list.push({
+                            kind: "header",
+                            label: qsTr("Recent")
+                        });
+                        for (const r of recents) {
+                            list.push(r);
+                        }
+                    }
+                    items = list;
                 }
-                contentItem: Text {
-                    text: importBtn.text
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                Instantiator {
+                    model: switcherMenu.items
+                    // Custom delegate so a "header" row renders as a section
+                    // divider strip (small uppercase label + rule line) rather
+                    // than looking like a clickable project.
+                    delegate: MenuItem {
+                        id: swItem
+                        required property var modelData
+                        readonly property bool isHeader: modelData.kind === "header"
+                        enabled: !isHeader
+                        implicitHeight: isHeader ? 26 : DesignTokens.controlHeight
+                        horizontalPadding: DesignTokens.spaceMd
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: (!swItem.isHeader && swItem.highlighted) ? DesignTokens.accentMuted : "transparent"
+                        }
+                        contentItem: Item {
+                            // Drive the menu width from the visible child so long
+                            // collection names widen the menu instead of clipping;
+                            // the row Text also elides as a safety net.
+                            implicitWidth: swItem.isHeader ? hdrRow.implicitWidth : rowText.implicitWidth
+                            RowLayout {
+                                id: hdrRow
+                                anchors.fill: parent
+                                visible: swItem.isHeader
+                                spacing: DesignTokens.spaceSm
+                                Label {
+                                    text: swItem.modelData.label.toUpperCase()
+                                    color: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.weight: DesignTokens.weightSemiBold
+                                }
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignVCenter
+                                    implicitHeight: 1
+                                    color: DesignTokens.borderSubtle
+                                }
+                            }
+                            Text {
+                                id: rowText
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: !swItem.isHeader
+                                text: swItem.modelData.kind === "open" ? ((swItem.modelData.active ? "●  " : "") + swItem.modelData.label) : swItem.modelData.label
+                                color: DesignTokens.textPrimary
+                                font.pixelSize: DesignTokens.fontBody
+                                font.family: DesignTokens.fontSans
+                                elide: Text.ElideRight
+                            }
+                        }
+                        onTriggered: {
+                            if (swItem.modelData.kind === "open")
+                                AppController.activateProject(swItem.modelData.projectIndex);
+                            else if (swItem.modelData.kind === "recent")
+                                AppController.openProjectPath(swItem.modelData.path);
+                        }
+                    }
+                    onObjectAdded: (index, object) => switcherMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => switcherMenu.removeItem(object)
                 }
-                onClicked: importSpecDialog.open()
+                MenuSeparator {}
+                GlassMenuItem {
+                    text: qsTr("Close current project")
+                    enabled: AppController.projectName.length > 0
+                    onTriggered: {
+                        for (const it of switcherMenu.items) {
+                            if (it.kind === "open" && it.active) {
+                                AppController.closeProject(it.projectIndex);
+                                break;
+                            }
+                        }
+                    }
+                }
+                MenuSeparator {}
+                GlassMenuItem {
+                    text: qsTr("New Project…")
+                    onTriggered: newProjectDialog.openDialog()
+                }
+                GlassMenuItem {
+                    text: qsTr("Open Project…")
+                    onTriggered: folderDialog.open()
+                }
+                GlassMenuItem {
+                    text: qsTr("Import (OpenAPI, Postman, Insomnia, …)…")
+                    onTriggered: importSpecDialog.open()
+                }
             }
+
             Button {
                 id: manageSecretsBtn
                 text: qsTr("Manage Secrets")
@@ -350,14 +483,16 @@ ApplicationWindow {
 
             Item {
                 Layout.fillWidth: true
-                Layout.maximumWidth: 200
             }
 
             // Global filter — a pill search that narrows the explorer tree,
-            // the prominent control the layout is built around.
+            // the prominent control the layout is built around. A stable
+            // preferred/min width keeps it a comfortable size; the flanking
+            // fill spacers absorb slack and centre it rather than starving it.
             Rectangle {
-                Layout.fillWidth: true
-                Layout.maximumWidth: 460
+                Layout.preferredWidth: 380
+                Layout.minimumWidth: 220
+                Layout.maximumWidth: 560
                 implicitHeight: 36
                 radius: DesignTokens.radiusPill
                 color: DesignTokens.surfaceSunken
@@ -399,7 +534,6 @@ ApplicationWindow {
 
             Item {
                 Layout.fillWidth: true
-                Layout.maximumWidth: 200
             }
             Row {
                 spacing: 0
@@ -598,11 +732,17 @@ ApplicationWindow {
 
                 // Empty state when no project loaded.
                 EmptyState {
-                    visible: !AppController.hasOperation && AppController.resourceCount === 0
+                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount === 0
                     anchors.centerIn: parent
                     useBrandLogo: true
-                    actionText: qsTr("Open Project")
-                    onActionTriggered: folderDialog.open()
+                    heading: qsTr("Welcome to Reqloom")
+                    body: qsTr("Create a new project to start building requests, open an existing one, or import an OpenAPI spec or Postman collection.")
+                    actionText: qsTr("New Project")
+                    onActionTriggered: newProjectDialog.openDialog()
+                    secondaryActionText: qsTr("Open Project")
+                    onSecondaryActionTriggered: folderDialog.open()
+                    tertiaryActionText: qsTr("Import (OpenAPI, Postman, Insomnia, …)…")
+                    onTertiaryActionTriggered: importSpecDialog.open()
                 }
 
                 // Endpoint list for the selected module.
@@ -610,7 +750,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     anchors.margins: DesignTokens.spaceXl
                     spacing: DesignTokens.spaceLg
-                    visible: !AppController.hasOperation && AppController.resourceCount > 0
+                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount > 0
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -698,6 +838,14 @@ ApplicationWindow {
                     anchors.fill: parent
                     anchors.margins: DesignTokens.spaceLg
                     visible: AppController.hasOperation
+                }
+
+                // Read-only actor detail (mutually exclusive with the editor;
+                // selectActor closes any open operation).
+                ActorDetail {
+                    anchors.fill: parent
+                    anchors.margins: DesignTokens.spaceLg
+                    visible: AppController.hasActor
                 }
             }
 
@@ -816,26 +964,153 @@ ApplicationWindow {
         onAccepted: AppController.openProject(selectedFolder)
     }
 
-    // ── OpenAPI import flow: pick a spec, then a destination folder ──────────
+    // ── New Project: a single modal with a name + a location (Browse) — no
+    //    surprise file manager opening before the user knows what's happening.
+    FolderDialog {
+        id: newProjectFolderDialog
+        title: qsTr("Choose a location for the new project")
+        // Only fills the dialog's location field; it never creates on its own.
+        onAccepted: newProjectDialog.folderUrl = selectedFolder
+    }
+
+    Dialog {
+        id: newProjectDialog
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: 460
+        padding: DesignTokens.spaceLg
+        title: qsTr("New Project")
+
+        property url folderUrl
+
+        function openDialog() {
+            npNameField.text = "";
+            folderUrl = "";
+            open();
+        }
+        onOpened: npNameField.forceActiveFocus()
+
+        readonly property string folderDisplay: folderUrl.toString().length > 0 ? decodeURIComponent(folderUrl.toString().replace(/^file:\/\//, "")) : ""
+        readonly property bool canCreate: AppController.isValidName(npNameField.text) && folderDisplay.length > 0
+
+        header: DialogHeader {
+            title: qsTr("New Project")
+        }
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: ColumnLayout {
+            spacing: DesignTokens.spaceSm
+
+            Label {
+                text: qsTr("Project name")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontLabel
+            }
+            TextField {
+                id: npNameField
+                Layout.fillWidth: true
+                placeholderText: qsTr("My API project")
+                color: DesignTokens.textPrimary
+                placeholderTextColor: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontBody
+                background: Rectangle {
+                    radius: DesignTokens.radiusSm
+                    color: DesignTokens.surfaceSunken
+                    border.width: 1
+                    border.color: npNameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                }
+                onAccepted: if (newProjectDialog.canCreate) {
+                    newProjectDialog.accept();
+                }
+            }
+
+            Label {
+                text: qsTr("Location")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontLabel
+                Layout.topMargin: DesignTokens.spaceXs
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: DesignTokens.spaceSm
+                TextField {
+                    id: npLocationField
+                    Layout.fillWidth: true
+                    readOnly: true
+                    text: newProjectDialog.folderDisplay
+                    placeholderText: qsTr("Choose a folder…")
+                    color: DesignTokens.textPrimary
+                    placeholderTextColor: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    font.family: DesignTokens.fontMono
+                    background: Rectangle {
+                        radius: DesignTokens.radiusSm
+                        color: DesignTokens.surfaceSunken
+                        border.width: 1
+                        border.color: DesignTokens.borderSubtle
+                    }
+                }
+                Button {
+                    id: npBrowseBtn
+                    text: qsTr("Browse…")
+                    implicitHeight: 34
+                    leftPadding: DesignTokens.spaceMd
+                    rightPadding: DesignTokens.spaceMd
+                    onClicked: newProjectFolderDialog.open()
+                    background: Rectangle {
+                        radius: DesignTokens.radiusSm
+                        color: "transparent"
+                        border.width: 1
+                        border.color: DesignTokens.borderSubtle
+                    }
+                    contentItem: Text {
+                        text: npBrowseBtn.text
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontLabel
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("A reqloom.yaml is created in the chosen folder.")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontLabel
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Create")
+            okEnabled: newProjectDialog.canCreate
+            onAccepted: newProjectDialog.accept()
+            onRejected: newProjectDialog.reject()
+        }
+
+        onAccepted: AppController.createProject(folderUrl, npNameField.text)
+    }
+
+    // ── Import flow: pick a spec/collection; the project is created in a
+    //    named sub-folder next to the chosen file (no destination prompt). ────
     FileDialog {
         id: importSpecDialog
-        title: qsTr("Choose an OpenAPI spec")
-        nameFilters: [qsTr("OpenAPI specs (*.yaml *.yml *.json)"), qsTr("All files (*)")]
-        onAccepted: {
-            importTargetDialog.specUrl = selectedFile;
-            importTargetDialog.open();
-        }
+        title: qsTr("Import an API definition")
+        nameFilters: [qsTr("API definitions (*.yaml *.yml *.json *.http *.rest *.bru)"), qsTr("All files (*)")]
+        // Empty destination → the engine defaults it to the file's own folder
+        // and creates a project sub-folder named after the collection.
+        onAccepted: AppController.importOpenApi(selectedFile, "", false)
     }
 
-    FolderDialog {
-        id: importTargetDialog
-        title: qsTr("Choose a destination folder")
-        property url specUrl
-
-        onAccepted: AppController.importOpenApi(specUrl, selectedFolder, false)
-    }
-
-    // Confirm overwriting an existing project in the chosen destination.
+    // Confirm overwriting an existing imported project folder.
     Dialog {
         id: importOverwriteDialog
         modal: true
@@ -867,7 +1142,7 @@ ApplicationWindow {
         }
 
         contentItem: Label {
-            text: qsTr("This folder already contains a reqloom.yaml. Replace it with the imported project?")
+            text: qsTr("A project already exists at this location. Replace it with the imported project?")
             color: DesignTokens.textPrimary
             font.pixelSize: DesignTokens.fontBody
             wrapMode: Text.WordWrap
@@ -1182,11 +1457,15 @@ ApplicationWindow {
                         clear();
                         const all = [
                             {
+                                itemLabel: qsTr("New Project…"),
+                                itemAction: "newProject"
+                            },
+                            {
                                 itemLabel: qsTr("Open Project…"),
                                 itemAction: "openProject"
                             },
                             {
-                                itemLabel: qsTr("Import OpenAPI…"),
+                                itemLabel: qsTr("Import (OpenAPI or Postman)…"),
                                 itemAction: "importOpenApi"
                             },
                             {
@@ -1255,6 +1534,9 @@ ApplicationWindow {
                     onClicked: {
                         commandPalette.close();
                         switch (paletteItem.itemAction) {
+                        case "newProject":
+                            newProjectDialog.openDialog();
+                            break;
                         case "openProject":
                             folderDialog.open();
                             break;

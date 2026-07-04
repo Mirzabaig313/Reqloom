@@ -3,10 +3,7 @@
 // state to QML. C++ owns logic/state; QML binds to these properties.
 #pragma once
 
-#include "../../src/application/Bootstrapper.h"
-#include "../../src/application/EnvironmentSettings.h"
-#include "../../src/application/RunController.h"
-#include "../../src/application/SavedResponseStore.h"
+#include "AuthStepListModel.h"
 #include "ChainEditorModel.h"
 #include "DependencyEditModel.h"
 #include "EditableKeyValueModel.h"
@@ -19,6 +16,10 @@
 #include "ResourceListModel.h"
 #include "ResponseBodyModel.h"
 #include "TimelineModel.h"
+#include "application/Bootstrapper.h"
+#include "application/EnvironmentSettings.h"
+#include "application/RunController.h"
+#include "application/SavedResponseStore.h"
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractItemModel>
@@ -38,6 +39,7 @@
 
 namespace reqloom::desktop {
 class ProjectModel;
+class WorkspaceModel;
 }  // namespace reqloom::desktop
 
 class QQmlEngine;
@@ -51,6 +53,7 @@ class AppController : public QObject {
     QML_SINGLETON
 
     Q_PROPERTY(QString projectName READ projectName NOTIFY projectChanged)
+    Q_PROPERTY(QString projectRoot READ projectRoot NOTIFY projectChanged)
     Q_PROPERTY(int resourceCount READ resourceCount NOTIFY projectChanged)
     Q_PROPERTY(int latencySloP95Ms READ latencySloP95Ms NOTIFY projectChanged)
     Q_PROPERTY(QString status READ status NOTIFY projectChanged)
@@ -76,6 +79,14 @@ class AppController : public QObject {
     Q_PROPERTY(ChainEditorModel* newEndpointDepExtracts READ newEndpointDepExtracts CONSTANT)
 
     // Selected operation (request editor)
+    // ── Actor detail (read-only panel in the centre pane) ───────────────────
+    Q_PROPERTY(bool hasActor READ hasActor NOTIFY actorSelectionChanged)
+    Q_PROPERTY(QString selectedActorName READ selectedActorName NOTIFY actorSelectionChanged)
+    Q_PROPERTY(
+        QString selectedActorDescription READ selectedActorDescription NOTIFY actorSelectionChanged)
+    Q_PROPERTY(
+        QString selectedActorStrategy READ selectedActorStrategy NOTIFY actorSelectionChanged)
+
     Q_PROPERTY(bool hasOperation READ hasOperation NOTIFY operationChanged)
     Q_PROPERTY(QString opName READ opName NOTIFY operationChanged)
     Q_PROPERTY(QString opMethod READ opMethod NOTIFY operationChanged)
@@ -151,6 +162,10 @@ class AppController : public QObject {
     Q_PROPERTY(QString actorRefreshBody READ actorRefreshBody NOTIFY actorEditChanged)
     Q_PROPERTY(EditableKeyValueModel* actorAuthExtract READ actorAuthExtract CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* actorRefreshExtract READ actorRefreshExtract CONSTANT)
+    // N-step login chain editor: one row per auth step (method/path/body/expect
+    // + that step's own extractions). Edited inline in ActorDetail; read back on
+    // saveActorInline. Seeded by prepareEdit/NewActor.
+    Q_PROPERTY(AuthStepListModel* actorAuthSteps READ actorAuthSteps CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editExtractions READ editExtractions CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editAssertions READ editAssertions CONSTANT)
     Q_PROPERTY(DependencyEditModel* editDependencies READ editDependencies CONSTANT)
@@ -187,12 +202,13 @@ public:
     static AppController* create(QQmlEngine*, QJSEngine*) { return new AppController; }
 
     [[nodiscard]] QString projectName() const { return projectName_; }
+    [[nodiscard]] QString projectRoot() const;
     [[nodiscard]] int resourceCount() const;
     [[nodiscard]] int latencySloP95Ms() const;
     [[nodiscard]] QString status() const { return status_; }
     /// Returns a raw pointer to the current ProjectModel for C++ consumers
     /// such as SecretsController (never exposed as a QML property).
-    [[nodiscard]] const ProjectModel* projectRaw() const noexcept { return project_.get(); }
+    [[nodiscard]] const ProjectModel* projectRaw() const noexcept { return &activeProject(); }
     [[nodiscard]] ResourceListModel* resources() { return &resources_; }
     [[nodiscard]] OperationListModel* operations() { return &operations_; }
     [[nodiscard]] QString selectedModule() const { return selectedModule_; }
@@ -216,6 +232,11 @@ public:
     Q_INVOKABLE void prepareNewActor();
     /// Load an existing actor's config into the editor's config table.
     Q_INVOKABLE void prepareEditActor(const QString& actorId);
+
+    /// Show an actor's read-only detail in the centre pane. Activates the
+    /// owning collection, seeds the actor accessors (via prepareEditActor), and
+    /// clears any open operation (they share the centre pane).
+    Q_INVOKABLE void selectActor(const QString& projectRoot, const QString& actorId);
     /// Create-or-update an actor. `originalId` empty → create; otherwise edit
     /// (renaming when `name` differs). Config comes from `editActorConfig`; the
     /// login request from the auth* args + `actorAuthExtract`; the refresh block
@@ -234,6 +255,17 @@ public:
                                     const QString& refreshMethod,
                                     const QString& refreshPath,
                                     const QString& refreshBody);
+    /// Save an actor edited inline in ActorDetail. Same as saveActorEdits but
+    /// the login steps come from the actorAuthSteps model (full N-step chain)
+    /// rather than a single flat request. Returns true on success.
+    Q_INVOKABLE bool saveActorInline(const QString& originalId,
+                                     const QString& name,
+                                     const QString& strategyLabel,
+                                     const QString& description,
+                                     bool refreshEnabled,
+                                     const QString& refreshMethod,
+                                     const QString& refreshPath,
+                                     const QString& refreshBody);
     /// Delete an actor and clear it from any operation that referenced it.
     Q_INVOKABLE void deleteActor(const QString& actorId);
 
@@ -252,6 +284,12 @@ public:
     /// Set the project's p95 latency SLO budget (ms); 0 clears it. Persists
     /// to reqloom.yaml and refreshes the latency chart's verdict.
     Q_INVOKABLE void setLatencySlo(int ms);
+
+    /// Load / persist the set of expanded explorer-tree node keys (see
+    /// ProjectTreeFilterModel::nodeKey) so the tree's open/closed state survives
+    /// model rebuilds and app restarts. Stored in QSettings, app-global.
+    [[nodiscard]] Q_INVOKABLE QStringList loadTreeExpansion() const;
+    Q_INVOKABLE void saveTreeExpansion(const QStringList& keys) const;
 
     /// Reload the history view from the engine's run-history store (newest
     /// first). Called after each run completes and on project load.
@@ -274,12 +312,18 @@ public:
     [[nodiscard]] QString actorRefreshBody() const { return actorRefreshBody_; }
     [[nodiscard]] EditableKeyValueModel* actorAuthExtract() { return &actorAuthExtract_; }
     [[nodiscard]] EditableKeyValueModel* actorRefreshExtract() { return &actorRefreshExtract_; }
+    [[nodiscard]] AuthStepListModel* actorAuthSteps() { return &actorAuthSteps_; }
     [[nodiscard]] QStringList operationIds() const;
     [[nodiscard]] DependencyEditModel* newEndpointDependencies() { return &newEndpointDeps_; }
     [[nodiscard]] EditableKeyValueModel* newEndpointExtractions() {
         return &newEndpointExtractions_;
     }
     [[nodiscard]] ChainEditorModel* newEndpointDepExtracts() { return &newEndpointDepExtracts_; }
+
+    [[nodiscard]] bool hasActor() const { return hasActor_; }
+    [[nodiscard]] QString selectedActorName() const { return selectedActorName_; }
+    [[nodiscard]] QString selectedActorDescription() const { return selectedActorDescription_; }
+    [[nodiscard]] QString selectedActorStrategy() const { return selectedActorStrategy_; }
 
     [[nodiscard]] bool hasOperation() const { return hasOperation_; }
     [[nodiscard]] QString opName() const { return opName_; }
@@ -443,6 +487,20 @@ public:
     Q_INVOKABLE void chainSetForEachContinueOnError(const QString& operationId,
                                                     bool continueOnError);
 
+    /// Validate an extraction path against the step operation's available
+    /// response (the live body when it's the open op, else its latest saved
+    /// example). Returns {state: "match"|"nomatch"|"neutral", value: "<first
+    /// match>"} so the chain editor can flag the path and preview its resolved
+    /// value before running. "neutral" when there's nothing to check against.
+    Q_INVOKABLE [[nodiscard]] QVariantMap evaluateExtractionPath(const QString& operationId,
+                                                                 const QString& path) const;
+
+    /// Leaf JSONPaths in the step's available response matching `prefix`
+    /// (case-insensitive substring; empty = all), for the path field's
+    /// autocomplete. Empty when there's no response/example to draw from.
+    Q_INVOKABLE [[nodiscard]] QStringList suggestExtractionPaths(const QString& operationId,
+                                                                 const QString& prefix) const;
+
     /// Save a value from the current operation's response as an extracted
     /// variable (the response-driven picker). `sourcePath` is a JSONPath such
     /// as "$.data[2].id"; `variableName` is the bare name. Persists immediately
@@ -471,6 +529,36 @@ public:
 
     /// Open a project directory (the folder containing reqloom.yaml).
     Q_INVOKABLE void openProject(const QUrl& directory);
+
+    /// Switch to a known project by its absolute directory path. Used by the
+    /// workspace switcher, which lists every project opened/imported this and
+    /// prior sessions so many collections live in one window.
+    Q_INVOKABLE void openProjectPath(const QString& path);
+
+    /// The workspace's recent projects, newest first, as a list of
+    /// {name, path} maps. Stale entries (no reqloom.yaml on disk) are filtered
+    /// out. Persisted across sessions via QSettings.
+    Q_INVOKABLE [[nodiscard]] QVariantList recentProjects() const;
+
+    /// Drop a project from the workspace switcher list (does not touch disk).
+    Q_INVOKABLE void removeRecentProject(const QString& path);
+
+    /// The projects currently OPEN in the workspace (loaded collections), as a
+    /// list of {name, path, index, active} maps, in workspace order. Drives the
+    /// switcher's open-collections section.
+    Q_INVOKABLE [[nodiscard]] QVariantList openProjects();
+
+    /// Switch the active project to the open project at `index` (rebinds all
+    /// views + the run controller). No-op while a run is in flight.
+    Q_INVOKABLE void activateProject(int index);
+
+    /// Close the open project at `index` (removes it from the workspace; does
+    /// not delete anything on disk). No-op while a run is in flight on it.
+    Q_INVOKABLE void closeProject(int index);
+
+    /// Close the open collection identified by its root path. Used by the
+    /// aggregated tree's per-project context menu.
+    Q_INVOKABLE void closeProjectByRoot(const QString& projectRoot);
 
     /// Import an OpenAPI 3.x document (`specFile`) into a Reqloom project
     /// written to `targetDir`, then load it. `overwrite` must be true to
@@ -566,6 +654,21 @@ public:
     /// Activate an operation row (double-click / Enter): open it and run it.
     Q_INVOKABLE void activateOperationById(const QString& operationId);
 
+    // ── Multi-project selection (aggregated explorer tree) ───────────────────
+    /// Select an operation in a specific open collection: activate that project
+    /// (if not already active) then open the operation. Used by the aggregated
+    /// tree where a row's owning project may differ from the active one.
+    Q_INVOKABLE void selectOperationInProject(const QString& projectRoot,
+                                              const QString& operationId);
+    /// Like selectOperationInProject, then run it (double-click / Enter).
+    Q_INVOKABLE void activateOperationInProject(const QString& projectRoot,
+                                                const QString& operationId);
+    /// Make the collection with `projectRoot` active without opening an
+    /// operation. Returns true if the collection is now (or was already) active,
+    /// false if it couldn't switch (unknown root, or a run is in flight) — the
+    /// caller must not perform a project-scoped action when false.
+    Q_INVOKABLE bool activateProjectByRoot(const QString& projectRoot);
+
     // ── Live filter ────────────────────────────────────────────────────────
     /// Set the explorer's fuzzy filter text.
     Q_INVOKABLE void setExplorerFilter(const QString& text);
@@ -579,6 +682,13 @@ public:
     Q_INVOKABLE [[nodiscard]] bool isValidName(const QString& name) const;
 
     Q_INVOKABLE void createResource(const QString& name, const QString& description);
+
+    /// Scaffold and open a brand-new empty project in `directory` named `name`.
+    /// This is the "New Project" onboarding entry point: it gives a first-time
+    /// user a way to go from an empty app to a loaded project without an
+    /// existing reqloom.yaml to open. Toasts success/failure; on success the
+    /// `loaded` chain refreshes the whole UI.
+    Q_INVOKABLE void createProject(const QUrl& directory, const QString& name);
 
     /// Reset the New Endpoint dialog's chain editors and dependency candidates.
     /// `preselectedResource` selects a module up-front (empty = none).
@@ -612,6 +722,12 @@ public:
 
 signals:
     void projectChanged();
+    /// Emitted when the workspace's recent-projects list changes (a project was
+    /// opened, imported, or removed), so the switcher refreshes.
+    void recentProjectsChanged();
+    /// Emitted when the set of OPEN projects changes (opened, closed, or the
+    /// active one switched), so the switcher's open-collections list refreshes.
+    void openProjectsChanged();
     void selectionChanged();
     void operationChanged();
     void environmentChanged();
@@ -629,6 +745,9 @@ signals:
     /// Fired after prepareNewActor/prepareEditActor seeds the actor editor, so
     /// the dialog's read-only bindings (auth method/path/body/refresh) refresh.
     void actorEditChanged();
+    /// Fired when the read-only actor detail selection changes (an actor was
+    /// selected, or cleared because an operation/module was opened).
+    void actorSelectionChanged();
 
     /// Fired when the env editor's Base URL field is seeded programmatically.
     void editEnvBaseUrlChanged();
@@ -672,6 +791,39 @@ private:
     /// derived from a hash of the project root and lives under the app-data
     /// dir, so each project keeps its own history and the repo stays clean.
     void openProjectHistory(const QString& projectRoot);
+    /// The workspace's active project — the collection the UI currently edits
+    /// and runs. Never null (the workspace always holds at least one project),
+    /// so this is the single indirection every former `project_` call goes
+    /// through. Multi-Project Workspace Plan, Phase 1.
+    [[nodiscard]] ProjectModel& activeProject() noexcept;
+    [[nodiscard]] const ProjectModel& activeProject() const noexcept;
+    /// Persist the just-loaded project into the workspace switcher's recent
+    /// list (newest first, de-duplicated by path, capped). Emits
+    /// `recentProjectsChanged`.
+    void recordRecentProject(const QString& name, const QString& path);
+    /// Bind a project's load/save/failure signals to this controller's slots.
+    /// Called for the initial project and every one added to the workspace.
+    void bindProject(ProjectModel* project);
+    /// Rebind every per-active-project view + the run controller to the current
+    /// active project. Shared by a fresh load (`onLoaded`) and a plain switch
+    /// (`activateProject`).
+    void rebindActiveProject(bool repopulateTree = true);
+    /// Rebuild the aggregated explorer tree from every open collection.
+    void populateWorkspaceTree();
+    /// Select the active project's first module (used after a fresh load or a
+    /// switcher activation so the centre pane isn't empty).
+    void selectFirstModule();
+    /// Clear the read-only actor detail (an operation/module took the pane).
+    void clearActorSelection();
+    /// Make the collection with `projectRoot` active (no tree repopulate, no
+    /// auto-select) so a subsequent select/run/context action targets it.
+    /// Returns false if it couldn't switch (unknown root, or a run is running).
+    [[nodiscard]] bool activateForRow(const QString& projectRoot);
+    /// Persist the open-project set + active project so the workspace restores
+    /// on next launch. `restoreOpenProjects` re-opens them at construction.
+    void persistOpenProjects();
+    void persistActiveProject();
+    void restoreOpenProjects();
     /// Refresh `exampleList_` for the open operation, and rebuild the explorer
     /// tree's example child rows from the store. Called on load + after any
     /// example mutation so the panel and explorer stay in sync.
@@ -694,6 +846,9 @@ private:
     /// whether the variable was named plainly or with dots. Returns
     /// {operationId, sourcePath}, both empty if nothing produces it.
     [[nodiscard]] std::pair<QString, QString> findVariableProducer(const QString& token) const;
+    /// Best response body to check a step's extraction against without a
+    /// re-run: the live body when it's the open op, else its latest example.
+    [[nodiscard]] QString responseBodyFor(const QString& operationId) const;
     /// Fully-qualified id of the open operation ("<module>.<op>"), or empty.
     [[nodiscard]] QString currentOperationId() const;
     /// Assemble a one-shot RequestOverride from the current edit state. Mirrors
@@ -705,20 +860,24 @@ private:
     /// clobber a custom Content-Type the user typed.
     void setManagedContentType(const QString& desired);
 
-    std::unique_ptr<ProjectModel> project_;
+    std::unique_ptr<WorkspaceModel> workspace_;
     std::unique_ptr<Bootstrapper> bootstrapper_;
     std::unique_ptr<RunController> runController_;
 
     /// Result of an off-thread OpenAPI import, handed back to the GUI thread
     /// by `importWatcher_` so the project load + toasts run where they're safe.
     struct ImportOutcome {
-        enum class Status : std::uint8_t { Success, ImportFailed, WriteFailed };
+        enum class Status : std::uint8_t { Success, ImportFailed, WriteFailed, NeedsOverwrite };
         Status status{Status::ImportFailed};
         QString errorDetail;
         int resources{0};
         int operations{0};
         QString notes;
         QString loadDir;
+        /// Echoed back so a NeedsOverwrite outcome can re-invoke the import with
+        /// overwrite=true against the same source + destination base.
+        QString specPath;
+        QString baseDir;
     };
     QFutureWatcher<ImportOutcome> importWatcher_;
     SavedResponseStore exampleStore_;
@@ -750,11 +909,19 @@ private:
     QString editEnvBaseUrl_;
     EditableKeyValueModel actorAuthExtract_;
     EditableKeyValueModel actorRefreshExtract_;
+    AuthStepListModel actorAuthSteps_;
     QString actorAuthMethod_;
     QString actorAuthPath_;
     QString actorAuthBody_;
     QString actorAuthExpect_;
     bool actorHasRefresh_{false};
+
+    // Read-only actor detail selection (centre pane).
+    bool hasActor_{false};
+    QString selectedActorId_;
+    QString selectedActorName_;
+    QString selectedActorDescription_;
+    QString selectedActorStrategy_;
     QString actorRefreshMethod_;
     QString actorRefreshPath_;
     QString actorRefreshBody_;

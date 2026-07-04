@@ -3,7 +3,7 @@
 // set / clear individual secrets. Never returns stored values to QML.
 #pragma once
 
-#include "../../src/application/SecretManager.h"
+#include "application/SecretManager.h"
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractListModel>

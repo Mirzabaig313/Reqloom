@@ -120,6 +120,41 @@ void ProjectModel::loadFromDirectory(const QString& directory) {
     emit loaded();
 }
 
+bool ProjectModel::createProject(const QString& directory, const QString& name, QString& error) {
+    const std::filesystem::path dir{directory.toStdString()};
+
+    std::error_code ec;
+    if (!std::filesystem::exists(dir, ec)) {
+        std::filesystem::create_directories(dir, ec);
+        if (ec) {
+            error = QStringLiteral("Couldn't create the project folder: %1")
+                        .arg(QString::fromStdString(ec.message()));
+            return false;
+        }
+    }
+
+    engine::Project draft;
+    const std::string trimmed = name.trimmed().toStdString();
+    // A blank name falls back to the folder's own name so the project is never
+    // nameless; the writer round-trips it into reqloom.yaml's `name:` field.
+    draft.name = trimmed.empty() ? dir.filename().string() : trimmed;
+
+    // overwrite=false: the writer refuses to clobber an existing reqloom.yaml,
+    // so re-scaffolding over a real project surfaces an error instead of data
+    // loss. The caller shows the message and keeps its dialog open.
+    auto written = engine::writeProject(dir, draft, /*overwrite=*/false);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+
+    // Reuse the normal load path so the model rebinds and `loaded` fires,
+    // driving the same UI refresh an Open Project would. root_ is only set to
+    // `dir` on a successful parse, so it doubles as the success signal.
+    loadFromDirectory(directory);
+    return root_ == dir;
+}
+
 bool ProjectModel::hasProject() const noexcept {
     return project_ != nullptr;
 }

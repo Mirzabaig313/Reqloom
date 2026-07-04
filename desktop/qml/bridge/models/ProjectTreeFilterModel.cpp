@@ -3,7 +3,7 @@
 
 #include "ProjectTreeModel.h"
 
-#include "../../src/widgets/FuzzyMatch.h"
+#include "widgets/FuzzyMatch.h"
 
 namespace reqloom::desktop::qml {
 
@@ -25,6 +25,20 @@ void ProjectTreeFilterModel::setFilterText(const QString& text) {
     invalidateFilter();
 #endif
     emit filterTextChanged();
+}
+
+QString ProjectTreeFilterModel::nodeKey(const QModelIndex& index) const {
+    if (!index.isValid()) {
+        return {};
+    }
+    // 0x1F (unit separator) can't appear in ids/names, so it's a safe join char.
+    // Field order must match ExplorerPanel.qml keyForDelegate().
+    const QChar sep(u'\x1f');
+    return index.data(ProjectTreeModel::KindRole).toString() + sep +
+           index.data(ProjectTreeModel::ProjectRootRole).toString() + sep +
+           index.data(ProjectTreeModel::ResourceIdRole).toString() + sep +
+           index.data(ProjectTreeModel::OperationIdRole).toString() + sep +
+           index.data(ProjectTreeModel::NameRole).toString();
 }
 
 bool ProjectTreeFilterModel::filterAcceptsRow(int sourceRow,

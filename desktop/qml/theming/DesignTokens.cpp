@@ -1,6 +1,6 @@
 // DesignTokens — see header.
 #include "DesignTokens.h"
-#include "../bridge/ThemeController.h"
+#include "ThemeController.h"
 
 #include <QtQml/QQmlEngine>
 

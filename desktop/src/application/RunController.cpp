@@ -38,7 +38,7 @@ namespace ce = reqloom::engine;
 RunController::RunController(ce::ExecutionEngine& engine,
                              const ProjectModel& project,
                              QObject* parent)
-    : QObject(parent), engine_(engine), project_(project) {
+    : QObject(parent), engine_(engine), project_(&project) {
     qRegisterMetaType<RunReport>("RunReport");
 
     // The engine retains this callback for its lifetime (no unsubscribe in the
@@ -73,15 +73,32 @@ bool RunController::isRunning() const noexcept {
     return running_;
 }
 
+void RunController::setProject(const ProjectModel& project) noexcept {
+    project_ = &project;
+}
+
+engine::RunContext* RunController::findActiveContext() const {
+    const auto it = contexts_.find(project_->rootPath().toStdString());
+    return it == contexts_.end() ? nullptr : it->second.get();
+}
+
+engine::RunContext& RunController::contextForActive() {
+    auto& slot = contexts_[project_->rootPath().toStdString()];
+    if (!slot) {
+        slot = std::make_unique<engine::RunContext>();
+    }
+    return *slot;
+}
+
 void RunController::resetCaches() {
     if (running_) {
         return;
     }
-    if (context_) {
-        context_->clearExtractions();
-        if (project_.hasProject()) {
-            for (const auto& [actorId, _] : project_.project().actors) {
-                context_->invalidateSession(actorId);
+    if (auto* ctx = findActiveContext(); ctx != nullptr) {
+        ctx->clearExtractions();
+        if (project_->hasProject()) {
+            for (const auto& [actorId, _] : project_->project().actors) {
+                ctx->invalidateSession(actorId);
             }
         }
     }
@@ -108,16 +125,20 @@ void RunController::setVariableOverrides(
 }
 
 void RunController::clearExtractionCache() {
-    if (context_ && !running_) {
-        context_->clearExtractions();
+    if (running_) {
+        return;
+    }
+    if (auto* ctx = findActiveContext(); ctx != nullptr) {
+        ctx->clearExtractions();
     }
 }
 
 std::map<std::string, std::string> RunController::cookies(const ce::ActorId& actor) const {
-    if (!context_) {
+    const auto* ctx = findActiveContext();
+    if (ctx == nullptr) {
         return {};
     }
-    return context_->cookies(actor);
+    return ctx->cookies(actor);
 }
 
 namespace {
@@ -251,12 +272,8 @@ void RunController::runWithOverride(const QString& target,
                                     bool clean,
                                     bool dryRun,
                                     const RequestOverride& requestOverride) {
-    if (running_ || !project_.hasProject()) {
+    if (running_ || !project_->hasProject()) {
         return;
-    }
-
-    if (!context_) {
-        context_ = std::make_unique<ce::RunContext>();
     }
 
     ce::RunOptions options;
@@ -272,9 +289,9 @@ void RunController::runWithOverride(const QString& target,
     // loaded project. Either way the worker owns a strong ref, so a concurrent
     // reload can't dangle it.
     const std::shared_ptr<const ce::Project> project =
-        requestOverride.active ? patchedProject(project_.project(), targetId, requestOverride)
-                               : project_.projectPtr();
-    ce::RunContext& ctx = *context_;
+        requestOverride.active ? patchedProject(project_->project(), targetId, requestOverride)
+                               : project_->projectPtr();
+    ce::RunContext& ctx = contextForActive();
 
     // Value-picker pins (Option A): seed each chosen value as the resource's
     // most-recent instance so the producing op is extraction-cache-skipped and

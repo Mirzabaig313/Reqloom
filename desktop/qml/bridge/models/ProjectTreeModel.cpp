@@ -97,6 +97,8 @@ QVariant ProjectTreeModel::data(const QModelIndex& index, int role) const {
     switch (role) {
         case KindRole:
             switch (node->kind) {
+                case Kind::Project:
+                    return QStringLiteral("project");
                 case Kind::ActorGroup:
                     return QStringLiteral("actorGroup");
                 case Kind::ResourceGroup:
@@ -124,9 +126,14 @@ QVariant ProjectTreeModel::data(const QModelIndex& index, int role) const {
             return node->exampleName;
         case TooltipRole:
             return node->tooltip.isEmpty() ? node->name : node->tooltip;
+        case ProjectRootRole:
+            return node->projectRoot;
+        case ActiveRole:
+            return node->active;
         case CountRole:
             // Child count only for folder rows; leaves and operations show none.
             switch (node->kind) {
+                case Kind::Project:
                 case Kind::ActorGroup:
                 case Kind::ResourceGroup:
                 case Kind::Resource:
@@ -166,16 +173,30 @@ QHash<int, QByteArray> ProjectTreeModel::roleNames() const {
         {CountRole, "count"},
         {StatusRole, "status"},
         {StatusTokenRole, "statusToken"},
+        {ProjectRootRole, "projectRoot"},
+        {ActiveRole, "active"},
     };
 }
 
-void ProjectTreeModel::populate(const engine::Project& project) {
-    project_ = std::make_shared<const engine::Project>(project);
+QString ProjectTreeModel::exampleKey(const QString& projectRoot, const QString& operationId) {
+    // U+001F (unit separator) can't appear in a filesystem root or an op id.
+    return projectRoot + QChar(u'\x1f') + operationId;
+}
+
+void ProjectTreeModel::populate(const std::vector<ProjectEntry>& projects) {
+    projects_ = projects;
+    rebuild();
+}
+
+void ProjectTreeModel::populate(const std::vector<ProjectEntry>& projects,
+                                const QMap<QString, QList<ExampleRow>>& examples) {
+    projects_ = projects;
+    examples_ = examples;
     rebuild();
 }
 
 void ProjectTreeModel::clear() {
-    project_.reset();
+    projects_.clear();
     rebuild();
 }
 
@@ -188,40 +209,57 @@ void ProjectTreeModel::setSavedExamples(
 void ProjectTreeModel::rebuild() {
     beginResetModel();
     root_ = std::make_unique<Node>();
-    if (project_) {
-        const engine::Project& proj = *project_;
+    for (const ProjectEntry& entry : projects_) {
+        if (!entry.project) {
+            continue;
+        }
+        const engine::Project& proj = *entry.project;
 
-        Node* actorsRoot = addChild(root_.get(), Kind::ActorGroup);
+        // One Project node per open collection; its subtree carries the owning
+        // root on every descendant so a selection resolves the right project.
+        Node* projectNode = addChild(root_.get(), Kind::Project);
+        projectNode->name = entry.name.isEmpty() ? entry.root : entry.name;
+        projectNode->projectRoot = entry.root;
+        projectNode->active = entry.active;
+        projectNode->tooltip = entry.root;
+
+        Node* actorsRoot = addChild(projectNode, Kind::ActorGroup);
         actorsRoot->name = QStringLiteral("Actors");
+        actorsRoot->projectRoot = entry.root;
         for (const auto& [actorId, actor] : proj.actors) {
             Node* actorNode = addChild(actorsRoot, Kind::Actor);
             actorNode->name = QString::fromStdString(actorId.value);
+            actorNode->projectRoot = entry.root;
             actorNode->tooltip = actorNode->name;
         }
 
-        Node* resourcesRoot = addChild(root_.get(), Kind::ResourceGroup);
+        Node* resourcesRoot = addChild(projectNode, Kind::ResourceGroup);
         resourcesRoot->name = QStringLiteral("Resources");
+        resourcesRoot->projectRoot = entry.root;
         for (const auto& [resId, resource] : proj.resources) {
             Node* resNode = addChild(resourcesRoot, Kind::Resource);
             resNode->name = QString::fromStdString(resId.value);
             resNode->resourceId = resNode->name;
+            resNode->projectRoot = entry.root;
             resNode->tooltip = resNode->name;
             for (const auto& [opName, op] : resource.operations) {
                 Node* opNode = addChild(resNode, Kind::Operation);
                 const QString opId = QString::fromStdString(op.id.value);
                 opNode->name = QString::fromStdString(opName);
                 opNode->operationId = opId;
+                opNode->projectRoot = entry.root;
                 opNode->method = methodLabel(op.method);
                 opNode->tooltip =
                     QStringLiteral("%1\n%2 %3")
                         .arg(opId, opNode->method, QString::fromStdString(op.pathTemplate));
-                const auto exIt = examples_.constFind(opId);
+                const auto exIt = examples_.constFind(exampleKey(entry.root, opId));
                 if (exIt != examples_.constEnd()) {
                     for (const ExampleRow& example : exIt.value()) {
                         Node* exNode = addChild(opNode, Kind::Example);
                         exNode->name = example.name;
                         exNode->exampleName = example.name;
                         exNode->operationId = opId;
+                        exNode->projectRoot = entry.root;
                         exNode->exampleStatus = example.status;
                         exNode->tooltip = QStringLiteral("Saved example — click to load");
                     }

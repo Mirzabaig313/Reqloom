@@ -2,7 +2,7 @@
 #include "SecretsController.h"
 #include "AppController.h"
 
-#include "../../src/application/ProjectModel.h"
+#include "application/ProjectModel.h"
 
 namespace reqloom::desktop::qml {
 

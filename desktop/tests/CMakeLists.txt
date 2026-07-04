@@ -74,18 +74,34 @@ gtest_discover_tests(reqloom-desktop-ui-tests
 add_executable(reqloom-desktop-secret-tests
     unit/SecretManagerTest.cpp
     unit/ProjectModelTest.cpp
+    unit/WorkspaceModelTest.cpp
+    unit/ProjectTreeModelTest.cpp
+    unit/PathEvalTest.cpp
+    unit/AuthStepListModelTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/WorkspaceModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/WorkspaceModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/ProjectTreeModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/ProjectTreeModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/AuthStepListModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/AuthStepListModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/EditableKeyValueModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/EditableKeyValueModel.h
 )
 target_include_directories(reqloom-desktop-secret-tests
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models
 )
 target_link_libraries(reqloom-desktop-secret-tests
     PRIVATE
         reqloom::engine
         Qt6::Core
+        Qt6::Qml
         GTest::gtest
 )
 set_target_properties(reqloom-desktop-secret-tests PROPERTIES

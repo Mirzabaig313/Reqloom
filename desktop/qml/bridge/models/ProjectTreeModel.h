@@ -30,9 +30,10 @@ class ProjectTreeModel : public QAbstractItemModel {
 
 public:
     enum Roles : int {
-        KindRole = Qt::UserRole +
-                   1,     ///< QString: actorGroup/resourceGroup/actor/resource/operation/example
-        NameRole,         ///< QString: display label for the row
+        KindRole =
+            Qt::UserRole +
+            1,     ///< QString: project/actorGroup/resourceGroup/actor/resource/operation/example
+        NameRole,  ///< QString: display label for the row
         OperationIdRole,  ///< QString: fully-qualified op id ("<res>.<op>")
         ResourceIdRole,   ///< QString: resource id (folder rows)
         MethodRole,       ///< QString: HTTP verb for operation rows
@@ -41,6 +42,8 @@ public:
         CountRole,        ///< int: child count for folder rows (0 for leaves)
         StatusRole,       ///< int: HTTP status of a saved-example row (0 otherwise)
         StatusTokenRole,  ///< QString: success/warning/error token for the status badge
+        ProjectRootRole,  ///< QString: owning project's root path (every row carries it)
+        ActiveRole,       ///< bool: true on the active project's row
     };
 
     /// One saved-example child row: its display name + the HTTP status it
@@ -49,6 +52,20 @@ public:
         QString name;
         int status{0};
     };
+
+    /// One open collection fed to the aggregated tree: its root path, display
+    /// name, the loaded project, and whether it's the active one.
+    struct ProjectEntry {
+        QString root;
+        QString name;
+        std::shared_ptr<const engine::Project> project;
+        bool active{false};
+    };
+
+    /// Composite key for `setSavedExamples`, scoping example rows to a specific
+    /// project so identically-named operations in different collections don't
+    /// share example rows.
+    [[nodiscard]] static QString exampleKey(const QString& projectRoot, const QString& operationId);
 
     explicit ProjectTreeModel(QObject* parent = nullptr);
     ~ProjectTreeModel() override;
@@ -67,9 +84,17 @@ public:
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
-    /// Rebuild the whole tree from `project` (actors + resources + operations).
-    /// Saved-example child rows (set via `setSavedExamples`) are re-applied.
-    void populate(const engine::Project& project);
+    /// Rebuild the whole tree from every open collection: one Project node per
+    /// entry, each holding its Actors + Resources subtrees. Saved-example child
+    /// rows (set via `setSavedExamples`) are re-applied. An empty list clears
+    /// the tree.
+    void populate(const std::vector<ProjectEntry>& projects);
+
+    /// Rebuild from projects AND example rows in a single reset, so the tree
+    /// doesn't flash through two `beginResetModel` cycles when both change
+    /// together (a fresh load / edit). `examples` is keyed by `exampleKey`.
+    void populate(const std::vector<ProjectEntry>& projects,
+                  const QMap<QString, QList<ExampleRow>>& examples);
 
     /// Clear the tree (no project loaded).
     void clear();
@@ -81,6 +106,7 @@ public:
 
 private:
     enum class Kind : std::uint8_t {
+        Project,
         ActorGroup,
         ResourceGroup,
         Actor,
@@ -97,6 +123,8 @@ private:
         QString method;
         QString exampleName;
         QString tooltip;
+        QString projectRoot;  ///< owning project's root (set on every descendant)
+        bool active{false};   ///< true on the active project node
         int exampleStatus{0};
         int rowInParent{0};
         Node* parent{nullptr};
@@ -108,7 +136,7 @@ private:
     void rebuild();
 
     std::unique_ptr<Node> root_;
-    std::shared_ptr<const engine::Project> project_;
+    std::vector<ProjectEntry> projects_;
     QMap<QString, QList<ExampleRow>> examples_;
 };
 

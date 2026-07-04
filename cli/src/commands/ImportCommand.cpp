@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <fstream>
 #include <print>
 #include <ranges>
 #include <string>
@@ -32,7 +33,10 @@ struct ImportArgs {
 void printUsage(std::FILE* stream) {
     std::println(stream,
                  "Usage: reqloom import <spec> [options]\n"
-                 "Import an OpenAPI 3.0.x / 3.1.x document (YAML or JSON) into a project.\n"
+                 "Import an API definition into a project. Supported formats,\n"
+                 "auto-detected: OpenAPI 3.x (YAML/JSON), Postman v2.1, Insomnia v4,\n"
+                 "Thunder Client, Hoppscotch, REST Client (.http/.rest), and Bruno\n"
+                 "(a collection directory, its bruno.json, or a .bru file).\n"
                  "Options:\n"
                  "  --out <dir>           Directory to write the project into (default: cwd)\n"
                  "  --project-root <dir>  Containment root the spec must resolve under\n"
@@ -106,7 +110,7 @@ int importCommand(const QStringList& args) {
     // caller wants to confine the import to a known project tree.
     const fs::path projectRoot = cfg.projectRoot.empty() ? cfg.spec.parent_path() : cfg.projectRoot;
 
-    auto imported = ce::importFromOpenApi(cfg.spec, projectRoot);
+    auto imported = ce::importAny(cfg.spec, projectRoot);
     if (!imported) {
         std::println(stderr,
                      "Import error [{}]: {}",

@@ -26,6 +26,73 @@ Rectangle {
     property string ctxResourceId: ""
     property string ctxExampleName: ""
     property string ctxActorId: ""
+    // Owning collection of the current/context row (aggregated multi-project tree).
+    property string currentProjectRoot: ""
+    property string ctxProjectRoot: ""
+
+    // ── Explorer expansion persistence ───────────────────────────────────────
+    // Which tree nodes are expanded, keyed by ProjectTreeFilterModel.nodeKey.
+    // Persisted to QSettings so the open/closed layout survives model rebuilds
+    // (open/close/save/run all reset the model) and app restarts. Empty on a
+    // first run → the tree opens fully collapsed.
+    property var expandedKeys: ({})
+
+    // Build a node key that matches ProjectTreeFilterModel::nodeKey byte-for-byte
+    // (kind, projectRoot, resourceId, operationId, name joined by 0x1F).
+    function keyForDelegate(del) {
+        const sep = String.fromCharCode(0x1f);
+        return del.kind + sep + del.projectRoot + sep + del.resourceId + sep + del.operationId + sep + del.name;
+    }
+
+    function persistExpansion() {
+        AppController.saveTreeExpansion(Object.keys(panel.expandedKeys));
+    }
+
+    // Toggle a row's expansion and remember the new state.
+    function toggleAndRecord(del) {
+        tree.toggleExpanded(del.row);
+        const key = panel.keyForDelegate(del);
+        if (tree.isExpanded(del.row)) {
+            panel.expandedKeys[key] = true;
+        } else {
+            delete panel.expandedKeys[key];
+        }
+        panel.persistExpansion();
+    }
+
+    // Forget every expanded node (used by Collapse-all so a later model rebuild
+    // doesn't re-open anything).
+    function forgetExpansion() {
+        panel.expandedKeys = ({});
+        panel.persistExpansion();
+    }
+
+    // Re-open the remembered nodes after a model rebuild. Walks the model
+    // top-down; a node is only opened if its key is remembered AND its parent
+    // was opened (recursion only descends into opened nodes), so a collapsed
+    // ancestor keeps its subtree closed. expandToIndex(firstChild) opens the
+    // node via its child's ancestor chain — no view-row lookup needed.
+    function restoreExpansion() {
+        if (!tree.model) {
+            return;
+        }
+        panel.restoreInto(undefined);
+        // Any expandToIndex may have nudged the viewport; keep the top in view.
+        tree.contentY = 0;
+    }
+
+    function restoreInto(parentIndex) {
+        const m = tree.model;
+        const n = (parentIndex === undefined) ? m.rowCount() : m.rowCount(parentIndex);
+        for (let i = 0; i < n; ++i) {
+            const idx = (parentIndex === undefined) ? m.index(i, 0) : m.index(i, 0, parentIndex);
+            const key = m.nodeKey(idx);
+            if (key.length > 0 && panel.expandedKeys[key] === true && m.rowCount(idx) > 0) {
+                tree.expandToIndex(m.index(0, 0, idx));
+                panel.restoreInto(idx);
+            }
+        }
+    }
 
     // Open the New Endpoint dialog (optionally pre-selecting a module). Lets
     // other views (e.g. the centre endpoint-list empty state) trigger the same
@@ -98,7 +165,10 @@ Rectangle {
                     active: collapseAllBtn.hovered
                     text: qsTr("Collapse all groups")
                 }
-                onClicked: tree.collapseRecursively()
+                onClicked: {
+                    tree.collapseRecursively();
+                    panel.forgetExpansion();
+                }
                 contentItem: AppIcon {
                     name: "chevron-up"
                     size: 16
@@ -141,31 +211,36 @@ Rectangle {
                 model: tree.model
             }
 
-            // Re-expand after the model rebuilds (project load OR example-row
-            // updates both reset the model, which collapses the TreeView).
-            Connections {
-                target: AppController
-                function onProjectChanged() {
-                    Qt.callLater(tree.expandRecursively);
-                }
-            }
+            // Restore the remembered open/closed layout after the model
+            // REBUILDS (open/close/load/save/example updates reset the model,
+            // collapsing the TreeView). Not bound to projectChanged: a plain
+            // project switch doesn't rebuild the tree.
             Connections {
                 target: tree.model
                 function onModelReset() {
-                    Qt.callLater(tree.expandRecursively);
+                    Qt.callLater(panel.restoreExpansion);
                 }
             }
-            Component.onCompleted: Qt.callLater(expandRecursively)
+            Component.onCompleted: {
+                const saved = AppController.loadTreeExpansion();
+                const set = ({});
+                for (let i = 0; i < saved.length; ++i) {
+                    set[saved[i]] = true;
+                }
+                panel.expandedKeys = set;
+                Qt.callLater(panel.restoreExpansion);
+            }
 
-            // Enter / Return activates (runs) the current operation row.
+            // Enter / Return activates (runs) the current operation row in its
+            // owning collection.
             Keys.onReturnPressed: {
                 if (panel.currentOperationId.length > 0) {
-                    AppController.activateOperationById(panel.currentOperationId);
+                    AppController.activateOperationInProject(panel.currentProjectRoot, panel.currentOperationId);
                 }
             }
             Keys.onEnterPressed: {
                 if (panel.currentOperationId.length > 0) {
-                    AppController.activateOperationById(panel.currentOperationId);
+                    AppController.activateOperationInProject(panel.currentProjectRoot, panel.currentOperationId);
                 }
             }
 
@@ -178,6 +253,7 @@ Rectangle {
                 required property string method
                 required property string exampleName
                 required property string tooltip
+                required property string projectRoot
                 required property int count
                 required property int status
                 required property string statusToken
@@ -185,12 +261,16 @@ Rectangle {
                 implicitHeight: 34
                 indentation: 16
 
+                readonly property bool isProject: kind === "project"
                 readonly property bool isOperation: kind === "operation"
                 readonly property bool isExample: kind === "example"
                 readonly property bool isResource: kind === "resource"
                 readonly property bool isResourcesRoot: kind === "resourceGroup"
                 readonly property bool isActor: kind === "actor"
                 readonly property bool isActorsRoot: kind === "actorGroup"
+                // The active collection, tracked reactively via a property (no
+                // tree rebuild needed to move the highlight).
+                readonly property bool isActiveProject: del.isProject && del.projectRoot === AppController.projectRoot
                 // Live run-status token for this operation (running/success/error/…),
                 // for the trailing status dot. Empty when the op hasn't run.
                 readonly property string opRunToken: del.isOperation ? (AppController.chainStatus[del.operationId] || "") : ""
@@ -198,6 +278,7 @@ Rectangle {
                 onCurrentChanged: {
                     if (del.current) {
                         panel.currentOperationId = del.isOperation ? del.operationId : "";
+                        panel.currentProjectRoot = del.projectRoot;
                     }
                 }
 
@@ -240,7 +321,7 @@ Rectangle {
                         }
                         TapHandler {
                             enabled: del.hasChildren
-                            onTapped: tree.toggleExpanded(del.row)
+                            onTapped: panel.toggleAndRecord(del)
                         }
                     }
 
@@ -263,9 +344,9 @@ Rectangle {
                     Label {
                         Layout.alignment: Qt.AlignVCenter
                         text: del.name
-                        color: del.isExample ? DesignTokens.textSecondary : DesignTokens.textPrimary
+                        color: del.isActiveProject ? DesignTokens.accent : (del.isExample ? DesignTokens.textSecondary : DesignTokens.textPrimary)
                         font.pixelSize: DesignTokens.fontBody
-                        font.weight: del.current ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
+                        font.weight: (del.current || del.isProject) ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                         elide: Text.ElideRight
                         Layout.maximumWidth: implicitWidth
                         HoverHandler {
@@ -338,11 +419,16 @@ Rectangle {
 
                 onClicked: {
                     if (del.isOperation) {
-                        AppController.selectOperationById(del.operationId);
+                        AppController.selectOperationInProject(del.projectRoot, del.operationId);
                     } else if (del.isExample) {
                         AppController.selectExample(del.operationId, del.exampleName);
+                    } else if (del.isActor) {
+                        AppController.selectActor(del.projectRoot, del.name);
+                    } else if (del.isProject) {
+                        AppController.activateProjectByRoot(del.projectRoot);
+                        panel.toggleAndRecord(del);
                     } else {
-                        tree.toggleExpanded(del.row);
+                        panel.toggleAndRecord(del);
                     }
                 }
 
@@ -350,7 +436,7 @@ Rectangle {
                     acceptedButtons: Qt.LeftButton
                     onDoubleTapped: {
                         if (del.isOperation) {
-                            AppController.activateOperationById(del.operationId);
+                            AppController.activateOperationInProject(del.projectRoot, del.operationId);
                         }
                     }
                 }
@@ -358,10 +444,18 @@ Rectangle {
                 TapHandler {
                     acceptedButtons: Qt.RightButton
                     onTapped: {
+                        // Activate the row's collection first so New/Rename/Delete
+                        // and the create dialogs target the right project. If the
+                        // switch is refused (e.g. a run is in flight), don't open
+                        // the menu — otherwise actions would hit the active project.
+                        if (!AppController.activateProjectByRoot(del.projectRoot)) {
+                            return;
+                        }
                         panel.ctxOperationId = del.operationId;
                         panel.ctxResourceId = del.resourceId;
                         panel.ctxExampleName = del.exampleName;
                         panel.ctxActorId = del.isActor ? del.name : "";
+                        panel.ctxProjectRoot = del.projectRoot;
                         if (del.isExample) {
                             exampleMenu.popup();
                         } else if (del.isOperation) {
@@ -374,6 +468,8 @@ Rectangle {
                             actorMenu.popup();
                         } else if (del.isActorsRoot) {
                             actorsRootMenu.popup();
+                        } else if (del.isProject) {
+                            projectMenu.popup();
                         }
                     }
                 }
@@ -444,6 +540,28 @@ Rectangle {
         GlassMenuItem {
             text: qsTr("New Endpoint…")
             onTriggered: newEndpointDialog.openFor("")
+        }
+    }
+    // Per-collection menu (right-click a Project node). The row's project was
+    // activated on right-click, so the create dialogs target it.
+    GlassMenu {
+        id: projectMenu
+        GlassMenuItem {
+            text: qsTr("New Endpoint…")
+            onTriggered: newEndpointDialog.openFor("")
+        }
+        GlassMenuItem {
+            text: qsTr("New Module…")
+            onTriggered: newModuleDialog.openDialog()
+        }
+        GlassMenuItem {
+            text: qsTr("New Actor…")
+            onTriggered: actorDialog.openFor("")
+        }
+        MenuSeparator {}
+        GlassMenuItem {
+            text: qsTr("Close collection")
+            onTriggered: AppController.closeProjectByRoot(panel.ctxProjectRoot)
         }
     }
     GlassMenu {
