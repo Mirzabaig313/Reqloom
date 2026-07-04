@@ -347,7 +347,7 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
             const auto it = req.find(key);
             if (it != req.end() && it->is_array()) {
                 for (const auto& item : *it) {
-                    if (!item.value("enabled", true)) {
+                    if (!item.is_object() || !item.value("enabled", true)) {
                         continue;
                     }
                     const auto name = jsonStr(item, "name");
@@ -379,7 +379,7 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
                        body["form"].contains("fields") && body["form"]["fields"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["form"]["fields"]) {
-                    if (!f.value("enabled", true)) {
+                    if (!f.is_object() || !f.value("enabled", true)) {
                         continue;
                     }
                     const auto name = jsonStr(f, "name");

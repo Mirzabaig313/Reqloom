@@ -363,7 +363,7 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
         // Query params.
         if (item.contains("params") && item["params"].is_array()) {
             for (const auto& q : item["params"]) {
-                if (!q.value("active", true)) {
+                if (!q.is_object() || !q.value("active", true)) {
                     continue;
                 }
                 const auto key = jsonStr(q, "key");
@@ -376,7 +376,7 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
         // Headers.
         if (item.contains("headers") && item["headers"].is_array()) {
             for (const auto& h : item["headers"]) {
-                if (!h.value("active", true)) {
+                if (!h.is_object() || !h.value("active", true)) {
                     continue;
                 }
                 const auto key = jsonStr(h, "key");
@@ -398,7 +398,7 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
                 } else if (payloadIt->is_array() && isFormContentType(contentType)) {
                     std::map<std::string, std::string> form;
                     for (const auto& f : *payloadIt) {
-                        if (!f.value("active", true)) {
+                        if (!f.is_object() || !f.value("active", true)) {
                             continue;
                         }
                         const auto key = jsonStr(f, "key");

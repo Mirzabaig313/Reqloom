@@ -418,7 +418,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
         // Query params: prefer the url object's structured array.
         if (urlNode != nullptr && urlNode->contains("query") && (*urlNode)["query"].is_array()) {
             for (const auto& q : (*urlNode)["query"]) {
-                if (q.value("disabled", false)) {
+                if (!q.is_object() || q.value("disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(q, "key");
@@ -431,7 +431,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
         // Headers.
         if (request.is_object() && request.contains("header") && request["header"].is_array()) {
             for (const auto& h : request["header"]) {
-                if (h.value("disabled", false)) {
+                if (!h.is_object() || h.value("disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(h, "key");
@@ -451,7 +451,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                        body["urlencoded"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["urlencoded"]) {
-                    if (f.value("disabled", false)) {
+                    if (!f.is_object() || f.value("disabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(f, "key");
@@ -466,7 +466,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                        body["formdata"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["formdata"]) {
-                    if (f.value("disabled", false)) {
+                    if (!f.is_object() || f.value("disabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(f, "key");
