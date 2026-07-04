@@ -21,6 +21,13 @@ public:
     [[nodiscard]] QString filterText() const { return filterText_; }
     void setFilterText(const QString& text);
 
+    /// Stable identity string for a tree node (proxy index), used by the
+    /// explorer to persist which rows are expanded across model rebuilds and
+    /// app restarts. Composed of the node's kind + owning project + ids + name,
+    /// joined by the unit-separator (0x1F). Empty for an invalid index.
+    /// Must stay byte-for-byte in sync with ExplorerPanel's keyForDelegate().
+    [[nodiscard]] Q_INVOKABLE QString nodeKey(const QModelIndex& index) const;
+
 signals:
     void filterTextChanged();
 
