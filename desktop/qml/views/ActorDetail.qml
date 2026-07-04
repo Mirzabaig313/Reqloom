@@ -1,9 +1,11 @@
 // ActorDetail — actor (auth identity) detail in the centre pane. Shows a
 // read-only view by default; the "Edit" button flips the same panel into an
-// inline editable form (no modal) with Save/Cancel. Seeded from AppController's
-// actor* properties (set by selectActor→prepareEditActor); Save persists via
-// saveActorEdits. New-actor creation still uses ActorDialog (no panel to edit
-// before the actor exists).
+// inline editable form (no modal) with Save/Cancel. Step-based strategies edit
+// a full N-step login chain (AppController.actorAuthSteps): Add/Remove/reorder
+// steps, each with its own method/path/body/expect + extractions. Seeded by
+// selectActor→prepareEditActor; Save persists via saveActorInline. New-actor
+// creation still uses ActorDialog (no panel to edit before the actor exists).
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -16,19 +18,21 @@ ScrollView {
 
     property bool editing: false
 
-    // Editable working copies (seeded on beginEdit, sent back on save). The
-    // key/value tables are edited directly on the shared AppController models
-    // (already populated by prepareEditActor), so they need no local copy.
+    // Editable working copies for the scalar fields (seeded on beginEdit). The
+    // login steps live in AppController.actorAuthSteps and the refresh/config
+    // key-value tables are the shared AppController models, edited directly.
     property string fName: ""
     property string fDesc: ""
-    property string fAuthMethod: "POST"
-    property string fAuthPath: ""
-    property string fAuthBody: ""
-    property string fAuthExpect: ""
     property bool fRefreshEnabled: false
     property string fRefreshMethod: "POST"
     property string fRefreshPath: ""
     property string fRefreshBody: ""
+
+    // HTTP verbs for the method pickers. Shared so the combos can resolve their
+    // current index with a plain indexOf (ComboBox.find() returns -1 while the
+    // combo's internal model is still initialising, which defaulted every step
+    // to GET even when the model held POST).
+    readonly property var methodOptions: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 
     // Step-based strategies carry "login" in their label. In edit mode the live
     // combo selection drives it; in read mode the selected actor's strategy.
@@ -49,10 +53,6 @@ ScrollView {
     function beginEdit() {
         fName = AppController.selectedActorName;
         fDesc = AppController.selectedActorDescription;
-        fAuthMethod = AppController.actorAuthMethod;
-        fAuthPath = AppController.actorAuthPath;
-        fAuthBody = AppController.actorAuthBody;
-        fAuthExpect = AppController.actorAuthExpect;
         fRefreshEnabled = AppController.actorHasRefresh;
         fRefreshMethod = AppController.actorRefreshMethod;
         fRefreshPath = AppController.actorRefreshPath;
@@ -64,10 +64,17 @@ ScrollView {
         editing = true;
     }
 
+    function cancelEdit() {
+        // Discard edits to the shared step/config/refresh models by re-seeding
+        // from the persisted actor (name == id for the selected actor).
+        AppController.prepareEditActor(AppController.selectedActorName);
+        editing = false;
+    }
+
     function saveEdits() {
         // originalId stays the pre-edit name (== id in this project) so a rename
         // still targets the right actor; only close edit mode when accepted.
-        if (AppController.saveActorEdits(AppController.selectedActorName, fName.trim(), strategyCombo.currentText, fDesc.trim(), fAuthMethod, fAuthPath, fAuthBody, fAuthExpect, fRefreshEnabled, fRefreshMethod, fRefreshPath, fRefreshBody)) {
+        if (AppController.saveActorInline(AppController.selectedActorName, fName.trim(), strategyCombo.currentText, fDesc.trim(), fRefreshEnabled, fRefreshMethod, fRefreshPath, fRefreshBody)) {
             editing = false;
         }
     }
@@ -115,7 +122,7 @@ ScrollView {
             GlassButton {
                 visible: root.editing
                 text: qsTr("Cancel")
-                onClicked: root.editing = false
+                onClicked: root.cancelEdit()
             }
             GlassButton {
                 visible: root.editing
@@ -182,91 +189,162 @@ ScrollView {
             }
         }
 
-        // ── Step-based login request ──
+        // ── Step-based login chain (N steps) ──
         ColumnLayout {
             Layout.fillWidth: true
             visible: root.stepBased
-            spacing: DesignTokens.spaceXs
+            spacing: DesignTokens.spaceMd
             FieldLabel {
-                text: qsTr("Login request")
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: DesignTokens.spaceSm
-                MethodBadge {
-                    visible: !root.editing
-                    method: AppController.actorAuthMethod
-                }
-                GlassComboBox {
-                    visible: root.editing
-                    Layout.preferredWidth: 110
-                    model: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-                    currentIndex: Math.max(0, find(root.fAuthMethod))
-                    onActivated: root.fAuthMethod = currentText
-                }
-                Label {
-                    visible: !root.editing
-                    Layout.fillWidth: true
-                    text: AppController.actorAuthPath
-                    color: DesignTokens.textPrimary
-                    font.pixelSize: DesignTokens.fontBody
-                    font.family: DesignTokens.fontMono
-                    elide: Text.ElideRight
-                }
-                GlassTextField {
-                    visible: root.editing
-                    Layout.fillWidth: true
-                    text: root.fAuthPath
-                    placeholderText: qsTr("/api/v1/auth/login")
-                    onTextEdited: root.fAuthPath = text
-                }
-                Label {
-                    visible: !root.editing
-                    text: AppController.actorAuthExpect.length > 0 ? qsTr("expect %1").arg(AppController.actorAuthExpect) : ""
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    font.family: DesignTokens.fontMono
-                }
-                GlassTextField {
-                    visible: root.editing
-                    Layout.preferredWidth: 90
-                    text: root.fAuthExpect
-                    placeholderText: qsTr("200")
-                    onTextEdited: root.fAuthExpect = text
-                }
-            }
-            FieldLabel {
-                text: qsTr("Body")
-                visible: root.editing || AppController.actorAuthBody.length > 0
-            }
-            BodyBox {
-                visible: root.editing || AppController.actorAuthBody.length > 0
-                readOnly: !root.editing
-                text: root.editing ? root.fAuthBody : AppController.actorAuthBody
-                onTextEdited: if (text !== root.fAuthBody) {
-                    root.fAuthBody = text;
-                }
-            }
-            FieldLabel {
-                text: qsTr("Extract (variable ← JSONPath)")
+                text: qsTr("Login chain")
             }
             Label {
                 visible: root.editing
                 Layout.fillWidth: true
-                text: qsTr("The leading $. is optional — “data.accessToken” works too.")
+                text: qsTr("Steps run top to bottom. Each step can extract variables the next steps reference. The last step usually returns the access token.")
                 color: DesignTokens.textSecondary
                 font.pixelSize: DesignTokens.fontCaption
                 wrapMode: Text.WordWrap
             }
-            KeyValueEditorView {
-                Layout.fillWidth: true
-                enabled: root.editing
-                kvModel: AppController.actorAuthExtract
-                keyPlaceholder: qsTr("token")
-                valuePlaceholder: qsTr("data.accessToken")
+
+            Repeater {
+                id: stepsRepeater
+                model: AppController.actorAuthSteps
+                delegate: ColumnLayout {
+                    id: stepRow
+                    required property int index
+                    required property string method
+                    required property string path
+                    required property string body
+                    required property string expect
+                    required property var extractModel
+                    Layout.fillWidth: true
+                    spacing: DesignTokens.spaceXs
+
+                    // Step header: "Step N" + reorder / remove (edit only).
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: DesignTokens.spaceSm
+                        FieldLabel {
+                            text: qsTr("Step %1").arg(stepRow.index + 1)
+                        }
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                        GlassButton {
+                            visible: root.editing
+                            text: "↑"
+                            enabled: stepRow.index > 0
+                            onClicked: AppController.actorAuthSteps.moveStep(stepRow.index, -1)
+                        }
+                        GlassButton {
+                            visible: root.editing
+                            text: "↓"
+                            enabled: stepRow.index < stepsRepeater.count - 1
+                            onClicked: AppController.actorAuthSteps.moveStep(stepRow.index, 1)
+                        }
+                        GlassButton {
+                            visible: root.editing
+                            text: qsTr("Remove")
+                            enabled: stepsRepeater.count > 1
+                            onClicked: AppController.actorAuthSteps.removeStep(stepRow.index)
+                        }
+                    }
+
+                    // Method + path + expect.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: DesignTokens.spaceSm
+                        MethodBadge {
+                            visible: !root.editing
+                            method: stepRow.method
+                        }
+                        GlassComboBox {
+                            visible: root.editing
+                            Layout.preferredWidth: 110
+                            model: root.methodOptions
+                            currentIndex: Math.max(0, root.methodOptions.indexOf(stepRow.method))
+                            onActivated: AppController.actorAuthSteps.setMethod(stepRow.index, currentText)
+                        }
+                        Label {
+                            visible: !root.editing
+                            Layout.fillWidth: true
+                            text: stepRow.path
+                            color: DesignTokens.textPrimary
+                            font.pixelSize: DesignTokens.fontBody
+                            font.family: DesignTokens.fontMono
+                            elide: Text.ElideRight
+                        }
+                        GlassTextField {
+                            visible: root.editing
+                            Layout.fillWidth: true
+                            text: stepRow.path
+                            placeholderText: qsTr("/api/v1/auth/login")
+                            onTextEdited: AppController.actorAuthSteps.setPath(stepRow.index, text)
+                        }
+                        Label {
+                            visible: !root.editing
+                            text: stepRow.expect.length > 0 ? qsTr("expect %1").arg(stepRow.expect) : ""
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            font.family: DesignTokens.fontMono
+                        }
+                        GlassTextField {
+                            visible: root.editing
+                            Layout.preferredWidth: 90
+                            text: stepRow.expect
+                            placeholderText: qsTr("200")
+                            onTextEdited: AppController.actorAuthSteps.setExpect(stepRow.index, text)
+                        }
+                    }
+
+                    // Body (JSON / form template).
+                    FieldLabel {
+                        text: qsTr("Body")
+                        visible: root.editing || stepRow.body.length > 0
+                    }
+                    BodyBox {
+                        visible: root.editing || stepRow.body.length > 0
+                        readOnly: !root.editing
+                        text: stepRow.body
+                        onTextEdited: AppController.actorAuthSteps.setBody(stepRow.index, text)
+                    }
+
+                    // Per-step extractions (variable ← JSONPath).
+                    FieldLabel {
+                        text: qsTr("Extract (variable ← JSONPath)")
+                    }
+                    KeyValueEditorView {
+                        Layout.fillWidth: true
+                        enabled: root.editing
+                        kvModel: stepRow.extractModel
+                        keyPlaceholder: qsTr("token")
+                        valuePlaceholder: qsTr("data.accessToken")
+                    }
+
+                    // Divider between steps.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: DesignTokens.spaceXs
+                        implicitHeight: 1
+                        color: DesignTokens.borderSubtle
+                    }
+                }
             }
 
-            // ── Refresh ──
+            GlassButton {
+                visible: root.editing
+                text: qsTr("Add step")
+                onClicked: AppController.actorAuthSteps.addStep()
+            }
+        }
+
+        // ── Session refresh (single request) ──
+        // Read mode shows the block only when a refresh exists; edit mode always
+        // offers the toggle so it can be added or removed.
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: root.stepBased && (root.editing || AppController.actorHasRefresh)
+            spacing: DesignTokens.spaceXs
             CheckBox {
                 id: refreshCheck
                 visible: root.editing
@@ -299,8 +377,8 @@ ScrollView {
                     GlassComboBox {
                         visible: root.editing
                         Layout.preferredWidth: 110
-                        model: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-                        currentIndex: Math.max(0, find(root.fRefreshMethod))
+                        model: root.methodOptions
+                        currentIndex: Math.max(0, root.methodOptions.indexOf(root.fRefreshMethod))
                         onActivated: root.fRefreshMethod = currentText
                     }
                     Label {
@@ -365,7 +443,12 @@ ScrollView {
             font.family: DesignTokens.fontMono
             wrapMode: TextEdit.WrapAnywhere
             background: null
-            onTextChanged: bodyBox.textEdited(text)
+            // Fire only on user edits; onTextChanged also fires on binding-
+            // driven updates (rebuild/reorder), which would spuriously re-invoke
+            // the setter and, if a transform were added, risk a binding loop.
+            onTextChanged: if (bodyArea.activeFocus) {
+                bodyBox.textEdited(text);
+            }
         }
     }
 }

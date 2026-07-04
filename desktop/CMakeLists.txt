@@ -37,6 +37,8 @@ qt_add_executable(reqloom-desktop
     qml/bridge/support/BodyHighlighter.h
     qml/bridge/models/ChainEditorModel.cpp
     qml/bridge/models/ChainEditorModel.h
+    qml/bridge/models/AuthStepListModel.cpp
+    qml/bridge/models/AuthStepListModel.h
     qml/bridge/support/LayoutSolver.cpp
     qml/bridge/support/LayoutSolver.h
     qml/bridge/models/ExampleListModel.cpp

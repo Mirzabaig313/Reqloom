@@ -77,6 +77,7 @@ add_executable(reqloom-desktop-secret-tests
     unit/WorkspaceModelTest.cpp
     unit/ProjectTreeModelTest.cpp
     unit/PathEvalTest.cpp
+    unit/AuthStepListModelTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp
@@ -85,6 +86,10 @@ add_executable(reqloom-desktop-secret-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/WorkspaceModel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/ProjectTreeModel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/ProjectTreeModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/AuthStepListModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/AuthStepListModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/EditableKeyValueModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/EditableKeyValueModel.h
 )
 target_include_directories(reqloom-desktop-secret-tests
     PRIVATE

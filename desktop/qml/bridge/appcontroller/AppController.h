@@ -3,6 +3,7 @@
 // state to QML. C++ owns logic/state; QML binds to these properties.
 #pragma once
 
+#include "AuthStepListModel.h"
 #include "ChainEditorModel.h"
 #include "DependencyEditModel.h"
 #include "EditableKeyValueModel.h"
@@ -161,6 +162,10 @@ class AppController : public QObject {
     Q_PROPERTY(QString actorRefreshBody READ actorRefreshBody NOTIFY actorEditChanged)
     Q_PROPERTY(EditableKeyValueModel* actorAuthExtract READ actorAuthExtract CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* actorRefreshExtract READ actorRefreshExtract CONSTANT)
+    // N-step login chain editor: one row per auth step (method/path/body/expect
+    // + that step's own extractions). Edited inline in ActorDetail; read back on
+    // saveActorInline. Seeded by prepareEdit/NewActor.
+    Q_PROPERTY(AuthStepListModel* actorAuthSteps READ actorAuthSteps CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editExtractions READ editExtractions CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editAssertions READ editAssertions CONSTANT)
     Q_PROPERTY(DependencyEditModel* editDependencies READ editDependencies CONSTANT)
@@ -250,6 +255,17 @@ public:
                                     const QString& refreshMethod,
                                     const QString& refreshPath,
                                     const QString& refreshBody);
+    /// Save an actor edited inline in ActorDetail. Same as saveActorEdits but
+    /// the login steps come from the actorAuthSteps model (full N-step chain)
+    /// rather than a single flat request. Returns true on success.
+    Q_INVOKABLE bool saveActorInline(const QString& originalId,
+                                     const QString& name,
+                                     const QString& strategyLabel,
+                                     const QString& description,
+                                     bool refreshEnabled,
+                                     const QString& refreshMethod,
+                                     const QString& refreshPath,
+                                     const QString& refreshBody);
     /// Delete an actor and clear it from any operation that referenced it.
     Q_INVOKABLE void deleteActor(const QString& actorId);
 
@@ -268,6 +284,12 @@ public:
     /// Set the project's p95 latency SLO budget (ms); 0 clears it. Persists
     /// to reqloom.yaml and refreshes the latency chart's verdict.
     Q_INVOKABLE void setLatencySlo(int ms);
+
+    /// Load / persist the set of expanded explorer-tree node keys (see
+    /// ProjectTreeFilterModel::nodeKey) so the tree's open/closed state survives
+    /// model rebuilds and app restarts. Stored in QSettings, app-global.
+    [[nodiscard]] Q_INVOKABLE QStringList loadTreeExpansion() const;
+    Q_INVOKABLE void saveTreeExpansion(const QStringList& keys) const;
 
     /// Reload the history view from the engine's run-history store (newest
     /// first). Called after each run completes and on project load.
@@ -290,6 +312,7 @@ public:
     [[nodiscard]] QString actorRefreshBody() const { return actorRefreshBody_; }
     [[nodiscard]] EditableKeyValueModel* actorAuthExtract() { return &actorAuthExtract_; }
     [[nodiscard]] EditableKeyValueModel* actorRefreshExtract() { return &actorRefreshExtract_; }
+    [[nodiscard]] AuthStepListModel* actorAuthSteps() { return &actorAuthSteps_; }
     [[nodiscard]] QStringList operationIds() const;
     [[nodiscard]] DependencyEditModel* newEndpointDependencies() { return &newEndpointDeps_; }
     [[nodiscard]] EditableKeyValueModel* newEndpointExtractions() {
@@ -886,6 +909,7 @@ private:
     QString editEnvBaseUrl_;
     EditableKeyValueModel actorAuthExtract_;
     EditableKeyValueModel actorRefreshExtract_;
+    AuthStepListModel actorAuthSteps_;
     QString actorAuthMethod_;
     QString actorAuthPath_;
     QString actorAuthBody_;

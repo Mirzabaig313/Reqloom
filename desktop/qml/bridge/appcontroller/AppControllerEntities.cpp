@@ -147,6 +147,9 @@ void AppController::prepareNewActor() {
     actorConfig_.clearRows();
     actorAuthExtract_.clearRows();
     actorRefreshExtract_.clearRows();
+    // One blank login step so the N-step editor always has a row to edit.
+    actorAuthSteps_.rebuild({AuthStepListModel::StepSeed{
+        QStringLiteral("login"), QStringLiteral("POST"), {}, {}, {}, {}}});
     emit actorEditChanged();
 }
 
@@ -163,6 +166,7 @@ void AppController::prepareEditActor(const QString& actorId) {
     std::vector<std::pair<QString, QString>> config;
     std::vector<std::pair<QString, QString>> authEx;
     std::vector<std::pair<QString, QString>> refreshEx;
+    std::vector<AuthStepListModel::StepSeed> stepSeeds;
 
     if (activeProject().hasProject()) {
         const auto& actors = activeProject().project().actors;
@@ -171,6 +175,21 @@ void AppController::prepareEditActor(const QString& actorId) {
             const engine::Actor& actor = it->second;
             for (const auto& [key, value] : actor.authConfig) {
                 config.emplace_back(QString::fromStdString(key), QString::fromStdString(value));
+            }
+            // Full N-step chain for the step-list editor.
+            for (const auto& step : actor.authSteps) {
+                AuthStepListModel::StepSeed seed;
+                seed.id = QString::fromStdString(step.id);
+                seed.method = methodLabel(step.method);
+                seed.path = QString::fromStdString(step.pathTemplate);
+                seed.body =
+                    step.bodyTemplate ? QString::fromStdString(*step.bodyTemplate) : QString{};
+                seed.expect = step.expectStatus ? QString::number(*step.expectStatus) : QString{};
+                for (const auto& ext : step.extractions) {
+                    seed.extractions.emplace_back(QString::fromStdString(ext.variableName),
+                                                  QString::fromStdString(ext.sourcePath));
+                }
+                stepSeeds.push_back(std::move(seed));
             }
             if (!actor.authSteps.empty()) {
                 const engine::AuthStep& step = actor.authSteps.front();
@@ -202,6 +221,13 @@ void AppController::prepareEditActor(const QString& actorId) {
     actorConfig_.setPairs(std::move(config));
     actorAuthExtract_.setPairs(std::move(authEx));
     actorRefreshExtract_.setPairs(std::move(refreshEx));
+    // Guarantee the step editor always has a row (a step-based actor with no
+    // steps yet, or a non-step strategy the user may switch to step-based).
+    if (stepSeeds.empty()) {
+        stepSeeds.push_back(AuthStepListModel::StepSeed{
+            QStringLiteral("login"), QStringLiteral("POST"), {}, {}, {}, {}});
+    }
+    actorAuthSteps_.rebuild(stepSeeds);
     emit actorEditChanged();
 }
 
@@ -263,6 +289,90 @@ bool AppController::saveActorEdits(const QString& originalId,
             actor.authSteps.push_back(std::move(step));
         } else {
             actor.authSteps.front() = std::move(step);
+        }
+    } else {
+        actor.authSteps.clear();
+    }
+
+    if (refreshEnabled) {
+        engine::SessionRefresh refresh;
+        if (actor.refresh) {
+            refresh = *actor.refresh;
+        }
+        refresh.method = httpMethodFromLabel(refreshMethod);
+        refresh.pathTemplate = refreshPath.trimmed().toStdString();
+        const QString body = refreshBody.trimmed();
+        refresh.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
+                                              : std::optional<std::string>{body.toStdString()};
+        refresh.extractions = extractionsFromPairs(actorRefreshExtract_.pairs());
+        actor.refresh = std::move(refresh);
+    } else {
+        actor.refresh.reset();
+    }
+
+    QString error;
+    if (activeProject().saveActor(originalId, actor, error)) {
+        emit notify(QStringLiteral("Saved actor “%1”").arg(name.trimmed()), false);
+        return true;
+    }
+    emit notify(error, true);
+    return false;
+}
+
+bool AppController::saveActorInline(const QString& originalId,
+                                    const QString& name,
+                                    const QString& strategyLabel,
+                                    const QString& description,
+                                    bool refreshEnabled,
+                                    const QString& refreshMethod,
+                                    const QString& refreshPath,
+                                    const QString& refreshBody) {
+    // Start from the existing actor (preserving inject headers + session TTL).
+    engine::Actor actor;
+    if (!originalId.isEmpty() && activeProject().hasProject()) {
+        const auto& actors = activeProject().project().actors;
+        const auto it = actors.find(engine::ActorId{originalId.toStdString()});
+        if (it != actors.end()) {
+            actor = it->second;
+        }
+    }
+    actor.id = engine::ActorId{name.trimmed().toStdString()};
+    actor.description = description.trimmed().toStdString();
+    const engine::AuthStrategy strategy = authStrategyFromLabel(strategyLabel);
+    actor.strategy = strategy;
+
+    std::map<std::string, std::string> config;
+    for (const auto& [key, value] : actorConfig_.pairs()) {
+        if (!key.isEmpty()) {
+            config.insert_or_assign(key.toStdString(), value.toStdString());
+        }
+    }
+    actor.authConfig = std::move(config);
+
+    const bool stepBased =
+        (strategy == engine::AuthStrategy::Simple || strategy == engine::AuthStrategy::Chain);
+    if (stepBased) {
+        // Rebuild the whole login chain from the step-list editor.
+        actor.authSteps.clear();
+        for (int i = 0; i < actorAuthSteps_.count(); ++i) {
+            engine::AuthStep step;
+            step.id = actorAuthSteps_.idAt(i).trimmed().toStdString();
+            if (step.id.empty()) {
+                step.id = (i == 0) ? std::string{"login"} : "step" + std::to_string(i + 1);
+            }
+            step.method = httpMethodFromLabel(actorAuthSteps_.methodAt(i));
+            step.pathTemplate = actorAuthSteps_.pathAt(i).trimmed().toStdString();
+            const QString body = actorAuthSteps_.bodyAt(i).trimmed();
+            step.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
+                                               : std::optional<std::string>{body.toStdString()};
+            bool okExpect = false;
+            const int expect = actorAuthSteps_.expectAt(i).trimmed().toInt(&okExpect);
+            step.expectStatus = okExpect ? std::optional<int>{expect} : std::optional<int>{};
+            const auto* extractModel = actorAuthSteps_.extractModelAt(i);
+            if (extractModel != nullptr) {
+                step.extractions = extractionsFromPairs(extractModel->pairs());
+            }
+            actor.authSteps.push_back(std::move(step));
         }
     } else {
         actor.authSteps.clear();
