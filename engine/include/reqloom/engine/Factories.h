@@ -151,6 +151,13 @@ struct OpenApiImportOutcome {
 [[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpie(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot);
 
+/// Parse an Apidog native export (JSON) into a Project. The `apiCollection`
+/// folder tree becomes resources (Apidog's synthetic "Root" wrapper is
+/// unwrapped), each endpoint's `api` becomes an operation, and header/query
+/// examples + a request-body example seed it. Reuses `OpenApiImportOutcome`.
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> importFromApidog(
+    const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot);
+
 /// Detect the format of `spec` (OpenAPI or a supported API-client export) and
 /// dispatch to the matching importer. This is the single entry point CLI and
 /// desktop should call so support for a new format needs no caller changes.
