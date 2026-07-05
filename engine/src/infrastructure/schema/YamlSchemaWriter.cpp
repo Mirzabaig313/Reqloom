@@ -164,8 +164,19 @@ void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m
 // scalar on load. So emitting the stored body as a single scalar round-trips
 // exactly: yaml-cpp escapes it once for YAML, the parser unescapes it once, and
 // repeated saves are idempotent (this is what fixed the over-escaping bug).
+//
+// Multi-line bodies (typically imported JSON examples) are far more readable as
+// a YAML block literal than a single escaped double-quoted line. We only switch
+// to the block form when the content has no trailing newline, so yaml-cpp emits
+// the strip variant (`|-`) that round-trips the exact bytes and keeps repeated
+// saves idempotent; anything ending in a newline stays on the safe scalar path.
 void emitBodyTemplate(YAML::Emitter& e, const std::string& bodyTemplate) {
-    e << bodyTemplate;
+    if (bodyTemplate.find('\n') != std::string::npos && !bodyTemplate.empty() &&
+        bodyTemplate.back() != '\n') {
+        e << YAML::Literal << bodyTemplate;
+    } else {
+        e << bodyTemplate;
+    }
 }
 
 // String form of an extraction source for the explicit map form below.

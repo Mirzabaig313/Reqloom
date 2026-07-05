@@ -936,3 +936,50 @@ TEST(SchemaWriter, latency_slo_absent_when_unset) {
     ASSERT_TRUE(reloaded.has_value());
     EXPECT_EQ(reloaded->latencySloP95Ms, 0);
 }
+
+TEST(SchemaWriter, multiline_body_round_trips_exactly_and_stays_idempotent) {
+    // A multi-line JSON body (as imported from Apidog/Postman examples) must
+    // read back byte-for-byte, be written as a readable block literal (not an
+    // escaped one-liner), and re-save byte-identically.
+    ScratchDir scratch;
+    ce::Project p;
+    p.name = "Bodies";
+    p.defaultEnvironment = "local";
+    p.environments["local"] = {{"baseUrl", "http://localhost:0"}};
+    ce::Resource res;
+    res.id = ce::ResourceId{"profile"};
+    ce::Operation op;
+    op.id = ce::OperationId{"profile.create"};
+    op.resource = res.id;
+    op.method = ce::HttpMethod::Post;
+    op.pathTemplate = "/profile";
+    const std::string body = "{\n  \"email\": \"a@b.com\",\n  \"phone\": \"+1\"\n}";
+    op.bodyTemplate = body;
+    res.operations["create"] = std::move(op);
+    p.resources[res.id] = std::move(res);
+
+    const auto written = ce::writeProject(scratch.path(), p, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    // Parse back: body must equal the original bytes exactly.
+    auto reparsed = ce::parseProject(*written);
+    ASSERT_TRUE(reparsed.has_value()) << reparsed.error().detail;
+    const auto& rop = reparsed->resources.at(ce::ResourceId{"profile"}).operations.at("create");
+    ASSERT_TRUE(rop.bodyTemplate.has_value());
+    EXPECT_EQ(*rop.bodyTemplate, body);
+
+    const auto slurp = [](const fs::path& f) {
+        std::ifstream in(f, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const fs::path resourceFile = scratch.path() / "resources" / "profile.yaml";
+    const std::string firstBytes = slurp(resourceFile);
+
+    // Readable: emitted as a block literal, no escaped "\n" one-liner.
+    EXPECT_NE(firstBytes.find("body: |"), std::string::npos);
+    EXPECT_EQ(firstBytes.find("\\n"), std::string::npos);
+
+    // Idempotent: re-writing the reparsed project yields identical bytes.
+    ASSERT_TRUE(ce::writeProject(scratch.path(), *reparsed, /*overwrite=*/true).has_value());
+    EXPECT_EQ(slurp(resourceFile), firstBytes);
+}
