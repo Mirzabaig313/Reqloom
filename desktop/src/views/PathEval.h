@@ -75,12 +75,14 @@ inline void collectLeafPaths(const QJsonValue& value, const QString& path, QStri
     if (doc.isObject()) {
         const QJsonObject obj = doc.object();
         for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
-            detail::collectLeafPaths(it.value(), QStringLiteral("$.") + it.key(), all);
+            // Bare body paths (no leading "$." — it's optional for body paths,
+            // so suggestions are shorter to type/read: `data.id`, not `$.data.id`).
+            detail::collectLeafPaths(it.value(), it.key(), all);
         }
     } else if (doc.isArray()) {
         const QJsonArray arr = doc.array();
         for (int i = 0; i < arr.size(); ++i) {
-            detail::collectLeafPaths(arr.at(i), QStringLiteral("$[%1]").arg(i), all);
+            detail::collectLeafPaths(arr.at(i), QStringLiteral("[%1]").arg(i), all);
         }
     }
     QStringList out;
