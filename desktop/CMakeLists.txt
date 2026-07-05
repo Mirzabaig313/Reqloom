@@ -1,37 +1,232 @@
 qt_standard_project_setup(REQUIRES 6.8)
 
-qt_add_executable(chainapi-desktop WIN32 MACOSX_BUNDLE
-    src/main.cpp
-    src/application/App.cpp
-    src/application/App.h
+# ─── Desktop app (ADR-007, QML/Qt Quick) ──────────────────────────────────────
+# The QML/Qt Quick front-end is the desktop app. Logic (engine, ProjectModel,
+# RunController, settings, …) is shared C++ under src/ and reused unchanged;
+# presentation is QML under qml/. The old Qt Widgets app was retired in Phase 5
+# of the QML Migration Roadmap — this is now the sole desktop target.
+qt_add_executable(reqloom-desktop
+    qml/main.cpp
+    qml/theming/DesignTokens.h
+    qml/theming/DesignTokens.cpp
+    qml/bridge/controllers/ThemeController.h
+    qml/bridge/controllers/ThemeController.cpp
+    qml/bridge/controllers/SecretsController.h
+    qml/bridge/controllers/SecretsController.cpp
+    qml/bridge/models/ResourceListModel.cpp
+    qml/bridge/models/ResourceListModel.h
+    qml/bridge/models/ResponseBodyModel.cpp
+    qml/bridge/models/ResponseBodyModel.h
+    qml/bridge/models/OperationListModel.cpp
+    qml/bridge/models/OperationListModel.h
+    qml/bridge/models/KeyValueModel.cpp
+    qml/bridge/models/KeyValueModel.h
+    qml/bridge/models/ProjectTreeModel.cpp
+    qml/bridge/models/ProjectTreeModel.h
+    qml/bridge/models/ProjectTreeFilterModel.cpp
+    qml/bridge/models/ProjectTreeFilterModel.h
+    qml/bridge/models/DependencyEditModel.cpp
+    qml/bridge/models/DependencyEditModel.h
+    qml/bridge/models/EditableKeyValueModel.cpp
+    qml/bridge/models/EditableKeyValueModel.h
+    qml/bridge/models/TimelineModel.cpp
+    qml/bridge/models/TimelineModel.h
+    qml/bridge/models/HistoryModel.cpp
+    qml/bridge/models/HistoryModel.h
+    qml/bridge/support/BodyHighlighter.cpp
+    qml/bridge/support/BodyHighlighter.h
+    qml/bridge/models/ChainEditorModel.cpp
+    qml/bridge/models/ChainEditorModel.h
+    qml/bridge/models/AuthStepListModel.cpp
+    qml/bridge/models/AuthStepListModel.h
+    qml/bridge/support/LayoutSolver.cpp
+    qml/bridge/support/LayoutSolver.h
+    qml/bridge/models/ExampleListModel.cpp
+    qml/bridge/models/ExampleListModel.h
+    qml/bridge/appcontroller/AppController.cpp
+    qml/bridge/appcontroller/AppController.h
+    qml/bridge/appcontroller/AppControllerInternal.h
+    qml/bridge/appcontroller/AppControllerChain.cpp
+    qml/bridge/appcontroller/AppControllerEntities.cpp
+    src/application/ProjectModel.cpp
+    src/application/ProjectModel.h
+    src/application/WorkspaceModel.cpp
+    src/application/WorkspaceModel.h
     src/application/Bootstrapper.cpp
     src/application/Bootstrapper.h
-    src/views/MainWindow.cpp
-    src/views/MainWindow.h
+    src/application/RunController.cpp
+    src/application/RunController.h
+    src/application/SavedResponseStore.cpp
+    src/application/SavedResponseStore.h
+    src/application/EnvironmentSettings.cpp
+    src/application/EnvironmentSettings.h
+    src/application/SecretManager.cpp
+    src/application/SecretManager.h
+    src/views/Formatting.cpp
+    src/views/Formatting.h
+    src/views/HookEditorDialog.cpp
+    src/views/HookEditorDialog.h
+    src/widgets/FuzzyMatch.cpp
+    src/widgets/FuzzyMatch.h
+    src/widgets/LineDiff.cpp
+    src/widgets/LineDiff.h
+    src/widgets/GraphLayout.cpp
+    src/widgets/GraphLayout.h
+    src/widgets/ConstraintLayout.cpp
+    src/widgets/ConstraintLayout.h
+    src/widgets/LatencyStats.cpp
+    src/widgets/LatencyStats.h
+    src/widgets/CodeEditor.cpp
+    src/widgets/CodeEditor.h
+    src/theming/Color.cpp
+    src/theming/Color.h
+    src/theming/Theme.cpp
+    src/theming/Theme.h
 )
 
-target_link_libraries(chainapi-desktop
+qt_add_qml_module(reqloom-desktop
+    URI Reqloom
+    VERSION 1.0
+    # The default on-disk module dir is <bindir>/Reqloom, which collides with
+    # the executable's OUTPUT_NAME ("Reqloom") on Linux (bare ELF) — the linker
+    # fails with "cannot open output file: Is a directory". Place the module
+    # files under a distinct dir. The module is embedded via Qt resources
+    # (qrc:/qt/qml/Reqloom), so `import Reqloom` resolution is unaffected.
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qml_modules/Reqloom
+    QML_FILES
+        qml/views/Main.qml
+        qml/views/ExplorerPanel.qml
+        qml/views/RequestEditor.qml
+        qml/views/ResponsePanel.qml
+        qml/views/TimelinePanel.qml
+        qml/views/NewModuleDialog.qml
+        qml/views/NewEndpointDialog.qml
+        qml/views/ActorDialog.qml
+        qml/views/ActorDetail.qml
+        qml/views/ManageEnvironmentDialog.qml
+        qml/widgets/MethodBadge.qml
+        qml/widgets/Card.qml
+        qml/widgets/GlassComboBox.qml
+        qml/widgets/GlassButton.qml
+        qml/widgets/GlassMenu.qml
+        qml/widgets/EnvironmentSelector.qml
+        qml/widgets/GlassMenuItem.qml
+        qml/widgets/DialogButtons.qml
+        qml/widgets/GlassTextField.qml
+        qml/widgets/FieldLabel.qml
+        qml/widgets/FieldError.qml
+        qml/widgets/DialogHeader.qml
+        qml/widgets/AppIcon.qml
+        qml/widgets/BrandLogo.qml
+        qml/widgets/PanelHeader.qml
+        qml/widgets/SectionLabel.qml
+        qml/widgets/LineTabBar.qml
+        qml/widgets/SelectableTextBox.qml
+        qml/widgets/CodeView.qml
+        qml/widgets/GlassToolTip.qml
+        qml/widgets/KeyValueList.qml
+        qml/widgets/KeyValueEditorView.qml
+        qml/widgets/ChainView.qml
+        qml/widgets/StatusBadge.qml
+        qml/widgets/DependencyEditor.qml
+        qml/widgets/ChainDependencyTable.qml
+        qml/widgets/VariableAutocomplete.qml
+        qml/widgets/PathAutocomplete.qml
+        qml/widgets/ValuePicker.qml
+        qml/widgets/PathTokenBar.qml
+        qml/widgets/ExtractionEditor.qml
+        qml/widgets/AssertionEditor.qml
+        qml/views/SecretsDialog.qml
+        qml/views/HistoryDialog.qml
+        qml/widgets/Toast.qml
+        qml/widgets/EmptyState.qml
+        qml/widgets/BusyBar.qml
+        qml/widgets/LatencySparkline.qml
+        qml/motion/SpringMotion.qml
+        qml/motion/ColorMotion.qml
+        qml/motion/FadeMotion.qml
+        qml/motion/PopupEnter.qml
+        qml/motion/PopupExit.qml
+    RESOURCES
+        qml/icons/chevron-left.svg
+        qml/icons/chevron-right.svg
+        qml/icons/chevron-up.svg
+        qml/icons/chevron-down.svg
+        qml/icons/columns.svg
+        qml/icons/rows.svg
+        qml/icons/x.svg
+        qml/icons/search.svg
+        qml/icons/sun.svg
+        qml/icons/moon.svg
+        qml/icons/monitor.svg
+        qml/icons/plus.svg
+        qml/icons/user.svg
+        qml/icons/folder.svg
+        qml/icons/folder-open.svg
+        qml/icons/zap.svg
+        qml/icons/arrow-down.svg
+        qml/icons/paperclip.svg
+        # Brand marks (theme-aware in-app logo) and the window/taskbar icon.
+        branding/Reqloom-mark-dark.png
+        branding/Reqloom-mark-light.png
+        branding/Reqloom-app-icon.png
+)
+
+target_link_libraries(reqloom-desktop
     PRIVATE
-        chainapi::engine
+        reqloom::engine
+        scintilla
         Qt6::Core
+        Qt6::Concurrent
         Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2
+        # Widgets is linked so a non-replaceable Widgets-only control (e.g. a
+        # QScintilla code editor) can be shown as a standalone dialog window.
+        # QML-first; Widgets only as a fallback (ADR-007 / Roadmap Phase 5 §7).
         Qt6::Widgets
 )
 
-target_include_directories(chainapi-desktop
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+target_include_directories(reqloom-desktop
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge/appcontroller
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge/controllers
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge/models
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/bridge/support
+        ${CMAKE_CURRENT_SOURCE_DIR}/qml/theming
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-set_target_properties(chainapi-desktop PROPERTIES
-    OUTPUT_NAME "ChainAPI"
-    AUTOMOC ON
-    AUTORCC ON
-    AUTOUIC ON
+set_target_properties(reqloom-desktop PROPERTIES
+    OUTPUT_NAME "Reqloom"
+    MACOSX_BUNDLE ON
+    # Build as a GUI-subsystem app on Windows so launching it does not also
+    # open a console window (the GUI app has no use for an attached console).
+    WIN32_EXECUTABLE ON
 )
 
-chainapi_set_warnings(chainapi-desktop)
-chainapi_apply_sanitizers(chainapi-desktop)
+# Windows: embed the application icon (.ico) via a resource script so the exe,
+# taskbar, and title bar show the brand icon. No-op on other platforms.
+if(WIN32)
+    target_sources(reqloom-desktop PRIVATE Reqloom.rc)
+endif()
+
+reqloom_set_warnings(reqloom-desktop)
+reqloom_apply_sanitizers(reqloom-desktop)
+
+# Point the runtime font loader at the repo's desktop/fonts during development
+# so dropping Geist / Noto Sans JP .ttf files there registers them with no
+# rebuild of resources. A shipped app loads from its bundle Resources/fonts.
+target_compile_definitions(reqloom-desktop
+    PRIVATE REQLOOM_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts")
 
 # No boundary guard here — desktop is the one place Qt UI libraries are
 # allowed (PRD §8.6 / Project Layout §2.5). The engine boundary is enforced
 # on the engine and CLI targets, not here.
+
+if(REQLOOM_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()

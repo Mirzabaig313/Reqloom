@@ -1,22 +1,22 @@
 // Engine-internal interface for executing pre/post hooks in a sandboxed
 // JS environment. Concrete impl: QuickJsHookRunner.
 //
-// Sandbox rules (PRD §5.10):
+// Sandbox rules:
 //   - No filesystem access
 //   - No network beyond the operation's own request
 //   - 1-second timeout per hook
 //   - Read-only access to other actors' variables
 #pragma once
 
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Operation.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Operation.h>
 
 #include <expected>
 #include <map>
 #include <optional>
 #include <string>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 struct HookRequestView {
     HttpMethod method{};
@@ -36,6 +36,7 @@ struct HookContext {
     std::optional<HookResponseView> response;  ///< Set only for post_response.
     std::map<std::string, std::map<std::string, std::string>> variables;
     std::map<std::string, std::string> env;
+    std::map<std::string, std::string> secrets;
 };
 
 struct HookOutcome {
@@ -45,13 +46,18 @@ struct HookOutcome {
 
 class HookRunner {
 public:
+    HookRunner() = default;
+    HookRunner(const HookRunner&) = delete;
+    HookRunner& operator=(const HookRunner&) = delete;
+    HookRunner(HookRunner&&) = delete;
+    HookRunner& operator=(HookRunner&&) = delete;
     virtual ~HookRunner() = default;
 
-    virtual std::expected<HookOutcome, ChainApiError> runPreRequest(const std::string& script,
-                                                                    HookContext context) = 0;
+    virtual std::expected<HookOutcome, ReqloomError> runPreRequest(const std::string& script,
+                                                                   HookContext context) = 0;
 
-    virtual std::expected<HookOutcome, ChainApiError> runPostResponse(const std::string& script,
-                                                                      HookContext context) = 0;
+    virtual std::expected<HookOutcome, ReqloomError> runPostResponse(const std::string& script,
+                                                                     HookContext context) = 0;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

@@ -13,7 +13,7 @@
       "generator": "Ninja",
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "CHAINAPI_BUILD_TESTS": "ON",
+        "REQLOOM_BUILD_TESTS": "ON",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       }
     },
@@ -23,8 +23,9 @@
       "displayName": "macOS Debug (ASan)",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CHAINAPI_ENABLE_ASAN": "ON",
-        "CHAINAPI_ENABLE_UBSAN": "ON"
+        "REQLOOM_ENABLE_ASAN": "ON",
+        "REQLOOM_ENABLE_UBSAN": "ON",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew/opt/qt@6"
       },
       "condition": {
         "type": "equals",
@@ -37,7 +38,8 @@
       "inherits": "base",
       "displayName": "macOS Release",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew/opt/qt@6"
       },
       "condition": {
         "type": "equals",
@@ -51,8 +53,8 @@
       "displayName": "Linux Debug (ASan + UBSan)",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CHAINAPI_ENABLE_ASAN": "ON",
-        "CHAINAPI_ENABLE_UBSAN": "ON"
+        "REQLOOM_ENABLE_ASAN": "ON",
+        "REQLOOM_ENABLE_UBSAN": "ON"
       },
       "condition": {
         "type": "equals",

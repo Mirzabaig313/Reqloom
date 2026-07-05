@@ -1,25 +1,25 @@
 #pragma once
 
-#include <chainapi/engine/ExecutionEngine.h>
+#include <reqloom/engine/ExecutionEngine.h>
 
 #include <expected>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 /// Application-layer use case wrapping ExecutionEngine. Kept as a separate
-/// abstraction so that the CLI and UI present the same conceptual entry
-/// point even when the engine evolves.
+/// abstraction so the CLI and UI share the same conceptual entry point as
+/// the engine evolves.
 class RunOperationUseCase {
 public:
     explicit RunOperationUseCase(ExecutionEngine& engine);
 
-    std::expected<RunResult, ChainApiError> execute(const Project& project,
-                                                    const OperationId& target,
-                                                    RunContext& ctx,
-                                                    const RunOptions& options = {});
+    [[nodiscard]] std::expected<RunResult, ReqloomError> execute(const Project& project,
+                                                                 const OperationId& target,
+                                                                 RunContext& ctx,
+                                                                 const RunOptions& options = {});
 
 private:
     ExecutionEngine& engine_;
 };
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.astro/
+.cache/
+.vercel/
+.netlify/
+*.log
+.env
+.env.local
+.DS_Store

@@ -1,0 +1,52 @@
+{
+  "routes": [
+    { "method": "POST", "path": "/api/v1/auth/admin/login",
+      "status": 200,
+      "body": { "data": { "accessToken": "admin-tok",
+                          "refreshToken": "admin-refresh",
+                          "user": { "id": "adm-1" } } } },
+
+    { "method": "POST", "path": "/api/v1/auth/vendor/login",
+      "status": 200,
+      "body": { "data": { "accessToken": "vendor-tok",
+                          "refreshToken": "vendor-refresh",
+                          "user": { "id": "vnd-1" } } } },
+
+    { "method": "POST", "path": "/api/v1/auth/send-otp",
+      "status": 200,
+      "body": "" },
+
+    { "method": "POST", "path": "/api/v1/auth/verify-otp",
+      "status": 200,
+      "body": { "data": { "accessToken": "customer-tok",
+                          "user": { "id": "cust-1" } } } },
+
+    { "method": "POST", "path": "/api/v1/vendors/vnd-1/products",
+      "status": 201,
+      "body": { "data": { "id": "prod-42" } } },
+
+    { "method": "POST", "path": "/api/v1/products/prod-42/publish",
+      "status": 200,
+      "body": { "data": { "ok": true } } },
+
+    { "method": "POST", "path": "/api/v1/cart/items",
+      "status": 200,
+      "body": { "data": { "id": "cart-item-1", "cart_total": 1998 } } },
+
+    { "method": "POST", "path": "/api/v1/orders",
+      "status": 201,
+      "body": { "data": { "id": "ord-7" } } },
+
+    { "method": "POST", "path": "/api/v1/orders/ord-7/pay",
+      "status": 200,
+      "body": { "data": { "payment": { "id": "pay-3" } } } },
+
+    { "method": "POST", "path": "/api/v1/orders/ord-7/refunds",
+      "status": 201,
+      "body": { "data": { "id": "ref-9" } } },
+
+    { "method": "POST", "path": "/api/v1/admin/refunds/ref-9/approve",
+      "status": 200,
+      "body": { "data": { "ok": true } } }
+  ]
+}

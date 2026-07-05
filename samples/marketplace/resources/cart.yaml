@@ -1,0 +1,39 @@
+name: cart
+description: Customer's shopping cart (one cart per customer)
+
+operations:
+  add_item:
+    method: POST
+    path: /api/v1/cart/items
+    actor: customer
+    depends_on: [product.publish]
+    body:
+      product_id: "{{product.product_id}}"
+      quantity: 2
+    expect_status: 200
+    extract:
+      cart_item_id: $.data.id
+      cart_total: $.data.cart_total
+
+  view:
+    method: GET
+    path: /api/v1/cart
+    actor: customer
+    depends_on: [cart.add_item]
+    expect_status: 200
+
+  update_quantity:
+    method: PATCH
+    path: /api/v1/cart/items/{{cart.cart_item_id}}
+    actor: customer
+    depends_on: [cart.add_item]
+    body:
+      quantity: 3
+    expect_status: 200
+
+  remove_item:
+    method: DELETE
+    path: /api/v1/cart/items/{{cart.cart_item_id}}
+    actor: customer
+    depends_on: [cart.add_item]
+    expect_status: 204

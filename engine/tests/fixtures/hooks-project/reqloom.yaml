@@ -1,0 +1,52 @@
+version: 1
+name: Hooks Smoke Project
+default_environment: local
+
+environments:
+  local:
+    baseUrl: http://placeholder.invalid
+
+actors:
+  user:
+    auth:
+      strategy: simple
+      method: POST
+      path: /api/v1/auth/login
+      body:
+        email: "test@test.com"
+        password: "test123"
+      expect_status: 200
+      extract:
+        token: $.data.accessToken
+    inject:
+      headers:
+        Authorization: "Bearer {{user.token}}"
+
+resources:
+  signed:
+    operations:
+      send:
+        method: POST
+        path: /api/v1/signed
+        actor: user
+        body:
+          payload: "secret"
+        expect_status: 200
+        pre_request: |
+          ctx.request.headers['X-Signature'] =
+              ctx.hmac.sha256('shared-key', ctx.request.body);
+        extract:
+          id: $.data.id
+
+  wrapped:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/wrapped
+        actor: user
+        expect_status: 200
+        post_response: |
+          const inner = JSON.parse(ctx.response.body).envelope;
+          ctx.response.body = JSON.stringify(inner);
+        extract:
+          id: $.data.id

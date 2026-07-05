@@ -1,0 +1,51 @@
+{
+    "routes": [
+        {
+            "method": "GET",
+            "path": "/api/v1/orgs",
+            "status": 200,
+            "body": {
+                "data": {
+                    "items": [
+                        {
+                            "id": "org-1"
+                        },
+                        {
+                            "id": "org-2"
+                        },
+                        {
+                            "id": "org-3"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/orgs/org-1",
+            "status": 200,
+            "body": {
+                "id": "org-1",
+                "name": "Alpha"
+            }
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/orgs/org-2",
+            "status": 200,
+            "body": {
+                "id": "org-2",
+                "name": "Bravo"
+            }
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/orgs/org-3",
+            "status": 200,
+            "body": {
+                "id": "org-3",
+                "name": "Charlie"
+            }
+        }
+    ]
+}

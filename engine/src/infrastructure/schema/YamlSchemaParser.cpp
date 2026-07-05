@@ -1,20 +1,1175 @@
 // YamlSchemaParser — yaml-cpp-backed schema parser.
-//
-// Phase 1 will:
-//   - Parse chainapi.yaml + imports glob (PRD §5.3).
-//   - Validate version (last 3 majors supported).
-//   - Build implicit dependency edges from {{X.y}} references.
-//   - Detect cycles and undefined references (Engine Req §3.1).
-//   - Produce ChainApiError with file:line on failure.
 #include "YamlSchemaParser.h"
 
-namespace chainapi::engine {
+#include "../../domain/DependencyResolver.h"
+
+#include <yaml-cpp/yaml.h>
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cctype>
+#include <charconv>
+#include <cstdint>
+#include <expected>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <optional>
+#include <set>
+#include <string>
+#include <system_error>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+namespace reqloom::engine {
+
+namespace {
+
+// Helpers
+
+HttpMethod parseMethod(const std::string& m) {
+    if (m == "GET" || m == "get") {
+        return HttpMethod::Get;
+    }
+    if (m == "POST" || m == "post") {
+        return HttpMethod::Post;
+    }
+    if (m == "PUT" || m == "put") {
+        return HttpMethod::Put;
+    }
+    if (m == "PATCH" || m == "patch") {
+        return HttpMethod::Patch;
+    }
+    if (m == "DELETE" || m == "delete") {
+        return HttpMethod::Delete;
+    }
+    if (m == "HEAD" || m == "head") {
+        return HttpMethod::Head;
+    }
+    if (m == "OPTIONS" || m == "options") {
+        return HttpMethod::Options;
+    }
+    return HttpMethod::Get;
+}
+
+std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
+    std::map<std::string, std::string> result;
+    if (!node || !node.IsMap()) {
+        return result;
+    }
+    for (const auto& kv : node) {
+        auto key = kv.first.as<std::string>();
+        if (kv.second.IsNull()) {
+            // `key:` with no value (or `key: ~`) is an empty string, not the
+            // literal "~" that emitting a null node would round-trip to.
+            result[key] = "";
+        } else if (kv.second.IsScalar()) {
+            result[key] = kv.second.as<std::string>();
+        } else {
+            YAML::Emitter emitter;
+            emitter << kv.second;
+            result[key] = emitter.c_str();
+        }
+    }
+    return result;
+}
+
+/// Read an environment-variable scalar, honoring the `!secret` YAML tag.
+///
+/// `key: !secret NAME` binds the variable to a keychain secret rather than
+/// a literal: the value becomes the reference `{{secret.NAME}}`, which the
+/// variable resolver expands at run time (and which `collectSecretReferences`
+/// picks up so the engine pre-loads NAME from the secret store). Without
+/// this, yaml-cpp drops the tag and the env var would hold the literal
+/// string "NAME" — PRD §5.4. An untagged scalar passes through verbatim.
+[[nodiscard]] std::string readEnvScalar(const YAML::Node& scalar) {
+    // yaml-cpp reports an explicit local tag as "!secret"; the implicit
+    // tags for plain scalars are "?"/"!", which we treat as untagged.
+    if (scalar.Tag() == "!secret") {
+        const auto name = scalar.as<std::string>("");
+        return name.empty() ? std::string{} : "{{secret." + name + "}}";
+    }
+    return scalar.as<std::string>("");
+}
+
+constexpr int kMaxYamlDepth = 64;  // prevent stack overflow on malicious input
+
+nlohmann::json yamlNodeToJsonValue(const YAML::Node& node, int depth);
+
+nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
+    const auto raw = scalar.as<std::string>();
+    // A quoted scalar (yaml-cpp reports the non-specific "!" tag) is always a
+    // string — never coerce it to a number/bool. This preserves values like a
+    // zip code "01234" or a flag-shaped string "true" inside a JSON body
+    // instead of silently retyping them on parse.
+    if (scalar.Tag() == "!") {
+        return nlohmann::json(raw);
+    }
+    // Use parens, not braces — nlohmann::json{x} treats braces as an
+    // initializer-list and produces a one-element array.
+    if (raw == "true") {
+        return nlohmann::json(true);
+    }
+    if (raw == "false") {
+        return nlohmann::json(false);
+    }
+    if (raw == "null" || raw == "~") {
+        return {nullptr};
+    }
+    if (!raw.empty() && ((std::isdigit(static_cast<unsigned char>(raw.front())) != 0) ||
+                         raw.front() == '-' || raw.front() == '+')) {
+        long long ll = 0;
+        const auto* first = raw.data();
+        const auto* last = first + raw.size();
+        auto fc = std::from_chars(first, last, ll);
+        if (fc.ec == std::errc{} && fc.ptr == last) {
+            return nlohmann::json(ll);
+        }
+        try {
+            std::size_t pos = 0;
+            double const d = std::stod(raw, &pos);
+            if (pos == raw.size()) {
+                return nlohmann::json(d);
+            }
+            // std::stod throws on non-numeric input; that's our signal to
+            // fall through and treat the scalar as a string. No log needed
+            // — every YAML string starting with a digit-like character
+            // takes this path.
+            // NOLINTNEXTLINE(bugprone-empty-catch)
+        } catch (...) {
+        }
+    }
+    return nlohmann::json(raw);
+}
+
+nlohmann::json yamlNodeToJsonValue(const YAML::Node& node, int depth) {
+    if (depth > kMaxYamlDepth) {
+        throw YAML::Exception(
+            node.Mark(), "YAML nesting exceeds maximum depth of " + std::to_string(kMaxYamlDepth));
+    }
+    if (!node || node.IsNull()) {
+        return {nullptr};
+    }
+    if (node.IsScalar()) {
+        return yamlScalarToJsonValue(node);
+    }
+    if (node.IsSequence()) {
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& item : node) {
+            arr.push_back(yamlNodeToJsonValue(item, depth + 1));
+        }
+        return arr;
+    }
+    if (node.IsMap()) {
+        nlohmann::json obj = nlohmann::json::object();
+        for (const auto& kv : node) {
+            obj[kv.first.as<std::string>()] = yamlNodeToJsonValue(kv.second, depth + 1);
+        }
+        return obj;
+    }
+    return {nullptr};
+}
+
+std::string nodeToJsonString(const YAML::Node& node) {
+    if (!node || node.IsNull()) {
+        return "";
+    }
+    // A scalar body is the raw request body verbatim — do NOT JSON-encode it.
+    // Re-encoding a scalar was the over-escaping bug: the writer emits the
+    // stored body as a scalar, so encoding it here would add a layer of quotes
+    // on every save. Structured (map/sequence) bodies are serialized to JSON.
+    if (node.IsScalar()) {
+        return node.as<std::string>();
+    }
+    return yamlNodeToJsonValue(node, 0).dump();
+}
+
+Extraction::Source extractionSourceFromString(const std::string& s) {
+    if (s == "xpath") {
+        return Extraction::Source::XPath;
+    }
+    if (s == "header") {
+        return Extraction::Source::Header;
+    }
+    if (s == "status_code") {
+        return Extraction::Source::StatusCode;
+    }
+    if (s == "regex") {
+        return Extraction::Source::Regex;
+    }
+    if (s == "cookie") {
+        return Extraction::Source::Cookie;
+    }
+    return Extraction::Source::JsonPath;
+}
+
+// Source implied by the path prefix when no explicit `source:` is present.
+// XPath/Regex are NOT auto-detectable — they require the explicit map form.
+Extraction::Source autoDetectExtractionSource(const std::string& path) {
+    if (path.starts_with("$.headers.")) {
+        return Extraction::Source::Header;
+    }
+    if (path.starts_with("$.cookies.")) {
+        return Extraction::Source::Cookie;
+    }
+    if (path == "$.status_code") {
+        return Extraction::Source::StatusCode;
+    }
+    return Extraction::Source::JsonPath;
+}
+
+std::vector<Extraction> parseExtractions(const YAML::Node& node) {
+    std::vector<Extraction> result;
+    if (!node || !node.IsMap()) {
+        return result;
+    }
+    for (const auto& kv : node) {
+        Extraction ext;
+        ext.variableName = kv.first.as<std::string>();
+        const auto& value = kv.second;
+        // Two shapes: a bare scalar path (source auto-detected from the prefix)
+        // or a map `{ path: ..., source: ... }` carrying an explicit source for
+        // cases the prefix can't express (XPath, Regex). The map form lets
+        // those survive a parse → write → parse round-trip.
+        if (value.IsMap()) {
+            ext.sourcePath = value["path"].as<std::string>("");
+            if (value["source"]) {
+                ext.source = extractionSourceFromString(value["source"].as<std::string>(""));
+            } else {
+                ext.source = autoDetectExtractionSource(ext.sourcePath);
+            }
+        } else {
+            ext.sourcePath = value.as<std::string>("");
+            ext.source = autoDetectExtractionSource(ext.sourcePath);
+        }
+        result.push_back(std::move(ext));
+    }
+    return result;
+}
+
+/// Parse the `assert:` block: a sequence whose items are either a bare scalar
+/// (the predicate expression, unnamed) or a map `{ expr: ..., name: ... }`.
+std::vector<Assertion> parseAssertions(const YAML::Node& node) {
+    std::vector<Assertion> result;
+    if (!node || !node.IsSequence()) {
+        return result;
+    }
+    for (const auto& item : node) {
+        Assertion assertion;
+        if (item.IsMap()) {
+            assertion.expr = item["expr"].as<std::string>("");
+            if (item["name"]) {
+                assertion.name = item["name"].as<std::string>();
+            }
+        } else {
+            assertion.expr = item.as<std::string>("");
+        }
+        if (!assertion.expr.empty()) {
+            result.push_back(std::move(assertion));
+        }
+    }
+    return result;
+}
+
+/// Parse a non-negative integer using from_chars. Returns nullopt for
+/// any malformed input (non-digit, sign, partial parse, negative).
+/// Used by all the duration parsers below — std::stol throws on bad
+[[nodiscard]] std::optional<long> parseNonNegativeLong(std::string_view digits) {
+    long value = 0;
+    const auto* first = digits.data();
+    const auto* last = first + digits.size();
+    const auto fc = std::from_chars(first, last, value);
+    if (fc.ec != std::errc{} || fc.ptr != last || value < 0) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+std::chrono::seconds parseDuration(const std::string& s) {
+    constexpr std::chrono::seconds kDefault{900};  // 15m — used when input is malformed
+    if (s.empty()) {
+        return kDefault;
+    }
+
+    const auto digits = std::string_view{s}.substr(0, s.size() - 1);
+    const auto value = parseNonNegativeLong(digits);
+    if (!value) {
+        return kDefault;
+    }
+
+    const char unit = s.back();
+    switch (unit) {
+        case 's':
+            return std::chrono::seconds{*value};
+        case 'm':
+            return std::chrono::seconds{*value * 60};
+        case 'h':
+            return std::chrono::seconds{*value * 3600};
+        case 'd':
+            return std::chrono::seconds{*value * 86400};
+        default:
+            return std::chrono::seconds{*value};
+    }
+}
+
+/// Parse a duration literal in either milliseconds (`750ms`) or
+/// seconds-and-up (`5s`, `1m`, `1h`, `1d`). Returns `fallback` when
+/// the literal is malformed. Centralised so the schema parser doesn't
+/// sprinkle `std::stol` calls (which throw) across every poll /
+/// transport / refresh field.
+[[nodiscard]] std::chrono::milliseconds parseDurationMs(const std::string& literal,
+                                                        std::chrono::milliseconds fallback) {
+    if (literal.empty()) {
+        return fallback;
+    }
+    if (literal.ends_with("ms")) {
+        const auto digits = std::string_view{literal}.substr(0, literal.size() - 2);
+        if (auto ms = parseNonNegativeLong(digits)) {
+            return std::chrono::milliseconds{*ms};
+        }
+        return fallback;
+    }
+    // Fall through to second-grained parser. Empty unit (just digits)
+    // is treated as seconds by parseDuration.
+    if (literal.size() < 2) {
+        return fallback;
+    }
+    const auto digits = std::string_view{literal}.substr(0, literal.size() - 1);
+    if (!parseNonNegativeLong(digits)) {
+        return fallback;  // malformed; don't trust parseDuration
+    }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(parseDuration(literal));
+}
+
+/// Parse a `transport:` block.
+///
+/// Recognised keys:
+///   tls_verify:       bool              (default true)
+///   tls_verify_host:  bool              (default true)
+///   ca_bundle:        string (path)     (optional)
+///   proxy:            string (URL)      (optional)
+///   connect_timeout:  duration ("5s")   (default 5s, also accepts "500ms")
+///
+/// Unknown keys are silently ignored — same forward-compat policy used
+/// for poll_until and other extension blocks. A fully-empty / missing
+/// block parses to a default-constructed `TransportConfig` so absent
+/// schema declarations preserve the engine's prior behaviour exactly.
+TransportConfig parseTransport(const YAML::Node& node) {
+    TransportConfig out;
+    if (!node || !node.IsMap()) {
+        return out;
+    }
+
+    if (node["tls_verify"]) {
+        out.tlsVerify = node["tls_verify"].as<bool>(true);
+    }
+    if (node["tls_verify_host"]) {
+        out.tlsVerifyHost = node["tls_verify_host"].as<bool>(true);
+    }
+
+    if (node["ca_bundle"]) {
+        const auto path = node["ca_bundle"].as<std::string>("");
+        if (!path.empty()) {
+            out.caBundlePath = path;
+        }
+    }
+    if (node["proxy"]) {
+        const auto proxy = node["proxy"].as<std::string>("");
+        if (!proxy.empty()) {
+            out.proxy = proxy;
+        }
+    }
+
+    if (node["connect_timeout"]) {
+        const auto literal = node["connect_timeout"].as<std::string>("");
+        out.connectTimeout = parseDurationMs(literal, out.connectTimeout);
+    }
+
+    return out;
+}
+
+// A hook value is a file reference (not inline JS) when it looks like a
+// relative path to a .js/.mjs file. Single-sourced so the parser can both load
+// the referenced file and remember the reference for a faithful round-trip.
+[[nodiscard]] bool hookValueIsFileRef(std::string_view s) {
+    if (s.starts_with("./") || s.starts_with("../")) {
+        return true;
+    }
+    if (s.find('\n') != std::string_view::npos) {
+        return false;
+    }
+    if (s.find('{') != std::string_view::npos) {
+        return false;
+    }
+    if (s.find('(') != std::string_view::npos) {
+        return false;
+    }
+    if (s.find('=') != std::string_view::npos) {
+        return false;
+    }
+    return s.ends_with(".js") || s.ends_with(".mjs");
+}
+
+// Resolve a hook-script value: if it looks like a relative path to a .js/.mjs
+// file, load the file content; otherwise treat as inline JS. Paths are
+// canonicalised via weakly_canonical against baseDir and rejected if outside
+// root. File size capped at 1 MiB.
+[[nodiscard]] std::expected<std::string, ReqloomError> resolveHookScript(const std::string& value,
+                                                                         const fs::path& baseDir) {
+    if (value.empty()) {
+        return value;
+    }
+
+    if (!hookValueIsFileRef(value)) {
+        return value;
+    }
+
+    const fs::path raw{value};
+    // is_absolute() is host-dependent: on Windows it returns false for a
+    // POSIX-rooted path like "/etc/passwd.js", letting an escape attempt
+    // slip past. Reject any leading separator or a Windows drive/UNC prefix
+    // regardless of the host OS so the guard behaves identically everywhere.
+    const auto hasRootedPrefix = [](std::string_view s) {
+        if (s.starts_with('/') || s.starts_with('\\')) {
+            return true;
+        }
+        // Drive-letter root: "C:\..." or "C:/...".
+        if (s.size() >= 3 && std::isalpha(static_cast<unsigned char>(s[0])) && s[1] == ':' &&
+            (s[2] == '\\' || s[2] == '/')) {
+            return true;
+        }
+        return false;
+    };
+    if (raw.is_absolute() || hasRootedPrefix(value)) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script path must be relative to the project root: " + value});
+    }
+
+    std::error_code ec;
+    const auto canonical = fs::weakly_canonical(baseDir / raw, ec);
+    if (ec) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SchemaInvalid,
+            ErrorClass::Schema,
+            "hook script path is not resolvable: " + value + " (" + ec.message() + ")"});
+    }
+
+    // Containment check using fs::canonical (not weakly_canonical) for the
+    // base — fully resolving symlinks is required for the prefix comparison
+    // to be reliable. Also require the prefix to end at a path separator to
+    // prevent /home/user/proj matching /home/user/proj-evil/hook.js.
+    const auto canonicalBase = fs::canonical(baseDir, ec);
+    if (ec) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "could not canonicalise project root: " + ec.message()});
+    }
+    {
+        const auto canonStr = canonical.lexically_normal().string();
+        const auto baseStr = canonicalBase.lexically_normal().string();
+        const bool contained =
+            canonStr.size() >= baseStr.size() && canonStr.substr(0, baseStr.size()) == baseStr &&
+            (canonStr.size() == baseStr.size() || canonStr[baseStr.size()] == '/' ||
+             canonStr[baseStr.size()] == fs::path::preferred_separator);
+        if (!contained) {
+            return std::unexpected(
+                ReqloomError{ErrorCode::SchemaInvalid,
+                             ErrorClass::Schema,
+                             "hook script path escapes the project root: " + value});
+        }
+    }
+
+    if (!fs::exists(canonical, ec) || ec) {
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            "hook script not found: " + canonical.string()});
+    }
+    if (!fs::is_regular_file(canonical, ec) || ec) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script is not a regular file: " + canonical.string()});
+    }
+
+    constexpr std::uintmax_t kMaxHookBytes = std::uintmax_t{1} * 1024 * 1024;  // 1 MiB
+    const auto size = fs::file_size(canonical, ec);
+    if (ec) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "could not stat hook script " + canonical.string() + ": " + ec.message()});
+    }
+    if (size > kMaxHookBytes) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script exceeds 1 MiB cap: " + canonical.string()});
+    }
+
+    std::ifstream in(canonical, std::ios::binary);
+    if (!in) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "hook script could not be opened: " + canonical.string()});
+    }
+    std::string contents(static_cast<std::size_t>(size), '\0');
+    in.read(contents.data(), static_cast<std::streamsize>(size));
+    if (in.gcount() != static_cast<std::streamsize>(size)) {
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            "hook script read truncated: " + canonical.string()});
+    }
+    return contents;
+}
+
+// ─── Actor parsing ───────────────────────────────────────────────────────────
+
+Actor parseActor(const std::string& actorId, const YAML::Node& node) {
+    Actor actor;
+    actor.id = ActorId{actorId};
+    actor.description = node["description"].as<std::string>("");
+
+    const auto& auth = node["auth"];
+    if (auth) {
+        const auto strategy = auth["strategy"].as<std::string>("simple");
+        if (strategy == "chain") {
+            actor.strategy = AuthStrategy::Chain;
+        } else if (strategy == "basic") {
+            actor.strategy = AuthStrategy::Basic;
+        } else if (strategy == "api_key") {
+            actor.strategy = AuthStrategy::ApiKey;
+        } else if (strategy == "oauth2_client_credentials") {
+            actor.strategy = AuthStrategy::OAuth2ClientCredentials;
+        } else if (strategy == "oauth2_password") {
+            actor.strategy = AuthStrategy::OAuth2Password;
+        } else if (strategy == "oauth1") {
+            actor.strategy = AuthStrategy::OAuth1;
+        } else if (strategy == "aws_sigv4") {
+            actor.strategy = AuthStrategy::AwsSigV4;
+        } else {
+            actor.strategy = AuthStrategy::Simple;
+        }
+
+        if (actor.strategy == AuthStrategy::Chain && auth["steps"]) {
+            for (const auto& stepNode : auth["steps"]) {
+                AuthStep step;
+                step.id = stepNode["id"].as<std::string>("");
+                step.method = parseMethod(stepNode["method"].as<std::string>("POST"));
+                step.pathTemplate = stepNode["path"].as<std::string>("");
+                step.headers = parseStringMap(stepNode["headers"]);
+                if (stepNode["body"]) {
+                    step.bodyTemplate = nodeToJsonString(stepNode["body"]);
+                }
+                if (stepNode["expect_status"]) {
+                    step.expectStatus = stepNode["expect_status"].as<int>();
+                }
+                step.extractions = parseExtractions(stepNode["extract"]);
+                actor.authSteps.push_back(std::move(step));
+            }
+        } else if (actor.strategy == AuthStrategy::Basic) {
+            actor.authConfig["username"] = auth["username"].as<std::string>("");
+            actor.authConfig["password"] = auth["password"].as<std::string>("");
+        } else if (actor.strategy == AuthStrategy::ApiKey) {
+            // Required: `key`. Optional: `location` (header|query|cookie) and `name`.
+            actor.authConfig["key"] = auth["key"].as<std::string>("");
+            if (auth["location"]) {
+                actor.authConfig["location"] = auth["location"].as<std::string>();
+            }
+            if (auth["name"]) {
+                actor.authConfig["name"] = auth["name"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::OAuth2ClientCredentials) {
+            // RFC 6749 : token_url + client_id + client_secret required; scope optional.
+            actor.authConfig["token_url"] = auth["token_url"].as<std::string>("");
+            actor.authConfig["client_id"] = auth["client_id"].as<std::string>("");
+            actor.authConfig["client_secret"] = auth["client_secret"].as<std::string>("");
+            if (auth["scope"]) {
+                actor.authConfig["scope"] = auth["scope"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::OAuth2Password) {
+            // RFC 6749 : same as client_credentials plus username/password.
+            actor.authConfig["token_url"] = auth["token_url"].as<std::string>("");
+            actor.authConfig["client_id"] = auth["client_id"].as<std::string>("");
+            actor.authConfig["client_secret"] = auth["client_secret"].as<std::string>("");
+            actor.authConfig["username"] = auth["username"].as<std::string>("");
+            actor.authConfig["password"] = auth["password"].as<std::string>("");
+            if (auth["scope"]) {
+                actor.authConfig["scope"] = auth["scope"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::OAuth1) {
+            // RFC 5849 two-legged + optional preacquired access token.
+            actor.authConfig["consumer_key"] = auth["consumer_key"].as<std::string>("");
+            actor.authConfig["consumer_secret"] = auth["consumer_secret"].as<std::string>("");
+            if (auth["token"]) {
+                actor.authConfig["token"] = auth["token"].as<std::string>();
+            }
+            if (auth["token_secret"]) {
+                actor.authConfig["token_secret"] = auth["token_secret"].as<std::string>();
+            }
+            if (auth["realm"]) {
+                actor.authConfig["realm"] = auth["realm"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::AwsSigV4) {
+            // AWS SigV4 (AWS4-HMAC-SHA256). Long-lived keys are discouraged;
+            // prefer {{X.y}} references that pull from a secret store.
+            actor.authConfig["access_key"] = auth["access_key"].as<std::string>("");
+            actor.authConfig["secret_key"] = auth["secret_key"].as<std::string>("");
+            actor.authConfig["region"] = auth["region"].as<std::string>("");
+            actor.authConfig["service"] = auth["service"].as<std::string>("");
+            if (auth["session_token"]) {
+                actor.authConfig["session_token"] = auth["session_token"].as<std::string>();
+            }
+        } else {
+            AuthStep step;
+            step.id = "login";
+            step.method = parseMethod(auth["method"].as<std::string>("POST"));
+            step.pathTemplate = auth["path"].as<std::string>("");
+            step.headers = parseStringMap(auth["headers"]);
+            if (auth["body"]) {
+                step.bodyTemplate = nodeToJsonString(auth["body"]);
+            }
+            if (auth["expect_status"]) {
+                step.expectStatus = auth["expect_status"].as<int>();
+            }
+            step.extractions = parseExtractions(auth["extract"]);
+            actor.authSteps.push_back(std::move(step));
+        }
+    }
+
+    if (node["session"]) {
+        const auto& session = node["session"];
+        if (session["ttl"]) {
+            actor.sessionTtl = parseDuration(session["ttl"].as<std::string>("15m"));
+        }
+        if (session["refresh"]) {
+            SessionRefresh refresh;
+            const auto& r = session["refresh"];
+            refresh.method = parseMethod(r["method"].as<std::string>("POST"));
+            refresh.pathTemplate = r["path"].as<std::string>("");
+            refresh.headers = parseStringMap(r["headers"]);
+            if (r["body"]) {
+                refresh.bodyTemplate = nodeToJsonString(r["body"]);
+            }
+            // expect_status accepts a scalar or an array — same surface
+            // as Operation's field. When unset, runRefresh treats any
+            // 2xx as success (backwards-compatible default).
+            if (r["expect_status"]) {
+                const auto& es = r["expect_status"];
+                if (es.IsSequence()) {
+                    for (const auto& s : es) {
+                        refresh.expectStatusList.push_back(s.as<int>());
+                    }
+                } else if (es.IsScalar()) {
+                    refresh.expectStatus = es.as<int>();
+                }
+            }
+            refresh.extractions = parseExtractions(r["extract"]);
+            actor.refresh = std::move(refresh);
+        }
+    }
+
+    if (node["inject"]) {
+        actor.inject.headers = parseStringMap(node["inject"]["headers"]);
+    }
+
+    return actor;
+}
+
+// ─── Resource/Operation parsing ──────────────────────────────────────────────
+
+Provenance::Source provenanceSourceFromString(const std::string& s) {
+    if (s == "openapi_import") {
+        return Provenance::Source::OpenApiImport;
+    }
+    if (s == "postman_import") {
+        return Provenance::Source::PostmanImport;
+    }
+    if (s == "bruno_import") {
+        return Provenance::Source::BrunoImport;
+    }
+    if (s == "insomnia_import") {
+        return Provenance::Source::InsomniaImport;
+    }
+    if (s == "har_import") {
+        return Provenance::Source::HarImport;
+    }
+    if (s == "ai_import") {
+        return Provenance::Source::AiImport;
+    }
+    return Provenance::Source::HandWritten;
+}
+
+Provenance::VerifiedAgainst verifiedAgainstFromString(const std::string& s) {
+    if (s == "openapi_example") {
+        return Provenance::VerifiedAgainst::OpenApiExample;
+    }
+    if (s == "postman_response") {
+        return Provenance::VerifiedAgainst::PostmanResponse;
+    }
+    if (s == "insomnia_response") {
+        return Provenance::VerifiedAgainst::InsomniaResponse;
+    }
+    if (s == "har_entry") {
+        return Provenance::VerifiedAgainst::HarEntry;
+    }
+    if (s == "synthetic") {
+        return Provenance::VerifiedAgainst::Synthetic;
+    }
+    if (s == "live_capture") {
+        return Provenance::VerifiedAgainst::LiveCapture;
+    }
+    return Provenance::VerifiedAgainst::None;
+}
+
+// Parse the `_provenance` block written by the importer/writer. Pure metadata
+// — the runtime ignores it — but it must survive parse→write→parse so an app
+// save doesn't strip an AI-imported op's audit trail.
+Provenance parseProvenance(const YAML::Node& node) {
+    Provenance prov;
+    if (!node || !node.IsMap()) {
+        return prov;
+    }
+    prov.source = provenanceSourceFromString(node["source"].as<std::string>("hand_written"));
+    if (node["verified_against"]) {
+        prov.verifiedAgainst =
+            verifiedAgainstFromString(node["verified_against"].as<std::string>("none"));
+    }
+    if (node["model"]) {
+        prov.model = node["model"].as<std::string>("");
+    }
+    if (node["imported_at"]) {
+        prov.importedAt = node["imported_at"].as<std::string>("");
+    }
+    prov.evidence = parseStringMap(node["evidence"]);
+    return prov;
+}
+
+std::expected<Resource, ReqloomError> parseResource(const std::string& resourceId,
+                                                    const YAML::Node& node,
+                                                    const fs::path& baseDir) {
+    Resource resource;
+    resource.id = ResourceId{resourceId};
+    resource.description = node["description"].as<std::string>("");
+
+    const auto& ops = node["operations"];
+    if (!ops || !ops.IsMap()) {
+        return resource;
+    }
+
+    for (const auto& kv : ops) {
+        auto opName = kv.first.as<std::string>();
+        const auto& opNode = kv.second;
+
+        Operation op;
+        op.id = OperationId{std::format("{}.{}", resourceId, opName)};
+        op.resource = ResourceId{resourceId};
+        op.method = parseMethod(opNode["method"].as<std::string>("GET"));
+        op.pathTemplate = opNode["path"].as<std::string>("");
+
+        if (opNode["actor"]) {
+            op.actor = ActorId{opNode["actor"].as<std::string>()};
+        }
+
+        op.headers = parseStringMap(opNode["headers"]);
+        op.queryParams = parseStringMap(opNode["query_params"]);
+
+        if (opNode["body"]) {
+            op.bodyTemplate = nodeToJsonString(opNode["body"]);
+        }
+        if (opNode["body_form"]) {
+            op.bodyForm = parseStringMap(opNode["body_form"]);
+        }
+
+        if (opNode["expect_status"]) {
+            // expect_status accepts either a scalar or an array. The array
+            // form is required when poll_until is in play (202 Accepted
+            // alongside a 200 from the eventual poll completion).
+            const auto& es = opNode["expect_status"];
+            if (es.IsSequence()) {
+                for (const auto& s : es) {
+                    op.expectStatusList.push_back(s.as<int>());
+                }
+            } else if (es.IsScalar()) {
+                op.expectStatus = es.as<int>();
+            }
+        }
+
+        if (opNode["poll_until"]) {
+            const auto& p = opNode["poll_until"];
+            PollUntil poll;
+            poll.method = parseMethod(p["method"].as<std::string>("GET"));
+            poll.pathTemplate = p["path"].as<std::string>("");
+            if (p["actor"]) {
+                poll.actor = ActorId{p["actor"].as<std::string>()};
+            }
+            poll.successWhen = p["success_when"].as<std::string>("");
+            if (p["fail_when"]) {
+                poll.failWhen = p["fail_when"].as<std::string>();
+            }
+            if (p["interval"]) {
+                const auto literal = p["interval"].as<std::string>("2s");
+                poll.interval = parseDurationMs(literal, poll.interval);
+            }
+            if (p["backoff"]) {
+                const auto& b = p["backoff"];
+                if (b["base"]) {
+                    const auto literal = b["base"].as<std::string>("500ms");
+                    poll.backoffBase = parseDurationMs(
+                        literal, poll.backoffBase.value_or(std::chrono::milliseconds{500}));
+                }
+                if (b["max"]) {
+                    const auto literal = b["max"].as<std::string>("30s");
+                    poll.backoffMax = parseDurationMs(literal, poll.backoffMax);
+                }
+            }
+            if (p["timeout"]) {
+                const auto literal = p["timeout"].as<std::string>("60s");
+                poll.timeout = parseDurationMs(literal, poll.timeout);
+            }
+            if (p["max_attempts"]) {
+                poll.maxAttempts = p["max_attempts"].as<int>();
+            }
+            op.pollUntil = std::move(poll);
+        }
+
+        if (opNode["for_each"]) {
+            const auto over = opNode["for_each"]["over"].as<std::string>("");
+            if (!over.empty()) {
+                ForEach forEach{ResourceId{over}};
+                forEach.continueOnError = opNode["for_each"]["continue_on_error"].as<bool>(false);
+                op.forEach = forEach;
+            }
+        }
+
+        op.extractions = parseExtractions(opNode["extract"]);
+        op.assertions = parseAssertions(opNode["assert"]);
+
+        if (opNode["depends_on"] && opNode["depends_on"].IsSequence()) {
+            for (const auto& dep : opNode["depends_on"]) {
+                op.explicitDependencies.push_back(OperationId{dep.as<std::string>()});
+            }
+        }
+
+        // Hook scripts: a relative `.js` path is loaded from disk; everything
+        // else is treated as inline JS. See `resolveHookScript` for the
+        // heuristic and security checks.
+        if (opNode["pre_request"]) {
+            const auto raw = opNode["pre_request"].as<std::string>();
+            auto resolved = resolveHookScript(raw, baseDir);
+            if (!resolved) {
+                return std::unexpected(resolved.error());
+            }
+            op.preRequestScript = std::move(*resolved);
+            if (hookValueIsFileRef(raw)) {
+                op.preRequestScriptRef = raw;
+            }
+        }
+        if (opNode["post_response"]) {
+            const auto raw = opNode["post_response"].as<std::string>();
+            auto resolved = resolveHookScript(raw, baseDir);
+            if (!resolved) {
+                return std::unexpected(resolved.error());
+            }
+            op.postResponseScript = std::move(*resolved);
+            if (hookValueIsFileRef(raw)) {
+                op.postResponseScriptRef = raw;
+            }
+        }
+
+        if (opNode["retry"]) {
+            const auto& retryNode = opNode["retry"];
+            if (retryNode["max"]) {
+                op.retry.maxAttempts = retryNode["max"].as<int>();
+            }
+            if (retryNode["backoff"]) {
+                op.retry.baseBackoff = std::chrono::milliseconds{retryNode["backoff"].as<int>(500)};
+            }
+        }
+
+        if (opNode["timeout"]) {
+            op.timeout = std::chrono::milliseconds{opNode["timeout"].as<int>(30000)};
+        }
+
+        op.force = opNode["force"].as<bool>(false);
+
+        if (opNode["_provenance"]) {
+            op.provenance = parseProvenance(opNode["_provenance"]);
+        }
+
+        resource.operations[opName] = std::move(op);
+    }
+
+    return resource;
+}
+
+// ─── File loading ────────────────────────────────────────────────────────────
+
+// Cap raw schema document size before handing bytes to yaml-cpp. The YAML
+// layer is an attacker-controlled surface (AGENTS.md §"Reading user input");
+// an unbounded document is a trivial memory-exhaustion vector. 8 MiB is far
+// above any legitimate hand-written schema.
+constexpr std::uintmax_t kMaxYamlBytes = std::uintmax_t{8} * 1024 * 1024;
+
+[[nodiscard]] std::expected<YAML::Node, ReqloomError> loadYamlCapped(const fs::path& file) {
+    std::error_code ec;
+    const auto size = fs::file_size(file, ec);
+    if (ec) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::YamlParse,
+                         ErrorClass::Schema,
+                         "could not stat schema file " + file.string() + ": " + ec.message()});
+    }
+    if (size > kMaxYamlBytes) {
+        return std::unexpected(ReqloomError{ErrorCode::YamlParse,
+                                            ErrorClass::Schema,
+                                            "schema file exceeds 8 MiB cap: " + file.string()});
+    }
+    try {
+        return YAML::LoadFile(file.string());
+    } catch (const YAML::Exception& e) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::YamlParse, ErrorClass::Schema, file.string() + ": " + e.what()});
+    }
+}
+
+std::vector<fs::path> resolveGlob(const fs::path& baseDir, const std::string& pattern) {
+    std::vector<fs::path> results;
+    auto dir = baseDir / fs::path(pattern).parent_path();
+    auto ext = fs::path(pattern).filename().string();
+
+    if (!fs::exists(dir)) {
+        return results;
+    }
+
+    if (ext == "*.yaml" || ext == "*.yml") {
+        for (const auto& entry : fs::directory_iterator(dir)) {
+            if (entry.is_regular_file()) {
+                auto entryExt = entry.path().extension().string();
+                if (entryExt == ".yaml" || entryExt == ".yml") {
+                    results.push_back(entry.path());
+                }
+            }
+        }
+        std::sort(results.begin(), results.end());
+    } else {
+        auto resolved = baseDir / pattern;
+        if (fs::exists(resolved)) {
+            results.push_back(resolved);
+        }
+    }
+    return results;
+}
+
+}  // namespace
+
+// ─── Public ──────────────────────────────────────────────────────────────────
 
 YamlSchemaParser::YamlSchemaParser() = default;
 YamlSchemaParser::~YamlSchemaParser() = default;
 
-SchemaParseResult YamlSchemaParser::parse(const std::filesystem::path& /*rootYaml*/) {
-    return Project{};
+SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
+    if (!fs::exists(rootYaml)) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::YamlParse, ErrorClass::Schema, "File not found: " + rootYaml.string()});
+    }
+
+    // yaml-cpp's Node::as<T>() (without a default) throws YAML::Exception on
+    // a type mismatch. Those calls are scattered across the parse helpers
+    // below on attacker-controlled input; this guard keeps every one of them
+    // inside the std::expected<Project, ReqloomError> contract instead of
+    // unwinding out of the engine.
+    try {
+        auto loadedRoot = loadYamlCapped(rootYaml);
+        if (!loadedRoot) {
+            return std::unexpected(loadedRoot.error());
+        }
+        const YAML::Node root = *loadedRoot;
+
+        auto version = root["version"].as<int>(0);
+        if (version < 1 || version > 3) {
+            return std::unexpected(
+                ReqloomError{ErrorCode::SchemaVersion,
+                             ErrorClass::Schema,
+                             "Unsupported schema version " + std::to_string(version) +
+                                 " (supported: 1–3). Run `reqloom migrate` to upgrade."});
+        }
+
+        Project project;
+        project.name = root["name"].as<std::string>("Unnamed Project");
+        project.defaultEnvironment = root["default_environment"].as<std::string>("local");
+
+        // Optional latency SLO: latency_slo: { p95_ms: 800 }. Negative or
+        // missing → unset (0). Surfaced on the desktop latency chart.
+        if (root["latency_slo"] && root["latency_slo"]["p95_ms"]) {
+            project.latencySloP95Ms = std::max(0, root["latency_slo"]["p95_ms"].as<int>(0));
+        }
+
+        const auto baseDir = rootYaml.parent_path();
+
+        auto loadSubFile = [&](const fs::path& file) -> std::optional<ReqloomError> {
+            auto loadedSub = loadYamlCapped(file);
+            if (!loadedSub) {
+                return loadedSub.error();
+            }
+            const YAML::Node subDoc = *loadedSub;
+
+            const auto relPath = fs::relative(file, baseDir).string();
+            if (relPath.starts_with("actors/") || relPath.starts_with("actors\\")) {
+                // Two file shapes accepted:
+                //   Form A (flat):    name: vendor\n description: ...\n auth: ...
+                //   Form B (wrapped): vendor:\n   description: ...\n   auth: ...
+                auto actorId = subDoc["name"].as<std::string>("");
+                const YAML::Node actorBody = subDoc["name"] ? subDoc : [&]() {
+                    if (subDoc.IsMap() && subDoc.size() == 1) {
+                        auto it = subDoc.begin();
+                        actorId = it->first.as<std::string>();
+                        return it->second;
+                    }
+                    return subDoc;
+                }();
+                if (actorId.empty()) {
+                    actorId = file.stem().string();
+                }
+                project.actors[ActorId{actorId}] = parseActor(actorId, actorBody);
+            } else if (relPath.starts_with("resources/") || relPath.starts_with("resources\\")) {
+                auto resourceId = subDoc["name"].as<std::string>("");
+                const YAML::Node resourceBody = subDoc["name"] ? subDoc : [&]() {
+                    if (subDoc.IsMap() && subDoc.size() == 1) {
+                        auto it = subDoc.begin();
+                        resourceId = it->first.as<std::string>();
+                        return it->second;
+                    }
+                    return subDoc;
+                }();
+                if (resourceId.empty()) {
+                    resourceId = file.stem().string();
+                }
+                auto parsedResource = parseResource(resourceId, resourceBody, baseDir);
+                if (!parsedResource) {
+                    return parsedResource.error();
+                }
+                project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
+            } else if (relPath.starts_with("environments/") ||
+                       relPath.starts_with("environments\\")) {
+                // Two env file shapes accepted:
+                //   Form A (wrapped): name: local\n variables:\n   baseUrl: ...
+                //   Form B (flat):    baseUrl: ...\n admin_email: ...
+                auto envName = subDoc["name"].as<std::string>(file.stem().string());
+                std::map<std::string, std::string> vars;
+                if (subDoc["variables"] && subDoc["variables"].IsMap()) {
+                    for (const auto& kv : subDoc["variables"]) {
+                        vars[kv.first.as<std::string>()] = readEnvScalar(kv.second);
+                    }
+                } else if (subDoc.IsMap()) {
+                    for (const auto& kv : subDoc) {
+                        auto key = kv.first.as<std::string>();
+                        if (key == "name" || key == "transport") {
+                            continue;
+                        }
+                        if (kv.second.IsScalar()) {
+                            vars[key] = readEnvScalar(kv.second);
+                        }
+                    }
+                }
+                project.environments[envName] = std::move(vars);
+
+                // Optional `transport:` block at env level. Sits alongside
+                // `variables:` in the wrapped form, or as a top-level key
+                // in the flat form (which is why we skip it in the flat
+                // loop above — otherwise a YAML map would land in `vars`
+                // as the empty string).
+                if (subDoc["transport"]) {
+                    project.transport[envName] = parseTransport(subDoc["transport"]);
+                }
+            }
+            return std::nullopt;
+        };
+
+        auto processImports = [&](const YAML::Node& importsNode) -> std::optional<ReqloomError> {
+            if (!importsNode) {
+                return std::nullopt;
+            }
+
+            std::vector<std::string> patterns;
+            if (importsNode.IsSequence()) {
+                for (const auto& p : importsNode) {
+                    patterns.push_back(p.as<std::string>());
+                }
+            } else if (importsNode.IsMap()) {
+                for (const auto& kv : importsNode) {
+                    if (kv.second.IsSequence()) {
+                        for (const auto& p : kv.second) {
+                            patterns.push_back(p.as<std::string>());
+                        }
+                    } else if (kv.second.IsScalar()) {
+                        patterns.push_back(kv.second.as<std::string>());
+                    }
+                }
+            }
+
+            for (const auto& pattern : patterns) {
+                auto files = resolveGlob(baseDir, pattern);
+                for (const auto& file : files) {
+                    if (auto err = loadSubFile(file)) {
+                        return err;
+                    }
+                }
+            }
+            return std::nullopt;
+        };
+
+        if (auto err = processImports(root["imports"])) {
+            return std::unexpected(*err);
+        }
+
+        if (root["actors"] && root["actors"].IsMap()) {
+            for (const auto& kv : root["actors"]) {
+                auto actorId = kv.first.as<std::string>();
+                project.actors[ActorId{actorId}] = parseActor(actorId, kv.second);
+            }
+        }
+
+        if (root["resources"] && root["resources"].IsMap()) {
+            for (const auto& kv : root["resources"]) {
+                auto resourceId = kv.first.as<std::string>();
+                auto parsedResource = parseResource(resourceId, kv.second, baseDir);
+                if (!parsedResource) {
+                    return std::unexpected(parsedResource.error());
+                }
+                project.resources[ResourceId{resourceId}] = std::move(*parsedResource);
+            }
+        }
+
+        if (root["environment"] && root["environment"].IsMap()) {
+            std::map<std::string, std::string> vars;
+            for (const auto& kv : root["environment"]) {
+                vars[kv.first.as<std::string>()] = readEnvScalar(kv.second);
+            }
+            project.environments[project.defaultEnvironment] = std::move(vars);
+        }
+
+        // Root-level `transport:` block. Applies to the default environment
+        // only — multi-env projects should put the block on each env file.
+        if (root["transport"]) {
+            project.transport[project.defaultEnvironment] = parseTransport(root["transport"]);
+        }
+
+        // Reject undefined references, missing depends_on targets, and
+        // dependency cycles at load time (AC-3.1.4 / 3.1.5 / 3.1.6).
+        if (auto valid = DependencyResolver{}.validate(project); !valid) {
+            return std::unexpected(valid.error());
+        }
+
+        return project;
+    } catch (const YAML::Exception& e) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::YamlParse, ErrorClass::Schema, rootYaml.string() + ": " + e.what()});
+    }
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine
