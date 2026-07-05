@@ -126,6 +126,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/GlassToolTip.qml
         qml/widgets/KeyValueList.qml
         qml/widgets/KeyValueEditorView.qml
+        qml/widgets/HeaderNameAutocomplete.qml
         qml/widgets/ChainView.qml
         qml/widgets/StatusBadge.qml
         qml/widgets/DependencyEditor.qml

@@ -20,6 +20,9 @@ ColumnLayout {
     property string valuePlaceholder: qsTr("value")
     // Show a per-row file-attach button (form-data body only).
     property bool allowFiles: false
+    // Offer a Postman-style dropdown of common HTTP header names on the Key
+    // field (headers tab only; off for query/form/config tables).
+    property bool suggestHeaderNames: false
 
     // Row whose attach button opened the file dialog (-1 = none).
     property int fileTargetRow: -1
@@ -79,10 +82,24 @@ ColumnLayout {
             spacing: DesignTokens.spaceXs
 
             Field {
+                id: keyField
                 Layout.preferredWidth: 200
                 text: row.key
                 placeholderText: root.keyPlaceholder
                 onTextEdited: root.kvModel.setKey(row.index, text)
+                // Postman-style header-name completion (headers tab only).
+                Keys.forwardTo: root.suggestHeaderNames ? [hdrAutocomplete.keyTarget] : []
+                HeaderNameAutocomplete {
+                    id: hdrAutocomplete
+                    field: keyField
+                    active: root.suggestHeaderNames
+                    // setKey updates the model; the `text: row.key` binding
+                    // above reflects it — don't write keyField.text directly
+                    // (that would break the binding for later model updates).
+                    onPicked: function (name) {
+                        root.kvModel.setKey(row.index, name);
+                    }
+                }
             }
 
             // Value: a file chip when the value is an `@<path>` upload, else a

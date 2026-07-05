@@ -693,6 +693,7 @@ ColumnLayout {
                 KeyValueEditorView {
                     width: headersScroll.availableWidth
                     kvModel: AppController.editHeaders
+                    suggestHeaderNames: true
                 }
             }
             // Body: type selector (none / form-data / x-www-form-urlencoded /
