@@ -1,13 +1,13 @@
-// Machine-readable JSON renderer for `chainapi run --format json`.
+// Machine-readable JSON renderer for `reqloom run --format json`.
 
 #pragma once
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <ostream>
 #include <string_view>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 /// Emits a single JSON document describing the run: outcome, target,
 /// environment, per-step status / elapsed / error code, and aggregate
@@ -24,4 +24,4 @@ private:
     std::ostream& out_;
 };
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

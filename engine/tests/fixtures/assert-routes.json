@@ -1,0 +1,16 @@
+{
+    "routes": [
+        {
+            "method": "GET",
+            "path": "/api/v1/orders/1",
+            "status": 200,
+            "body": {
+                "data": {
+                    "id": "ord-1",
+                    "status": "confirmed",
+                    "total": 42
+                }
+            }
+        }
+    ]
+}

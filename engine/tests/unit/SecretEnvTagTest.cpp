@@ -10,7 +10,7 @@
 #include "domain/DependencyResolver.h"
 #include "domain/VariableResolver.h"
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -22,7 +22,7 @@
 #include <fstream>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -30,9 +30,9 @@ namespace {
 class ScratchProject {
 public:
     explicit ScratchProject(const std::string& body) {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-secret-env");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-secret-env");
         fs::create_directories(path_);
-        std::ofstream{path_ / "chainapi.yaml"} << body;
+        std::ofstream{path_ / "reqloom.yaml"} << body;
     }
     ~ScratchProject() {
         std::error_code ec;
@@ -41,7 +41,7 @@ public:
     ScratchProject(const ScratchProject&) = delete;
     ScratchProject& operator=(const ScratchProject&) = delete;
 
-    [[nodiscard]] fs::path yaml() const { return path_ / "chainapi.yaml"; }
+    [[nodiscard]] fs::path yaml() const { return path_ / "reqloom.yaml"; }
 
 private:
     fs::path path_;

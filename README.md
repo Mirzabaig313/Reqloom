@@ -1,28 +1,32 @@
 <div align="center">
 
-# ChainAPI
+# Reqloom
 
 **A workflow-aware API testing tool that auto-resolves request dependency chains.**
 
-[![Build & Test](https://github.com/Mirzabaig313/ChainAPi/actions/workflows/build.yml/badge.svg)](https://github.com/Mirzabaig313/ChainAPi/actions/workflows/build.yml)
-[![Docs](https://img.shields.io/badge/docs-chainapi.github.io-2496ED.svg)](https://chainapi.github.io)
+[![Build & Test](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml/badge.svg)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml)
+![Build Status](https://dev.azure.com/mirza4ever/chainapi/_apis/build/status%2FMirzabaig313.Reqloom?branchName=main)
+[![Docs](https://img.shields.io/badge/docs-online-2496ED.svg)](https://reqloom.dev/docs/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)](https://en.cppreference.com/w/cpp/23)
 [![CMake](https://img.shields.io/badge/CMake-4.0%2B-064F8C.svg)](https://cmake.org/)
 [![Qt](https://img.shields.io/badge/Qt-6.8_LTS-41CD52.svg)](https://www.qt.io/)
+[![Latest release](https://img.shields.io/github/v/release/Mirzabaig313/Reqloom?include_prereleases&label=download)](https://github.com/Mirzabaig313/Reqloom/releases)
 
 </div>
 
 ---
 
-ChainAPI treats your API as a graph of resources, actors, and dependencies.
+Reqloom treats your API as a graph of resources, actors, and dependencies.
 Define each actor (auth flow) and each resource (endpoints + dependencies)
-once. Then invoke any endpoint and ChainAPI auto-resolves the entire chain —
+once. Then invoke any endpoint and Reqloom auto-resolves the entire chain —
 login, prerequisites, target call — and executes them in the correct order.
 
-> Postman is an HTTP client. ChainAPI is an API workflow engine.
+> Postman is an HTTP client. Reqloom is an API workflow engine.
 
-📖 **Full documentation: [chainapi.github.io](https://chainapi.github.io)**
+📖 **Full documentation: [mirzabaig313.github.io/Reqloom](https://mirzabaig313.github.io/Reqloom/)**
+
+📦 **Download:** grab the latest build for macOS (`.dmg`), Windows (`.exe` installer), or Linux (`.AppImage`) from the [Releases page](https://github.com/Mirzabaig313/Reqloom/releases).
 
 ## How it works
 
@@ -54,10 +58,10 @@ Invoking `refund.approve` resolves and runs the whole chain in order — actor
 logins (reusing cached sessions), `order.create`, `order.pay`, `refund.request`,
 then the target — with every extracted ID flowing automatically between steps.
 
-## Why ChainAPI
+## Why Reqloom
 
 - **Dependency-aware execution.** Model resources and their prerequisites once;
-  ChainAPI computes the execution order and runs the full chain for you.
+  Reqloom computes the execution order and runs the full chain for you.
 - **Actors as first-class citizens.** Authentication flows are declared once per
   actor and reused across every request that needs them.
 - **Three ways to run.** A pure C++ engine library, a scriptable CLI, and a Qt 6
@@ -97,8 +101,8 @@ then the target — with every extracted ID flowing automatically between steps.
 
 ### Planned
 
-Committed directions from the [product roadmap](https://chainapi.github.io). The
-guiding rule is that the **same `chainapi.yaml`** that powers testing also powers
+Committed directions from the [product roadmap](https://mirzabaig313.github.io/Reqloom/). The
+guiding rule is that the **same `reqloom.yaml`** that powers testing also powers
 these features — no parallel definitions.
 
 - **Desktop UI** *(in progress)* — project explorer, request editor, response
@@ -117,13 +121,13 @@ these features — no parallel definitions.
 ## Repository layout
 
 ```
-chainapi/
+reqloom/
 ├── cmake/        Reusable CMake modules (warnings, sanitizers, boundary guards)
-├── engine/       libchainapi-engine — pure C++ engine (no Qt UI deps)
-│   ├── include/  Public engine API (chainapi/engine/*.h)
+├── engine/       libreqloom-engine — pure C++ engine (no Qt UI deps)
+│   ├── include/  Public engine API (reqloom/engine/*.h)
 │   ├── src/      domain / application / infrastructure layers
 │   └── tests/    Unit + integration tests (GoogleTest)
-├── cli/          chainapi CLI — links engine + Qt6::Core only
+├── cli/          reqloom CLI — links engine + Qt6::Core only
 ├── desktop/      Qt 6 desktop UI app
 ├── ipc/          Engine-as-separate-process scaffold (opt-in, off by default)
 ├── third_party/  Vendored dependencies
@@ -136,12 +140,12 @@ chainapi/
 The engine is a pure C++ library with **no Qt UI dependency**. The boundary is
 mechanically enforced in three places:
 
-1. **CMake link guards** (`cmake/ChainApiBoundaryGuards.cmake`) — fail the
+1. **CMake link guards** (`cmake/ReqloomBoundaryGuards.cmake`) — fail the
    configure step if the engine or CLI transitively links Qt Widgets / Gui /
    Quick / QScintilla.
 2. **CI grep job** (`tools/ci/boundary-check.sh`) — catches `#include`
    regressions before they land.
-3. **Public header surface** (`engine/include/chainapi/engine/`) — pImpl and
+3. **Public header surface** (`engine/include/reqloom/engine/`) — pImpl and
    value types only; no Qt UI types appear.
 
 This keeps the engine portable and embeddable: extracting it into a separate
@@ -198,10 +202,10 @@ cmake --build --preset macos-debug
 ctest --preset macos-debug
 
 # Run the CLI
-./build/macos-debug/cli/chainapi --help
+./build/macos-debug/cli/reqloom --help
 
 # Run the desktop app
-./build/macos-debug/desktop/ChainAPI.app/Contents/MacOS/ChainAPI
+./build/macos-debug/desktop/Reqloom.app/Contents/MacOS/Reqloom
 ```
 
 Other presets: `macos-release`, `linux-debug`, `linux-release`,
@@ -215,41 +219,41 @@ actors, creating prerequisites, then calling the target:
 
 ```bash
 # Execute the chain ending at refund.approve
-./build/macos-debug/cli/chainapi run refund.approve --project samples/marketplace
+./build/macos-debug/cli/reqloom run refund.approve --project samples/marketplace
 
 # Validate the schema
-./build/macos-debug/cli/chainapi lint --project samples/marketplace
+./build/macos-debug/cli/reqloom lint --project samples/marketplace
 
 # Emit JUnit XML for CI
-./build/macos-debug/cli/chainapi run refund.approve \
+./build/macos-debug/cli/reqloom run refund.approve \
   --project samples/marketplace --format junit --output results.xml
 ```
 
 ### CLI reference
 
 ```
-chainapi run <operation> [opts]   Execute a chain ending at <operation>
+reqloom run <operation> [opts]   Execute a chain ending at <operation>
   --project <path>                Project directory (default: cwd)
   --env <name>                    Environment to run against
   --var KEY=VALUE                 Override an env variable (repeatable)
   --format text|json|junit        Output format (default: text)
   --output <file>                 Write rendered output to <file>
   --quiet                         Suppress live progress on stdout
-chainapi lint                     Validate the schema in the current project
-chainapi import <file>            Import an external API spec
-chainapi --help                   Show usage
+reqloom lint                     Validate the schema in the current project
+reqloom import <file>            Import an external API spec
+reqloom --help                   Show usage
 ```
 
 ### Build options
 
 | Option                       | Default | Effect                                  |
 |------------------------------|---------|-----------------------------------------|
-| `CHAINAPI_BUILD_DESKTOP`     | ON      | Build the Qt desktop app                |
-| `CHAINAPI_BUILD_CLI`         | ON      | Build the CLI binary                    |
-| `CHAINAPI_BUILD_TESTS`       | ON      | Build the test suite                    |
-| `CHAINAPI_BUILD_IPC`         | OFF     | Build the IPC server                    |
-| `CHAINAPI_ENABLE_ASAN`       | OFF     | Enable AddressSanitizer in Debug        |
-| `CHAINAPI_ENABLE_UBSAN`      | OFF     | Enable UBSan in Debug                   |
+| `REQLOOM_BUILD_DESKTOP`     | ON      | Build the Qt desktop app                |
+| `REQLOOM_BUILD_CLI`         | ON      | Build the CLI binary                    |
+| `REQLOOM_BUILD_TESTS`       | ON      | Build the test suite                    |
+| `REQLOOM_BUILD_IPC`         | OFF     | Build the IPC server                    |
+| `REQLOOM_ENABLE_ASAN`       | OFF     | Enable AddressSanitizer in Debug        |
+| `REQLOOM_ENABLE_UBSAN`      | OFF     | Enable UBSan in Debug                   |
 
 ## Secret storage
 
@@ -308,7 +312,7 @@ CI fails the whole pipeline on a single misformatted line, using
 ## Documentation
 
 Full documentation — schema reference, auth strategies, polling, hooks, and the
-CLI guide — lives at **[chainapi.github.io](https://chainapi.github.io)**.
+CLI guide — lives at **[mirzabaig313.github.io/Reqloom](https://mirzabaig313.github.io/Reqloom/)**.
 
 The site is built from `docs-site/` (Astro Starlight). To run it locally:
 
@@ -323,7 +327,7 @@ Pushes to `main` that touch `docs-site/` auto-deploy via
 
 ## Project status
 
-The C++ engine and the `chainapi` CLI are functional: the engine resolves and
+The C++ engine and the `reqloom` CLI are functional: the engine resolves and
 executes dependency chains, named auth strategies, polling, hooks, and secret
 substitution, covered by an extensive unit and integration test suite. The Qt 6
 desktop app (project explorer, request editor, response viewer, run timeline) is

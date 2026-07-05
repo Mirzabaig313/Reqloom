@@ -1,13 +1,13 @@
-// Human-readable run renderer. Default format for `chainapi run`.
+// Human-readable run renderer. Default format for `reqloom run`.
 
 #pragma once
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <ostream>
 #include <string>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 /// Renders a run as plain text. Emits live progress on each `RunEvent`
 /// (suppressed when constructed with `quiet=true`) and a chain summary
@@ -44,4 +44,4 @@ private:
     bool quiet_;
 };
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

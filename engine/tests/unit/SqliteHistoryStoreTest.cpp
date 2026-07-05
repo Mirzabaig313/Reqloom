@@ -10,7 +10,7 @@
 
 #include "infrastructure/storage/SqliteHistoryStore.h"
 
-#include <chainapi/engine/Events.h>
+#include <reqloom/engine/Events.h>
 
 #include <gtest/gtest.h>
 
@@ -21,14 +21,14 @@
 #include <filesystem>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
 
 class TempDb {
 public:
-    TempDb() { path_ = chainapi::tests::uniqueTempPath("chainapi-history", ".sqlite"); }
+    TempDb() { path_ = reqloom::tests::uniqueTempPath("reqloom-history", ".sqlite"); }
     ~TempDb() {
         std::error_code ec;
         fs::remove(path_, ec);
@@ -71,7 +71,7 @@ TEST(SqliteHistoryStore, open_creates_parent_directory_if_missing) {
     // The desktop puts the history db at ~/Library/Application Support/...
     // which often doesn't exist on a fresh install. Open must create
     // the parent rather than failing with "no such file or directory".
-    const auto root = chainapi::tests::uniqueTempPath("chainapi-history-mkdir");
+    const auto root = reqloom::tests::uniqueTempPath("reqloom-history-mkdir");
     const auto nested = root / "deep" / "history.sqlite";
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -426,6 +426,9 @@ TEST(SqliteHistoryStore, listRuns_fills_terminal_columns_after_run_ended) {
     const auto& row = (*rows)[0];
     EXPECT_EQ(row.outcome, "Failed");
     EXPECT_FALSE(row.endedAt.empty());
+    // The precise elapsed from RunEnded is denormalised onto the run row so the
+    // history view shows real durations, not a second-resolution timestamp diff.
+    EXPECT_EQ(row.elapsedMs, 1500);
 }
 
 TEST(SqliteHistoryStore, listRuns_orders_runs_newest_first) {
@@ -511,4 +514,72 @@ TEST(SqliteHistoryStore, history_survives_close_and_reopen) {
     auto events = reopened.eventsFor(ce::RunId{500});
     ASSERT_TRUE(events.has_value());
     EXPECT_EQ(events->size(), 2u);
+}
+
+TEST(SqliteHistoryStore, reopen_to_different_path_isolates_runs) {
+    // Switching projects re-opens the store at a different DB path. Runs from
+    // the first database must not leak into the second — the isolation
+    // guarantee the desktop's per-project history relies on.
+    TempDb first;
+    TempDb second;
+    ce::SqliteHistoryStore store;
+
+    ASSERT_TRUE(store.open(first.path()).has_value());
+    ce::RunStarted a;
+    a.runId = ce::RunId{1};
+    a.target = ce::OperationId{"project-a.op"};
+    a.at = someTimePoint();
+    ASSERT_TRUE(store.append(a).has_value());
+
+    // Re-open at a second path (no explicit close — open() must handle it).
+    ASSERT_TRUE(store.open(second.path()).has_value());
+    auto rowsB = store.listRuns(10);
+    ASSERT_TRUE(rowsB.has_value()) << rowsB.error().detail;
+    EXPECT_TRUE(rowsB->empty()) << "second project must not see the first's runs";
+
+    ce::RunStarted b;
+    b.runId = ce::RunId{2};
+    b.target = ce::OperationId{"project-b.op"};
+    b.at = someTimePoint();
+    ASSERT_TRUE(store.append(b).has_value());
+
+    auto rowsAfter = store.listRuns(10);
+    ASSERT_TRUE(rowsAfter.has_value());
+    ASSERT_EQ(rowsAfter->size(), 1u);
+    EXPECT_EQ((*rowsAfter)[0].targetOp.value, "project-b.op");
+
+    // Re-open the first database — its single run is still there, untouched.
+    ASSERT_TRUE(store.open(first.path()).has_value());
+    auto rowsA = store.listRuns(10);
+    ASSERT_TRUE(rowsA.has_value());
+    ASSERT_EQ(rowsA->size(), 1u);
+    EXPECT_EQ((*rowsA)[0].targetOp.value, "project-a.op");
+}
+
+TEST(SqliteHistoryStore, clear_deletes_all_runs_and_events) {
+    TempDb tmp;
+    ce::SqliteHistoryStore store;
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+
+    ce::RunStarted rs;
+    rs.runId = ce::RunId{1};
+    rs.target = ce::OperationId{"a.b"};
+    rs.at = someTimePoint();
+    ASSERT_TRUE(store.append(rs).has_value());
+    ce::RunEnded re;
+    re.runId = ce::RunId{1};
+    re.outcome = ce::RunOutcome::Succeeded;
+    re.at = someTimePoint();
+    ASSERT_TRUE(store.append(re).has_value());
+
+    ASSERT_FALSE(store.listRuns(10)->empty());
+
+    ASSERT_TRUE(store.clear().has_value());
+
+    auto rows = store.listRuns(10);
+    ASSERT_TRUE(rows.has_value());
+    EXPECT_TRUE(rows->empty());
+    auto events = store.eventsFor(ce::RunId{1});
+    ASSERT_TRUE(events.has_value());
+    EXPECT_TRUE(events->empty());
 }

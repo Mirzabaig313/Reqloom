@@ -3,7 +3,7 @@ title: The mental model
 description: "Three concepts. Sixty seconds. The whole product fits in your head."
 ---
 
-ChainAPI treats your API as a graph. Three concepts make up the model:
+Reqloom treats your API as a graph. Three concepts make up the model:
 
 ## Actors
 

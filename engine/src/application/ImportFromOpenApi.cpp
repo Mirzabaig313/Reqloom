@@ -24,20 +24,20 @@
 #include <string_view>
 #include <vector>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 namespace {
 
 namespace fs = std::filesystem;
 
-ChainApiError invalid(std::string detail) {
-    return ChainApiError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
+ReqloomError invalid(std::string detail) {
+    return ReqloomError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
 }
 
 // Containment check: resolved path must live under projectRoot with a
 // path-separator boundary so `/home/user/proj` doesn't admit `/home/user/proj-evil`.
-std::expected<fs::path, ChainApiError> canonicalSpecPath(const fs::path& spec,
-                                                         const fs::path& projectRoot) {
+std::expected<fs::path, ReqloomError> canonicalSpecPath(const fs::path& spec,
+                                                        const fs::path& projectRoot) {
     std::error_code ec;
     auto canonical = fs::weakly_canonical(spec, ec);
     if (ec) {
@@ -240,6 +240,22 @@ std::string firstServerUrl(const YAML::Node& root) {
         return "/";
     }
     return first["url"].as<std::string>("/");
+}
+
+/// Swagger 2.0 base URL from `schemes` + `host` + `basePath`. Falls back to
+/// `basePath` (or "/") when no host is declared — the user fills `baseUrl` in.
+std::string swagger2BaseUrl(const YAML::Node& root) {
+    const auto host = root["host"].as<std::string>("");
+    const auto basePath = root["basePath"].as<std::string>("");
+    std::string scheme = "https";
+    if (const auto& schemes = root["schemes"];
+        schemes && schemes.IsSequence() && schemes.size() > 0) {
+        scheme = schemes[0].as<std::string>("https");
+    }
+    if (host.empty()) {
+        return basePath.empty() ? "/" : basePath;
+    }
+    return scheme + "://" + host + basePath;
 }
 
 /// Rewrite `{name}` path parameters into `{{<resource>.<name>}}` template
@@ -478,7 +494,7 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
 
 }  // namespace
 
-std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
+std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
     const fs::path& spec, const fs::path& projectRoot) const {
     auto canonical = canonicalSpecPath(spec, projectRoot);
     if (!canonical) {
@@ -511,9 +527,9 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
         root = YAML::Load(buffer.str());
     } catch (const YAML::Exception& e) {
         return std::unexpected(
-            ChainApiError{ErrorCode::YamlParse,
-                          ErrorClass::Schema,
-                          std::string{"openapi import: YAML parse failed: "} + e.what()});
+            ReqloomError{ErrorCode::YamlParse,
+                         ErrorClass::Schema,
+                         std::string{"openapi import: YAML parse failed: "} + e.what()});
     }
 
     if (!root || !root.IsMap()) {
@@ -521,9 +537,13 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
             invalid("openapi import: top-level document must be a YAML/JSON object"));
     }
     const auto openapiVersion = root["openapi"].as<std::string>("");
-    if (openapiVersion.empty() || !openapiVersion.starts_with("3.")) {
-        return std::unexpected(invalid("openapi import: only OpenAPI 3.x is supported (found '" +
-                                       openapiVersion + "')"));
+    const auto swaggerVersion = root["swagger"].as<std::string>("");
+    const bool isOpenApi3 = openapiVersion.starts_with("3.");
+    const bool isSwagger2 = swaggerVersion.starts_with("2.");
+    if (!isOpenApi3 && !isSwagger2) {
+        return std::unexpected(invalid(
+            "openapi import: only OpenAPI 3.x and Swagger 2.0 are supported (found openapi='" +
+            openapiVersion + "', swagger='" + swaggerVersion + "')"));
     }
 
     const auto& info = root["info"];
@@ -538,7 +558,8 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
     Outcome outcome;
     outcome.project.name = title;
     outcome.project.defaultEnvironment = "default";
-    outcome.project.environments["default"]["baseUrl"] = firstServerUrl(root);
+    outcome.project.environments["default"]["baseUrl"] =
+        isSwagger2 ? swagger2BaseUrl(root) : firstServerUrl(root);
 
     const auto importedAt = nowIso8601Utc();
     std::vector<std::string> warnings;
@@ -723,4 +744,4 @@ std::expected<ImportFromOpenApi::Outcome, ChainApiError> ImportFromOpenApi::run(
     return outcome;
 }
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

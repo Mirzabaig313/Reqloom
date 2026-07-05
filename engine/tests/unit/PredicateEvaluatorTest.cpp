@@ -4,11 +4,11 @@
 // the include itself wouldn't resolve.
 #include "application/PredicateEvaluator.h"
 
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 
 #include <gtest/gtest.h>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 

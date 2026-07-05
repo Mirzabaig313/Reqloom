@@ -1,10 +1,10 @@
 ---
-title: chainapi import
-description: "Convert OpenAPI specs, Postman collections, Bruno files, Insomnia exports, or curl logs into a ChainAPI project."
+title: reqloom import
+description: "Convert OpenAPI specs, Postman collections, Bruno files, Insomnia exports, or curl logs into a Reqloom project."
 ---
 
 ```
-chainapi import <file>
+reqloom import <file>
 ```
 
 The direct importer (no LLM) supports:

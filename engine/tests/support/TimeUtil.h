@@ -5,7 +5,7 @@
 
 #include <ctime>
 
-namespace chainapi::tests {
+namespace reqloom::tests {
 
 /// Convert a UTC std::tm to time_t without consulting the local timezone,
 /// the way POSIX timegm() does. On Windows the equivalent is _mkgmtime.
@@ -17,4 +17,4 @@ namespace chainapi::tests {
 #endif
 }
 
-}  // namespace chainapi::tests
+}  // namespace reqloom::tests

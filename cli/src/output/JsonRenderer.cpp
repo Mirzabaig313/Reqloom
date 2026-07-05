@@ -10,7 +10,7 @@
 
 #include "StepFormatting.h"
 
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <cstdint>
 #include <iomanip>
@@ -18,11 +18,11 @@
 #include <string>
 #include <string_view>
 
-namespace chainapi::cli {
+namespace reqloom::cli {
 
 namespace {
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 /// Escape a UTF-8 byte sequence per RFC 8259 §7. Bytes ≤ 0x1F use the
 /// short escape forms; everything else passes through. Engine-emitted
@@ -89,10 +89,15 @@ void JsonRenderer::render(const ce::OperationId& target,
     std::uint32_t blocked = 0;
     std::uint32_t cancelled = 0;
     std::uint32_t pollAttempts = 0;
+    std::uint32_t forEachIterations = 0;
     for (const auto& s : result.steps) {
         if (s.pollAttempt) {
             ++pollAttempts;
             continue;  // poll attempts don't count toward step totals
+        }
+        if (s.forEachIndex) {
+            ++forEachIterations;
+            continue;  // for-each iterations group under their parent step
         }
         switch (s.status) {
             case ce::StepResult::Status::Succeeded:
@@ -126,6 +131,7 @@ void JsonRenderer::render(const ce::OperationId& target,
     out_ << "    \"skipped\": " << skipped << ",\n";
     out_ << "    \"blocked\": " << blocked << ",\n";
     out_ << "    \"cancelled\": " << cancelled << ",\n";
+    out_ << "    \"for_each_iterations\": " << forEachIterations << ",\n";
     out_ << "    \"poll_attempts\": " << pollAttempts << "\n";
     out_ << "  },\n";
 
@@ -153,7 +159,26 @@ void JsonRenderer::render(const ce::OperationId& target,
         } else {
             out_ << "      \"poll_attempt\": null,\n";
         }
-        out_ << R"(      "detail": ")" << escape(step.detail) << "\"\n";
+        if (step.forEachIndex) {
+            out_ << "      \"for_each_index\": " << *step.forEachIndex << ",\n";
+        } else {
+            out_ << "      \"for_each_index\": null,\n";
+        }
+        out_ << R"(      "detail": ")" << escape(step.detail) << "\",\n";
+        out_ << "      \"assertions\": [";
+        bool firstAssert = true;
+        for (const auto& a : step.assertions) {
+            if (!firstAssert) {
+                out_ << ",";
+            }
+            firstAssert = false;
+            out_ << "\n        { \"name\": \"" << escape(a.name) << "\", \"expr\": \""
+                 << escape(a.expr) << "\", \"passed\": " << (a.passed ? "true" : "false") << " }";
+        }
+        if (!step.assertions.empty()) {
+            out_ << "\n      ";
+        }
+        out_ << "]\n";
         out_ << "    }";
     }
     if (!result.steps.empty()) {
@@ -163,4 +188,4 @@ void JsonRenderer::render(const ce::OperationId& target,
     out_ << "}\n";
 }
 
-}  // namespace chainapi::cli
+}  // namespace reqloom::cli

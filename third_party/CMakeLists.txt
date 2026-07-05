@@ -62,3 +62,92 @@ if(NOT TARGET Qt6Keychain::Qt6Keychain)
         endif()
     endif()
 endif()
+
+# ─── Scintilla (permissive — the desktop hook-script CodeEditor engine) ───────
+# Scintilla's license (Neil Hodgson, MIT-style) permits use in this Apache-2.0
+# tree. We deliberately do NOT use QScintilla (Riverbank, GPL/commercial). We
+# fetch the official pinned tarball (hash-verified) and compile Scintilla's core
+# plus its own permissive Qt platform layer (qt/ScintillaEditBase) against the
+# project's Qt6. No Lexilla: syntax styling is driven from our own code via
+# Scintilla's container-lexer notifications, so we don't compile ~100 lexers.
+if(REQLOOM_BUILD_DESKTOP AND NOT TARGET scintilla)
+    include(FetchContent)
+    # Source the vendored in-tree tarball so the build needs no network
+    # access (CI runners with restricted egress cannot reach scintilla.org).
+    # A single local path is a valid URL entry; the file is hash-verified.
+    FetchContent_Declare(
+        scintilla
+        URL "${CMAKE_CURRENT_SOURCE_DIR}/vendor/scintilla563.tgz"
+        URL_HASH SHA256=f64339c504960c5a95510e6c3306ab5e95f23abaf8aed82897e57bff78e74616
+    )
+    FetchContent_MakeAvailable(scintilla)
+
+    # ExternalProject strips a single top-level dir, but be robust to either
+    # layout (SOURCE_DIR or SOURCE_DIR/scintilla).
+    set(_sc "${scintilla_SOURCE_DIR}")
+    if(NOT EXISTS "${_sc}/src/Editor.cxx")
+        set(_sc "${scintilla_SOURCE_DIR}/scintilla")
+    endif()
+
+    add_library(scintilla STATIC
+        ${_sc}/src/AutoComplete.cxx
+        ${_sc}/src/CallTip.cxx
+        ${_sc}/src/CaseConvert.cxx
+        ${_sc}/src/CaseFolder.cxx
+        ${_sc}/src/CellBuffer.cxx
+        ${_sc}/src/ChangeHistory.cxx
+        ${_sc}/src/CharClassify.cxx
+        ${_sc}/src/CharacterCategoryMap.cxx
+        ${_sc}/src/CharacterType.cxx
+        ${_sc}/src/ContractionState.cxx
+        ${_sc}/src/DBCS.cxx
+        ${_sc}/src/Decoration.cxx
+        ${_sc}/src/Document.cxx
+        ${_sc}/src/EditModel.cxx
+        ${_sc}/src/EditView.cxx
+        ${_sc}/src/Editor.cxx
+        ${_sc}/src/Geometry.cxx
+        ${_sc}/src/Indicator.cxx
+        ${_sc}/src/KeyMap.cxx
+        ${_sc}/src/LineMarker.cxx
+        ${_sc}/src/MarginView.cxx
+        ${_sc}/src/PerLine.cxx
+        ${_sc}/src/PositionCache.cxx
+        ${_sc}/src/RESearch.cxx
+        ${_sc}/src/RunStyles.cxx
+        ${_sc}/src/ScintillaBase.cxx
+        ${_sc}/src/Selection.cxx
+        ${_sc}/src/Style.cxx
+        ${_sc}/src/UndoHistory.cxx
+        ${_sc}/src/UniConversion.cxx
+        ${_sc}/src/UniqueString.cxx
+        ${_sc}/src/ViewStyle.cxx
+        ${_sc}/src/XPM.cxx
+        ${_sc}/qt/ScintillaEditBase/PlatQt.cpp
+        ${_sc}/qt/ScintillaEditBase/ScintillaQt.cpp
+        ${_sc}/qt/ScintillaEditBase/ScintillaEditBase.cpp
+    )
+    set_target_properties(scintilla PROPERTIES AUTOMOC ON)
+    target_include_directories(scintilla
+        SYSTEM PUBLIC
+            ${_sc}/include
+            ${_sc}/qt/ScintillaEditBase
+            ${_sc}/src
+    )
+    target_link_libraries(scintilla PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Core5Compat)
+    target_compile_features(scintilla PRIVATE cxx_std_17)
+    # We compile Scintilla's Qt layer statically. On Windows its headers
+    # default ScintillaEditBase to __declspec(dllimport), which MOC rejects
+    # ("definition of dllimport static data member not allowed"). Neutralise
+    # the export macro to empty — matching Scintilla's own non-Windows path.
+    # PUBLIC so desktop sources including the headers stay consistent.
+    if(WIN32)
+        target_compile_definitions(scintilla PUBLIC EXPORT_IMPORT_API=)
+    endif()
+    # Vendored third-party: silence its warnings (we don't lint upstream code).
+    if(MSVC)
+        target_compile_options(scintilla PRIVATE /w)
+    else()
+        target_compile_options(scintilla PRIVATE -w)
+    endif()
+endif()

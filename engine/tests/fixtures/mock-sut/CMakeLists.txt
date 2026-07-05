@@ -1,22 +1,22 @@
 # mock-sut — minimal HTTP server for engine integration tests.
 #
-# Built only when CHAINAPI_BUILD_TESTS is ON. Not part of the shipped binary.
+# Built only when REQLOOM_BUILD_TESTS is ON. Not part of the shipped binary.
 
 find_package(httplib CONFIG REQUIRED)
 
-add_executable(chainapi-mock-sut
+add_executable(reqloom-mock-sut
     main.cpp
 )
-target_link_libraries(chainapi-mock-sut
+target_link_libraries(reqloom-mock-sut
     PRIVATE
         httplib::httplib
         nlohmann_json::nlohmann_json
 )
-chainapi_set_warnings(chainapi-mock-sut)
-chainapi_apply_sanitizers(chainapi-mock-sut)
+reqloom_set_warnings(reqloom-mock-sut)
+reqloom_apply_sanitizers(reqloom-mock-sut)
 
 # Mock SUT is test infrastructure — must not pull in Qt UI either.
-chainapi_forbid_dependencies(chainapi-mock-sut
+reqloom_forbid_dependencies(reqloom-mock-sut
     Qt6::Widgets
     Qt6::Gui
     Qt6::Quick

@@ -1,6 +1,6 @@
 # Stage 4 — Generate One Resource File
 
-Input: the Stage 2 schema plan + the name of one specific resource. Output: `chainapi/resources/<resource_id>.yaml`. Use your file-writing tools — do NOT dump YAML inline in chat.
+Input: the Stage 2 schema plan + the name of one specific resource. Output: `reqloom/resources/<resource_id>.yaml`. Use your file-writing tools — do NOT dump YAML inline in chat.
 
 You will be invoked once per resource. Generate ONLY the resource you were told to generate. Do not generate other resources.
 

@@ -9,7 +9,7 @@ operations:
     body:
       rating: 5
       title: "Great product"
-      body: "Posted by ChainAPI sample"
+      body: "Posted by Reqloom sample"
     expect_status: 201
     extract:
       review_id: $.data.id

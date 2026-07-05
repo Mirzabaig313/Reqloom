@@ -1,6 +1,6 @@
 // Hook typings emitter tests.
-#include <chainapi/engine/Factories.h>
-#include <chainapi/engine/PublicApi.h>
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
@@ -12,7 +12,7 @@
 #include <iterator>
 #include <string>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
 
 namespace {
@@ -20,7 +20,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        path_ = chainapi::tests::uniqueTempPath("chainapi-typings");
+        path_ = reqloom::tests::uniqueTempPath("reqloom-typings");
         fs::create_directories(path_);
     }
     ~ScratchDir() {
@@ -47,12 +47,12 @@ ce::Project makeMinimalProject() {
 
 }  // namespace
 
-TEST(HookTypingsEmitter, writes_chainapi_dts_to_target_directory) {
+TEST(HookTypingsEmitter, writes_reqloom_dts_to_target_directory) {
     ScratchDir scratch;
     const auto written = ce::emitHookTypings(scratch.path(), makeMinimalProject());
     ASSERT_TRUE(written.has_value()) << written.error().detail;
 
-    EXPECT_EQ(written->filename(), "chainapi.d.ts");
+    EXPECT_EQ(written->filename(), "reqloom.d.ts");
     EXPECT_TRUE(fs::exists(*written));
 }
 
@@ -82,7 +82,7 @@ TEST(HookTypingsEmitter, declares_required_top_level_types) {
     const auto body = readFile(*written);
 
     // Top-level surfaces hooks rely on.
-    EXPECT_NE(body.find("namespace ChainApi"), std::string::npos);
+    EXPECT_NE(body.find("namespace Reqloom"), std::string::npos);
     EXPECT_NE(body.find("interface Context"), std::string::npos);
     EXPECT_NE(body.find("interface MutableRequest"), std::string::npos);
     EXPECT_NE(body.find("interface ResponseView"), std::string::npos);

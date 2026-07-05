@@ -7,11 +7,11 @@
 // broken or the cycle-detection path is missing.
 #include "domain/Topology.h"
 
-#include <chainapi/engine/ErrorCodes.h>
+#include <reqloom/engine/ErrorCodes.h>
 
 #include <gtest/gtest.h>
 
-namespace ce = chainapi::engine;
+namespace ce = reqloom::engine;
 
 namespace {
 

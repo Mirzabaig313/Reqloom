@@ -1,6 +1,6 @@
-# ChainAPI Docs Site
+# Reqloom Docs Site
 
-The documentation site at **chainapi.github.io** (and any equivalent
+The documentation site at **reqloom.github.io** (and any equivalent
 project-pages URL). Built with [Astro Starlight](https://starlight.astro.build/).
 
 ## Local development

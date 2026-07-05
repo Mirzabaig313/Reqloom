@@ -2,10 +2,10 @@
 
 #pragma once
 
-#include <chainapi/engine/Actor.h>
-#include <chainapi/engine/ErrorCodes.h>
-#include <chainapi/engine/Events.h>
-#include <chainapi/engine/RunContext.h>
+#include <reqloom/engine/Actor.h>
+#include <reqloom/engine/ErrorCodes.h>
+#include <reqloom/engine/Events.h>
+#include <reqloom/engine/RunContext.h>
 
 #include <expected>
 #include <functional>
@@ -13,7 +13,7 @@
 #include <memory>
 #include <string>
 
-namespace chainapi::engine {
+namespace reqloom::engine {
 
 class HttpClient;        // forward — defined in infrastructure
 class VariableResolver;  // forward — defined in domain
@@ -51,13 +51,13 @@ public:
     virtual ~Authenticator() = default;
 
     /// Run the authenticator's flow. Returns the resulting session
-    /// (variables populated) or a `ChainApiError`.
+    /// (variables populated) or a `ReqloomError`.
     ///
     /// Authenticators must NOT consult or mutate the `RunContext`'s
     /// session cache — that's the engine's job. They MAY mutate the
     /// per-actor cookie jar via `ctx.setCookie(...)` to absorb
     /// `Set-Cookie` headers that arrive on the auth response.
-    [[nodiscard]] virtual std::expected<ActorSession, ChainApiError> authenticate(
+    [[nodiscard]] virtual std::expected<ActorSession, ReqloomError> authenticate(
         const Actor& actor, RunContext& ctx, const ResolveContext& rctx) = 0;
 };
 
@@ -83,7 +83,7 @@ public:
 /// Templates in the refresh block resolve against the EXISTING session
 /// (e.g. `{{user.refresh_token}}`), so the caller must keep the session
 /// in the RunContext's cache while calling.
-[[nodiscard]] std::expected<std::map<std::string, std::string>, ChainApiError> runRefresh(
+[[nodiscard]] std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     const Actor& actor, RunContext& ctx, const ResolveContext& rctx, const AuthDependencies& deps);
 
-}  // namespace chainapi::engine
+}  // namespace reqloom::engine

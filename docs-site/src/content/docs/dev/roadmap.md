@@ -14,4 +14,4 @@ Roadmap as of the most recent release:
 | 4 — Polish & v1 launch | Planned | Auto-update, sample projects, public release |
 | 5+ — Mock server, team sync, hosted | Post-MVP | Per PRD §13.6 |
 
-The canonical roadmap is in [`doc/ChainAPI - PRD.md`](https://github.com/chainapi/chainapi/blob/main/doc/ChainAPI%20-%20PRD.md) §13.
+The canonical roadmap is in [`doc/Reqloom - PRD.md`](https://github.com/Mirzabaig313/Reqloom/blob/main/doc/Reqloom%20-%20PRD.md) §13.

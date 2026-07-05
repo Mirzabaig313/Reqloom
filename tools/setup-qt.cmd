@@ -37,6 +37,7 @@ if exist "%QT_PREFIX%" (
     REM Match the archives list used in CI (appveyor.yml).
     aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 ^
         --outputdir "%QT_DIR%" ^
+        --modules qt5compat ^
         --archives qtbase qtdeclarative qtsvg
 )
 

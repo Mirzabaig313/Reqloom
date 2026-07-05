@@ -1,4 +1,4 @@
-# ChainAPI — macOS CI on Azure DevOps Pipelines.
+# Reqloom — macOS CI on Azure DevOps Pipelines.
 #
 # Branch routing:
 #   * push to dev  → static checks + macos-debug   (ASan + UBSan + tests)
@@ -122,6 +122,7 @@ stages:
                 rm -rf "$(QT_INSTALL_DIR)/$(QT_VERSION)"
                 aqt install-qt mac desktop "$(QT_VERSION)" clang_64 \
                   --outputdir "$(QT_INSTALL_DIR)" \
+                  --modules qt5compat \
                   --archives qtbase qtdeclarative qtsvg
               else
                 echo "Qt $(QT_VERSION) already present from cache."
