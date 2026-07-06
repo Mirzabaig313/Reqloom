@@ -1094,11 +1094,19 @@ ColumnLayout {
                     width: authScroll.availableWidth
                     spacing: DesignTokens.spaceMd
 
+                    // Auth choice persists with the request (saved as the
+                    // operation's auth: block). No Apply step — it saves with
+                    // everything else on the editor's Save.
+
                     OptionRow {
                         label: qsTr("Actor")
                         GlassComboBox {
                             id: actorCombo
                             width: parent.width
+                            // Actor and inline Auth Type are mutually exclusive:
+                            // disabled while an inline type is selected.
+                            enabled: AppController.editAuthType === "none"
+                            opacity: enabled ? 1.0 : 0.5
                             model: [qsTr("(No Auth)")].concat(AppController.actorNames)
                             currentIndex: AppController.editActor.length === 0 ? 0 : Math.max(0, find(AppController.editActor))
                             onActivated: AppController.editActor = (currentIndex === 0 ? "" : currentText)
@@ -1116,7 +1124,189 @@ ColumnLayout {
                     }
                     Label {
                         Layout.fillWidth: true
-                        text: qsTr("Auth (Basic, API Key, OAuth, AWS SigV4, login chains) is configured on the actor in actors/*.yaml. Choose which actor this request runs as.")
+                        text: qsTr("Use an Actor OR a prebuilt Auth Type — picking one disables the other. Actors (login chains, OAuth, AWS SigV4) live in actors/*.yaml; an inline Auth Type is a quick per-request credential with no actor.")
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontCaption
+                        wrapMode: Text.WordWrap
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 1
+                        color: DesignTokens.borderSubtle
+                    }
+                    OptionRow {
+                        label: qsTr("Auth Type")
+                        GlassComboBox {
+                            id: authTypeCombo
+                            width: parent.width
+                            // Disabled while an Actor is selected (see above).
+                            enabled: AppController.editActor.length === 0
+                            opacity: enabled ? 1.0 : 0.5
+                            property var types: ["none", "bearer", "basic", "apikey", "aws_sigv4", "oauth1"]
+                            model: [qsTr("No Auth"), qsTr("Bearer Token"), qsTr("Basic Auth"), qsTr("API Key"), qsTr("AWS Signature"), qsTr("OAuth 1.0")]
+                            currentIndex: Math.max(0, types.indexOf(AppController.editAuthType))
+                            onActivated: AppController.editAuthType = types[currentIndex]
+                        }
+                    }
+                    // Bearer
+                    OptionRow {
+                        visible: AppController.editAuthType === "bearer"
+                        label: qsTr("Token")
+                        GlassTextField {
+                            id: bearerToken
+                            width: parent.width
+                            placeholderText: qsTr("token or {{variable}}")
+                            text: AppController.editAuthToken
+                            onTextEdited: AppController.editAuthToken = text
+                        }
+                    }
+                    // Basic
+                    OptionRow {
+                        visible: AppController.editAuthType === "basic"
+                        label: qsTr("Username")
+                        GlassTextField {
+                            id: basicUser
+                            width: parent.width
+                            text: AppController.editAuthUsername
+                            onTextEdited: AppController.editAuthUsername = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "basic"
+                        label: qsTr("Password")
+                        GlassTextField {
+                            id: basicPass
+                            width: parent.width
+                            echoMode: TextInput.Password
+                            text: AppController.editAuthPassword
+                            onTextEdited: AppController.editAuthPassword = text
+                        }
+                    }
+                    // API Key
+                    OptionRow {
+                        visible: AppController.editAuthType === "apikey"
+                        label: qsTr("Key")
+                        GlassTextField {
+                            id: apiKeyName
+                            width: parent.width
+                            placeholderText: qsTr("e.g. X-API-Key")
+                            text: AppController.editAuthApiKeyName
+                            onTextEdited: AppController.editAuthApiKeyName = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "apikey"
+                        label: qsTr("Value")
+                        GlassTextField {
+                            id: apiKeyValue
+                            width: parent.width
+                            text: AppController.editAuthApiKeyValue
+                            onTextEdited: AppController.editAuthApiKeyValue = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "apikey"
+                        label: qsTr("Add to")
+                        GlassComboBox {
+                            width: parent.width
+                            model: [qsTr("Header"), qsTr("Query Param")]
+                            currentIndex: AppController.editAuthApiKeyInQuery ? 1 : 0
+                            onActivated: AppController.editAuthApiKeyInQuery = (currentIndex === 1)
+                        }
+                    }
+                    // AWS Signature v4
+                    OptionRow {
+                        visible: AppController.editAuthType === "aws_sigv4"
+                        label: qsTr("Access Key")
+                        GlassTextField {
+                            width: parent.width
+                            text: AppController.editAuthAwsAccessKey
+                            onTextEdited: AppController.editAuthAwsAccessKey = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "aws_sigv4"
+                        label: qsTr("Secret Key")
+                        GlassTextField {
+                            width: parent.width
+                            echoMode: TextInput.Password
+                            text: AppController.editAuthAwsSecretKey
+                            onTextEdited: AppController.editAuthAwsSecretKey = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "aws_sigv4"
+                        label: qsTr("Region")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr("e.g. us-east-1")
+                            text: AppController.editAuthAwsRegion
+                            onTextEdited: AppController.editAuthAwsRegion = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "aws_sigv4"
+                        label: qsTr("Service")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr("e.g. execute-api, s3")
+                            text: AppController.editAuthAwsService
+                            onTextEdited: AppController.editAuthAwsService = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "aws_sigv4"
+                        label: qsTr("Session Token")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr("optional (STS)")
+                            text: AppController.editAuthAwsSessionToken
+                            onTextEdited: AppController.editAuthAwsSessionToken = text
+                        }
+                    }
+                    // OAuth 1.0a
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth1"
+                        label: qsTr("Consumer Key")
+                        GlassTextField {
+                            width: parent.width
+                            text: AppController.editAuthOauthConsumerKey
+                            onTextEdited: AppController.editAuthOauthConsumerKey = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth1"
+                        label: qsTr("Consumer Secret")
+                        GlassTextField {
+                            width: parent.width
+                            echoMode: TextInput.Password
+                            text: AppController.editAuthOauthConsumerSecret
+                            onTextEdited: AppController.editAuthOauthConsumerSecret = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth1"
+                        label: qsTr("Token")
+                        GlassTextField {
+                            width: parent.width
+                            text: AppController.editAuthOauthToken
+                            onTextEdited: AppController.editAuthOauthToken = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth1"
+                        label: qsTr("Token Secret")
+                        GlassTextField {
+                            width: parent.width
+                            echoMode: TextInput.Password
+                            text: AppController.editAuthOauthTokenSecret
+                            onTextEdited: AppController.editAuthOauthTokenSecret = text
+                        }
+                    }
+                    Label {
+                        visible: AppController.editAuthType !== "none"
+                        Layout.fillWidth: true
+                        text: qsTr("Credential values may use {{variables}}; prefer {{secret.X}} over a plaintext token — it round-trips into the endpoint's YAML.")
                         color: DesignTokens.textSecondary
                         font.pixelSize: DesignTokens.fontCaption
                         wrapMode: Text.WordWrap

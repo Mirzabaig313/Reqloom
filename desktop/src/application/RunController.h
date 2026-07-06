@@ -15,6 +15,7 @@
 #include <QtCore/QString>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -57,6 +58,10 @@ struct RequestOverride {
     std::vector<std::string> dependencies;        ///< replaces explicitDependencies
     std::vector<engine::Extraction> extractions;  ///< replaces extractions
     std::vector<engine::Assertion> assertions;    ///< replaces assertions
+
+    /// Per-operation inline (actor-less) auth. nullopt clears any existing
+    /// auth on the operation (full-assignment semantics, like headers).
+    std::optional<engine::InlineAuth> inlineAuth;
 };
 
 /// Apply a RequestOverride's fields onto an operation in place. Shared by the

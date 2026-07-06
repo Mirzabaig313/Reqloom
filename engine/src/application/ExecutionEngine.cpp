@@ -364,6 +364,11 @@ struct ExecutionEngine::Impl {
                 }
             }
 
+            // Inline (actor-less) auth on the parent op also covers its poll
+            // requests. Applied before signing; inline-auth ops have no signing
+            // session, so the two never interact in practice.
+            applyInlineAuth(req, op.inlineAuth, ctx, rctx);
+
             // Per-request signing done after inject merge so the signer sees the final shape.
             if (pollActor != nullptr) {
                 if (const auto* session = ctx.session(pollActor->id); session) {
@@ -386,6 +391,14 @@ struct ExecutionEngine::Impl {
                         }
                     }
                 }
+            }
+
+            // Inline (actor-less) signing on the parent op also covers polls.
+            if (!signInlineAuth(req, op.inlineAuth, ctx, rctx)) {
+                return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                    ErrorClass::Auth,
+                                                    "poll_until: inline auth signing failed "
+                                                    "(missing credentials or malformed URL)"});
             }
 
             emit(RequestPrepared{runId,
@@ -502,6 +515,101 @@ struct ExecutionEngine::Impl {
                 : "poll_until: max_attempts (" + std::to_string(poll.maxAttempts) + ") exceeded"});
     }
 
+    // Apply an operation's actor-less inline auth to a fully-built request.
+    // Values may contain {{variables}}, resolved here like any header. Called
+    // after actor/session injects so inline auth wins on the Authorization key.
+    void applyInlineAuth(HttpRequest& req,
+                         const std::optional<InlineAuth>& auth,
+                         const RunContext& ctx,
+                         const ResolveContext& rctx) const {
+        if (!auth || auth->type == InlineAuthType::None) {
+            return;
+        }
+        switch (auth->type) {
+            case InlineAuthType::Bearer: {
+                const auto token = varResolver.resolve(auth->token, ctx, rctx).output;
+                req.headers["Authorization"] = "Bearer " + token;
+                break;
+            }
+            case InlineAuthType::Basic: {
+                const auto user = varResolver.resolve(auth->username, ctx, rctx).output;
+                const auto pass = varResolver.resolve(auth->password, ctx, rctx).output;
+                req.headers["Authorization"] = "Basic " + base64Encode(user + ":" + pass);
+                break;
+            }
+            case InlineAuthType::ApiKey: {
+                if (auth->apiKeyName.empty()) {
+                    break;
+                }
+                const auto key = varResolver.resolve(auth->apiKeyName, ctx, rctx).output;
+                const auto value = varResolver.resolve(auth->apiKeyValue, ctx, rctx).output;
+                if (auth->apiKeyInQuery) {
+                    // Idempotent: re-applying on a reauth retry (where req.url
+                    // already carries the segment) must not append a duplicate.
+                    // ponytail: substring match, not a full query parse — a key
+                    // whose "k=v" is a substring of another param won't re-add,
+                    // acceptable for a single auth param.
+                    const auto segment = urlEncode(key) + "=" + urlEncode(value);
+                    if (req.url.find(segment) == std::string::npos) {
+                        req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + segment;
+                    }
+                } else {
+                    req.headers[key] = value;
+                }
+                break;
+            }
+            case InlineAuthType::None:
+            case InlineAuthType::AwsSigV4:
+            case InlineAuthType::OAuth1:
+                // Signing schemes are handled per-attempt by signInlineAuth,
+                // not here (their signature depends on the final request).
+                break;
+        }
+    }
+
+    // Per-request signing for inline (actor-less) AWS SigV4 / OAuth1. Reuses
+    // the same tested signers as the actor path by feeding the inline
+    // credentials into a transient session. Returns false on signing failure
+    // (missing credential / malformed URL), leaving req untouched.
+    [[nodiscard]] bool signInlineAuth(HttpRequest& req,
+                                      const std::optional<InlineAuth>& auth,
+                                      const RunContext& ctx,
+                                      const ResolveContext& rctx) const {
+        if (!auth) {
+            return true;
+        }
+        const auto resolve = [&](const std::string& value) {
+            return varResolver.resolve(value, ctx, rctx).output;
+        };
+        switch (auth->type) {
+            case InlineAuthType::AwsSigV4: {
+                ActorSession session;
+                session.variables["access_key"] = resolve(auth->awsAccessKey);
+                session.variables["secret_key"] = resolve(auth->awsSecretKey);
+                session.variables["region"] = resolve(auth->awsRegion);
+                session.variables["service"] = resolve(auth->awsService);
+                if (!auth->awsSessionToken.empty()) {
+                    session.variables["session_token"] = resolve(auth->awsSessionToken);
+                }
+                return signSigV4Request(req, session);
+            }
+            case InlineAuthType::OAuth1: {
+                ActorSession session;
+                session.variables["consumer_key"] = resolve(auth->oauthConsumerKey);
+                session.variables["consumer_secret"] = resolve(auth->oauthConsumerSecret);
+                session.variables["token"] = resolve(auth->oauthToken);
+                session.variables["token_secret"] = resolve(auth->oauthTokenSecret);
+                return signOAuth1Request(req, session);
+            }
+            case InlineAuthType::None:
+            case InlineAuthType::Bearer:
+            case InlineAuthType::Basic:
+            case InlineAuthType::ApiKey:
+                return true;  // static types handled by applyInlineAuth
+        }
+        return true;
+    }
+
     // Execute a single operation step. pollAttemptRows is an out-parameter since
     // each timeline row is a separate StepResult (a parent can't carry a
     // vector<StepResult> without making the type recursive).
@@ -597,6 +705,11 @@ struct ExecutionEngine::Impl {
             }
             req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
         }
+
+        // Inline (actor-less) auth: applied after actor/session injects and
+        // after the query string is assembled, so a Bearer/Basic header wins
+        // and an API-key query param appends to the finished URL.
+        applyInlineAuth(req, op.inlineAuth, ctx, rctx);
 
         if (op.bodyTemplate) {
             auto resolved = varResolver.resolve(*op.bodyTemplate, ctx, rctx);
@@ -698,6 +811,16 @@ struct ExecutionEngine::Impl {
                 }
             }
 
+            // Inline (actor-less) AWS SigV4 / OAuth1 signing — per-attempt so
+            // each retry gets a fresh nonce/timestamp, mirroring the actor path.
+            if (!signInlineAuth(req, op.inlineAuth, ctx, rctx)) {
+                result.status = StepResult::Status::Failed;
+                result.error = ErrorCode::SessionRefreshFailed;
+                result.detail = "inline auth signing failed (missing credentials or malformed URL)";
+                result.attempts = attemptCount;
+                return result;
+            }
+
             emit(RequestPrepared{runId,
                                  stepIndex,
                                  req.method,
@@ -789,6 +912,11 @@ struct ExecutionEngine::Impl {
                             req.headers[k] = v;
                         }
                     }
+
+                    // Re-apply inline auth so it still wins after the header
+                    // rebuild (Operation::inlineAuth's documented contract).
+                    // Idempotent for the query-param case (see applyInlineAuth).
+                    applyInlineAuth(req, op.inlineAuth, ctx, rctx);
 
                     // Refresh the Cookie header for the retry. Mirror
                     if (!req.headers.contains("Cookie")) {

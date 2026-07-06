@@ -1,0 +1,9 @@
+{
+  "routes": [
+    { "method": "GET", "path": "/bearer", "status": 200, "body": { "ok": true } },
+    { "method": "GET", "path": "/basic",  "status": 200, "body": { "ok": true } },
+    { "method": "GET", "path": "/apikey", "status": 200, "body": { "ok": true } },
+    { "method": "GET", "path": "/aws",    "status": 200, "body": { "ok": true } },
+    { "method": "GET", "path": "/oauth",  "status": 200, "body": { "ok": true } }
+  ]
+}

@@ -17,6 +17,7 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QCryptographicHash>
 #include <QtCore/QDir>
@@ -1089,6 +1090,11 @@ void AppController::setEditActor(const QString& actor) {
         return;
     }
     editActor_ = actor;
+    // Actor and inline auth are mutually exclusive — selecting an actor drops
+    // the inline type (fields kept, ignored while type is "none").
+    if (!editActor_.isEmpty()) {
+        editAuthType_ = QStringLiteral("none");
+    }
     emit editChanged();
 }
 
@@ -1197,6 +1203,179 @@ void AppController::setManagedContentType(const QString& desired) {
     editHeaders_.setPairs(std::move(pairs));
 }
 
+namespace {
+// Map between the InlineAuthType enum and the QML-facing type string.
+[[nodiscard]] QString inlineAuthTypeToQString(engine::InlineAuthType type) {
+    switch (type) {
+        case engine::InlineAuthType::Bearer:
+            return QStringLiteral("bearer");
+        case engine::InlineAuthType::Basic:
+            return QStringLiteral("basic");
+        case engine::InlineAuthType::ApiKey:
+            return QStringLiteral("apikey");
+        case engine::InlineAuthType::AwsSigV4:
+            return QStringLiteral("aws_sigv4");
+        case engine::InlineAuthType::OAuth1:
+            return QStringLiteral("oauth1");
+        case engine::InlineAuthType::None:
+            break;
+    }
+    return QStringLiteral("none");
+}
+
+[[nodiscard]] engine::InlineAuthType inlineAuthTypeFromQString(const QString& type) {
+    if (type == QStringLiteral("bearer")) {
+        return engine::InlineAuthType::Bearer;
+    }
+    if (type == QStringLiteral("basic")) {
+        return engine::InlineAuthType::Basic;
+    }
+    if (type == QStringLiteral("apikey")) {
+        return engine::InlineAuthType::ApiKey;
+    }
+    if (type == QStringLiteral("aws_sigv4")) {
+        return engine::InlineAuthType::AwsSigV4;
+    }
+    if (type == QStringLiteral("oauth1")) {
+        return engine::InlineAuthType::OAuth1;
+    }
+    return engine::InlineAuthType::None;
+}
+}  // namespace
+
+void AppController::setEditAuthType(const QString& type) {
+    if (editAuthType_ == type) {
+        return;
+    }
+    editAuthType_ = type;
+    // Mutually exclusive with actor — selecting a real inline type clears the
+    // actor so the two can never both be active.
+    if (editAuthType_ != QStringLiteral("none")) {
+        editActor_.clear();
+    }
+    emit editChanged();
+}
+
+void AppController::setEditAuthToken(const QString& token) {
+    if (editAuthToken_ == token) {
+        return;
+    }
+    editAuthToken_ = token;
+    emit editChanged();
+}
+
+void AppController::setEditAuthUsername(const QString& username) {
+    if (editAuthUsername_ == username) {
+        return;
+    }
+    editAuthUsername_ = username;
+    emit editChanged();
+}
+
+void AppController::setEditAuthPassword(const QString& password) {
+    if (editAuthPassword_ == password) {
+        return;
+    }
+    editAuthPassword_ = password;
+    emit editChanged();
+}
+
+void AppController::setEditAuthApiKeyName(const QString& name) {
+    if (editAuthApiKeyName_ == name) {
+        return;
+    }
+    editAuthApiKeyName_ = name;
+    emit editChanged();
+}
+
+void AppController::setEditAuthApiKeyValue(const QString& value) {
+    if (editAuthApiKeyValue_ == value) {
+        return;
+    }
+    editAuthApiKeyValue_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthApiKeyInQuery(bool inQuery) {
+    if (editAuthApiKeyInQuery_ == inQuery) {
+        return;
+    }
+    editAuthApiKeyInQuery_ = inQuery;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsAccessKey(const QString& value) {
+    if (editAuthAwsAccessKey_ == value) {
+        return;
+    }
+    editAuthAwsAccessKey_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsSecretKey(const QString& value) {
+    if (editAuthAwsSecretKey_ == value) {
+        return;
+    }
+    editAuthAwsSecretKey_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsRegion(const QString& value) {
+    if (editAuthAwsRegion_ == value) {
+        return;
+    }
+    editAuthAwsRegion_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsService(const QString& value) {
+    if (editAuthAwsService_ == value) {
+        return;
+    }
+    editAuthAwsService_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsSessionToken(const QString& value) {
+    if (editAuthAwsSessionToken_ == value) {
+        return;
+    }
+    editAuthAwsSessionToken_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauthConsumerKey(const QString& value) {
+    if (editAuthOauthConsumerKey_ == value) {
+        return;
+    }
+    editAuthOauthConsumerKey_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauthConsumerSecret(const QString& value) {
+    if (editAuthOauthConsumerSecret_ == value) {
+        return;
+    }
+    editAuthOauthConsumerSecret_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauthToken(const QString& value) {
+    if (editAuthOauthToken_ == value) {
+        return;
+    }
+    editAuthOauthToken_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauthTokenSecret(const QString& value) {
+    if (editAuthOauthTokenSecret_ == value) {
+        return;
+    }
+    editAuthOauthTokenSecret_ = value;
+    emit editChanged();
+}
+
 void AppController::beginEdit() {
     if (!hasOperation_ || !activeProject().hasProject()) {
         return;
@@ -1212,6 +1391,51 @@ void AppController::beginEdit() {
     editMethod_ = methodLabel(op->method);
     editPath_ = QString::fromStdString(op->pathTemplate);
     editActor_ = QString::fromStdString(op->actor.value);
+
+    // Inline (actor-less) auth: seed from the op, or reset to "none".
+    if (op->inlineAuth) {
+        const auto& a = *op->inlineAuth;
+        editAuthType_ = inlineAuthTypeToQString(a.type);
+        editAuthToken_ = QString::fromStdString(a.token);
+        editAuthUsername_ = QString::fromStdString(a.username);
+        editAuthPassword_ = QString::fromStdString(a.password);
+        editAuthApiKeyName_ = QString::fromStdString(a.apiKeyName);
+        editAuthApiKeyValue_ = QString::fromStdString(a.apiKeyValue);
+        editAuthApiKeyInQuery_ = a.apiKeyInQuery;
+        editAuthAwsAccessKey_ = QString::fromStdString(a.awsAccessKey);
+        editAuthAwsSecretKey_ = QString::fromStdString(a.awsSecretKey);
+        editAuthAwsRegion_ = QString::fromStdString(a.awsRegion);
+        editAuthAwsService_ = QString::fromStdString(a.awsService);
+        editAuthAwsSessionToken_ = QString::fromStdString(a.awsSessionToken);
+        editAuthOauthConsumerKey_ = QString::fromStdString(a.oauthConsumerKey);
+        editAuthOauthConsumerSecret_ = QString::fromStdString(a.oauthConsumerSecret);
+        editAuthOauthToken_ = QString::fromStdString(a.oauthToken);
+        editAuthOauthTokenSecret_ = QString::fromStdString(a.oauthTokenSecret);
+    } else {
+        editAuthType_ = QStringLiteral("none");
+        editAuthToken_.clear();
+        editAuthUsername_.clear();
+        editAuthPassword_.clear();
+        editAuthApiKeyName_.clear();
+        editAuthApiKeyValue_.clear();
+        editAuthApiKeyInQuery_ = false;
+        editAuthAwsAccessKey_.clear();
+        editAuthAwsSecretKey_.clear();
+        editAuthAwsRegion_.clear();
+        editAuthAwsService_.clear();
+        editAuthAwsSessionToken_.clear();
+        editAuthOauthConsumerKey_.clear();
+        editAuthOauthConsumerSecret_.clear();
+        editAuthOauthToken_.clear();
+        editAuthOauthTokenSecret_.clear();
+    }
+
+    // Actor and inline auth are mutually exclusive in the editor. If a
+    // hand-edited op carries both, inline auth wins (it's applied last at
+    // runtime), so drop the actor from the editor seed to match.
+    if (editAuthType_ != QStringLiteral("none")) {
+        editActor_.clear();
+    }
 
     if (!op->expectStatusList.empty()) {
         QStringList codes;
@@ -1331,6 +1555,30 @@ RequestOverride AppController::buildOverride() const {
     ov.expectStatus = editExpectStatus_;
     ov.timeoutMs = editTimeout_;
     ov.forceReRun = editForce_;
+
+    // Inline auth: build the typed credential from the edit fields. "none"
+    // leaves it nullopt so applyOverrideToOperation clears any prior auth.
+    const auto authType = inlineAuthTypeFromQString(editAuthType_);
+    if (authType != engine::InlineAuthType::None) {
+        engine::InlineAuth auth;
+        auth.type = authType;
+        auth.token = editAuthToken_.toStdString();
+        auth.username = editAuthUsername_.toStdString();
+        auth.password = editAuthPassword_.toStdString();
+        auth.apiKeyName = editAuthApiKeyName_.toStdString();
+        auth.apiKeyValue = editAuthApiKeyValue_.toStdString();
+        auth.apiKeyInQuery = editAuthApiKeyInQuery_;
+        auth.awsAccessKey = editAuthAwsAccessKey_.toStdString();
+        auth.awsSecretKey = editAuthAwsSecretKey_.toStdString();
+        auth.awsRegion = editAuthAwsRegion_.toStdString();
+        auth.awsService = editAuthAwsService_.toStdString();
+        auth.awsSessionToken = editAuthAwsSessionToken_.toStdString();
+        auth.oauthConsumerKey = editAuthOauthConsumerKey_.toStdString();
+        auth.oauthConsumerSecret = editAuthOauthConsumerSecret_.toStdString();
+        auth.oauthToken = editAuthOauthToken_.toStdString();
+        auth.oauthTokenSecret = editAuthOauthTokenSecret_.toStdString();
+        ov.inlineAuth = std::move(auth);
+    }
 
     ov.bodyIsForm = editBodyIsForm_;
     if (editBodyIsForm_) {

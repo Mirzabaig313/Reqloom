@@ -53,6 +53,25 @@ HttpMethod parseMethod(const std::string& m) {
     return HttpMethod::Get;
 }
 
+InlineAuthType parseInlineAuthType(const std::string& t) {
+    if (t == "bearer") {
+        return InlineAuthType::Bearer;
+    }
+    if (t == "basic") {
+        return InlineAuthType::Basic;
+    }
+    if (t == "apikey" || t == "api_key") {
+        return InlineAuthType::ApiKey;
+    }
+    if (t == "aws_sigv4" || t == "awssigv4" || t == "aws") {
+        return InlineAuthType::AwsSigV4;
+    }
+    if (t == "oauth1" || t == "oauth_1") {
+        return InlineAuthType::OAuth1;
+    }
+    return InlineAuthType::None;
+}
+
 std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     std::map<std::string, std::string> result;
     if (!node || !node.IsMap()) {
@@ -773,6 +792,30 @@ std::expected<Resource, ReqloomError> parseResource(const std::string& resourceI
 
         if (opNode["actor"]) {
             op.actor = ActorId{opNode["actor"].as<std::string>()};
+        }
+
+        if (opNode["auth"] && opNode["auth"].IsMap()) {
+            const auto& a = opNode["auth"];
+            InlineAuth auth;
+            auth.type = parseInlineAuthType(a["type"].as<std::string>("none"));
+            auth.token = a["token"].as<std::string>("");
+            auth.username = a["username"].as<std::string>("");
+            auth.password = a["password"].as<std::string>("");
+            auth.apiKeyName = a["key"].as<std::string>("");
+            auth.apiKeyValue = a["value"].as<std::string>("");
+            auth.apiKeyInQuery = a["in"].as<std::string>("header") == "query";
+            auth.awsAccessKey = a["access_key"].as<std::string>("");
+            auth.awsSecretKey = a["secret_key"].as<std::string>("");
+            auth.awsRegion = a["region"].as<std::string>("");
+            auth.awsService = a["service"].as<std::string>("");
+            auth.awsSessionToken = a["session_token"].as<std::string>("");
+            auth.oauthConsumerKey = a["consumer_key"].as<std::string>("");
+            auth.oauthConsumerSecret = a["consumer_secret"].as<std::string>("");
+            auth.oauthToken = a["oauth_token"].as<std::string>("");
+            auth.oauthTokenSecret = a["token_secret"].as<std::string>("");
+            if (auth.type != InlineAuthType::None) {
+                op.inlineAuth = std::move(auth);
+            }
         }
 
         op.headers = parseStringMap(opNode["headers"]);

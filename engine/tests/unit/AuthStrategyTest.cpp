@@ -1231,6 +1231,34 @@ TEST(SigV4Signer, matches_aws_canonical_reference_vector) {
         << "auth header was: " << auth;
 }
 
+TEST(SigV4Signer, re_signing_is_idempotent_and_ignores_stale_authorization) {
+    // A retried request is re-signed while still carrying the previous
+    // attempt's Authorization header. That header must NOT be folded into the
+    // signature — re-signing must reproduce the same Authorization, not a new
+    // one with `authorization` in SignedHeaders.
+    ce::ActorSession session;
+    session.variables["access_key"] = "AKIDEXAMPLE";
+    session.variables["secret_key"] = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
+    session.variables["region"] = "us-east-1";
+    session.variables["service"] = "service";
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = "https://example.amazonaws.com/?Param2=value2&Param1=value1";
+
+    ce::SigV4TestOverrides overrides;
+    overrides.amzDate = "20150830T123600Z";
+
+    ASSERT_TRUE(ce::signSigV4Request(req, session, overrides));
+    const auto firstAuth = req.headers.at("Authorization");
+
+    // Second sign (retry): req already has Authorization from the first pass.
+    ASSERT_TRUE(ce::signSigV4Request(req, session, overrides));
+    EXPECT_EQ(req.headers.at("Authorization"), firstAuth);
+    EXPECT_EQ(req.headers.at("Authorization").find("authorization"), std::string::npos)
+        << "stale Authorization must not appear in SignedHeaders";
+}
+
 TEST(SigV4Signer, adds_x_amz_security_token_header_when_session_token_present) {
     ce::ActorSession session;
     session.variables["access_key"] = "AKID";

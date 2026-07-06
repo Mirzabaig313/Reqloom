@@ -143,6 +143,48 @@ struct Provenance {
     std::map<std::string, std::string> evidence;
 };
 
+/// Per-operation inline auth kind. This is the actor-less alternative to
+/// running a request "as" an actor — a quick, Postman-style credential attached
+/// directly to one endpoint (e.g. hitting an out-of-project URL without
+/// standing up a full actor + login chain).
+enum class InlineAuthType : std::uint8_t {
+    None,      ///< No inline auth (field absent / explicitly cleared).
+    Bearer,    ///< Authorization: Bearer <token>
+    Basic,     ///< Authorization: Basic base64(username:password)
+    ApiKey,    ///< <name>: <value> as a header or query param
+    AwsSigV4,  ///< AWS Signature v4, signed per-request (reuses signSigV4Request).
+    OAuth1,    ///< OAuth 1.0a HMAC-SHA1, signed per-request (reuses signOAuth1Request).
+};
+
+/// A credential bound to a single operation, applied at request-build time.
+/// All value fields may contain `{{variable}}` templates (resolved like
+/// headers) — prefer `{{secret.X}}` for real secrets rather than storing a
+/// plaintext token here, since these round-trip verbatim into the YAML.
+struct InlineAuth {
+    InlineAuthType type{InlineAuthType::None};
+
+    std::string token;     ///< Bearer.
+    std::string username;  ///< Basic.
+    std::string password;  ///< Basic.
+
+    std::string apiKeyName;     ///< ApiKey: header/query key.
+    std::string apiKeyValue;    ///< ApiKey: value.
+    bool apiKeyInQuery{false};  ///< ApiKey: true → query param, false → header.
+
+    // AWS Signature v4 — fed to signSigV4Request via a transient session.
+    std::string awsAccessKey;
+    std::string awsSecretKey;
+    std::string awsRegion;
+    std::string awsService;
+    std::string awsSessionToken;  ///< Optional (STS temporary credentials).
+
+    // OAuth 1.0a (HMAC-SHA1) — fed to signOAuth1Request via a transient session.
+    std::string oauthConsumerKey;
+    std::string oauthConsumerSecret;
+    std::string oauthToken;
+    std::string oauthTokenSecret;
+};
+
 /// A declared response assertion. `expr` is a predicate in the engine's
 /// predicate grammar (the same one `poll_until.success_when` uses): comparisons
 /// (`==, !=, <, <=, >, >=, in, matches`), boolean `&&`/`||`, `$.json.path`
@@ -158,6 +200,11 @@ struct Operation {
     OperationId id;
     ResourceId resource;
     ActorId actor;
+
+    /// Actor-less per-endpoint credential. Mutually exclusive with `actor` in
+    /// the UI (use an actor OR an inline auth type), but if both are set the
+    /// inline auth is applied last and wins on the Authorization header.
+    std::optional<InlineAuth> inlineAuth;
 
     HttpMethod method{HttpMethod::Get};
     std::string pathTemplate;  ///< e.g. /api/v1/orders/{{order.order_id}}

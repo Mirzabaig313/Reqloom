@@ -983,3 +983,101 @@ TEST(SchemaWriter, multiline_body_round_trips_exactly_and_stays_idempotent) {
     ASSERT_TRUE(ce::writeProject(scratch.path(), *reparsed, /*overwrite=*/true).has_value());
     EXPECT_EQ(slurp(resourceFile), firstBytes);
 }
+
+TEST(SchemaWriter, inline_auth_round_trips_all_types) {
+    // Per-operation inline auth (the actor-less, Postman-style credential)
+    // must survive write → parse for every type. Fails on the parent commit:
+    // Operation::inlineAuth and the auth: YAML block did not exist.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& ops = project.resources.at(ce::ResourceId{"payment"}).operations;
+
+    ce::Operation bearer;
+    bearer.id = ce::OperationId{"payment.bearer"};
+    bearer.resource = ce::ResourceId{"payment"};
+    bearer.method = ce::HttpMethod::Get;
+    bearer.pathTemplate = "/api/v1/bearer";
+    bearer.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::Bearer, .token = "{{env.tok}}"};
+    ops["bearer"] = std::move(bearer);
+
+    ce::Operation basic;
+    basic.id = ce::OperationId{"payment.basic"};
+    basic.resource = ce::ResourceId{"payment"};
+    basic.method = ce::HttpMethod::Get;
+    basic.pathTemplate = "/api/v1/basic";
+    basic.inlineAuth = ce::InlineAuth{
+        .type = ce::InlineAuthType::Basic, .username = "admin", .password = "s3cr3t"};
+    ops["basic"] = std::move(basic);
+
+    ce::Operation apikey;
+    apikey.id = ce::OperationId{"payment.apikey"};
+    apikey.resource = ce::ResourceId{"payment"};
+    apikey.method = ce::HttpMethod::Get;
+    apikey.pathTemplate = "/api/v1/apikey";
+    apikey.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::ApiKey,
+                                       .apiKeyName = "X-API-Key",
+                                       .apiKeyValue = "{{secret.key}}",
+                                       .apiKeyInQuery = true};
+    ops["apikey"] = std::move(apikey);
+
+    ce::Operation aws;
+    aws.id = ce::OperationId{"payment.aws"};
+    aws.resource = ce::ResourceId{"payment"};
+    aws.method = ce::HttpMethod::Get;
+    aws.pathTemplate = "/api/v1/aws";
+    aws.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::AwsSigV4,
+                                    .awsAccessKey = "AKIA...",
+                                    .awsSecretKey = "{{secret.aws}}",
+                                    .awsRegion = "us-east-1",
+                                    .awsService = "execute-api",
+                                    .awsSessionToken = "sess-tok"};
+    ops["aws"] = std::move(aws);
+
+    ce::Operation oauth;
+    oauth.id = ce::OperationId{"payment.oauth"};
+    oauth.resource = ce::ResourceId{"payment"};
+    oauth.method = ce::HttpMethod::Get;
+    oauth.pathTemplate = "/api/v1/oauth";
+    oauth.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::OAuth1,
+                                      .oauthConsumerKey = "ck",
+                                      .oauthConsumerSecret = "{{secret.cs}}",
+                                      .oauthToken = "tk",
+                                      .oauthTokenSecret = "{{secret.ts}}"};
+    ops["oauth"] = std::move(oauth);
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& out = reloaded->resources.at(ce::ResourceId{"payment"}).operations;
+
+    ASSERT_TRUE(out.at("bearer").inlineAuth.has_value());
+    EXPECT_EQ(out.at("bearer").inlineAuth->type, ce::InlineAuthType::Bearer);
+    EXPECT_EQ(out.at("bearer").inlineAuth->token, "{{env.tok}}");
+
+    ASSERT_TRUE(out.at("basic").inlineAuth.has_value());
+    EXPECT_EQ(out.at("basic").inlineAuth->type, ce::InlineAuthType::Basic);
+    EXPECT_EQ(out.at("basic").inlineAuth->username, "admin");
+    EXPECT_EQ(out.at("basic").inlineAuth->password, "s3cr3t");
+
+    ASSERT_TRUE(out.at("apikey").inlineAuth.has_value());
+    EXPECT_EQ(out.at("apikey").inlineAuth->type, ce::InlineAuthType::ApiKey);
+    EXPECT_EQ(out.at("apikey").inlineAuth->apiKeyName, "X-API-Key");
+    EXPECT_EQ(out.at("apikey").inlineAuth->apiKeyValue, "{{secret.key}}");
+    EXPECT_TRUE(out.at("apikey").inlineAuth->apiKeyInQuery);
+
+    ASSERT_TRUE(out.at("aws").inlineAuth.has_value());
+    EXPECT_EQ(out.at("aws").inlineAuth->type, ce::InlineAuthType::AwsSigV4);
+    EXPECT_EQ(out.at("aws").inlineAuth->awsAccessKey, "AKIA...");
+    EXPECT_EQ(out.at("aws").inlineAuth->awsSecretKey, "{{secret.aws}}");
+    EXPECT_EQ(out.at("aws").inlineAuth->awsRegion, "us-east-1");
+    EXPECT_EQ(out.at("aws").inlineAuth->awsService, "execute-api");
+    EXPECT_EQ(out.at("aws").inlineAuth->awsSessionToken, "sess-tok");
+
+    ASSERT_TRUE(out.at("oauth").inlineAuth.has_value());
+    EXPECT_EQ(out.at("oauth").inlineAuth->type, ce::InlineAuthType::OAuth1);
+    EXPECT_EQ(out.at("oauth").inlineAuth->oauthConsumerKey, "ck");
+    EXPECT_EQ(out.at("oauth").inlineAuth->oauthConsumerSecret, "{{secret.cs}}");
+    EXPECT_EQ(out.at("oauth").inlineAuth->oauthToken, "tk");
+    EXPECT_EQ(out.at("oauth").inlineAuth->oauthTokenSecret, "{{secret.ts}}");
+}

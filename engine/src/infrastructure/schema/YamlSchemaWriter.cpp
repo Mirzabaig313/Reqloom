@@ -51,6 +51,24 @@ constexpr std::string_view provenanceSourceToString(Provenance::Source s) {
     return "hand_written";
 }
 
+constexpr std::string_view inlineAuthTypeToString(InlineAuthType t) {
+    switch (t) {
+        case InlineAuthType::None:
+            return "none";
+        case InlineAuthType::Bearer:
+            return "bearer";
+        case InlineAuthType::Basic:
+            return "basic";
+        case InlineAuthType::ApiKey:
+            return "apikey";
+        case InlineAuthType::AwsSigV4:
+            return "aws_sigv4";
+        case InlineAuthType::OAuth1:
+            return "oauth1";
+    }
+    return "none";
+}
+
 constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v) {
     switch (v) {
         case Provenance::VerifiedAgainst::None:
@@ -278,6 +296,44 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
     e << YAML::Key << "path" << YAML::Value << op.pathTemplate;
     if (!op.actor.value.empty()) {
         e << YAML::Key << "actor" << YAML::Value << op.actor.value;
+    }
+    if (op.inlineAuth && op.inlineAuth->type != InlineAuthType::None) {
+        const auto& a = *op.inlineAuth;
+        e << YAML::Key << "auth" << YAML::Value << YAML::BeginMap;
+        e << YAML::Key << "type" << YAML::Value << std::string{inlineAuthTypeToString(a.type)};
+        switch (a.type) {
+            case InlineAuthType::Bearer:
+                e << YAML::Key << "token" << YAML::Value << a.token;
+                break;
+            case InlineAuthType::Basic:
+                e << YAML::Key << "username" << YAML::Value << a.username;
+                e << YAML::Key << "password" << YAML::Value << a.password;
+                break;
+            case InlineAuthType::ApiKey:
+                e << YAML::Key << "key" << YAML::Value << a.apiKeyName;
+                e << YAML::Key << "value" << YAML::Value << a.apiKeyValue;
+                e << YAML::Key << "in" << YAML::Value
+                  << std::string{a.apiKeyInQuery ? "query" : "header"};
+                break;
+            case InlineAuthType::AwsSigV4:
+                e << YAML::Key << "access_key" << YAML::Value << a.awsAccessKey;
+                e << YAML::Key << "secret_key" << YAML::Value << a.awsSecretKey;
+                e << YAML::Key << "region" << YAML::Value << a.awsRegion;
+                e << YAML::Key << "service" << YAML::Value << a.awsService;
+                if (!a.awsSessionToken.empty()) {
+                    e << YAML::Key << "session_token" << YAML::Value << a.awsSessionToken;
+                }
+                break;
+            case InlineAuthType::OAuth1:
+                e << YAML::Key << "consumer_key" << YAML::Value << a.oauthConsumerKey;
+                e << YAML::Key << "consumer_secret" << YAML::Value << a.oauthConsumerSecret;
+                e << YAML::Key << "oauth_token" << YAML::Value << a.oauthToken;
+                e << YAML::Key << "token_secret" << YAML::Value << a.oauthTokenSecret;
+                break;
+            case InlineAuthType::None:
+                break;
+        }
+        e << YAML::EndMap;
     }
     if (!op.headers.empty()) {
         e << YAML::Key << "headers" << YAML::Value;

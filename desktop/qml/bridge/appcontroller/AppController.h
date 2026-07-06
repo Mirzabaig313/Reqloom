@@ -142,6 +142,42 @@ class AppController : public QObject {
     Q_PROPERTY(QString editBody READ editBody WRITE setEditBody NOTIFY editChanged)
     Q_PROPERTY(bool editBodyIsForm READ editBodyIsForm WRITE setEditBodyIsForm NOTIFY editChanged)
     Q_PROPERTY(QString editBodyType READ editBodyType WRITE setEditBodyType NOTIFY editChanged)
+    // Per-operation inline auth (actor-less). editAuthType is one of
+    // "none"/"bearer"/"basic"/"apikey"; the rest carry the credential for the
+    // selected type. Seeded from the op in beginEdit, folded into the request
+    // override on save/run.
+    Q_PROPERTY(QString editAuthType READ editAuthType WRITE setEditAuthType NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthToken READ editAuthToken WRITE setEditAuthToken NOTIFY editChanged)
+    Q_PROPERTY(
+        QString editAuthUsername READ editAuthUsername WRITE setEditAuthUsername NOTIFY editChanged)
+    Q_PROPERTY(
+        QString editAuthPassword READ editAuthPassword WRITE setEditAuthPassword NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthApiKeyName READ editAuthApiKeyName WRITE setEditAuthApiKeyName NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthApiKeyValue READ editAuthApiKeyValue WRITE setEditAuthApiKeyValue
+                   NOTIFY editChanged)
+    Q_PROPERTY(bool editAuthApiKeyInQuery READ editAuthApiKeyInQuery WRITE setEditAuthApiKeyInQuery
+                   NOTIFY editChanged)
+    // AWS Signature v4 credentials.
+    Q_PROPERTY(QString editAuthAwsAccessKey READ editAuthAwsAccessKey WRITE setEditAuthAwsAccessKey
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthAwsSecretKey READ editAuthAwsSecretKey WRITE setEditAuthAwsSecretKey
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthAwsRegion READ editAuthAwsRegion WRITE setEditAuthAwsRegion NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthAwsService READ editAuthAwsService WRITE setEditAuthAwsService NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthAwsSessionToken READ editAuthAwsSessionToken WRITE
+                   setEditAuthAwsSessionToken NOTIFY editChanged)
+    // OAuth 1.0a credentials.
+    Q_PROPERTY(QString editAuthOauthConsumerKey READ editAuthOauthConsumerKey WRITE
+                   setEditAuthOauthConsumerKey NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauthConsumerSecret READ editAuthOauthConsumerSecret WRITE
+                   setEditAuthOauthConsumerSecret NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauthToken READ editAuthOauthToken WRITE setEditAuthOauthToken NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthOauthTokenSecret READ editAuthOauthTokenSecret WRITE
+                   setEditAuthOauthTokenSecret NOTIFY editChanged)
     Q_PROPERTY(EditableKeyValueModel* editHeaders READ editHeaders CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editQuery READ editQuery CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
@@ -368,6 +404,24 @@ public:
     [[nodiscard]] QString editBody() const { return editBody_; }
     [[nodiscard]] bool editBodyIsForm() const { return editBodyIsForm_; }
     [[nodiscard]] QString editBodyType() const { return editBodyType_; }
+    [[nodiscard]] QString editAuthType() const { return editAuthType_; }
+    [[nodiscard]] QString editAuthToken() const { return editAuthToken_; }
+    [[nodiscard]] QString editAuthUsername() const { return editAuthUsername_; }
+    [[nodiscard]] QString editAuthPassword() const { return editAuthPassword_; }
+    [[nodiscard]] QString editAuthApiKeyName() const { return editAuthApiKeyName_; }
+    [[nodiscard]] QString editAuthApiKeyValue() const { return editAuthApiKeyValue_; }
+    [[nodiscard]] bool editAuthApiKeyInQuery() const { return editAuthApiKeyInQuery_; }
+    [[nodiscard]] QString editAuthAwsAccessKey() const { return editAuthAwsAccessKey_; }
+    [[nodiscard]] QString editAuthAwsSecretKey() const { return editAuthAwsSecretKey_; }
+    [[nodiscard]] QString editAuthAwsRegion() const { return editAuthAwsRegion_; }
+    [[nodiscard]] QString editAuthAwsService() const { return editAuthAwsService_; }
+    [[nodiscard]] QString editAuthAwsSessionToken() const { return editAuthAwsSessionToken_; }
+    [[nodiscard]] QString editAuthOauthConsumerKey() const { return editAuthOauthConsumerKey_; }
+    [[nodiscard]] QString editAuthOauthConsumerSecret() const {
+        return editAuthOauthConsumerSecret_;
+    }
+    [[nodiscard]] QString editAuthOauthToken() const { return editAuthOauthToken_; }
+    [[nodiscard]] QString editAuthOauthTokenSecret() const { return editAuthOauthTokenSecret_; }
     void setEditMethod(const QString& method);
     void setEditPath(const QString& path);
     void setEditActor(const QString& actor);
@@ -381,6 +435,22 @@ public:
     /// politely sets the Content-Type header to the kind's canonical type
     /// (preserving a custom Content-Type the user set themselves).
     void setEditBodyType(const QString& type);
+    void setEditAuthType(const QString& type);
+    void setEditAuthToken(const QString& token);
+    void setEditAuthUsername(const QString& username);
+    void setEditAuthPassword(const QString& password);
+    void setEditAuthApiKeyName(const QString& name);
+    void setEditAuthApiKeyValue(const QString& value);
+    void setEditAuthApiKeyInQuery(bool inQuery);
+    void setEditAuthAwsAccessKey(const QString& value);
+    void setEditAuthAwsSecretKey(const QString& value);
+    void setEditAuthAwsRegion(const QString& value);
+    void setEditAuthAwsService(const QString& value);
+    void setEditAuthAwsSessionToken(const QString& value);
+    void setEditAuthOauthConsumerKey(const QString& value);
+    void setEditAuthOauthConsumerSecret(const QString& value);
+    void setEditAuthOauthToken(const QString& value);
+    void setEditAuthOauthTokenSecret(const QString& value);
     [[nodiscard]] EditableKeyValueModel* editHeaders() { return &editHeaders_; }
     [[nodiscard]] EditableKeyValueModel* editQuery() { return &editQuery_; }
     [[nodiscard]] EditableKeyValueModel* editForm() { return &editForm_; }
@@ -936,6 +1006,22 @@ private:
     QString editBody_;
     bool editBodyIsForm_{false};
     QString editBodyType_{QStringLiteral("none")};
+    QString editAuthType_{QStringLiteral("none")};
+    QString editAuthToken_;
+    QString editAuthUsername_;
+    QString editAuthPassword_;
+    QString editAuthApiKeyName_;
+    QString editAuthApiKeyValue_;
+    bool editAuthApiKeyInQuery_{false};
+    QString editAuthAwsAccessKey_;
+    QString editAuthAwsSecretKey_;
+    QString editAuthAwsRegion_;
+    QString editAuthAwsService_;
+    QString editAuthAwsSessionToken_;
+    QString editAuthOauthConsumerKey_;
+    QString editAuthOauthConsumerSecret_;
+    QString editAuthOauthToken_;
+    QString editAuthOauthTokenSecret_;
     /// True once the Chain tab has been seeded for the open op, so the override
     /// only stamps chainEdited when the wiring it captures is a real snapshot.
     bool chainFieldsLoaded_{false};
