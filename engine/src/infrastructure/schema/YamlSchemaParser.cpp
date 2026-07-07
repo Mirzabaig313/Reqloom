@@ -116,6 +116,11 @@ std::optional<InlineAuth> parseInlineAuth(const YAML::Node& node) {
     auth.oauth2ClientSecret = node["client_secret"].as<std::string>("");
     auth.oauth2Scope = node["scope"].as<std::string>("");
     auth.oauth2ClientAuth = node["client_auth"].as<std::string>("");
+    auth.oauth2AuthUrl = node["auth_url"].as<std::string>("");
+    auth.oauth2CallbackUrl = node["callback_url"].as<std::string>("");
+    auth.oauth2PkceMethod = node["pkce_method"].as<std::string>("");
+    // oauth2AccessToken is intentionally never read/written — it is an
+    // ephemeral secret obtained at runtime, not project configuration.
     auth.jwtAlgorithm = node["algorithm"].as<std::string>("");
     auth.jwtSecret = node["secret"].as<std::string>("");
     auth.jwtPayload = node["payload"].as<std::string>("");

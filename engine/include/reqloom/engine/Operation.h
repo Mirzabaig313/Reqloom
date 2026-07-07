@@ -191,7 +191,7 @@ struct InlineAuth {
     // OAuth 2.0 — a token is fetched at request build and injected as
     // Authorization: Bearer. Only the non-interactive grants are supported
     // (a headless engine can't drive the authorization-code browser redirect).
-    std::string oauth2GrantType;  ///< "client_credentials" (default) or "password".
+    std::string oauth2GrantType;  ///< "client_credentials", "password", or "authorization_code".
     std::string oauth2TokenUrl;
     std::string oauth2ClientId;
     std::string oauth2ClientSecret;
@@ -199,6 +199,14 @@ struct InlineAuth {
     std::string
         oauth2ClientAuth;  ///< "body" (default) or "basic" (client creds in a Basic header).
     // Password grant reuses the generic `username`/`password` fields above.
+
+    // Authorization Code (with PKCE) — interactive grant. The engine can't run
+    // the browser flow; the desktop obtains the token and stores it here.
+    std::string oauth2AuthUrl;      ///< Authorization endpoint (browser).
+    std::string oauth2CallbackUrl;  ///< Loopback redirect URI.
+    std::string oauth2PkceMethod;   ///< "S256" (default) or "plain". Desktop-only.
+    std::string oauth2AccessToken;  ///< Token from the interactive flow. NEVER
+                                    ///< persisted to YAML (ephemeral secret).
 
     // JWT Bearer — a JWT is signed and injected as Authorization: Bearer.
     std::string jwtAlgorithm;  ///< "HS256" (default) or "HS512".

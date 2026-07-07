@@ -347,3 +347,55 @@ TEST_F(InlineAuthFixture, oauth2_password_grant_with_basic_client_auth) {
     EXPECT_EQ(body.find("client_secret="), std::string::npos)
         << "client_secret must not be in the body when using Basic client auth: " << body;
 }
+
+TEST_F(InlineAuthFixture, oauth2_authorization_code_injects_obtained_token) {
+    // The desktop's interactive flow obtains the token and stores it on the op;
+    // the engine only injects it. Here we simulate a token already present.
+    auto project = makeProject(harness_->baseUrl());
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["authcode"] =
+        makeOp("authcode",
+               "/oauth2",
+               ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                              .oauth2GrantType = "authorization_code",
+                              .oauth2ClientId = "cid",
+                              .oauth2AuthUrl = "https://id.test/authorize",
+                              .oauth2CallbackUrl = "http://127.0.0.1:8080/callback",
+                              .oauth2AccessToken = "authcode-tok"});
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"echo.authcode"}, ctx);
+    ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+    ASSERT_TRUE(result->succeeded());
+
+    auto cap = fetchLastRequest(harness_->baseUrl(), "/oauth2");
+    ASSERT_TRUE(cap["found"].get<bool>());
+    EXPECT_EQ(cap["headers"]["authorization"].get<std::string>(), "Bearer authcode-tok");
+}
+
+TEST_F(InlineAuthFixture, oauth2_authorization_code_without_token_fails_clearly) {
+    auto project = makeProject(harness_->baseUrl());
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["authcode2"] =
+        makeOp("authcode2",
+               "/oauth2",
+               ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                              .oauth2GrantType = "authorization_code",
+                              .oauth2ClientId = "cid",
+                              .oauth2AuthUrl = "https://id.test/authorize"});
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"echo.authcode2"}, ctx);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_FALSE(result->succeeded());
+    bool sawFailure = false;
+    for (const auto& step : result->steps) {
+        if (step.op.value == "echo.authcode2" && step.status == ce::StepResult::Status::Failed) {
+            EXPECT_NE(step.detail.find("no access token"), std::string::npos) << step.detail;
+            sawFailure = true;
+        }
+    }
+    EXPECT_TRUE(sawFailure);
+}

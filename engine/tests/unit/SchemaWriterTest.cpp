@@ -1143,6 +1143,48 @@ TEST(SchemaWriter, inline_auth_round_trips_all_types) {
     EXPECT_EQ(out.at("mtls").inlineAuth->mtlsKeyPassword, "{{secret.pfx}}");
 }
 
+TEST(SchemaWriter, oauth2_authorization_code_persists_config_but_never_the_token) {
+    // Authorization Code config (grant/auth_url/callback) round-trips, but the
+    // interactively-obtained access token is an ephemeral secret and must NOT
+    // be written to YAML.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    ce::Operation authcode;
+    authcode.id = ce::OperationId{"payment.authcode"};
+    authcode.resource = ce::ResourceId{"payment"};
+    authcode.method = ce::HttpMethod::Get;
+    authcode.pathTemplate = "/api/v1/authcode";
+    authcode.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                                         .oauth2GrantType = "authorization_code",
+                                         .oauth2ClientId = "cid",
+                                         .oauth2AuthUrl = "https://id.test/authorize",
+                                         .oauth2CallbackUrl = "http://127.0.0.1:8080/callback",
+                                         .oauth2PkceMethod = "plain",
+                                         .oauth2AccessToken = "SUPER-SECRET-TOKEN"};
+    project.resources.at(ce::ResourceId{"payment"}).operations["authcode"] = std::move(authcode);
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    // The token must not appear anywhere on disk.
+    const auto slurp = [](const fs::path& f) {
+        std::ifstream in(f, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    EXPECT_EQ(slurp(scratch.path() / "resources" / "payment.yaml").find("SUPER-SECRET-TOKEN"),
+              std::string::npos);
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& op = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("authcode");
+    ASSERT_TRUE(op.inlineAuth.has_value());
+    EXPECT_EQ(op.inlineAuth->oauth2GrantType, "authorization_code");
+    EXPECT_EQ(op.inlineAuth->oauth2AuthUrl, "https://id.test/authorize");
+    EXPECT_EQ(op.inlineAuth->oauth2CallbackUrl, "http://127.0.0.1:8080/callback");
+    EXPECT_EQ(op.inlineAuth->oauth2PkceMethod, "plain");
+    EXPECT_TRUE(op.inlineAuth->oauth2AccessToken.empty()) << "token must not persist";
+}
+
 TEST(SchemaWriter, project_default_auth_and_inherit_round_trip) {
     // The project-wide default auth (the "inherit from parent" target) and an
     // operation set to Inherit must both survive write → parse.

@@ -41,6 +41,7 @@
 namespace reqloom::desktop {
 class ProjectModel;
 class WorkspaceModel;
+class OAuth2AuthCodeFlow;
 }  // namespace reqloom::desktop
 
 class QQmlEngine;
@@ -185,6 +186,15 @@ class AppController : public QObject {
                    setEditAuthOauth2GrantType NOTIFY editChanged)
     Q_PROPERTY(QString editAuthOauth2ClientAuth READ editAuthOauth2ClientAuth WRITE
                    setEditAuthOauth2ClientAuth NOTIFY editChanged)
+    // Authorization Code (PKCE) — interactive.
+    Q_PROPERTY(QString editAuthOauth2AuthUrl READ editAuthOauth2AuthUrl WRITE
+                   setEditAuthOauth2AuthUrl NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2CallbackUrl READ editAuthOauth2CallbackUrl WRITE
+                   setEditAuthOauth2CallbackUrl NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2PkceMethod READ editAuthOauth2PkceMethod WRITE
+                   setEditAuthOauth2PkceMethod NOTIFY editChanged)
+    /// True once an access token has been obtained via "Get New Token".
+    Q_PROPERTY(bool editAuthOauth2HasToken READ editAuthOauth2HasToken NOTIFY editChanged)
     Q_PROPERTY(QString editAuthOauth2TokenUrl READ editAuthOauth2TokenUrl WRITE
                    setEditAuthOauth2TokenUrl NOTIFY editChanged)
     Q_PROPERTY(QString editAuthOauth2ClientId READ editAuthOauth2ClientId WRITE
@@ -453,6 +463,12 @@ public:
     [[nodiscard]] QString editAuthOauthTokenSecret() const { return editAuthOauthTokenSecret_; }
     [[nodiscard]] QString editAuthOauth2GrantType() const { return editAuthOauth2GrantType_; }
     [[nodiscard]] QString editAuthOauth2ClientAuth() const { return editAuthOauth2ClientAuth_; }
+    [[nodiscard]] QString editAuthOauth2AuthUrl() const { return editAuthOauth2AuthUrl_; }
+    [[nodiscard]] QString editAuthOauth2CallbackUrl() const { return editAuthOauth2CallbackUrl_; }
+    [[nodiscard]] QString editAuthOauth2PkceMethod() const { return editAuthOauth2PkceMethod_; }
+    [[nodiscard]] bool editAuthOauth2HasToken() const {
+        return !editAuthOauth2AccessToken_.isEmpty();
+    }
     [[nodiscard]] QString editAuthOauth2TokenUrl() const { return editAuthOauth2TokenUrl_; }
     [[nodiscard]] QString editAuthOauth2ClientId() const { return editAuthOauth2ClientId_; }
     [[nodiscard]] QString editAuthOauth2ClientSecret() const { return editAuthOauth2ClientSecret_; }
@@ -494,6 +510,13 @@ public:
     void setEditAuthOauthTokenSecret(const QString& value);
     void setEditAuthOauth2GrantType(const QString& value);
     void setEditAuthOauth2ClientAuth(const QString& value);
+    void setEditAuthOauth2AuthUrl(const QString& value);
+    void setEditAuthOauth2CallbackUrl(const QString& value);
+    void setEditAuthOauth2PkceMethod(const QString& value);
+    /// Run the interactive Authorization Code + PKCE flow (opens the browser,
+    /// catches the loopback redirect, exchanges the code) and, on success,
+    /// stores the obtained token so this request injects it as a Bearer.
+    Q_INVOKABLE void oauth2GetNewToken();
     void setEditAuthOauth2TokenUrl(const QString& value);
     void setEditAuthOauth2ClientId(const QString& value);
     void setEditAuthOauth2ClientSecret(const QString& value);
@@ -1090,6 +1113,11 @@ private:
     QString editAuthOauthTokenSecret_;
     QString editAuthOauth2GrantType_{QStringLiteral("client_credentials")};
     QString editAuthOauth2ClientAuth_{QStringLiteral("body")};
+    QString editAuthOauth2AuthUrl_;
+    QString editAuthOauth2CallbackUrl_{QStringLiteral("http://127.0.0.1:8080/callback")};
+    QString editAuthOauth2PkceMethod_{QStringLiteral("S256")};
+    QString editAuthOauth2AccessToken_;  ///< Ephemeral; never persisted to YAML.
+    std::unique_ptr<OAuth2AuthCodeFlow> oauthFlow_;
     QString editAuthOauth2TokenUrl_;
     QString editAuthOauth2ClientId_;
     QString editAuthOauth2ClientSecret_;

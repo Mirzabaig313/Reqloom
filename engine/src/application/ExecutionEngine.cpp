@@ -725,6 +725,22 @@ struct ExecutionEngine::Impl {
         if (!auth || auth->type != InlineAuthType::OAuth2) {
             return std::nullopt;
         }
+
+        // Authorization Code (PKCE) is interactive: the desktop runs the browser
+        // flow and stores the token on the op. The engine only injects it — it
+        // can't acquire one headlessly.
+        if (auth->oauth2GrantType == "authorization_code") {
+            const auto token = varResolver.resolve(auth->oauth2AccessToken, ctx, rctx).output;
+            if (token.empty()) {
+                return ReqloomError{ErrorCode::SessionRefreshFailed,
+                                    ErrorClass::Auth,
+                                    "oauth2 authorization_code: no access token — use "
+                                    "\"Get New Token\" in the desktop app to authorize"};
+            }
+            req.headers["Authorization"] = "Bearer " + token;
+            return std::nullopt;
+        }
+
         const ActorId cacheId{"__inline_oauth2:" + auth->oauth2GrantType + "|" +
                               auth->oauth2TokenUrl + "|" + auth->oauth2ClientId + "|" +
                               auth->username + "|" + auth->oauth2Scope};

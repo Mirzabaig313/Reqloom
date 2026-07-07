@@ -3,6 +3,7 @@
 
 #include "ThemeController.h"
 #include "application/EnvironmentSettings.h"
+#include "application/OAuth2AuthCodeFlow.h"
 #include "application/ProjectModel.h"
 #include "application/WorkspaceModel.h"
 #include "views/Formatting.h"
@@ -1401,6 +1402,12 @@ void AppController::setEditAuthOauth2GrantType(const QString& value) {
         return;
     }
     editAuthOauth2GrantType_ = value;
+    // "None (Public Client)" only exists for authorization_code; switching to a
+    // grant that requires client auth must not leave a stale "none" behind.
+    if (editAuthOauth2GrantType_ != QStringLiteral("authorization_code") &&
+        editAuthOauth2ClientAuth_ == QStringLiteral("none")) {
+        editAuthOauth2ClientAuth_ = QStringLiteral("body");
+    }
     emit editChanged();
 }
 
@@ -1418,6 +1425,55 @@ void AppController::setEditAuthOauth2TokenUrl(const QString& value) {
     }
     editAuthOauth2TokenUrl_ = value;
     emit editChanged();
+}
+
+void AppController::setEditAuthOauth2AuthUrl(const QString& value) {
+    if (editAuthOauth2AuthUrl_ == value) {
+        return;
+    }
+    editAuthOauth2AuthUrl_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2CallbackUrl(const QString& value) {
+    if (editAuthOauth2CallbackUrl_ == value) {
+        return;
+    }
+    editAuthOauth2CallbackUrl_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2PkceMethod(const QString& value) {
+    if (editAuthOauth2PkceMethod_ == value) {
+        return;
+    }
+    editAuthOauth2PkceMethod_ = value;
+    emit editChanged();
+}
+
+void AppController::oauth2GetNewToken() {
+    OAuth2AuthCodeFlow::Config config;
+    config.authUrl = editAuthOauth2AuthUrl_;
+    config.tokenUrl = editAuthOauth2TokenUrl_;
+    config.clientId = editAuthOauth2ClientId_;
+    config.clientSecret = editAuthOauth2ClientSecret_;
+    config.scope = editAuthOauth2Scope_;
+    config.callbackUrl = editAuthOauth2CallbackUrl_;
+    config.clientAuth = editAuthOauth2ClientAuth_;
+    config.pkceMethod = editAuthOauth2PkceMethod_;
+
+    // One flow at a time; a fresh click supersedes any in-flight attempt.
+    oauthFlow_ = std::make_unique<OAuth2AuthCodeFlow>();
+    connect(oauthFlow_.get(), &OAuth2AuthCodeFlow::succeeded, this, [this](const QString& token) {
+        editAuthOauth2AccessToken_ = token;
+        emit editChanged();
+        emit notify(QStringLiteral("Access token acquired"), false);
+    });
+    connect(oauthFlow_.get(), &OAuth2AuthCodeFlow::failed, this, [this](const QString& error) {
+        emit notify(QStringLiteral("OAuth2 authorization failed: %1").arg(error), true);
+    });
+    emit notify(QStringLiteral("Opening browser to authorize…"), false);
+    oauthFlow_->start(config);
 }
 
 void AppController::setEditAuthOauth2ClientId(const QString& value) {
@@ -1533,12 +1589,21 @@ void AppController::beginEdit() {
         editAuthOauth2GrantType_ = a.oauth2GrantType == "password"
                                        ? QStringLiteral("password")
                                        : QStringLiteral("client_credentials");
-        editAuthOauth2ClientAuth_ =
-            a.oauth2ClientAuth == "basic" ? QStringLiteral("basic") : QStringLiteral("body");
+        editAuthOauth2ClientAuth_ = a.oauth2ClientAuth == "basic"  ? QStringLiteral("basic")
+                                    : a.oauth2ClientAuth == "none" ? QStringLiteral("none")
+                                                                   : QStringLiteral("body");
         editAuthOauth2TokenUrl_ = QString::fromStdString(a.oauth2TokenUrl);
         editAuthOauth2ClientId_ = QString::fromStdString(a.oauth2ClientId);
         editAuthOauth2ClientSecret_ = QString::fromStdString(a.oauth2ClientSecret);
         editAuthOauth2Scope_ = QString::fromStdString(a.oauth2Scope);
+        editAuthOauth2AuthUrl_ = QString::fromStdString(a.oauth2AuthUrl);
+        editAuthOauth2CallbackUrl_ = a.oauth2CallbackUrl.empty()
+                                         ? QStringLiteral("http://127.0.0.1:8080/callback")
+                                         : QString::fromStdString(a.oauth2CallbackUrl);
+        editAuthOauth2PkceMethod_ =
+            a.oauth2PkceMethod == "plain" ? QStringLiteral("plain") : QStringLiteral("S256");
+        // Token is ephemeral (never persisted); always starts empty on edit.
+        editAuthOauth2AccessToken_.clear();
         editAuthJwtAlgorithm_ = a.jwtAlgorithm.empty() ? QStringLiteral("HS256")
                                                        : QString::fromStdString(a.jwtAlgorithm);
         editAuthJwtSecret_ = QString::fromStdString(a.jwtSecret);
@@ -1569,6 +1634,10 @@ void AppController::beginEdit() {
         editAuthOauth2ClientId_.clear();
         editAuthOauth2ClientSecret_.clear();
         editAuthOauth2Scope_.clear();
+        editAuthOauth2AuthUrl_.clear();
+        editAuthOauth2CallbackUrl_ = QStringLiteral("http://127.0.0.1:8080/callback");
+        editAuthOauth2PkceMethod_ = QStringLiteral("S256");
+        editAuthOauth2AccessToken_.clear();
         editAuthJwtAlgorithm_ = QStringLiteral("HS256");
         editAuthJwtSecret_.clear();
         editAuthJwtPayload_.clear();
@@ -1715,6 +1784,10 @@ std::optional<engine::InlineAuth> AppController::buildInlineAuthFromEdit() const
     auth.oauth2ClientId = editAuthOauth2ClientId_.toStdString();
     auth.oauth2ClientSecret = editAuthOauth2ClientSecret_.toStdString();
     auth.oauth2Scope = editAuthOauth2Scope_.toStdString();
+    auth.oauth2AuthUrl = editAuthOauth2AuthUrl_.toStdString();
+    auth.oauth2CallbackUrl = editAuthOauth2CallbackUrl_.toStdString();
+    auth.oauth2PkceMethod = editAuthOauth2PkceMethod_.toStdString();
+    auth.oauth2AccessToken = editAuthOauth2AccessToken_.toStdString();
     auth.jwtAlgorithm = editAuthJwtAlgorithm_.toStdString();
     auth.jwtSecret = editAuthJwtSecret_.toStdString();
     auth.jwtPayload = editAuthJwtPayload_.toStdString();

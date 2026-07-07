@@ -1310,8 +1310,8 @@ ColumnLayout {
                         label: qsTr("Grant Type")
                         GlassComboBox {
                             width: parent.width
-                            property var grants: ["client_credentials", "password"]
-                            model: [qsTr("Client Credentials"), qsTr("Password Credentials")]
+                            property var grants: ["client_credentials", "password", "authorization_code"]
+                            model: [qsTr("Client Credentials"), qsTr("Password Credentials"), qsTr("Authorization Code (PKCE)")]
                             currentIndex: Math.max(0, grants.indexOf(AppController.editAuthOauth2GrantType))
                             onActivated: AppController.editAuthOauth2GrantType = grants[currentIndex]
                         }
@@ -1376,7 +1376,7 @@ ColumnLayout {
                         }
                     }
                     OptionRow {
-                        visible: AppController.editAuthType === "oauth2"
+                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType !== "authorization_code"
                         label: qsTr("Client Auth")
                         GlassComboBox {
                             width: parent.width
@@ -1384,6 +1384,74 @@ ColumnLayout {
                             model: [qsTr("Send in body"), qsTr("Send as Basic Auth header")]
                             currentIndex: Math.max(0, modes.indexOf(AppController.editAuthOauth2ClientAuth))
                             onActivated: AppController.editAuthOauth2ClientAuth = modes[currentIndex]
+                        }
+                    }
+                    // Authorization Code (PKCE) — interactive.
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType === "authorization_code"
+                        label: qsTr("Auth URL")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr("https://id.example.com/oauth/authorize")
+                            text: AppController.editAuthOauth2AuthUrl
+                            onTextEdited: AppController.editAuthOauth2AuthUrl = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType === "authorization_code"
+                        label: qsTr("Callback URL")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr("http://127.0.0.1:8080/callback")
+                            text: AppController.editAuthOauth2CallbackUrl
+                            onTextEdited: AppController.editAuthOauth2CallbackUrl = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType === "authorization_code"
+                        label: qsTr("Client Auth")
+                        GlassComboBox {
+                            width: parent.width
+                            property var modes: ["basic", "body", "none"]
+                            model: [qsTr("Send as Basic Auth header"), qsTr("Send client_id/secret in body"), qsTr("None (Public Client)")]
+                            currentIndex: Math.max(0, modes.indexOf(AppController.editAuthOauth2ClientAuth))
+                            onActivated: AppController.editAuthOauth2ClientAuth = modes[currentIndex]
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType === "authorization_code"
+                        label: qsTr("PKCE Method")
+                        GlassComboBox {
+                            width: parent.width
+                            property var methods: ["S256", "plain"]
+                            model: [qsTr("S256"), qsTr("Plain")]
+                            currentIndex: Math.max(0, methods.indexOf(AppController.editAuthOauth2PkceMethod))
+                            onActivated: AppController.editAuthOauth2PkceMethod = methods[currentIndex]
+                        }
+                    }
+                    Label {
+                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType === "authorization_code"
+                        Layout.fillWidth: true
+                        text: qsTr("State is generated automatically for each authorization (CSRF protection).")
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontCaption
+                        wrapMode: Text.WordWrap
+                    }
+                    RowLayout {
+                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType === "authorization_code"
+                        Layout.fillWidth: true
+                        spacing: DesignTokens.spaceMd
+                        GlassButton {
+                            primary: true
+                            text: qsTr("Get New Token")
+                            onClicked: AppController.oauth2GetNewToken()
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: AppController.editAuthOauth2HasToken ? qsTr("● Token acquired") : qsTr("No token yet — authorize in your browser")
+                            color: AppController.editAuthOauth2HasToken ? DesignTokens.statusSuccess : DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            verticalAlignment: Text.AlignVCenter
                         }
                     }
                     // JWT Bearer

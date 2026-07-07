@@ -343,6 +343,14 @@ void emitInlineAuth(YAML::Emitter& e, const InlineAuth& a) {
                 e << YAML::Key << "username" << YAML::Value << a.username;
                 e << YAML::Key << "password" << YAML::Value << a.password;
             }
+            if (a.oauth2GrantType == "authorization_code") {
+                e << YAML::Key << "auth_url" << YAML::Value << a.oauth2AuthUrl;
+                e << YAML::Key << "callback_url" << YAML::Value << a.oauth2CallbackUrl;
+                if (!a.oauth2PkceMethod.empty()) {
+                    e << YAML::Key << "pkce_method" << YAML::Value << a.oauth2PkceMethod;
+                }
+                // oauth2AccessToken is deliberately not emitted — ephemeral secret.
+            }
             if (!a.oauth2Scope.empty()) {
                 e << YAML::Key << "scope" << YAML::Value << a.oauth2Scope;
             }

@@ -54,6 +54,8 @@ qt_add_executable(reqloom-desktop
     src/application/WorkspaceModel.h
     src/application/Bootstrapper.cpp
     src/application/Bootstrapper.h
+    src/application/OAuth2AuthCodeFlow.cpp
+    src/application/OAuth2AuthCodeFlow.h
     src/application/RunController.cpp
     src/application/RunController.h
     src/application/SavedResponseStore.cpp
@@ -179,6 +181,7 @@ target_link_libraries(reqloom-desktop
         scintilla
         Qt6::Core
         Qt6::Concurrent
+        Qt6::Network
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
