@@ -202,6 +202,20 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
         curl_easy_setopt(curl.get(), CURLOPT_CAINFO, request.transport.caBundlePath->c_str());
     }
 
+    // Mutual TLS: present a client certificate/key during the handshake.
+    // PEM is assumed (libcurl's default SSLCERTTYPE); an encrypted key uses
+    // the optional passphrase.
+    if (request.transport.clientCertPath && !request.transport.clientCertPath->empty()) {
+        curl_easy_setopt(curl.get(), CURLOPT_SSLCERT, request.transport.clientCertPath->c_str());
+    }
+    if (request.transport.clientKeyPath && !request.transport.clientKeyPath->empty()) {
+        curl_easy_setopt(curl.get(), CURLOPT_SSLKEY, request.transport.clientKeyPath->c_str());
+    }
+    if (request.transport.clientKeyPassword && !request.transport.clientKeyPassword->empty()) {
+        curl_easy_setopt(
+            curl.get(), CURLOPT_KEYPASSWD, request.transport.clientKeyPassword->c_str());
+    }
+
     // Proxy. Empty leaves libcurl on its default (which honours the
     // HTTPS_PROXY / NO_PROXY env vars per request); a non-empty value
     // pins the request to that proxy regardless of env state.

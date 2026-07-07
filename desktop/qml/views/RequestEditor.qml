@@ -1142,8 +1142,8 @@ ColumnLayout {
                             // Disabled while an Actor is selected (see above).
                             enabled: AppController.editActor.length === 0
                             opacity: enabled ? 1.0 : 0.5
-                            property var types: ["none", "bearer", "basic", "apikey", "aws_sigv4", "oauth1"]
-                            model: [qsTr("No Auth"), qsTr("Bearer Token"), qsTr("Basic Auth"), qsTr("API Key"), qsTr("AWS Signature"), qsTr("OAuth 1.0")]
+                            property var types: ["none", "inherit", "bearer", "basic", "apikey", "oauth2", "oauth1", "aws_sigv4", "jwt", "mtls"]
+                            model: [qsTr("No Auth"), qsTr("Inherit from parent"), qsTr("Bearer Token"), qsTr("Basic Auth"), qsTr("API Key"), qsTr("OAuth 2.0"), qsTr("OAuth 1.0"), qsTr("AWS Signature"), qsTr("JWT Bearer"), qsTr("mTLS (Client Cert)")]
                             currentIndex: Math.max(0, types.indexOf(AppController.editAuthType))
                             onActivated: AppController.editAuthType = types[currentIndex]
                         }
@@ -1303,8 +1303,171 @@ ColumnLayout {
                             onTextEdited: AppController.editAuthOauthTokenSecret = text
                         }
                     }
+                    // OAuth 2.0 — only the non-interactive grants (a headless
+                    // engine can't drive the authorization-code browser flow).
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2"
+                        label: qsTr("Grant Type")
+                        GlassComboBox {
+                            width: parent.width
+                            property var grants: ["client_credentials", "password"]
+                            model: [qsTr("Client Credentials"), qsTr("Password Credentials")]
+                            currentIndex: Math.max(0, grants.indexOf(AppController.editAuthOauth2GrantType))
+                            onActivated: AppController.editAuthOauth2GrantType = grants[currentIndex]
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2"
+                        label: qsTr("Access Token URL")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr("https://id.example.com/oauth/token")
+                            text: AppController.editAuthOauth2TokenUrl
+                            onTextEdited: AppController.editAuthOauth2TokenUrl = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2"
+                        label: qsTr("Client ID")
+                        GlassTextField {
+                            width: parent.width
+                            text: AppController.editAuthOauth2ClientId
+                            onTextEdited: AppController.editAuthOauth2ClientId = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2"
+                        label: qsTr("Client Secret")
+                        GlassTextField {
+                            width: parent.width
+                            echoMode: TextInput.Password
+                            text: AppController.editAuthOauth2ClientSecret
+                            onTextEdited: AppController.editAuthOauth2ClientSecret = text
+                        }
+                    }
+                    // Password grant reuses the generic username/password fields.
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType === "password"
+                        label: qsTr("Username")
+                        GlassTextField {
+                            width: parent.width
+                            text: AppController.editAuthUsername
+                            onTextEdited: AppController.editAuthUsername = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType === "password"
+                        label: qsTr("Password")
+                        GlassTextField {
+                            width: parent.width
+                            echoMode: TextInput.Password
+                            text: AppController.editAuthPassword
+                            onTextEdited: AppController.editAuthPassword = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2"
+                        label: qsTr("Scope")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr("optional, space-separated")
+                            text: AppController.editAuthOauth2Scope
+                            onTextEdited: AppController.editAuthOauth2Scope = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "oauth2"
+                        label: qsTr("Client Auth")
+                        GlassComboBox {
+                            width: parent.width
+                            property var modes: ["body", "basic"]
+                            model: [qsTr("Send in body"), qsTr("Send as Basic Auth header")]
+                            currentIndex: Math.max(0, modes.indexOf(AppController.editAuthOauth2ClientAuth))
+                            onActivated: AppController.editAuthOauth2ClientAuth = modes[currentIndex]
+                        }
+                    }
+                    // JWT Bearer
+                    OptionRow {
+                        visible: AppController.editAuthType === "jwt"
+                        label: qsTr("Algorithm")
+                        GlassComboBox {
+                            width: parent.width
+                            property var algos: ["HS256", "HS512"]
+                            model: algos
+                            currentIndex: Math.max(0, algos.indexOf(AppController.editAuthJwtAlgorithm))
+                            onActivated: AppController.editAuthJwtAlgorithm = algos[currentIndex]
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "jwt"
+                        label: qsTr("Secret")
+                        GlassTextField {
+                            width: parent.width
+                            echoMode: TextInput.Password
+                            text: AppController.editAuthJwtSecret
+                            onTextEdited: AppController.editAuthJwtSecret = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "jwt"
+                        label: qsTr("Payload (JSON)")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr('{"sub":"1234","name":"Jane"}')
+                            text: AppController.editAuthJwtPayload
+                            onTextEdited: AppController.editAuthJwtPayload = text
+                        }
+                    }
+                    // Mutual TLS
+                    OptionRow {
+                        visible: AppController.editAuthType === "mtls"
+                        label: qsTr("Client Cert")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr("path to client.pem")
+                            text: AppController.editAuthMtlsCertPath
+                            onTextEdited: AppController.editAuthMtlsCertPath = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "mtls"
+                        label: qsTr("Client Key")
+                        GlassTextField {
+                            width: parent.width
+                            placeholderText: qsTr("path to client.key")
+                            text: AppController.editAuthMtlsKeyPath
+                            onTextEdited: AppController.editAuthMtlsKeyPath = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "mtls"
+                        label: qsTr("Key Password")
+                        GlassTextField {
+                            width: parent.width
+                            echoMode: TextInput.Password
+                            placeholderText: qsTr("optional")
+                            text: AppController.editAuthMtlsKeyPassword
+                            onTextEdited: AppController.editAuthMtlsKeyPassword = text
+                        }
+                    }
+                    // Inherit — no fields; uses the project default auth.
                     Label {
-                        visible: AppController.editAuthType !== "none"
+                        visible: AppController.editAuthType === "inherit"
+                        Layout.fillWidth: true
+                        text: qsTr("This endpoint uses the project's default auth (currently: %1). Configure a concrete Auth Type on any endpoint and click \u201CSave as project default\u201D to set it.").arg(AppController.projectDefaultAuthLabel)
+                        color: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontCaption
+                        wrapMode: Text.WordWrap
+                    }
+                    // Promote the current concrete auth to the project default,
+                    // which "Inherit from parent" endpoints then resolve to.
+                    GlassButton {
+                        visible: AppController.editAuthType !== "none" && AppController.editAuthType !== "inherit"
+                        text: qsTr("Save as project default")
+                        onClicked: AppController.saveProjectDefaultAuth()
+                    }
+                    Label {
+                        visible: AppController.editAuthType !== "none" && AppController.editAuthType !== "inherit"
                         Layout.fillWidth: true
                         text: qsTr("Credential values may use {{variables}}; prefer {{secret.X}} over a plaintext token — it round-trips into the endpoint's YAML.")
                         color: DesignTokens.textSecondary

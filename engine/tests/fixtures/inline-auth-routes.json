@@ -1,9 +1,117 @@
 {
   "routes": [
-    { "method": "GET", "path": "/bearer", "status": 200, "body": { "ok": true } },
-    { "method": "GET", "path": "/basic",  "status": 200, "body": { "ok": true } },
-    { "method": "GET", "path": "/apikey", "status": 200, "body": { "ok": true } },
-    { "method": "GET", "path": "/aws",    "status": 200, "body": { "ok": true } },
-    { "method": "GET", "path": "/oauth",  "status": 200, "body": { "ok": true } }
+    {
+      "method": "GET",
+      "path": "/bearer",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/basic",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/apikey",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/aws",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/oauth",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/jwt",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/oauth2",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/inherit",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/cache-a",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/cache-b",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/token",
+      "status": 200,
+      "body": {
+        "access_token": "oauth2-tok",
+        "token_type": "Bearer",
+        "expires_in": 3600
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/token-seq",
+      "status": 200,
+      "sequence": [
+        {
+          "status": 200,
+          "body": {
+            "access_token": "tok-1",
+            "token_type": "Bearer",
+            "expires_in": 3600
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "access_token": "tok-2",
+            "token_type": "Bearer",
+            "expires_in": 3600
+          }
+        }
+      ]
+    }
   ]
 }

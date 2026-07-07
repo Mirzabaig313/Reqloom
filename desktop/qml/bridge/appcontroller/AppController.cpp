@@ -1217,6 +1217,14 @@ namespace {
             return QStringLiteral("aws_sigv4");
         case engine::InlineAuthType::OAuth1:
             return QStringLiteral("oauth1");
+        case engine::InlineAuthType::OAuth2:
+            return QStringLiteral("oauth2");
+        case engine::InlineAuthType::Jwt:
+            return QStringLiteral("jwt");
+        case engine::InlineAuthType::Mtls:
+            return QStringLiteral("mtls");
+        case engine::InlineAuthType::Inherit:
+            return QStringLiteral("inherit");
         case engine::InlineAuthType::None:
             break;
     }
@@ -1238,6 +1246,18 @@ namespace {
     }
     if (type == QStringLiteral("oauth1")) {
         return engine::InlineAuthType::OAuth1;
+    }
+    if (type == QStringLiteral("oauth2")) {
+        return engine::InlineAuthType::OAuth2;
+    }
+    if (type == QStringLiteral("jwt")) {
+        return engine::InlineAuthType::Jwt;
+    }
+    if (type == QStringLiteral("mtls")) {
+        return engine::InlineAuthType::Mtls;
+    }
+    if (type == QStringLiteral("inherit")) {
+        return engine::InlineAuthType::Inherit;
     }
     return engine::InlineAuthType::None;
 }
@@ -1376,6 +1396,102 @@ void AppController::setEditAuthOauthTokenSecret(const QString& value) {
     emit editChanged();
 }
 
+void AppController::setEditAuthOauth2GrantType(const QString& value) {
+    if (editAuthOauth2GrantType_ == value) {
+        return;
+    }
+    editAuthOauth2GrantType_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2ClientAuth(const QString& value) {
+    if (editAuthOauth2ClientAuth_ == value) {
+        return;
+    }
+    editAuthOauth2ClientAuth_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2TokenUrl(const QString& value) {
+    if (editAuthOauth2TokenUrl_ == value) {
+        return;
+    }
+    editAuthOauth2TokenUrl_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2ClientId(const QString& value) {
+    if (editAuthOauth2ClientId_ == value) {
+        return;
+    }
+    editAuthOauth2ClientId_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2ClientSecret(const QString& value) {
+    if (editAuthOauth2ClientSecret_ == value) {
+        return;
+    }
+    editAuthOauth2ClientSecret_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2Scope(const QString& value) {
+    if (editAuthOauth2Scope_ == value) {
+        return;
+    }
+    editAuthOauth2Scope_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthJwtAlgorithm(const QString& value) {
+    if (editAuthJwtAlgorithm_ == value) {
+        return;
+    }
+    editAuthJwtAlgorithm_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthJwtSecret(const QString& value) {
+    if (editAuthJwtSecret_ == value) {
+        return;
+    }
+    editAuthJwtSecret_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthJwtPayload(const QString& value) {
+    if (editAuthJwtPayload_ == value) {
+        return;
+    }
+    editAuthJwtPayload_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthMtlsCertPath(const QString& value) {
+    if (editAuthMtlsCertPath_ == value) {
+        return;
+    }
+    editAuthMtlsCertPath_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthMtlsKeyPath(const QString& value) {
+    if (editAuthMtlsKeyPath_ == value) {
+        return;
+    }
+    editAuthMtlsKeyPath_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthMtlsKeyPassword(const QString& value) {
+    if (editAuthMtlsKeyPassword_ == value) {
+        return;
+    }
+    editAuthMtlsKeyPassword_ = value;
+    emit editChanged();
+}
+
 void AppController::beginEdit() {
     if (!hasOperation_ || !activeProject().hasProject()) {
         return;
@@ -1411,6 +1527,25 @@ void AppController::beginEdit() {
         editAuthOauthConsumerSecret_ = QString::fromStdString(a.oauthConsumerSecret);
         editAuthOauthToken_ = QString::fromStdString(a.oauthToken);
         editAuthOauthTokenSecret_ = QString::fromStdString(a.oauthTokenSecret);
+        // Clamp to the known options so the combo and the stored value never
+        // diverge (an unknown value from hand-edited YAML falls back to default,
+        // which is also how the engine interprets it).
+        editAuthOauth2GrantType_ = a.oauth2GrantType == "password"
+                                       ? QStringLiteral("password")
+                                       : QStringLiteral("client_credentials");
+        editAuthOauth2ClientAuth_ =
+            a.oauth2ClientAuth == "basic" ? QStringLiteral("basic") : QStringLiteral("body");
+        editAuthOauth2TokenUrl_ = QString::fromStdString(a.oauth2TokenUrl);
+        editAuthOauth2ClientId_ = QString::fromStdString(a.oauth2ClientId);
+        editAuthOauth2ClientSecret_ = QString::fromStdString(a.oauth2ClientSecret);
+        editAuthOauth2Scope_ = QString::fromStdString(a.oauth2Scope);
+        editAuthJwtAlgorithm_ = a.jwtAlgorithm.empty() ? QStringLiteral("HS256")
+                                                       : QString::fromStdString(a.jwtAlgorithm);
+        editAuthJwtSecret_ = QString::fromStdString(a.jwtSecret);
+        editAuthJwtPayload_ = QString::fromStdString(a.jwtPayload);
+        editAuthMtlsCertPath_ = QString::fromStdString(a.mtlsCertPath);
+        editAuthMtlsKeyPath_ = QString::fromStdString(a.mtlsKeyPath);
+        editAuthMtlsKeyPassword_ = QString::fromStdString(a.mtlsKeyPassword);
     } else {
         editAuthType_ = QStringLiteral("none");
         editAuthToken_.clear();
@@ -1428,6 +1563,18 @@ void AppController::beginEdit() {
         editAuthOauthConsumerSecret_.clear();
         editAuthOauthToken_.clear();
         editAuthOauthTokenSecret_.clear();
+        editAuthOauth2GrantType_ = QStringLiteral("client_credentials");
+        editAuthOauth2ClientAuth_ = QStringLiteral("body");
+        editAuthOauth2TokenUrl_.clear();
+        editAuthOauth2ClientId_.clear();
+        editAuthOauth2ClientSecret_.clear();
+        editAuthOauth2Scope_.clear();
+        editAuthJwtAlgorithm_ = QStringLiteral("HS256");
+        editAuthJwtSecret_.clear();
+        editAuthJwtPayload_.clear();
+        editAuthMtlsCertPath_.clear();
+        editAuthMtlsKeyPath_.clear();
+        editAuthMtlsKeyPassword_.clear();
     }
 
     // Actor and inline auth are mutually exclusive in the editor. If a
@@ -1540,6 +1687,70 @@ void AppController::cancelEdit() {
     emit chainChanged();
 }
 
+std::optional<engine::InlineAuth> AppController::buildInlineAuthFromEdit() const {
+    const auto authType = inlineAuthTypeFromQString(editAuthType_);
+    if (authType == engine::InlineAuthType::None) {
+        return std::nullopt;
+    }
+    engine::InlineAuth auth;
+    auth.type = authType;
+    auth.token = editAuthToken_.toStdString();
+    auth.username = editAuthUsername_.toStdString();
+    auth.password = editAuthPassword_.toStdString();
+    auth.apiKeyName = editAuthApiKeyName_.toStdString();
+    auth.apiKeyValue = editAuthApiKeyValue_.toStdString();
+    auth.apiKeyInQuery = editAuthApiKeyInQuery_;
+    auth.awsAccessKey = editAuthAwsAccessKey_.toStdString();
+    auth.awsSecretKey = editAuthAwsSecretKey_.toStdString();
+    auth.awsRegion = editAuthAwsRegion_.toStdString();
+    auth.awsService = editAuthAwsService_.toStdString();
+    auth.awsSessionToken = editAuthAwsSessionToken_.toStdString();
+    auth.oauthConsumerKey = editAuthOauthConsumerKey_.toStdString();
+    auth.oauthConsumerSecret = editAuthOauthConsumerSecret_.toStdString();
+    auth.oauthToken = editAuthOauthToken_.toStdString();
+    auth.oauthTokenSecret = editAuthOauthTokenSecret_.toStdString();
+    auth.oauth2GrantType = editAuthOauth2GrantType_.toStdString();
+    auth.oauth2ClientAuth = editAuthOauth2ClientAuth_.toStdString();
+    auth.oauth2TokenUrl = editAuthOauth2TokenUrl_.toStdString();
+    auth.oauth2ClientId = editAuthOauth2ClientId_.toStdString();
+    auth.oauth2ClientSecret = editAuthOauth2ClientSecret_.toStdString();
+    auth.oauth2Scope = editAuthOauth2Scope_.toStdString();
+    auth.jwtAlgorithm = editAuthJwtAlgorithm_.toStdString();
+    auth.jwtSecret = editAuthJwtSecret_.toStdString();
+    auth.jwtPayload = editAuthJwtPayload_.toStdString();
+    auth.mtlsCertPath = editAuthMtlsCertPath_.toStdString();
+    auth.mtlsKeyPath = editAuthMtlsKeyPath_.toStdString();
+    auth.mtlsKeyPassword = editAuthMtlsKeyPassword_.toStdString();
+    return auth;
+}
+
+void AppController::saveProjectDefaultAuth() {
+    if (!activeProject().hasProject()) {
+        emit notify(QStringLiteral("Open a project first"), true);
+        return;
+    }
+    const auto auth = buildInlineAuthFromEdit();
+    if (!auth || auth->type == engine::InlineAuthType::Inherit) {
+        emit notify(
+            QStringLiteral("Pick a concrete Auth Type before saving it as the project default"),
+            true);
+        return;
+    }
+    QString error;
+    if (activeProject().saveProjectDefaultAuth(auth, error)) {
+        emit notify(QStringLiteral("Saved project default auth (%1)").arg(editAuthType_), false);
+    } else {
+        emit notify(error, true);
+    }
+}
+
+QString AppController::projectDefaultAuthLabel() const {
+    if (!activeProject().hasProject() || !activeProject().project().defaultAuth) {
+        return QStringLiteral("(none set)");
+    }
+    return inlineAuthTypeToQString(activeProject().project().defaultAuth->type);
+}
+
 RequestOverride AppController::buildOverride() const {
     RequestOverride ov;
     ov.active = true;
@@ -1558,27 +1769,7 @@ RequestOverride AppController::buildOverride() const {
 
     // Inline auth: build the typed credential from the edit fields. "none"
     // leaves it nullopt so applyOverrideToOperation clears any prior auth.
-    const auto authType = inlineAuthTypeFromQString(editAuthType_);
-    if (authType != engine::InlineAuthType::None) {
-        engine::InlineAuth auth;
-        auth.type = authType;
-        auth.token = editAuthToken_.toStdString();
-        auth.username = editAuthUsername_.toStdString();
-        auth.password = editAuthPassword_.toStdString();
-        auth.apiKeyName = editAuthApiKeyName_.toStdString();
-        auth.apiKeyValue = editAuthApiKeyValue_.toStdString();
-        auth.apiKeyInQuery = editAuthApiKeyInQuery_;
-        auth.awsAccessKey = editAuthAwsAccessKey_.toStdString();
-        auth.awsSecretKey = editAuthAwsSecretKey_.toStdString();
-        auth.awsRegion = editAuthAwsRegion_.toStdString();
-        auth.awsService = editAuthAwsService_.toStdString();
-        auth.awsSessionToken = editAuthAwsSessionToken_.toStdString();
-        auth.oauthConsumerKey = editAuthOauthConsumerKey_.toStdString();
-        auth.oauthConsumerSecret = editAuthOauthConsumerSecret_.toStdString();
-        auth.oauthToken = editAuthOauthToken_.toStdString();
-        auth.oauthTokenSecret = editAuthOauthTokenSecret_.toStdString();
-        ov.inlineAuth = std::move(auth);
-    }
+    ov.inlineAuth = buildInlineAuthFromEdit();
 
     ov.bodyIsForm = editBodyIsForm_;
     if (editBodyIsForm_) {

@@ -154,6 +154,10 @@ enum class InlineAuthType : std::uint8_t {
     ApiKey,    ///< <name>: <value> as a header or query param
     AwsSigV4,  ///< AWS Signature v4, signed per-request (reuses signSigV4Request).
     OAuth1,    ///< OAuth 1.0a HMAC-SHA1, signed per-request (reuses signOAuth1Request).
+    OAuth2,    ///< OAuth 2.0 client-credentials; fetches a token, injects Bearer.
+    Jwt,       ///< Signs a JWT (HS256/HS512) and injects Authorization: Bearer.
+    Mtls,      ///< Mutual TLS — client cert/key for the TLS handshake (transport).
+    Inherit,   ///< Use the project's default auth (see Project::defaultAuth).
 };
 
 /// A credential bound to a single operation, applied at request-build time.
@@ -183,6 +187,31 @@ struct InlineAuth {
     std::string oauthConsumerSecret;
     std::string oauthToken;
     std::string oauthTokenSecret;
+
+    // OAuth 2.0 — a token is fetched at request build and injected as
+    // Authorization: Bearer. Only the non-interactive grants are supported
+    // (a headless engine can't drive the authorization-code browser redirect).
+    std::string oauth2GrantType;  ///< "client_credentials" (default) or "password".
+    std::string oauth2TokenUrl;
+    std::string oauth2ClientId;
+    std::string oauth2ClientSecret;
+    std::string oauth2Scope;  ///< Optional space-separated scopes.
+    std::string
+        oauth2ClientAuth;  ///< "body" (default) or "basic" (client creds in a Basic header).
+    // Password grant reuses the generic `username`/`password` fields above.
+
+    // JWT Bearer — a JWT is signed and injected as Authorization: Bearer.
+    std::string jwtAlgorithm;  ///< "HS256" (default) or "HS512".
+    std::string jwtSecret;
+    std::string jwtPayload;  ///< Claims as a JSON object string.
+
+    // Mutual TLS — client certificate/key for the TLS handshake. Paths are
+    // variable-resolved then handed to the HTTP client as-is (same trust model
+    // as a CA bundle path); they are NOT sandboxed to the project root, since
+    // client certs commonly live outside the repo. Prefer absolute paths.
+    std::string mtlsCertPath;
+    std::string mtlsKeyPath;
+    std::string mtlsKeyPassword;  ///< Optional passphrase for an encrypted key.
 };
 
 /// A declared response assertion. `expr` is a predicate in the engine's

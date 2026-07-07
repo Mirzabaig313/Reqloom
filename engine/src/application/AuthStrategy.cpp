@@ -324,12 +324,19 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     std::string formBody,
     std::string_view strategyLabel,
     const TransportConfig& transport,
-    const AuthDependencies& deps) {
+    const AuthDependencies& deps,
+    const std::optional<std::string>& authorizationHeader = std::nullopt) {
     HttpRequest req;
     req.method = HttpMethod::Post;
     req.url = tokenUrl;
     req.headers["Content-Type"] = "application/x-www-form-urlencoded";
     req.headers["Accept"] = "application/json";
+    // Client Authentication = "Send as Basic Auth header": RFC 6749 §2.3.1
+    // permits the client credentials either in the body or as an HTTP Basic
+    // header. When the caller supplies the header, the body omits them.
+    if (authorizationHeader) {
+        req.headers["Authorization"] = *authorizationHeader;
+    }
     req.body = std::move(formBody);
     req.transport = transport;
 
@@ -508,17 +515,28 @@ public:
             return std::unexpected(scope.error());
         }
 
-        // RFC 6749 §4.4.2.
-        std::string body =
-            "grant_type=client_credentials"
-            "&client_id=" +
-            urlEncode(*clientId) + "&client_secret=" + urlEncode(*clientSecret);
+        const auto clientAuth =
+            resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_auth");
+        if (!clientAuth) {
+            return std::unexpected(clientAuth.error());
+        }
+
+        // RFC 6749 §4.4.2. Client credentials go in a Basic header or the body
+        // per the `client_auth` setting (default: body).
+        std::string body = "grant_type=client_credentials";
+        std::optional<std::string> authHeader;
+        if (*clientAuth == "basic") {
+            authHeader = "Basic " + base64Encode(*clientId + ":" + *clientSecret);
+        } else {
+            body +=
+                "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(*clientSecret);
+        }
         if (!scope->empty()) {
             body += "&scope=" + urlEncode(*scope);
         }
 
         return executeOAuth2TokenRequest(
-            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_);
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_, authHeader);
     }
 
 private:
@@ -575,18 +593,29 @@ public:
             return std::unexpected(scope.error());
         }
 
-        // RFC 6749 §4.3.2.
-        std::string body =
-            "grant_type=password"
-            "&username=" +
-            urlEncode(*username) + "&password=" + urlEncode(*password) +
-            "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(*clientSecret);
+        const auto clientAuth =
+            resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_auth");
+        if (!clientAuth) {
+            return std::unexpected(clientAuth.error());
+        }
+
+        // RFC 6749 §4.3.2. Client credentials go in a Basic header or the body
+        // per the `client_auth` setting (default: body).
+        std::string body = "grant_type=password&username=" + urlEncode(*username) +
+                           "&password=" + urlEncode(*password);
+        std::optional<std::string> authHeader;
+        if (*clientAuth == "basic") {
+            authHeader = "Basic " + base64Encode(*clientId + ":" + *clientSecret);
+        } else {
+            body +=
+                "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(*clientSecret);
+        }
         if (!scope->empty()) {
             body += "&scope=" + urlEncode(*scope);
         }
 
         return executeOAuth2TokenRequest(
-            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_);
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_, authHeader);
     }
 
 private:

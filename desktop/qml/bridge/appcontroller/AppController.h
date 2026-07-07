@@ -33,6 +33,7 @@
 #include <QtCore/QVariant>
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include <cstdint>
@@ -65,6 +66,7 @@ class AppController : public QObject {
     Q_PROPERTY(QAbstractItemModel* explorerModel READ explorerModel CONSTANT)
     Q_PROPERTY(int operationCount READ operationCount NOTIFY projectChanged)
     Q_PROPERTY(int actorCount READ actorCount NOTIFY projectChanged)
+    Q_PROPERTY(QString projectDefaultAuthLabel READ projectDefaultAuthLabel NOTIFY projectChanged)
     // Pickers for the create dialogs.
     Q_PROPERTY(QStringList moduleNames READ moduleNames NOTIFY projectChanged)
     Q_PROPERTY(QStringList actorNames READ actorNames NOTIFY projectChanged)
@@ -178,6 +180,33 @@ class AppController : public QObject {
                    editChanged)
     Q_PROPERTY(QString editAuthOauthTokenSecret READ editAuthOauthTokenSecret WRITE
                    setEditAuthOauthTokenSecret NOTIFY editChanged)
+    // OAuth 2.0.
+    Q_PROPERTY(QString editAuthOauth2GrantType READ editAuthOauth2GrantType WRITE
+                   setEditAuthOauth2GrantType NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2ClientAuth READ editAuthOauth2ClientAuth WRITE
+                   setEditAuthOauth2ClientAuth NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2TokenUrl READ editAuthOauth2TokenUrl WRITE
+                   setEditAuthOauth2TokenUrl NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2ClientId READ editAuthOauth2ClientId WRITE
+                   setEditAuthOauth2ClientId NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2ClientSecret READ editAuthOauth2ClientSecret WRITE
+                   setEditAuthOauth2ClientSecret NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2Scope READ editAuthOauth2Scope WRITE setEditAuthOauth2Scope
+                   NOTIFY editChanged)
+    // JWT Bearer.
+    Q_PROPERTY(QString editAuthJwtAlgorithm READ editAuthJwtAlgorithm WRITE setEditAuthJwtAlgorithm
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthJwtSecret READ editAuthJwtSecret WRITE setEditAuthJwtSecret NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthJwtPayload READ editAuthJwtPayload WRITE setEditAuthJwtPayload NOTIFY
+                   editChanged)
+    // Mutual TLS.
+    Q_PROPERTY(QString editAuthMtlsCertPath READ editAuthMtlsCertPath WRITE setEditAuthMtlsCertPath
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthMtlsKeyPath READ editAuthMtlsKeyPath WRITE setEditAuthMtlsKeyPath
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthMtlsKeyPassword READ editAuthMtlsKeyPassword WRITE
+                   setEditAuthMtlsKeyPassword NOTIFY editChanged)
     Q_PROPERTY(EditableKeyValueModel* editHeaders READ editHeaders CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editQuery READ editQuery CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
@@ -422,6 +451,18 @@ public:
     }
     [[nodiscard]] QString editAuthOauthToken() const { return editAuthOauthToken_; }
     [[nodiscard]] QString editAuthOauthTokenSecret() const { return editAuthOauthTokenSecret_; }
+    [[nodiscard]] QString editAuthOauth2GrantType() const { return editAuthOauth2GrantType_; }
+    [[nodiscard]] QString editAuthOauth2ClientAuth() const { return editAuthOauth2ClientAuth_; }
+    [[nodiscard]] QString editAuthOauth2TokenUrl() const { return editAuthOauth2TokenUrl_; }
+    [[nodiscard]] QString editAuthOauth2ClientId() const { return editAuthOauth2ClientId_; }
+    [[nodiscard]] QString editAuthOauth2ClientSecret() const { return editAuthOauth2ClientSecret_; }
+    [[nodiscard]] QString editAuthOauth2Scope() const { return editAuthOauth2Scope_; }
+    [[nodiscard]] QString editAuthJwtAlgorithm() const { return editAuthJwtAlgorithm_; }
+    [[nodiscard]] QString editAuthJwtSecret() const { return editAuthJwtSecret_; }
+    [[nodiscard]] QString editAuthJwtPayload() const { return editAuthJwtPayload_; }
+    [[nodiscard]] QString editAuthMtlsCertPath() const { return editAuthMtlsCertPath_; }
+    [[nodiscard]] QString editAuthMtlsKeyPath() const { return editAuthMtlsKeyPath_; }
+    [[nodiscard]] QString editAuthMtlsKeyPassword() const { return editAuthMtlsKeyPassword_; }
     void setEditMethod(const QString& method);
     void setEditPath(const QString& path);
     void setEditActor(const QString& actor);
@@ -451,6 +492,18 @@ public:
     void setEditAuthOauthConsumerSecret(const QString& value);
     void setEditAuthOauthToken(const QString& value);
     void setEditAuthOauthTokenSecret(const QString& value);
+    void setEditAuthOauth2GrantType(const QString& value);
+    void setEditAuthOauth2ClientAuth(const QString& value);
+    void setEditAuthOauth2TokenUrl(const QString& value);
+    void setEditAuthOauth2ClientId(const QString& value);
+    void setEditAuthOauth2ClientSecret(const QString& value);
+    void setEditAuthOauth2Scope(const QString& value);
+    void setEditAuthJwtAlgorithm(const QString& value);
+    void setEditAuthJwtSecret(const QString& value);
+    void setEditAuthJwtPayload(const QString& value);
+    void setEditAuthMtlsCertPath(const QString& value);
+    void setEditAuthMtlsKeyPath(const QString& value);
+    void setEditAuthMtlsKeyPassword(const QString& value);
     [[nodiscard]] EditableKeyValueModel* editHeaders() { return &editHeaders_; }
     [[nodiscard]] EditableKeyValueModel* editQuery() { return &editQuery_; }
     [[nodiscard]] EditableKeyValueModel* editForm() { return &editForm_; }
@@ -666,6 +719,15 @@ public:
     /// validates via the engine — a chain that forms a cycle or names an
     /// undefined op is rejected with a notify() and nothing is written).
     Q_INVOKABLE void saveOperation();
+
+    /// Persist the current edit-auth fields as the project-wide default auth
+    /// (the target of endpoints whose Auth Type is "Inherit from parent").
+    Q_INVOKABLE void saveProjectDefaultAuth();
+
+    /// Human label for the current project default auth type, e.g. "bearer" or
+    /// "(none set)". A property (not an invokable) so the Inherit hint refreshes
+    /// when the project changes (e.g. after Save as project default).
+    [[nodiscard]] QString projectDefaultAuthLabel() const;
 
     /// Open the standalone hook-script editor (a Widgets dialog — the QML
     /// Migration Roadmap's sanctioned fallback) for the current operation.
@@ -925,6 +987,10 @@ private:
     /// the old RequestEditorPanel::buildOverride (chainEdited tracks the guard).
     [[nodiscard]] RequestOverride buildOverride() const;
 
+    /// Build an InlineAuth from the current edit-auth fields, or nullopt when
+    /// the type is "none". Shared by buildOverride and saveProjectDefaultAuth.
+    [[nodiscard]] std::optional<engine::InlineAuth> buildInlineAuthFromEdit() const;
+
     /// Set the Content-Type header in editHeaders_ to `desired`, but only when
     /// the current Content-Type is empty or a canonical type we manage — never
     /// clobber a custom Content-Type the user typed.
@@ -1022,6 +1088,18 @@ private:
     QString editAuthOauthConsumerSecret_;
     QString editAuthOauthToken_;
     QString editAuthOauthTokenSecret_;
+    QString editAuthOauth2GrantType_{QStringLiteral("client_credentials")};
+    QString editAuthOauth2ClientAuth_{QStringLiteral("body")};
+    QString editAuthOauth2TokenUrl_;
+    QString editAuthOauth2ClientId_;
+    QString editAuthOauth2ClientSecret_;
+    QString editAuthOauth2Scope_;
+    QString editAuthJwtAlgorithm_{QStringLiteral("HS256")};
+    QString editAuthJwtSecret_;
+    QString editAuthJwtPayload_;
+    QString editAuthMtlsCertPath_;
+    QString editAuthMtlsKeyPath_;
+    QString editAuthMtlsKeyPassword_;
     /// True once the Chain tab has been seeded for the open op, so the override
     /// only stamps chainEdited when the wiring it captures is a real snapshot.
     bool chainFieldsLoaded_{false};

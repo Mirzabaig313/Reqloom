@@ -37,6 +37,14 @@ struct TransportConfig {
     /// TCP connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`). Default 5s
     /// matches the previous hard-coded value.
     std::chrono::milliseconds connectTimeout{5'000};
+
+    /// Mutual TLS: PEM client certificate (`CURLOPT_SSLCERT`) and private
+    /// key (`CURLOPT_SSLKEY`) presented to the server during the TLS
+    /// handshake. Empty means "no client cert" (the common case).
+    std::optional<std::string> clientCertPath;
+    std::optional<std::string> clientKeyPath;
+    /// Passphrase for an encrypted client key (`CURLOPT_KEYPASSWD`).
+    std::optional<std::string> clientKeyPassword;
 };
 
 }  // namespace reqloom::engine

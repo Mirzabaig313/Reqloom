@@ -97,6 +97,12 @@ namespace {
                                                      .oauthConsumerSecret = "cs",
                                                      .oauthToken = "tk",
                                                      .oauthTokenSecret = "ts"});
+    echo.operations["jwt"] = makeOp("jwt",
+                                    "/jwt",
+                                    ce::InlineAuth{.type = ce::InlineAuthType::Jwt,
+                                                   .jwtAlgorithm = "HS256",
+                                                   .jwtSecret = "topsecret",
+                                                   .jwtPayload = R"({"sub":"abc"})"});
     p.resources[ce::ResourceId{"echo"}] = std::move(echo);
     return p;
 }
@@ -189,4 +195,155 @@ TEST_F(InlineAuthFixture, oauth1_signs_the_request) {
     EXPECT_TRUE(auth.starts_with("OAuth ")) << auth;
     EXPECT_NE(auth.find("oauth_consumer_key=\"ck\""), std::string::npos) << auth;
     EXPECT_NE(auth.find("oauth_signature="), std::string::npos) << auth;
+}
+
+TEST_F(InlineAuthFixture, jwt_bearer_injects_a_signed_token) {
+    auto project = makeProject(harness_->baseUrl());
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+
+    auto result = engine.run(project, ce::OperationId{"echo.jwt"}, ctx);
+    ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+    ASSERT_TRUE(result->succeeded());
+
+    auto cap = fetchLastRequest(harness_->baseUrl(), "/jwt");
+    ASSERT_TRUE(cap["found"].get<bool>());
+    const auto auth = cap["headers"]["authorization"].get<std::string>();
+    // base64url({"alg":"HS256","typ":"JWT"}) == "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    EXPECT_TRUE(auth.starts_with("Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.")) << auth;
+}
+
+TEST_F(InlineAuthFixture, oauth2_fetches_a_token_and_injects_bearer) {
+    auto project = makeProject(harness_->baseUrl());
+    // Point the op at the mock token endpoint.
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["oauth2"] =
+        makeOp("oauth2",
+               "/oauth2",
+               ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                              .oauth2TokenUrl = harness_->baseUrl() + "/token",
+                              .oauth2ClientId = "cid",
+                              .oauth2ClientSecret = "csecret"});
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"echo.oauth2"}, ctx);
+    ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+    ASSERT_TRUE(result->succeeded());
+
+    auto cap = fetchLastRequest(harness_->baseUrl(), "/oauth2");
+    ASSERT_TRUE(cap["found"].get<bool>());
+    EXPECT_EQ(cap["headers"]["authorization"].get<std::string>(), "Bearer oauth2-tok");
+}
+
+TEST_F(InlineAuthFixture, inherit_uses_the_project_default_auth) {
+    auto project = makeProject(harness_->baseUrl());
+    project.defaultAuth =
+        ce::InlineAuth{.type = ce::InlineAuthType::Bearer, .token = "inherited-tok"};
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["inherit"] =
+        makeOp("inherit", "/inherit", ce::InlineAuth{.type = ce::InlineAuthType::Inherit});
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"echo.inherit"}, ctx);
+    ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+    ASSERT_TRUE(result->succeeded());
+
+    auto cap = fetchLastRequest(harness_->baseUrl(), "/inherit");
+    ASSERT_TRUE(cap["found"].get<bool>());
+    EXPECT_EQ(cap["headers"]["authorization"].get<std::string>(), "Bearer inherited-tok");
+}
+
+TEST_F(InlineAuthFixture, jwt_unsupported_algorithm_fails_the_step) {
+    auto project = makeProject(harness_->baseUrl());
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["jwtbad"] = makeOp("jwtbad",
+                                       "/jwt",
+                                       ce::InlineAuth{.type = ce::InlineAuthType::Jwt,
+                                                      .jwtAlgorithm = "RS256",
+                                                      .jwtSecret = "s",
+                                                      .jwtPayload = R"({"sub":"x"})"});
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"echo.jwtbad"}, ctx);
+    ASSERT_TRUE(result.has_value()) << "engine itself returned an error";
+    EXPECT_FALSE(result->succeeded());
+    bool sawFailure = false;
+    for (const auto& step : result->steps) {
+        if (step.op.value == "echo.jwtbad" && step.status == ce::StepResult::Status::Failed) {
+            EXPECT_NE(step.detail.find("unsupported algorithm"), std::string::npos) << step.detail;
+            sawFailure = true;
+        }
+    }
+    EXPECT_TRUE(sawFailure);
+}
+
+TEST_F(InlineAuthFixture, oauth2_token_is_cached_across_operations) {
+    // Two ops with identical OAuth2 config sharing one RunContext must reuse a
+    // single fetched token. The token endpoint returns tok-1 then tok-2; with
+    // caching both ops carry tok-1 (only one fetch happened).
+    auto project = makeProject(harness_->baseUrl());
+    const auto oauth2 = ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                                       .oauth2TokenUrl = harness_->baseUrl() + "/token-seq",
+                                       .oauth2ClientId = "cid",
+                                       .oauth2ClientSecret = "csecret"};
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["cachea"] = makeOp("cachea", "/cache-a", oauth2);
+    echo.operations["cacheb"] = makeOp("cacheb", "/cache-b", oauth2);
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    ASSERT_TRUE(engine.run(project, ce::OperationId{"echo.cachea"}, ctx));
+    ASSERT_TRUE(engine.run(project, ce::OperationId{"echo.cacheb"}, ctx));
+
+    auto capA = fetchLastRequest(harness_->baseUrl(), "/cache-a");
+    auto capB = fetchLastRequest(harness_->baseUrl(), "/cache-b");
+    ASSERT_TRUE(capA["found"].get<bool>());
+    ASSERT_TRUE(capB["found"].get<bool>());
+    EXPECT_EQ(capA["headers"]["authorization"].get<std::string>(), "Bearer tok-1");
+    EXPECT_EQ(capB["headers"]["authorization"].get<std::string>(), "Bearer tok-1")
+        << "second op re-fetched a token instead of reusing the cached one";
+}
+
+TEST_F(InlineAuthFixture, oauth2_password_grant_with_basic_client_auth) {
+    // Password grant + "Send as Basic Auth header": the token endpoint must
+    // receive grant_type=password in the body and the client credentials as a
+    // Basic Authorization header (not in the body).
+    auto project = makeProject(harness_->baseUrl());
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["oauth2pw"] =
+        makeOp("oauth2pw",
+               "/oauth2",
+               ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                              .username = "alice",
+                              .password = "s3cret",
+                              .oauth2GrantType = "password",
+                              .oauth2TokenUrl = harness_->baseUrl() + "/token",
+                              .oauth2ClientId = "cid",
+                              .oauth2ClientSecret = "csecret",
+                              .oauth2ClientAuth = "basic"});
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"echo.oauth2pw"}, ctx);
+    ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+    ASSERT_TRUE(result->succeeded());
+
+    // The op itself carries the fetched bearer.
+    auto op = fetchLastRequest(harness_->baseUrl(), "/oauth2");
+    ASSERT_TRUE(op["found"].get<bool>());
+    EXPECT_EQ(op["headers"]["authorization"].get<std::string>(), "Bearer oauth2-tok");
+
+    // The token request used Basic client auth + password grant.
+    auto tok = fetchLastRequest(harness_->baseUrl(), "/token");
+    ASSERT_TRUE(tok["found"].get<bool>());
+    // base64("cid:csecret") == "Y2lkOmNzZWNyZXQ="
+    EXPECT_EQ(tok["headers"]["authorization"].get<std::string>(), "Basic Y2lkOmNzZWNyZXQ=");
+    const auto body = tok["raw_body"].get<std::string>();
+    EXPECT_NE(body.find("grant_type=password"), std::string::npos) << body;
+    EXPECT_NE(body.find("username=alice"), std::string::npos) << body;
+    EXPECT_EQ(body.find("client_secret="), std::string::npos)
+        << "client_secret must not be in the body when using Basic client auth: " << body;
 }

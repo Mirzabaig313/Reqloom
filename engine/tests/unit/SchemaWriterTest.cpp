@@ -1045,6 +1045,44 @@ TEST(SchemaWriter, inline_auth_round_trips_all_types) {
                                       .oauthTokenSecret = "{{secret.ts}}"};
     ops["oauth"] = std::move(oauth);
 
+    ce::Operation oauth2;
+    oauth2.id = ce::OperationId{"payment.oauth2"};
+    oauth2.resource = ce::ResourceId{"payment"};
+    oauth2.method = ce::HttpMethod::Get;
+    oauth2.pathTemplate = "/api/v1/oauth2";
+    oauth2.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                                       .username = "u",
+                                       .password = "{{secret.pw}}",
+                                       .oauth2GrantType = "password",
+                                       .oauth2TokenUrl = "https://id.test/token",
+                                       .oauth2ClientId = "cid",
+                                       .oauth2ClientSecret = "{{secret.cs}}",
+                                       .oauth2Scope = "read write",
+                                       .oauth2ClientAuth = "basic"};
+    ops["oauth2"] = std::move(oauth2);
+
+    ce::Operation jwt;
+    jwt.id = ce::OperationId{"payment.jwt"};
+    jwt.resource = ce::ResourceId{"payment"};
+    jwt.method = ce::HttpMethod::Get;
+    jwt.pathTemplate = "/api/v1/jwt";
+    jwt.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::Jwt,
+                                    .jwtAlgorithm = "HS512",
+                                    .jwtSecret = "{{secret.jwt}}",
+                                    .jwtPayload = R"({"sub":"123"})"};
+    ops["jwt"] = std::move(jwt);
+
+    ce::Operation mtls;
+    mtls.id = ce::OperationId{"payment.mtls"};
+    mtls.resource = ce::ResourceId{"payment"};
+    mtls.method = ce::HttpMethod::Get;
+    mtls.pathTemplate = "/api/v1/mtls";
+    mtls.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::Mtls,
+                                     .mtlsCertPath = "certs/client.pem",
+                                     .mtlsKeyPath = "certs/client.key",
+                                     .mtlsKeyPassword = "{{secret.pfx}}"};
+    ops["mtls"] = std::move(mtls);
+
     auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
     ASSERT_TRUE(written.has_value()) << written.error().detail;
     auto reloaded = ce::parseProject(*written);
@@ -1080,4 +1118,57 @@ TEST(SchemaWriter, inline_auth_round_trips_all_types) {
     EXPECT_EQ(out.at("oauth").inlineAuth->oauthConsumerSecret, "{{secret.cs}}");
     EXPECT_EQ(out.at("oauth").inlineAuth->oauthToken, "tk");
     EXPECT_EQ(out.at("oauth").inlineAuth->oauthTokenSecret, "{{secret.ts}}");
+
+    ASSERT_TRUE(out.at("oauth2").inlineAuth.has_value());
+    EXPECT_EQ(out.at("oauth2").inlineAuth->type, ce::InlineAuthType::OAuth2);
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2GrantType, "password");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2TokenUrl, "https://id.test/token");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2ClientId, "cid");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2ClientSecret, "{{secret.cs}}");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2Scope, "read write");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2ClientAuth, "basic");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->username, "u");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->password, "{{secret.pw}}");
+
+    ASSERT_TRUE(out.at("jwt").inlineAuth.has_value());
+    EXPECT_EQ(out.at("jwt").inlineAuth->type, ce::InlineAuthType::Jwt);
+    EXPECT_EQ(out.at("jwt").inlineAuth->jwtAlgorithm, "HS512");
+    EXPECT_EQ(out.at("jwt").inlineAuth->jwtSecret, "{{secret.jwt}}");
+    EXPECT_EQ(out.at("jwt").inlineAuth->jwtPayload, R"({"sub":"123"})");
+
+    ASSERT_TRUE(out.at("mtls").inlineAuth.has_value());
+    EXPECT_EQ(out.at("mtls").inlineAuth->type, ce::InlineAuthType::Mtls);
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsCertPath, "certs/client.pem");
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsKeyPath, "certs/client.key");
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsKeyPassword, "{{secret.pfx}}");
+}
+
+TEST(SchemaWriter, project_default_auth_and_inherit_round_trip) {
+    // The project-wide default auth (the "inherit from parent" target) and an
+    // operation set to Inherit must both survive write → parse.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    project.defaultAuth =
+        ce::InlineAuth{.type = ce::InlineAuthType::Bearer, .token = "{{secret.shared}}"};
+
+    ce::Operation inherit;
+    inherit.id = ce::OperationId{"payment.inherit"};
+    inherit.resource = ce::ResourceId{"payment"};
+    inherit.method = ce::HttpMethod::Get;
+    inherit.pathTemplate = "/api/v1/inherit";
+    inherit.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::Inherit};
+    project.resources.at(ce::ResourceId{"payment"}).operations["inherit"] = std::move(inherit);
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    ASSERT_TRUE(reloaded->defaultAuth.has_value());
+    EXPECT_EQ(reloaded->defaultAuth->type, ce::InlineAuthType::Bearer);
+    EXPECT_EQ(reloaded->defaultAuth->token, "{{secret.shared}}");
+
+    const auto& op = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("inherit");
+    ASSERT_TRUE(op.inlineAuth.has_value());
+    EXPECT_EQ(op.inlineAuth->type, ce::InlineAuthType::Inherit);
 }

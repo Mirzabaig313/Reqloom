@@ -69,7 +69,60 @@ InlineAuthType parseInlineAuthType(const std::string& t) {
     if (t == "oauth1" || t == "oauth_1") {
         return InlineAuthType::OAuth1;
     }
+    if (t == "oauth2" || t == "oauth_2" || t == "oauth2_client_credentials") {
+        return InlineAuthType::OAuth2;
+    }
+    if (t == "jwt" || t == "jwt_bearer") {
+        return InlineAuthType::Jwt;
+    }
+    if (t == "mtls" || t == "mutual_tls") {
+        return InlineAuthType::Mtls;
+    }
+    if (t == "inherit") {
+        return InlineAuthType::Inherit;
+    }
     return InlineAuthType::None;
+}
+
+/// Parse an `auth:` map (operation-level or project-level default) into an
+/// InlineAuth. Returns nullopt when the map is absent or its type is `none`.
+std::optional<InlineAuth> parseInlineAuth(const YAML::Node& node) {
+    if (!node || !node.IsMap()) {
+        return std::nullopt;
+    }
+    InlineAuth auth;
+    auth.type = parseInlineAuthType(node["type"].as<std::string>("none"));
+    if (auth.type == InlineAuthType::None) {
+        return std::nullopt;
+    }
+    auth.token = node["token"].as<std::string>("");
+    auth.username = node["username"].as<std::string>("");
+    auth.password = node["password"].as<std::string>("");
+    auth.apiKeyName = node["key"].as<std::string>("");
+    auth.apiKeyValue = node["value"].as<std::string>("");
+    auth.apiKeyInQuery = node["in"].as<std::string>("header") == "query";
+    auth.awsAccessKey = node["access_key"].as<std::string>("");
+    auth.awsSecretKey = node["secret_key"].as<std::string>("");
+    auth.awsRegion = node["region"].as<std::string>("");
+    auth.awsService = node["service"].as<std::string>("");
+    auth.awsSessionToken = node["session_token"].as<std::string>("");
+    auth.oauthConsumerKey = node["consumer_key"].as<std::string>("");
+    auth.oauthConsumerSecret = node["consumer_secret"].as<std::string>("");
+    auth.oauthToken = node["oauth_token"].as<std::string>("");
+    auth.oauthTokenSecret = node["token_secret"].as<std::string>("");
+    auth.oauth2GrantType = node["grant_type"].as<std::string>("");
+    auth.oauth2TokenUrl = node["token_url"].as<std::string>("");
+    auth.oauth2ClientId = node["client_id"].as<std::string>("");
+    auth.oauth2ClientSecret = node["client_secret"].as<std::string>("");
+    auth.oauth2Scope = node["scope"].as<std::string>("");
+    auth.oauth2ClientAuth = node["client_auth"].as<std::string>("");
+    auth.jwtAlgorithm = node["algorithm"].as<std::string>("");
+    auth.jwtSecret = node["secret"].as<std::string>("");
+    auth.jwtPayload = node["payload"].as<std::string>("");
+    auth.mtlsCertPath = node["cert"].as<std::string>("");
+    auth.mtlsKeyPath = node["key_file"].as<std::string>("");
+    auth.mtlsKeyPassword = node["key_password"].as<std::string>("");
+    return auth;
 }
 
 std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
@@ -794,29 +847,7 @@ std::expected<Resource, ReqloomError> parseResource(const std::string& resourceI
             op.actor = ActorId{opNode["actor"].as<std::string>()};
         }
 
-        if (opNode["auth"] && opNode["auth"].IsMap()) {
-            const auto& a = opNode["auth"];
-            InlineAuth auth;
-            auth.type = parseInlineAuthType(a["type"].as<std::string>("none"));
-            auth.token = a["token"].as<std::string>("");
-            auth.username = a["username"].as<std::string>("");
-            auth.password = a["password"].as<std::string>("");
-            auth.apiKeyName = a["key"].as<std::string>("");
-            auth.apiKeyValue = a["value"].as<std::string>("");
-            auth.apiKeyInQuery = a["in"].as<std::string>("header") == "query";
-            auth.awsAccessKey = a["access_key"].as<std::string>("");
-            auth.awsSecretKey = a["secret_key"].as<std::string>("");
-            auth.awsRegion = a["region"].as<std::string>("");
-            auth.awsService = a["service"].as<std::string>("");
-            auth.awsSessionToken = a["session_token"].as<std::string>("");
-            auth.oauthConsumerKey = a["consumer_key"].as<std::string>("");
-            auth.oauthConsumerSecret = a["consumer_secret"].as<std::string>("");
-            auth.oauthToken = a["oauth_token"].as<std::string>("");
-            auth.oauthTokenSecret = a["token_secret"].as<std::string>("");
-            if (auth.type != InlineAuthType::None) {
-                op.inlineAuth = std::move(auth);
-            }
-        }
+        op.inlineAuth = parseInlineAuth(opNode["auth"]);
 
         op.headers = parseStringMap(opNode["headers"]);
         op.queryParams = parseStringMap(opNode["query_params"]);
@@ -1045,6 +1076,10 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         Project project;
         project.name = root["name"].as<std::string>("Unnamed Project");
         project.defaultEnvironment = root["default_environment"].as<std::string>("local");
+
+        // Project-wide default auth (the "inherit from parent" target). An
+        // operation whose auth type is `inherit` resolves to this.
+        project.defaultAuth = parseInlineAuth(root["auth"]);
 
         // Optional latency SLO: latency_slo: { p95_ms: 800 }. Negative or
         // missing → unset (0). Surfaced on the desktop latency chart.
