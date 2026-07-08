@@ -208,6 +208,10 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     if (request.transport.clientCertPath && !request.transport.clientCertPath->empty()) {
         curl_easy_setopt(curl.get(), CURLOPT_SSLCERT, request.transport.clientCertPath->c_str());
     }
+    if (request.transport.clientCertType && !request.transport.clientCertType->empty()) {
+        curl_easy_setopt(
+            curl.get(), CURLOPT_SSLCERTTYPE, request.transport.clientCertType->c_str());
+    }
     if (request.transport.clientKeyPath && !request.transport.clientKeyPath->empty()) {
         curl_easy_setopt(curl.get(), CURLOPT_SSLKEY, request.transport.clientKeyPath->c_str());
     }

@@ -217,9 +217,11 @@ struct InlineAuth {
     // variable-resolved then handed to the HTTP client as-is (same trust model
     // as a CA bundle path); they are NOT sandboxed to the project root, since
     // client certs commonly live outside the repo. Prefer absolute paths.
-    std::string mtlsCertPath;
-    std::string mtlsKeyPath;
-    std::string mtlsKeyPassword;  ///< Optional passphrase for an encrypted key.
+    std::string mtlsFormat;       ///< "pem" (default) or "p12" (PKCS#12 bundle).
+    std::string mtlsCertPath;     ///< PEM cert, or the .p12/.pfx path when format is p12.
+    std::string mtlsKeyPath;      ///< PEM private key (unused for p12).
+    std::string mtlsKeyPassword;  ///< Encrypted-key passphrase, or the p12 password.
+    std::string mtlsCaCertPath;   ///< Optional custom CA bundle to trust the server.
 };
 
 /// A declared response assertion. `expr` is a predicate in the engine's

@@ -32,6 +32,7 @@
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include <QtWidgets/QDialog>
+#include <QtWidgets/QFileDialog>
 
 #include <algorithm>
 #include <filesystem>
@@ -1548,6 +1549,26 @@ void AppController::setEditAuthMtlsKeyPassword(const QString& value) {
     emit editChanged();
 }
 
+void AppController::setEditAuthMtlsFormat(const QString& value) {
+    if (editAuthMtlsFormat_ == value) {
+        return;
+    }
+    editAuthMtlsFormat_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthMtlsCaCertPath(const QString& value) {
+    if (editAuthMtlsCaCertPath_ == value) {
+        return;
+    }
+    editAuthMtlsCaCertPath_ = value;
+    emit editChanged();
+}
+
+QString AppController::pickFile(const QString& title, const QString& nameFilter) const {
+    return QFileDialog::getOpenFileName(nullptr, title, QString{}, nameFilter);
+}
+
 void AppController::beginEdit() {
     if (!hasOperation_ || !activeProject().hasProject()) {
         return;
@@ -1608,9 +1629,11 @@ void AppController::beginEdit() {
                                                        : QString::fromStdString(a.jwtAlgorithm);
         editAuthJwtSecret_ = QString::fromStdString(a.jwtSecret);
         editAuthJwtPayload_ = QString::fromStdString(a.jwtPayload);
+        editAuthMtlsFormat_ = a.mtlsFormat == "p12" ? QStringLiteral("p12") : QStringLiteral("pem");
         editAuthMtlsCertPath_ = QString::fromStdString(a.mtlsCertPath);
         editAuthMtlsKeyPath_ = QString::fromStdString(a.mtlsKeyPath);
         editAuthMtlsKeyPassword_ = QString::fromStdString(a.mtlsKeyPassword);
+        editAuthMtlsCaCertPath_ = QString::fromStdString(a.mtlsCaCertPath);
     } else {
         editAuthType_ = QStringLiteral("none");
         editAuthToken_.clear();
@@ -1641,9 +1664,11 @@ void AppController::beginEdit() {
         editAuthJwtAlgorithm_ = QStringLiteral("HS256");
         editAuthJwtSecret_.clear();
         editAuthJwtPayload_.clear();
+        editAuthMtlsFormat_ = QStringLiteral("pem");
         editAuthMtlsCertPath_.clear();
         editAuthMtlsKeyPath_.clear();
         editAuthMtlsKeyPassword_.clear();
+        editAuthMtlsCaCertPath_.clear();
     }
 
     // Actor and inline auth are mutually exclusive in the editor. If a
@@ -1791,9 +1816,11 @@ std::optional<engine::InlineAuth> AppController::buildInlineAuthFromEdit() const
     auth.jwtAlgorithm = editAuthJwtAlgorithm_.toStdString();
     auth.jwtSecret = editAuthJwtSecret_.toStdString();
     auth.jwtPayload = editAuthJwtPayload_.toStdString();
+    auth.mtlsFormat = editAuthMtlsFormat_.toStdString();
     auth.mtlsCertPath = editAuthMtlsCertPath_.toStdString();
     auth.mtlsKeyPath = editAuthMtlsKeyPath_.toStdString();
     auth.mtlsKeyPassword = editAuthMtlsKeyPassword_.toStdString();
+    auth.mtlsCaCertPath = editAuthMtlsCaCertPath_.toStdString();
     return auth;
 }
 

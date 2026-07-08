@@ -124,9 +124,11 @@ std::optional<InlineAuth> parseInlineAuth(const YAML::Node& node) {
     auth.jwtAlgorithm = node["algorithm"].as<std::string>("");
     auth.jwtSecret = node["secret"].as<std::string>("");
     auth.jwtPayload = node["payload"].as<std::string>("");
+    auth.mtlsFormat = node["format"].as<std::string>("");
     auth.mtlsCertPath = node["cert"].as<std::string>("");
     auth.mtlsKeyPath = node["key_file"].as<std::string>("");
     auth.mtlsKeyPassword = node["key_password"].as<std::string>("");
+    auth.mtlsCaCertPath = node["ca_cert"].as<std::string>("");
     return auth;
 }
 

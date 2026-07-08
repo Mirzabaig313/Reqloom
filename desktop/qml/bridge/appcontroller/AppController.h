@@ -217,6 +217,10 @@ class AppController : public QObject {
                    NOTIFY editChanged)
     Q_PROPERTY(QString editAuthMtlsKeyPassword READ editAuthMtlsKeyPassword WRITE
                    setEditAuthMtlsKeyPassword NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthMtlsFormat READ editAuthMtlsFormat WRITE setEditAuthMtlsFormat NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthMtlsCaCertPath READ editAuthMtlsCaCertPath WRITE
+                   setEditAuthMtlsCaCertPath NOTIFY editChanged)
     Q_PROPERTY(EditableKeyValueModel* editHeaders READ editHeaders CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editQuery READ editQuery CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
@@ -479,6 +483,8 @@ public:
     [[nodiscard]] QString editAuthMtlsCertPath() const { return editAuthMtlsCertPath_; }
     [[nodiscard]] QString editAuthMtlsKeyPath() const { return editAuthMtlsKeyPath_; }
     [[nodiscard]] QString editAuthMtlsKeyPassword() const { return editAuthMtlsKeyPassword_; }
+    [[nodiscard]] QString editAuthMtlsFormat() const { return editAuthMtlsFormat_; }
+    [[nodiscard]] QString editAuthMtlsCaCertPath() const { return editAuthMtlsCaCertPath_; }
     void setEditMethod(const QString& method);
     void setEditPath(const QString& path);
     void setEditActor(const QString& actor);
@@ -527,6 +533,13 @@ public:
     void setEditAuthMtlsCertPath(const QString& value);
     void setEditAuthMtlsKeyPath(const QString& value);
     void setEditAuthMtlsKeyPassword(const QString& value);
+    void setEditAuthMtlsFormat(const QString& value);
+    void setEditAuthMtlsCaCertPath(const QString& value);
+    /// Open a native file-open dialog and return the chosen path (empty if
+    /// cancelled). `nameFilter` uses Qt's filter syntax, e.g.
+    /// "Certificates (*.pem *.crt *.p12 *.pfx)".
+    Q_INVOKABLE [[nodiscard]] QString pickFile(const QString& title,
+                                               const QString& nameFilter) const;
     [[nodiscard]] EditableKeyValueModel* editHeaders() { return &editHeaders_; }
     [[nodiscard]] EditableKeyValueModel* editQuery() { return &editQuery_; }
     [[nodiscard]] EditableKeyValueModel* editForm() { return &editForm_; }
@@ -1125,9 +1138,11 @@ private:
     QString editAuthJwtAlgorithm_{QStringLiteral("HS256")};
     QString editAuthJwtSecret_;
     QString editAuthJwtPayload_;
+    QString editAuthMtlsFormat_{QStringLiteral("pem")};
     QString editAuthMtlsCertPath_;
     QString editAuthMtlsKeyPath_;
     QString editAuthMtlsKeyPassword_;
+    QString editAuthMtlsCaCertPath_;
     /// True once the Chain tab has been seeded for the open op, so the override
     /// only stamps chainEdited when the wiring it captures is a real snapshot.
     bool chainFieldsLoaded_{false};

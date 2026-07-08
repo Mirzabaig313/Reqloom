@@ -693,16 +693,24 @@ struct ExecutionEngine::Impl {
         if (!auth || auth->type != InlineAuthType::Mtls) {
             return;
         }
+        const bool p12 = auth->mtlsFormat == "p12";
         if (!auth->mtlsCertPath.empty()) {
             req.transport.clientCertPath =
                 varResolver.resolve(auth->mtlsCertPath, ctx, rctx).output;
         }
-        if (!auth->mtlsKeyPath.empty()) {
+        if (p12) {
+            // PKCS#12 bundle: the key lives inside the cert; tell curl the type.
+            req.transport.clientCertType = "P12";
+        } else if (!auth->mtlsKeyPath.empty()) {
             req.transport.clientKeyPath = varResolver.resolve(auth->mtlsKeyPath, ctx, rctx).output;
         }
         if (!auth->mtlsKeyPassword.empty()) {
             req.transport.clientKeyPassword =
                 varResolver.resolve(auth->mtlsKeyPassword, ctx, rctx).output;
+        }
+        if (!auth->mtlsCaCertPath.empty()) {
+            req.transport.caBundlePath =
+                varResolver.resolve(auth->mtlsCaCertPath, ctx, rctx).output;
         }
     }
 

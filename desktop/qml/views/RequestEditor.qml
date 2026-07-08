@@ -1489,33 +1489,114 @@ ColumnLayout {
                     // Mutual TLS
                     OptionRow {
                         visible: AppController.editAuthType === "mtls"
-                        label: qsTr("Client Cert")
-                        GlassTextField {
+                        label: qsTr("Certificate Format")
+                        GlassComboBox {
                             width: parent.width
-                            placeholderText: qsTr("path to client.pem")
-                            text: AppController.editAuthMtlsCertPath
-                            onTextEdited: AppController.editAuthMtlsCertPath = text
+                            property var formats: ["pem", "p12"]
+                            model: [qsTr("PEM Certificate + Key"), qsTr("PKCS#12 (.p12/.pfx)")]
+                            currentIndex: Math.max(0, formats.indexOf(AppController.editAuthMtlsFormat))
+                            onActivated: AppController.editAuthMtlsFormat = formats[currentIndex]
+                        }
+                    }
+                    // PEM: certificate + private key.
+                    OptionRow {
+                        visible: AppController.editAuthType === "mtls" && AppController.editAuthMtlsFormat !== "p12"
+                        label: qsTr("Client Certificate")
+                        RowLayout {
+                            width: parent.width
+                            spacing: DesignTokens.spaceSm
+                            GlassTextField {
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("path to client.pem / .crt")
+                                text: AppController.editAuthMtlsCertPath
+                                onTextEdited: AppController.editAuthMtlsCertPath = text
+                            }
+                            GlassButton {
+                                text: qsTr("Choose…")
+                                onClicked: {
+                                    var f = AppController.pickFile(qsTr("Select client certificate"), qsTr("Certificates (*.pem *.crt *.cer)"));
+                                    if (f.length > 0)
+                                        AppController.editAuthMtlsCertPath = f;
+                                }
+                            }
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "mtls" && AppController.editAuthMtlsFormat !== "p12"
+                        label: qsTr("Private Key")
+                        RowLayout {
+                            width: parent.width
+                            spacing: DesignTokens.spaceSm
+                            GlassTextField {
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("path to client.key")
+                                text: AppController.editAuthMtlsKeyPath
+                                onTextEdited: AppController.editAuthMtlsKeyPath = text
+                            }
+                            GlassButton {
+                                text: qsTr("Choose…")
+                                onClicked: {
+                                    var f = AppController.pickFile(qsTr("Select private key"), qsTr("Keys (*.key *.pem)"));
+                                    if (f.length > 0)
+                                        AppController.editAuthMtlsKeyPath = f;
+                                }
+                            }
+                        }
+                    }
+                    // PKCS#12: single bundle file.
+                    OptionRow {
+                        visible: AppController.editAuthType === "mtls" && AppController.editAuthMtlsFormat === "p12"
+                        label: qsTr("PKCS#12 File")
+                        RowLayout {
+                            width: parent.width
+                            spacing: DesignTokens.spaceSm
+                            GlassTextField {
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("path to client.p12 / .pfx")
+                                text: AppController.editAuthMtlsCertPath
+                                onTextEdited: AppController.editAuthMtlsCertPath = text
+                            }
+                            GlassButton {
+                                text: qsTr("Choose…")
+                                onClicked: {
+                                    var f = AppController.pickFile(qsTr("Select PKCS#12 bundle"), qsTr("PKCS#12 (*.p12 *.pfx)"));
+                                    if (f.length > 0)
+                                        AppController.editAuthMtlsCertPath = f;
+                                }
+                            }
                         }
                     }
                     OptionRow {
                         visible: AppController.editAuthType === "mtls"
-                        label: qsTr("Client Key")
-                        GlassTextField {
-                            width: parent.width
-                            placeholderText: qsTr("path to client.key")
-                            text: AppController.editAuthMtlsKeyPath
-                            onTextEdited: AppController.editAuthMtlsKeyPath = text
-                        }
-                    }
-                    OptionRow {
-                        visible: AppController.editAuthType === "mtls"
-                        label: qsTr("Key Password")
+                        label: AppController.editAuthMtlsFormat === "p12" ? qsTr("PKCS#12 Password") : qsTr("Private Key Passphrase")
                         GlassTextField {
                             width: parent.width
                             echoMode: TextInput.Password
-                            placeholderText: qsTr("optional")
+                            placeholderText: AppController.editAuthMtlsFormat === "p12" ? qsTr("PKCS#12 password") : qsTr("optional (encrypted key)")
                             text: AppController.editAuthMtlsKeyPassword
                             onTextEdited: AppController.editAuthMtlsKeyPassword = text
+                        }
+                    }
+                    OptionRow {
+                        visible: AppController.editAuthType === "mtls"
+                        label: qsTr("CA Certificate")
+                        RowLayout {
+                            width: parent.width
+                            spacing: DesignTokens.spaceSm
+                            GlassTextField {
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("optional — trust a private/self-signed CA")
+                                text: AppController.editAuthMtlsCaCertPath
+                                onTextEdited: AppController.editAuthMtlsCaCertPath = text
+                            }
+                            GlassButton {
+                                text: qsTr("Choose…")
+                                onClicked: {
+                                    var f = AppController.pickFile(qsTr("Select CA certificate"), qsTr("Certificates (*.pem *.crt *.cer)"));
+                                    if (f.length > 0)
+                                        AppController.editAuthMtlsCaCertPath = f;
+                                }
+                            }
                         }
                     }
                     // Inherit — no fields; uses the project default auth.

@@ -1078,9 +1078,10 @@ TEST(SchemaWriter, inline_auth_round_trips_all_types) {
     mtls.method = ce::HttpMethod::Get;
     mtls.pathTemplate = "/api/v1/mtls";
     mtls.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::Mtls,
-                                     .mtlsCertPath = "certs/client.pem",
-                                     .mtlsKeyPath = "certs/client.key",
-                                     .mtlsKeyPassword = "{{secret.pfx}}"};
+                                     .mtlsFormat = "p12",
+                                     .mtlsCertPath = "certs/client.p12",
+                                     .mtlsKeyPassword = "{{secret.pfx}}",
+                                     .mtlsCaCertPath = "certs/ca.pem"};
     ops["mtls"] = std::move(mtls);
 
     auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
@@ -1138,9 +1139,10 @@ TEST(SchemaWriter, inline_auth_round_trips_all_types) {
 
     ASSERT_TRUE(out.at("mtls").inlineAuth.has_value());
     EXPECT_EQ(out.at("mtls").inlineAuth->type, ce::InlineAuthType::Mtls);
-    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsCertPath, "certs/client.pem");
-    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsKeyPath, "certs/client.key");
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsFormat, "p12");
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsCertPath, "certs/client.p12");
     EXPECT_EQ(out.at("mtls").inlineAuth->mtlsKeyPassword, "{{secret.pfx}}");
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsCaCertPath, "certs/ca.pem");
 }
 
 TEST(SchemaWriter, oauth2_authorization_code_persists_config_but_never_the_token) {
