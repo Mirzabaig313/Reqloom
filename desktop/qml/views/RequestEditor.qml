@@ -1310,8 +1310,8 @@ ColumnLayout {
                         label: qsTr("Grant Type")
                         GlassComboBox {
                             width: parent.width
-                            property var grants: ["client_credentials", "password", "authorization_code"]
-                            model: [qsTr("Client Credentials"), qsTr("Password Credentials"), qsTr("Authorization Code (PKCE)")]
+                            property var grants: ["authorization_code", "client_credentials", "password"]
+                            model: [qsTr("Authorization Code (PKCE) — recommended"), qsTr("Client Credentials"), qsTr("Password Credentials (Legacy)")]
                             currentIndex: Math.max(0, grants.indexOf(AppController.editAuthOauth2GrantType))
                             onActivated: AppController.editAuthOauth2GrantType = grants[currentIndex]
                         }
@@ -1370,18 +1370,18 @@ ColumnLayout {
                         label: qsTr("Scope")
                         GlassTextField {
                             width: parent.width
-                            placeholderText: qsTr("optional, space-separated")
+                            placeholderText: qsTr("optional — e.g. read write profile")
                             text: AppController.editAuthOauth2Scope
                             onTextEdited: AppController.editAuthOauth2Scope = text
                         }
                     }
                     OptionRow {
-                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType !== "authorization_code"
+                        visible: AppController.editAuthType === "oauth2"
                         label: qsTr("Client Auth")
                         GlassComboBox {
                             width: parent.width
-                            property var modes: ["body", "basic"]
-                            model: [qsTr("Send in body"), qsTr("Send as Basic Auth header")]
+                            property var modes: ["basic", "body", "none"]
+                            model: [qsTr("Send as Basic Auth header"), qsTr("Send in request body"), qsTr("None (Public Client)")]
                             currentIndex: Math.max(0, modes.indexOf(AppController.editAuthOauth2ClientAuth))
                             onActivated: AppController.editAuthOauth2ClientAuth = modes[currentIndex]
                         }
@@ -1405,17 +1405,6 @@ ColumnLayout {
                             placeholderText: qsTr("http://127.0.0.1:8080/callback")
                             text: AppController.editAuthOauth2CallbackUrl
                             onTextEdited: AppController.editAuthOauth2CallbackUrl = text
-                        }
-                    }
-                    OptionRow {
-                        visible: AppController.editAuthType === "oauth2" && AppController.editAuthOauth2GrantType === "authorization_code"
-                        label: qsTr("Client Auth")
-                        GlassComboBox {
-                            width: parent.width
-                            property var modes: ["basic", "body", "none"]
-                            model: [qsTr("Send as Basic Auth header"), qsTr("Send client_id/secret in body"), qsTr("None (Public Client)")]
-                            currentIndex: Math.max(0, modes.indexOf(AppController.editAuthOauth2ClientAuth))
-                            onActivated: AppController.editAuthOauth2ClientAuth = modes[currentIndex]
                         }
                     }
                     OptionRow {

@@ -1403,12 +1403,6 @@ void AppController::setEditAuthOauth2GrantType(const QString& value) {
         return;
     }
     editAuthOauth2GrantType_ = value;
-    // "None (Public Client)" only exists for authorization_code; switching to a
-    // grant that requires client auth must not leave a stale "none" behind.
-    if (editAuthOauth2GrantType_ != QStringLiteral("authorization_code") &&
-        editAuthOauth2ClientAuth_ == QStringLiteral("none")) {
-        editAuthOauth2ClientAuth_ = QStringLiteral("body");
-    }
     emit editChanged();
 }
 
@@ -1652,7 +1646,7 @@ void AppController::beginEdit() {
         editAuthOauthToken_.clear();
         editAuthOauthTokenSecret_.clear();
         editAuthOauth2GrantType_ = QStringLiteral("client_credentials");
-        editAuthOauth2ClientAuth_ = QStringLiteral("body");
+        editAuthOauth2ClientAuth_ = QStringLiteral("basic");
         editAuthOauth2TokenUrl_.clear();
         editAuthOauth2ClientId_.clear();
         editAuthOauth2ClientSecret_.clear();

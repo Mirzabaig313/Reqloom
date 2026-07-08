@@ -504,11 +504,6 @@ public:
         if (!clientId) {
             return std::unexpected(clientId.error());
         }
-        const auto clientSecret =
-            resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
-        if (!clientSecret) {
-            return std::unexpected(clientSecret.error());
-        }
         const auto scope =
             resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "scope");
         if (!scope) {
@@ -521,15 +516,29 @@ public:
             return std::unexpected(clientAuth.error());
         }
 
-        // RFC 6749 §4.4.2. Client credentials go in a Basic header or the body
-        // per the `client_auth` setting (default: body).
+        // client_secret is required unless this is a public client
+        // (client_auth: none), per RFC 6749 §2.3.1 / §4.4.
+        std::string clientSecret;
+        if (*clientAuth != "none") {
+            auto cs = resolveAuthConfigField(
+                actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
+            if (!cs) {
+                return std::unexpected(cs.error());
+            }
+            clientSecret = *cs;
+        }
+
+        // RFC 6749 §4.4.2. Client credentials go in a Basic header, the body, or
+        // are omitted entirely for a public client, per `client_auth`.
         std::string body = "grant_type=client_credentials";
         std::optional<std::string> authHeader;
         if (*clientAuth == "basic") {
-            authHeader = "Basic " + base64Encode(*clientId + ":" + *clientSecret);
+            authHeader = "Basic " + base64Encode(*clientId + ":" + clientSecret);
+        } else if (*clientAuth == "none") {
+            body += "&client_id=" + urlEncode(*clientId);
         } else {
             body +=
-                "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(*clientSecret);
+                "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(clientSecret);
         }
         if (!scope->empty()) {
             body += "&scope=" + urlEncode(*scope);
@@ -572,11 +581,6 @@ public:
         if (!clientId) {
             return std::unexpected(clientId.error());
         }
-        const auto clientSecret =
-            resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
-        if (!clientSecret) {
-            return std::unexpected(clientSecret.error());
-        }
         const auto username =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "username");
         if (!username) {
@@ -599,16 +603,30 @@ public:
             return std::unexpected(clientAuth.error());
         }
 
-        // RFC 6749 §4.3.2. Client credentials go in a Basic header or the body
-        // per the `client_auth` setting (default: body).
+        // client_secret is required unless this is a public client
+        // (client_auth: none), per RFC 6749 §2.3.1 / §4.3.
+        std::string clientSecret;
+        if (*clientAuth != "none") {
+            auto cs = resolveAuthConfigField(
+                actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
+            if (!cs) {
+                return std::unexpected(cs.error());
+            }
+            clientSecret = *cs;
+        }
+
+        // RFC 6749 §4.3.2. Client credentials go in a Basic header, the body, or
+        // are omitted entirely for a public client, per `client_auth`.
         std::string body = "grant_type=password&username=" + urlEncode(*username) +
                            "&password=" + urlEncode(*password);
         std::optional<std::string> authHeader;
         if (*clientAuth == "basic") {
-            authHeader = "Basic " + base64Encode(*clientId + ":" + *clientSecret);
+            authHeader = "Basic " + base64Encode(*clientId + ":" + clientSecret);
+        } else if (*clientAuth == "none") {
+            body += "&client_id=" + urlEncode(*clientId);
         } else {
             body +=
-                "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(*clientSecret);
+                "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(clientSecret);
         }
         if (!scope->empty()) {
             body += "&scope=" + urlEncode(*scope);

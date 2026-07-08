@@ -1125,7 +1125,7 @@ private:
     QString editAuthOauthToken_;
     QString editAuthOauthTokenSecret_;
     QString editAuthOauth2GrantType_{QStringLiteral("client_credentials")};
-    QString editAuthOauth2ClientAuth_{QStringLiteral("body")};
+    QString editAuthOauth2ClientAuth_{QStringLiteral("basic")};
     QString editAuthOauth2AuthUrl_;
     QString editAuthOauth2CallbackUrl_{QStringLiteral("http://127.0.0.1:8080/callback")};
     QString editAuthOauth2PkceMethod_{QStringLiteral("S256")};
