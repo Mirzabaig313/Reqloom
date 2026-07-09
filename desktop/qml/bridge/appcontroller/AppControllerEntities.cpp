@@ -277,19 +277,9 @@ void AppController::newActor() {
         emit notify(QStringLiteral("Open a project before creating an actor."), true);
         return;
     }
-    // Blank editable state; an empty selection tells the inline panel this is a
-    // new draft (it opens straight in edit mode).
-    prepareNewActor();
-    selectedActorId_.clear();
-    selectedActorName_.clear();
-    selectedActorDescription_.clear();
-    // Default to the flagship multi-step login chain (prepareNewActor already
-    // seeds one blank login step for it).
-    selectedActorStrategy_ = QStringLiteral("Multi-step login chain");
-    hasActor_ = true;
-    // The actor detail and the request editor share the centre pane.
-    closeOperation();
-    emit actorSelectionChanged();
+    // Open a fresh actor draft as its own tab (blank id → the inline panel
+    // opens straight in edit mode).
+    openActorTab(activeProject().rootPath(), QString{}, /*isNewDraft=*/true);
 }
 
 void AppController::requestActorEdit(const QString& projectRoot, const QString& actorId) {
@@ -300,7 +290,10 @@ void AppController::requestActorEdit(const QString& projectRoot, const QString& 
 }
 
 void AppController::cancelActorDraft() {
-    clearActorSelection();
+    // Cancelling a never-saved draft closes its tab.
+    if (tabModel()->valid(activeTabIndex())) {
+        closeTab(activeTabIndex());
+    }
 }
 
 bool AppController::saveActorInline(const QString& originalId,
@@ -390,6 +383,16 @@ bool AppController::saveActorInline(const QString& originalId,
     selectedActorId_ = savedName;
     selectedActorName_ = savedName;
     if (activeProject().saveActor(originalId, actor, error)) {
+        // Point the active actor tab at the saved id (a draft's blank id
+        // becomes the real name) so switching away/back finds it.
+        if (tabModel()->valid(activeTabIndex()) &&
+            tabModel()->stateAt(activeTabIndex()).kind == TabState::Kind::Actor) {
+            TabState& tab = tabModel()->stateAt(activeTabIndex());
+            tab.id = savedName;
+            tab.title = savedName;
+            tab.dirty = false;  // just saved — clear the unsaved dot
+            tabModel()->refreshRow(activeTabIndex());
+        }
         emit notify(QStringLiteral("Saved actor “%1”").arg(savedName), false);
         return true;
     }
@@ -629,9 +632,8 @@ void AppController::selectOperationById(const QString& operationId) {
     }
     const QString module = operationId.left(dot);
     const QString opName = operationId.mid(dot + 1);
-    if (selectedModule_ != module) {
-        selectModule(module);
-    }
+    // openOperationTab (via selectOperation) sets the module context itself;
+    // no separate selectModule (which would blank the active tab).
     selectOperation(module, opName);
 }
 

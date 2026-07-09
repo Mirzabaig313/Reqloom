@@ -266,6 +266,9 @@ AppController::AppController(QObject* parent)
     connect(&editDependencies_, &QAbstractItemModel::rowsRemoved, this, onDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::modelReset, this, onDepsChanged);
 
+    // Toggle the active tab's dirty dot as its edit mode opens/closes.
+    connect(this, &AppController::editingChanged, this, &AppController::updateActiveTabDirty);
+
     restoreOpenProjects();
     refreshHistory();
 }
@@ -477,6 +480,13 @@ void AppController::rebindActiveProject(bool repopulateTree) {
     // Point the run controller at the active project first — every run + cookie
     // query resolves against it.
     runController_->setProject(activeProject());
+
+    // Tabs belong to the active collection (v1); a project switch/close starts
+    // with a fresh, empty tab strip. The per-branch pane reset below clears the
+    // live hasOperation_/hasActor_ flags.
+    tabs_.clearAll();
+    activeTabIndex_ = -1;
+    emit activeTabChanged();
 
     // A read-only actor detail belongs to the previously-active collection.
     clearActorSelection();
@@ -897,7 +907,11 @@ void AppController::onSaved() {
         const auto& resources = activeProject().project().resources;
         const auto it = resources.find(engine::ResourceId{openModule.toStdString()});
         if (it != resources.end() && it->second.operations.contains(openOp.toStdString())) {
-            selectOperation(openModule, openOp);
+            // Reload the active tab's read fields in place (no new tab).
+            loadOperationReadState(openModule, openOp);
+            captureActiveTab();
+            emit operationChanged();
+            emit chainChanged();
         }
     }
 }
@@ -909,16 +923,9 @@ void AppController::selectActor(const QString& projectRoot, const QString& actor
     if (!activeProject().hasProject() || actorId.isEmpty()) {
         return;
     }
-    // Seed the actor accessors + extract/config models for the read-only view.
-    prepareEditActor(actorId);
-    selectedActorId_ = actorId;
-    selectedActorName_ = actorId;
-    selectedActorDescription_ = actorDescription(actorId);
-    selectedActorStrategy_ = actorAuthLabel(actorId);
-    hasActor_ = true;
-    // The actor detail and the request editor share the centre pane.
-    closeOperation();
-    emit actorSelectionChanged();
+    // Open (or focus) a tab for this actor; the per-tab buffer preserves its
+    // in-progress edits alongside any open endpoint tabs.
+    openActorTab(projectRoot, actorId, /*isNewDraft=*/false);
 }
 
 void AppController::clearActorSelection() {
@@ -947,74 +954,9 @@ void AppController::selectModule(const QString& moduleName) {
 }
 
 void AppController::selectOperation(const QString& moduleName, const QString& opName) {
-    clearActorSelection();
-    if (!activeProject().hasProject()) {
-        return;
-    }
-    const auto& resources = activeProject().project().resources;
-    const auto resIt = resources.find(engine::ResourceId{moduleName.toStdString()});
-    if (resIt == resources.end()) {
-        return;
-    }
-    const auto opIt = resIt->second.operations.find(opName.toStdString());
-    if (opIt == resIt->second.operations.end()) {
-        return;
-    }
-    const engine::Operation& op = opIt->second;
-
-    opName_ = opName;
-    opMethod_ = methodLabel(op.method);
-    opPath_ = QString::fromStdString(op.pathTemplate);
-    opActor_ = QString::fromStdString(op.actor.value);
-
-    if (op.bodyTemplate) {
-        opBody_ = QString::fromStdString(*op.bodyTemplate);
-    } else if (op.bodyForm) {
-        QString form;
-        for (const auto& [key, value] : *op.bodyForm) {
-            form += QString::fromStdString(key) + " = " + QString::fromStdString(value) + '\n';
-        }
-        opBody_ = form.trimmed();
-    } else {
-        opBody_.clear();
-    }
-
-    opHeaders_.reload(op.headers);
-    opQuery_.reload(op.queryParams);
-
-    std::vector<std::pair<QString, QString>> extractRows;
-    extractRows.reserve(op.extractions.size());
-    for (const auto& ext : op.extractions) {
-        extractRows.emplace_back(QString::fromStdString(ext.variableName),
-                                 QString::fromStdString(ext.sourcePath));
-    }
-    opExtractions_.reloadPairs(std::move(extractRows));
-
-    // Read-view assertions: key = label (name, or the expression when unnamed),
-    // value = the expression. Reuses the KeyValueList widget.
-    std::vector<std::pair<QString, QString>> assertRows;
-    assertRows.reserve(op.assertions.size());
-    for (const auto& a : op.assertions) {
-        const QString expr = QString::fromStdString(a.expr);
-        const QString label = a.name ? QString::fromStdString(*a.name) : expr;
-        assertRows.emplace_back(label, expr);
-    }
-    opAssertions_.reloadPairs(std::move(assertRows));
-
-    opDependencies_.clear();
-    for (const auto& dep : op.explicitDependencies) {
-        opDependencies_.append(QString::fromStdString(dep.value));
-    }
-
-    hasOperation_ = true;
-    if (editing_) {
-        editing_ = false;
-        emit editingChanged();
-    }
-    chainFieldsLoaded_ = false;
-    emit operationChanged();
-    emit chainChanged();
-    refreshOpenOpExamples();
+    // Open (or focus) a tab for this operation in the active collection. The
+    // per-tab buffer preserves each open endpoint's edit + response state.
+    openOperationTab(activeProject().rootPath(), moduleName, opName);
 }
 
 void AppController::closeOperation() {
@@ -1933,11 +1875,14 @@ void AppController::saveOperation() {
 
     QString error;
     if (activeProject().saveOperation(id, updated, error)) {
-        // saveOperation emits `saved` → onLoaded reset the selection; reopen
-        // the operation and leave Edit mode so the read preview reflects disk.
+        // The tab is already open; reload its read fields from the just-saved
+        // project and re-snapshot the tab (don't spawn a duplicate tab).
         editing_ = false;
+        loadOperationReadState(selectedModule_, opName_);
+        captureActiveTab();
         emit editingChanged();
-        selectOperationById(opId);
+        emit operationChanged();
+        emit chainChanged();
         emit notify(QStringLiteral("Saved “%1” to project").arg(opId), false);
     } else {
         emit notify(error, true);

@@ -43,11 +43,14 @@ qt_add_executable(reqloom-desktop
     qml/bridge/support/LayoutSolver.h
     qml/bridge/models/ExampleListModel.cpp
     qml/bridge/models/ExampleListModel.h
+    qml/bridge/models/TabModel.cpp
+    qml/bridge/models/TabModel.h
     qml/bridge/appcontroller/AppController.cpp
     qml/bridge/appcontroller/AppController.h
     qml/bridge/appcontroller/AppControllerInternal.h
     qml/bridge/appcontroller/AppControllerChain.cpp
     qml/bridge/appcontroller/AppControllerEntities.cpp
+    qml/bridge/appcontroller/AppControllerTabs.cpp
     src/application/ProjectModel.cpp
     src/application/ProjectModel.h
     src/application/WorkspaceModel.cpp
@@ -104,6 +107,7 @@ qt_add_qml_module(reqloom-desktop
         qml/views/NewModuleDialog.qml
         qml/views/NewEndpointDialog.qml
         qml/views/ActorDetail.qml
+        qml/views/EditorTabBar.qml
         qml/views/ManageEnvironmentDialog.qml
         qml/widgets/MethodBadge.qml
         qml/widgets/Card.qml

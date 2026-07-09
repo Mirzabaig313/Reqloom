@@ -15,6 +15,7 @@
 #include "ProjectTreeModel.h"
 #include "ResourceListModel.h"
 #include "ResponseBodyModel.h"
+#include "TabModel.h"
 #include "TimelineModel.h"
 #include "application/Bootstrapper.h"
 #include "application/EnvironmentSettings.h"
@@ -62,6 +63,13 @@ class AppController : public QObject {
     Q_PROPERTY(ResourceListModel* resources READ resources CONSTANT)
     Q_PROPERTY(OperationListModel* operations READ operations CONSTANT)
     Q_PROPERTY(QString selectedModule READ selectedModule NOTIFY selectionChanged)
+
+    // ── Open editor tabs (endpoints + actors) ────────────────────────────────
+    // The centre pane shows the active tab. Each tab keeps a full snapshot of
+    // its editor state; switching tabs swaps the single live models/scalars.
+    Q_PROPERTY(TabModel* tabModel READ tabModel CONSTANT)
+    Q_PROPERTY(int activeTabIndex READ activeTabIndex NOTIFY activeTabChanged)
+    Q_PROPERTY(int tabCount READ tabCount NOTIFY activeTabChanged)
 
     // Explorer tree (Actors + Resources → operations → examples) + its filter.
     Q_PROPERTY(QAbstractItemModel* explorerModel READ explorerModel CONSTANT)
@@ -295,6 +303,19 @@ public:
     [[nodiscard]] ResourceListModel* resources() { return &resources_; }
     [[nodiscard]] OperationListModel* operations() { return &operations_; }
     [[nodiscard]] QString selectedModule() const { return selectedModule_; }
+
+    // ── Tabs ─────────────────────────────────────────────────────────────
+    [[nodiscard]] TabModel* tabModel() { return &tabs_; }
+    [[nodiscard]] int activeTabIndex() const { return activeTabIndex_; }
+    [[nodiscard]] int tabCount() const { return tabs_.count(); }
+    /// Make the tab at `index` active: snapshot the current tab, then restore
+    /// the target tab's buffer into the live models/scalars.
+    Q_INVOKABLE void activateTab(int index);
+    /// Close the tab at `index`. Activates a neighbour (or clears the pane when
+    /// the last tab closes). Unsaved edits in the closed tab are discarded.
+    Q_INVOKABLE void closeTab(int index);
+    /// Close every tab except `index`.
+    Q_INVOKABLE void closeOtherTabs(int index);
 
     [[nodiscard]] QAbstractItemModel* explorerModel() { return &treeFilter_; }
     [[nodiscard]] int operationCount() const;
@@ -916,6 +937,9 @@ signals:
     /// Fired when the read-only actor detail selection changes (an actor was
     /// selected, or cleared because an operation/module was opened).
     void actorSelectionChanged();
+    /// Fired when the active tab changes or the tab set changes (open/close),
+    /// so the tab strip re-highlights and centre-pane visibility updates.
+    void activeTabChanged();
     /// Fired when the inline actor panel should switch into edit mode (a new
     /// draft, or an "Edit…" request from the explorer).
     void actorEditRequested();
@@ -986,6 +1010,46 @@ private:
     void selectFirstModule();
     /// Clear the read-only actor detail (an operation/module took the pane).
     void clearActorSelection();
+
+    // ── Tab state snapshot / restore (multi-tab editor) ──
+    /// Copy the live editor state into the active tab's buffer. No-op when
+    /// there's no active tab. Called before switching away from a tab and
+    /// right after loading a freshly-opened one.
+    void captureActiveTab();
+    /// Load the active tab's buffer into the live models/scalars and emit the
+    /// full set of change signals so QML rebinds. Re-derives an operation tab's
+    /// read fields from the project (they only change on save), then overlays
+    /// the tab's edit + response snapshot.
+    void restoreActiveTab();
+    /// Snapshot the live operation edit/response state into `tab` (read fields
+    /// are re-derived on restore, so they aren't captured).
+    void captureOperationInto(TabState& tab) const;
+    /// Snapshot the live actor edit state into `tab`.
+    void captureActorInto(TabState& tab) const;
+    /// Load an operation's read fields (method/path/headers/…) from the project
+    /// into the live op* state. Does not touch tabs, actor state, or emit —
+    /// callers orchestrate that. Returns false if the op no longer exists
+    /// (refresh callers may ignore the result and fire-and-continue).
+    bool loadOperationReadState(const QString& moduleName, const QString& opName);
+    /// Restore the live edit-mode scalars + models + response from `tab`.
+    void restoreOperationEditFrom(const TabState& tab);
+    /// Restore the live actor edit models + scalars from `tab`.
+    void restoreActorFrom(const TabState& tab);
+    /// Open (or focus) an operation tab for `module.opName` in `projectRoot`.
+    /// Snapshots the outgoing tab, loads the operation live, and appends +
+    /// activates a new tab when one isn't already open.
+    void openOperationTab(const QString& projectRoot,
+                          const QString& moduleName,
+                          const QString& opName);
+    /// Open (or focus) an actor tab. `isNewDraft` opens a fresh unsaved actor
+    /// (blank id) in edit mode; otherwise focuses/loads the saved actor.
+    void openActorTab(const QString& projectRoot, const QString& actorId, bool isNewDraft);
+    /// After activeTabIndex_ changed, sync hasOperation_/hasActor_ from the
+    /// active tab kind (or clear both when there are no tabs) and emit.
+    void syncActiveKindFlags();
+    /// Recompute the active tab's dirty flag (operation: in edit mode; actor:
+    /// unsaved draft) and refresh its strip row when it changed.
+    void updateActiveTabDirty();
     /// Make the collection with `projectRoot` active (no tree repopulate, no
     /// auto-select) so a subsequent select/run/context action targets it.
     /// Returns false if it couldn't switch (unknown root, or a run is running).
@@ -1067,6 +1131,8 @@ private:
     HistoryModel history_;
     ChainEditorModel chainEditor_;
     ExampleListModel exampleList_;
+    TabModel tabs_;
+    int activeTabIndex_{-1};
     KeyValueModel opHeaders_;
     KeyValueModel opQuery_;
     KeyValueModel opExtractions_;

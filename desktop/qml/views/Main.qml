@@ -221,6 +221,14 @@ ApplicationWindow {
         onActivated: commandPalette.open()
     }
     Shortcut {
+        sequence: "Ctrl+W"
+        onActivated: {
+            if (AppController.activeTabIndex >= 0) {
+                AppController.closeTab(AppController.activeTabIndex);
+            }
+        }
+    }
+    Shortcut {
         sequence: "Ctrl+Return"
         onActivated: {
             if (AppController.hasOperation) {
@@ -730,6 +738,16 @@ ApplicationWindow {
                 border.width: 1
                 border.color: DesignTokens.glassBorder
 
+                // Open-tabs strip (endpoints + actors). Hidden when nothing is
+                // open; the empty state / endpoint list show in that case.
+                EditorTabBar {
+                    id: editorTabs
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    visible: AppController.tabCount > 0
+                }
+
                 // Empty state when no project loaded.
                 EmptyState {
                     visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount === 0
@@ -833,17 +851,25 @@ ApplicationWindow {
                     }
                 }
 
-                // Request editor.
+                // Request editor (active tab is an operation). Sits below the
+                // tab strip.
                 RequestEditor {
-                    anchors.fill: parent
+                    anchors.top: editorTabs.bottom
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
                     anchors.margins: DesignTokens.spaceLg
                     visible: AppController.hasOperation
                 }
 
-                // Read-only actor detail (mutually exclusive with the editor;
-                // selectActor closes any open operation).
+                // Actor detail (active tab is an actor). Sits below the tab
+                // strip; the request editor and this are driven by the active
+                // tab's kind, so only one is visible at a time.
                 ActorDetail {
-                    anchors.fill: parent
+                    anchors.top: editorTabs.bottom
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
                     anchors.margins: DesignTokens.spaceLg
                     visible: AppController.hasActor
                 }
