@@ -493,7 +493,7 @@ Rectangle {
         }
         GlassMenuItem {
             text: qsTr("New Actor…")
-            onTriggered: actorDialog.openFor("")
+            onTriggered: AppController.newActor()
         }
     }
 
@@ -556,7 +556,7 @@ Rectangle {
         }
         GlassMenuItem {
             text: qsTr("New Actor…")
-            onTriggered: actorDialog.openFor("")
+            onTriggered: AppController.newActor()
         }
         MenuSeparator {}
         GlassMenuItem {
@@ -584,14 +584,14 @@ Rectangle {
         id: actorsRootMenu
         GlassMenuItem {
             text: qsTr("New Actor…")
-            onTriggered: actorDialog.openFor("")
+            onTriggered: AppController.newActor()
         }
     }
     GlassMenu {
         id: actorMenu
         GlassMenuItem {
             text: qsTr("Edit…")
-            onTriggered: actorDialog.openFor(panel.ctxActorId)
+            onTriggered: AppController.requestActorEdit(panel.ctxProjectRoot, panel.ctxActorId)
         }
         MenuSeparator {}
         GlassMenuItem {
@@ -606,9 +606,6 @@ Rectangle {
     }
     NewEndpointDialog {
         id: newEndpointDialog
-    }
-    ActorDialog {
-        id: actorDialog
     }
 
     Dialog {

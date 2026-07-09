@@ -7,6 +7,10 @@
 #include "../domain/Codecs.h"
 #include "../domain/VariableResolver.h"
 #include "../infrastructure/http/HttpClient.h"
+#include "../infrastructure/util/Crypto.h"
+
+#include <algorithm>
+#include <cctype>
 
 #include <reqloom/engine/Actor.h>
 #include <reqloom/engine/Events.h>
@@ -324,12 +328,19 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     std::string formBody,
     std::string_view strategyLabel,
     const TransportConfig& transport,
-    const AuthDependencies& deps) {
+    const AuthDependencies& deps,
+    const std::optional<std::string>& authorizationHeader = std::nullopt) {
     HttpRequest req;
     req.method = HttpMethod::Post;
     req.url = tokenUrl;
     req.headers["Content-Type"] = "application/x-www-form-urlencoded";
     req.headers["Accept"] = "application/json";
+    // Client Authentication = "Send as Basic Auth header": RFC 6749 §2.3.1
+    // permits the client credentials either in the body or as an HTTP Basic
+    // header. When the caller supplies the header, the body omits them.
+    if (authorizationHeader) {
+        req.headers["Authorization"] = *authorizationHeader;
+    }
     req.body = std::move(formBody);
     req.transport = transport;
 
@@ -497,28 +508,48 @@ public:
         if (!clientId) {
             return std::unexpected(clientId.error());
         }
-        const auto clientSecret =
-            resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
-        if (!clientSecret) {
-            return std::unexpected(clientSecret.error());
-        }
         const auto scope =
             resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "scope");
         if (!scope) {
             return std::unexpected(scope.error());
         }
 
-        // RFC 6749 §4.4.2.
-        std::string body =
-            "grant_type=client_credentials"
-            "&client_id=" +
-            urlEncode(*clientId) + "&client_secret=" + urlEncode(*clientSecret);
+        const auto clientAuth =
+            resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_auth");
+        if (!clientAuth) {
+            return std::unexpected(clientAuth.error());
+        }
+
+        // client_secret is required unless this is a public client
+        // (client_auth: none), per RFC 6749 §2.3.1 / §4.4.
+        std::string clientSecret;
+        if (*clientAuth != "none") {
+            auto cs = resolveAuthConfigField(
+                actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
+            if (!cs) {
+                return std::unexpected(cs.error());
+            }
+            clientSecret = *cs;
+        }
+
+        // RFC 6749 §4.4.2. Client credentials go in a Basic header, the body, or
+        // are omitted entirely for a public client, per `client_auth`.
+        std::string body = "grant_type=client_credentials";
+        std::optional<std::string> authHeader;
+        if (*clientAuth == "basic") {
+            authHeader = "Basic " + base64Encode(*clientId + ":" + clientSecret);
+        } else if (*clientAuth == "none") {
+            body += "&client_id=" + urlEncode(*clientId);
+        } else {
+            body +=
+                "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(clientSecret);
+        }
         if (!scope->empty()) {
             body += "&scope=" + urlEncode(*scope);
         }
 
         return executeOAuth2TokenRequest(
-            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_);
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_, authHeader);
     }
 
 private:
@@ -554,11 +585,6 @@ public:
         if (!clientId) {
             return std::unexpected(clientId.error());
         }
-        const auto clientSecret =
-            resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
-        if (!clientSecret) {
-            return std::unexpected(clientSecret.error());
-        }
         const auto username =
             resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "username");
         if (!username) {
@@ -575,18 +601,43 @@ public:
             return std::unexpected(scope.error());
         }
 
-        // RFC 6749 §4.3.2.
-        std::string body =
-            "grant_type=password"
-            "&username=" +
-            urlEncode(*username) + "&password=" + urlEncode(*password) +
-            "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(*clientSecret);
+        const auto clientAuth =
+            resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "client_auth");
+        if (!clientAuth) {
+            return std::unexpected(clientAuth.error());
+        }
+
+        // client_secret is required unless this is a public client
+        // (client_auth: none), per RFC 6749 §2.3.1 / §4.3.
+        std::string clientSecret;
+        if (*clientAuth != "none") {
+            auto cs = resolveAuthConfigField(
+                actor, ctx, rctx, *deps_.varResolver, kLabel, "client_secret");
+            if (!cs) {
+                return std::unexpected(cs.error());
+            }
+            clientSecret = *cs;
+        }
+
+        // RFC 6749 §4.3.2. Client credentials go in a Basic header, the body, or
+        // are omitted entirely for a public client, per `client_auth`.
+        std::string body = "grant_type=password&username=" + urlEncode(*username) +
+                           "&password=" + urlEncode(*password);
+        std::optional<std::string> authHeader;
+        if (*clientAuth == "basic") {
+            authHeader = "Basic " + base64Encode(*clientId + ":" + clientSecret);
+        } else if (*clientAuth == "none") {
+            body += "&client_id=" + urlEncode(*clientId);
+        } else {
+            body +=
+                "&client_id=" + urlEncode(*clientId) + "&client_secret=" + urlEncode(clientSecret);
+        }
         if (!scope->empty()) {
             body += "&scope=" + urlEncode(*scope);
         }
 
         return executeOAuth2TokenRequest(
-            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_);
+            *deps_.http, *tokenUrl, std::move(body), kLabel, rctx.transport, deps_, authHeader);
     }
 
 private:
@@ -738,6 +789,179 @@ private:
     AuthDependencies deps_;
 };
 
+// Implements AuthStrategy::Bearer. Pure compute — no HTTP call. Injects a
+// static `Authorization: Bearer <token>` on every operation the actor owns.
+// Reads `token` from authConfig (may contain {{X.y}}).
+class BearerAuthenticator final : public Authenticator {
+public:
+    explicit BearerAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
+
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
+        if (deps_.varResolver == nullptr) {
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "auth: bearer authenticator wired without "
+                                                "resolver"});
+        }
+        const auto token =
+            resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, "bearer", "token");
+        if (!token) {
+            return std::unexpected(token.error());
+        }
+        ActorSession session;
+        session.state = ActorSession::State::Authenticating;
+        session.variables["token"] = *token;
+        session.injectHeaders["Authorization"] = "Bearer " + *token;
+        return session;
+    }
+
+private:
+    AuthDependencies deps_;
+};
+
+// Implements AuthStrategy::Jwt. Pure compute — signs an HS256/HS512 JWT and
+// injects it as `Authorization: Bearer <jwt>`. Reads `secret` and `payload`
+// (a JSON claims object) from authConfig; `algorithm` is optional (default
+// HS256). Only HMAC variants are supported (crypto has no RS/ES).
+//
+// ponytail: the JWT is signed once at session creation, not per request — a
+// payload with time-based claims (exp/iat) is fixed for the session lifetime.
+// Upgrade path: re-sign per request (like the inline path) if actors need
+// short-lived per-request JWTs.
+class JwtAuthenticator final : public Authenticator {
+public:
+    explicit JwtAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
+
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
+        if (deps_.varResolver == nullptr) {
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "auth: jwt authenticator wired without resolver"});
+        }
+        const auto secret =
+            resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, "jwt", "secret");
+        if (!secret) {
+            return std::unexpected(secret.error());
+        }
+        const auto payload =
+            resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, "jwt", "payload");
+        if (!payload) {
+            return std::unexpected(payload.error());
+        }
+
+        std::string algo = actor.authConfig.contains("algorithm") ? actor.authConfig.at("algorithm")
+                                                                  : std::string{};
+        std::ranges::transform(
+            algo, algo.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        if (algo.empty()) {
+            algo = "HS256";
+        }
+        if (algo != "HS256" && algo != "HS512") {
+            return std::unexpected(
+                ReqloomError{ErrorCode::SessionRefreshFailed,
+                             ErrorClass::Auth,
+                             "auth: jwt.algorithm '" + algo +
+                                 "' unsupported (only HS256 and HS512 are supported)"});
+        }
+        const std::string claims = payload->empty() ? std::string{"{}"} : *payload;
+        const std::string jwt = algo == "HS512" ? crypto::jwtSignHs512(claims, *secret)
+                                                : crypto::jwtSignHs256(claims, *secret);
+        if (jwt.empty()) {
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "auth: jwt signing failed (empty secret or "
+                                                "crypto error)"});
+        }
+        ActorSession session;
+        session.state = ActorSession::State::Authenticating;
+        session.injectHeaders["Authorization"] = "Bearer " + jwt;
+        return session;
+    }
+
+private:
+    AuthDependencies deps_;
+};
+
+// Implements AuthStrategy::Mtls. Pure compute — resolves the client cert/key
+// paths and stashes them on the session's TransportConfig so the executor
+// presents them during the TLS handshake for every operation the actor owns.
+// Reads `cert_path` (required), `format` (pem|p12), `key_path` (PEM only),
+// `key_password`, and `ca_cert_path` from authConfig. Paths are variable-
+// resolved then handed to the HTTP client as-is (same trust model as a CA
+// bundle path — NOT sandboxed to the project root, since client certs commonly
+// live outside the repo).
+class MtlsAuthenticator final : public Authenticator {
+public:
+    explicit MtlsAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
+
+    std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
+                                                           RunContext& ctx,
+                                                           const ResolveContext& rctx) override {
+        if (deps_.varResolver == nullptr) {
+            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                ErrorClass::Auth,
+                                                "auth: mtls authenticator wired without resolver"});
+        }
+        constexpr std::string_view kLabel = "mtls";
+        const auto certPath =
+            resolveAuthConfigField(actor, ctx, rctx, *deps_.varResolver, kLabel, "cert_path");
+        if (!certPath) {
+            return std::unexpected(certPath.error());
+        }
+        const auto keyPath =
+            resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "key_path");
+        if (!keyPath) {
+            return std::unexpected(keyPath.error());
+        }
+        const auto keyPassword =
+            resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "key_password");
+        if (!keyPassword) {
+            return std::unexpected(keyPassword.error());
+        }
+        const auto caCertPath =
+            resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "ca_cert_path");
+        if (!caCertPath) {
+            return std::unexpected(caCertPath.error());
+        }
+
+        const bool p12 = [&]() {
+            std::string format =
+                actor.authConfig.contains("format") ? actor.authConfig.at("format") : std::string{};
+            std::ranges::transform(format, format.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            return format == "p12";
+        }();
+
+        TransportConfig transport;
+        transport.clientCertPath = *certPath;
+        if (p12) {
+            // PKCS#12 bundle: the key lives inside the cert; tell curl the type.
+            transport.clientCertType = "P12";
+        } else if (!keyPath->empty()) {
+            transport.clientKeyPath = *keyPath;
+        }
+        if (!keyPassword->empty()) {
+            transport.clientKeyPassword = *keyPassword;
+        }
+        if (!caCertPath->empty()) {
+            transport.caBundlePath = *caCertPath;
+        }
+
+        ActorSession session;
+        session.state = ActorSession::State::Authenticating;
+        session.transport = std::move(transport);
+        return session;
+    }
+
+private:
+    AuthDependencies deps_;
+};
+
 }  // namespace
 
 std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor, AuthDependencies deps) {
@@ -757,6 +981,12 @@ std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor, AuthDepen
             return std::make_unique<OAuth1Authenticator>(std::move(deps));
         case AuthStrategy::AwsSigV4:
             return std::make_unique<AwsSigV4Authenticator>(std::move(deps));
+        case AuthStrategy::Bearer:
+            return std::make_unique<BearerAuthenticator>(std::move(deps));
+        case AuthStrategy::Jwt:
+            return std::make_unique<JwtAuthenticator>(std::move(deps));
+        case AuthStrategy::Mtls:
+            return std::make_unique<MtlsAuthenticator>(std::move(deps));
     }
     return nullptr;
 }

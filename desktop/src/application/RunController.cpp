@@ -238,6 +238,9 @@ void applyOverrideToOperation(ce::Operation& op, const RequestOverride& ov) {
     // Actor: an empty selection clears it (the "(none)" combo entry).
     op.actor = ce::ActorId{ov.actor.toStdString()};
 
+    // Inline auth: full-assignment — nullopt clears any prior per-op auth.
+    op.inlineAuth = ov.inlineAuth;
+
     const auto codes = parseStatusList(ov.expectStatus);
     op.expectStatusList = codes;
     if (codes.empty()) {

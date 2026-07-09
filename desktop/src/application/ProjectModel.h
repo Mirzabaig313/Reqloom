@@ -87,6 +87,11 @@ public:
     [[nodiscard]] bool saveOperations(const std::map<std::string, engine::Operation>& updates,
                                       QString& error);
 
+    /// Set (nullopt clears) the project-wide default auth used by operations
+    /// whose inline auth type is `inherit`. Validates + persists; emits `saved`.
+    [[nodiscard]] bool saveProjectDefaultAuth(const std::optional<engine::InlineAuth>& defaultAuth,
+                                              QString& error);
+
     /// Rename operation `id` to `newName` (the part after the resource dot),
     /// persist the project, and rebind. Fails if the name is empty, malformed,
     /// or already used in the resource. Emits `saved` on success.

@@ -51,6 +51,32 @@ constexpr std::string_view provenanceSourceToString(Provenance::Source s) {
     return "hand_written";
 }
 
+constexpr std::string_view inlineAuthTypeToString(InlineAuthType t) {
+    switch (t) {
+        case InlineAuthType::None:
+            return "none";
+        case InlineAuthType::Bearer:
+            return "bearer";
+        case InlineAuthType::Basic:
+            return "basic";
+        case InlineAuthType::ApiKey:
+            return "apikey";
+        case InlineAuthType::AwsSigV4:
+            return "aws_sigv4";
+        case InlineAuthType::OAuth1:
+            return "oauth1";
+        case InlineAuthType::OAuth2:
+            return "oauth2";
+        case InlineAuthType::Jwt:
+            return "jwt";
+        case InlineAuthType::Mtls:
+            return "mtls";
+        case InlineAuthType::Inherit:
+            return "inherit";
+    }
+    return "none";
+}
+
 constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v) {
     switch (v) {
         case Provenance::VerifiedAgainst::None:
@@ -164,8 +190,19 @@ void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m
 // scalar on load. So emitting the stored body as a single scalar round-trips
 // exactly: yaml-cpp escapes it once for YAML, the parser unescapes it once, and
 // repeated saves are idempotent (this is what fixed the over-escaping bug).
+//
+// Multi-line bodies (typically imported JSON examples) are far more readable as
+// a YAML block literal than a single escaped double-quoted line. We only switch
+// to the block form when the content has no trailing newline, so yaml-cpp emits
+// the strip variant (`|-`) that round-trips the exact bytes and keeps repeated
+// saves idempotent; anything ending in a newline stays on the safe scalar path.
 void emitBodyTemplate(YAML::Emitter& e, const std::string& bodyTemplate) {
-    e << bodyTemplate;
+    if (bodyTemplate.find('\n') != std::string::npos && !bodyTemplate.empty() &&
+        bodyTemplate.back() != '\n') {
+        e << YAML::Literal << bodyTemplate;
+    } else {
+        e << bodyTemplate;
+    }
 }
 
 // String form of an extraction source for the explicit map form below.
@@ -261,12 +298,102 @@ void emitProvenance(YAML::Emitter& e, const Provenance& p) {
     e << YAML::EndMap;
 }
 
+// Emit an `auth:` map for an operation-level or project-level default auth.
+// Only the fields relevant to the type are written.
+void emitInlineAuth(YAML::Emitter& e, const InlineAuth& a) {
+    e << YAML::Key << "auth" << YAML::Value << YAML::BeginMap;
+    e << YAML::Key << "type" << YAML::Value << std::string{inlineAuthTypeToString(a.type)};
+    switch (a.type) {
+        case InlineAuthType::Bearer:
+            e << YAML::Key << "token" << YAML::Value << a.token;
+            break;
+        case InlineAuthType::Basic:
+            e << YAML::Key << "username" << YAML::Value << a.username;
+            e << YAML::Key << "password" << YAML::Value << a.password;
+            break;
+        case InlineAuthType::ApiKey:
+            e << YAML::Key << "key" << YAML::Value << a.apiKeyName;
+            e << YAML::Key << "value" << YAML::Value << a.apiKeyValue;
+            e << YAML::Key << "in" << YAML::Value
+              << std::string{a.apiKeyInQuery ? "query" : "header"};
+            break;
+        case InlineAuthType::AwsSigV4:
+            e << YAML::Key << "access_key" << YAML::Value << a.awsAccessKey;
+            e << YAML::Key << "secret_key" << YAML::Value << a.awsSecretKey;
+            e << YAML::Key << "region" << YAML::Value << a.awsRegion;
+            e << YAML::Key << "service" << YAML::Value << a.awsService;
+            if (!a.awsSessionToken.empty()) {
+                e << YAML::Key << "session_token" << YAML::Value << a.awsSessionToken;
+            }
+            break;
+        case InlineAuthType::OAuth1:
+            e << YAML::Key << "consumer_key" << YAML::Value << a.oauthConsumerKey;
+            e << YAML::Key << "consumer_secret" << YAML::Value << a.oauthConsumerSecret;
+            e << YAML::Key << "oauth_token" << YAML::Value << a.oauthToken;
+            e << YAML::Key << "token_secret" << YAML::Value << a.oauthTokenSecret;
+            break;
+        case InlineAuthType::OAuth2:
+            e << YAML::Key << "grant_type" << YAML::Value
+              << (a.oauth2GrantType.empty() ? std::string{"client_credentials"}
+                                            : a.oauth2GrantType);
+            e << YAML::Key << "token_url" << YAML::Value << a.oauth2TokenUrl;
+            e << YAML::Key << "client_id" << YAML::Value << a.oauth2ClientId;
+            e << YAML::Key << "client_secret" << YAML::Value << a.oauth2ClientSecret;
+            if (a.oauth2GrantType == "password") {
+                e << YAML::Key << "username" << YAML::Value << a.username;
+                e << YAML::Key << "password" << YAML::Value << a.password;
+            }
+            if (a.oauth2GrantType == "authorization_code") {
+                e << YAML::Key << "auth_url" << YAML::Value << a.oauth2AuthUrl;
+                e << YAML::Key << "callback_url" << YAML::Value << a.oauth2CallbackUrl;
+                if (!a.oauth2PkceMethod.empty()) {
+                    e << YAML::Key << "pkce_method" << YAML::Value << a.oauth2PkceMethod;
+                }
+                // oauth2AccessToken is deliberately not emitted — ephemeral secret.
+            }
+            if (!a.oauth2Scope.empty()) {
+                e << YAML::Key << "scope" << YAML::Value << a.oauth2Scope;
+            }
+            if (!a.oauth2ClientAuth.empty()) {
+                e << YAML::Key << "client_auth" << YAML::Value << a.oauth2ClientAuth;
+            }
+            break;
+        case InlineAuthType::Jwt:
+            e << YAML::Key << "algorithm" << YAML::Value
+              << (a.jwtAlgorithm.empty() ? std::string{"HS256"} : a.jwtAlgorithm);
+            e << YAML::Key << "secret" << YAML::Value << a.jwtSecret;
+            e << YAML::Key << "payload" << YAML::Value << a.jwtPayload;
+            break;
+        case InlineAuthType::Mtls:
+            e << YAML::Key << "format" << YAML::Value
+              << (a.mtlsFormat.empty() ? std::string{"pem"} : a.mtlsFormat);
+            e << YAML::Key << "cert" << YAML::Value << a.mtlsCertPath;
+            if (a.mtlsFormat != "p12") {
+                e << YAML::Key << "key_file" << YAML::Value << a.mtlsKeyPath;
+            }
+            if (!a.mtlsKeyPassword.empty()) {
+                e << YAML::Key << "key_password" << YAML::Value << a.mtlsKeyPassword;
+            }
+            if (!a.mtlsCaCertPath.empty()) {
+                e << YAML::Key << "ca_cert" << YAML::Value << a.mtlsCaCertPath;
+            }
+            break;
+        case InlineAuthType::Inherit:
+        case InlineAuthType::None:
+            break;
+    }
+    e << YAML::EndMap;
+}
+
 void emitOperation(YAML::Emitter& e, const Operation& op) {
     e << YAML::BeginMap;
     e << YAML::Key << "method" << YAML::Value << std::string{methodToString(op.method)};
     e << YAML::Key << "path" << YAML::Value << op.pathTemplate;
     if (!op.actor.value.empty()) {
         e << YAML::Key << "actor" << YAML::Value << op.actor.value;
+    }
+    if (op.inlineAuth && op.inlineAuth->type != InlineAuthType::None) {
+        emitInlineAuth(e, *op.inlineAuth);
     }
     if (!op.headers.empty()) {
         e << YAML::Key << "headers" << YAML::Value;
@@ -472,6 +599,26 @@ std::string emitActor(const Actor& actor) {
                 e << YAML::Key << field << YAML::Value << it->second;
             }
         }
+    } else if (actor.strategy == AuthStrategy::Bearer) {
+        e << YAML::Key << "strategy" << YAML::Value << "bearer";
+        if (auto it = actor.authConfig.find("token"); it != actor.authConfig.end()) {
+            e << YAML::Key << "token" << YAML::Value << it->second;
+        }
+    } else if (actor.strategy == AuthStrategy::Jwt) {
+        e << YAML::Key << "strategy" << YAML::Value << "jwt";
+        for (const auto* field : {"algorithm", "secret", "payload"}) {
+            if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
+                e << YAML::Key << field << YAML::Value << it->second;
+            }
+        }
+    } else if (actor.strategy == AuthStrategy::Mtls) {
+        e << YAML::Key << "strategy" << YAML::Value << "mtls";
+        for (const auto* field :
+             {"format", "cert_path", "key_path", "key_password", "ca_cert_path"}) {
+            if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
+                e << YAML::Key << field << YAML::Value << it->second;
+            }
+        }
     } else {
         e << YAML::Key << "strategy" << YAML::Value << "simple";
         if (!actor.authSteps.empty()) {
@@ -565,6 +712,10 @@ std::string emitRoot(const Project& project) {
     if (project.latencySloP95Ms > 0) {
         e << YAML::Key << "latency_slo" << YAML::Value << YAML::BeginMap << YAML::Key << "p95_ms"
           << YAML::Value << project.latencySloP95Ms << YAML::EndMap;
+    }
+    if (project.defaultAuth && project.defaultAuth->type != InlineAuthType::None &&
+        project.defaultAuth->type != InlineAuthType::Inherit) {
+        emitInlineAuth(e, *project.defaultAuth);
     }
     e << YAML::Key << "imports" << YAML::Value << YAML::BeginSeq << "actors/*.yaml"
       << "resources/*.yaml"

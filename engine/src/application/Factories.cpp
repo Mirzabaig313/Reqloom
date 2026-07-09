@@ -29,7 +29,11 @@
 #include "../infrastructure/storage/SqliteHistoryStore.h"
 #include "../infrastructure/typings/StaticHookTypingsEmitter.h"
 
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -252,6 +256,120 @@ namespace {
     return haystack.find(needle) != std::string::npos;
 }
 
+/// Read a whole file for the structural-detection fallback, bounded to 32 MiB
+/// (the largest importer size cap). Empty on error or oversize.
+[[nodiscard]] std::string readAll(const std::filesystem::path& path) {
+    std::error_code ec;
+    if (const auto size = std::filesystem::file_size(path, ec);
+        ec || size > std::uintmax_t{32} * 1024 * 1024) {
+        return {};
+    }
+    std::ifstream in{path, std::ios::binary};
+    if (!in) {
+        return {};
+    }
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+/// True only when the head has an HTTPie meta marker: a `"format"` key whose
+/// string value is `httpie` (whitespace-tolerant). A bare `contains("httpie")`
+/// false-positives on any file that merely mentions httpie (a description, a
+/// URL, or HTTPie's own JSON *schema* file), misrouting it to the HTTPie
+/// importer where it hard-fails instead of falling through.
+[[nodiscard]] bool metaFormatIsHttpie(const std::string& head) {
+    constexpr std::string_view key = "\"format\"";
+    const auto isSpace = [](char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    };
+    std::size_t pos = 0;
+    while ((pos = head.find(key, pos)) != std::string::npos) {
+        std::size_t i = pos + key.size();
+        while (i < head.size() && isSpace(head[i])) {
+            ++i;
+        }
+        if (i < head.size() && head[i] == ':') {
+            ++i;
+            while (i < head.size() && isSpace(head[i])) {
+                ++i;
+            }
+            if (head.compare(i, 8, "\"httpie\"") == 0) {
+                return true;
+            }
+        }
+        pos += key.size();
+    }
+    return false;
+}
+
+using ImportFn = std::expected<OpenApiImportOutcome, ReqloomError> (*)(
+    const std::filesystem::path&, const std::filesystem::path&);
+
+/// True if `node` (or a nested folder) has a `requests[]` entry carrying `key`.
+/// Depth-bounded so a pathological tree can't blow the stack.
+[[nodiscard]] bool requestHasKey(const nlohmann::json& node, std::string_view key, int depth) {
+    if (depth > 32 || !node.is_object()) {
+        return false;
+    }
+    if (const auto it = node.find("requests"); it != node.end() && it->is_array()) {
+        for (const auto& r : *it) {
+            if (r.is_object() && r.contains(key)) {
+                return true;
+            }
+        }
+    }
+    if (const auto it = node.find("folders"); it != node.end() && it->is_array()) {
+        for (const auto& f : *it) {
+            if (requestHasKey(f, key, depth + 1)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/// Pick an importer from a parsed JSON document by its actual structure (not
+/// substrings anywhere), so a supported collection is detected even when its
+/// marker sits past the fast head-sniff window. Returns nullptr for
+/// OpenAPI/Swagger (or anything unrecognised) so the caller falls through.
+[[nodiscard]] ImportFn detectJsonImporter(const nlohmann::json& d) {
+    const bool obj = d.is_object();
+    if (obj && d.contains("meta") && d["meta"].is_object() &&
+        d["meta"].value("format", std::string{}) == "httpie") {
+        return &importFromHttpie;
+    }
+    if (obj && d.contains("apidogProject")) {
+        return &importFromApidog;
+    }
+    if (obj && d.contains("info") && d.contains("item") && d["item"].is_array()) {
+        return &importFromPostman;
+    }
+    if (obj && d.contains("__export_format") && d.contains("resources") &&
+        d["resources"].is_array()) {
+        return &importFromInsomnia;
+    }
+    if (obj && d.contains("colName")) {
+        return &importFromThunderClient;
+    }
+    if (d.is_array() && !d.empty() && d.front().is_object()) {
+        const auto& e = d.front();
+        if (e.contains("colName") || requestHasKey(e, "containerId", 0)) {
+            return &importFromThunderClient;
+        }
+        if (requestHasKey(e, "endpoint", 0) || e.contains("requests") || e.contains("folders")) {
+            return &importFromHoppscotch;
+        }
+    }
+    if (obj && (d.contains("folders") || d.contains("requests"))) {
+        if (requestHasKey(d, "containerId", 0)) {
+            return &importFromThunderClient;
+        }
+        return &importFromHoppscotch;
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 std::expected<OpenApiImportOutcome, ReqloomError> importAny(
@@ -275,8 +393,9 @@ std::expected<OpenApiImportOutcome, ReqloomError> importAny(
     }
 
     const std::string head = readHead(spec);
-    // HTTPie export ({"meta":{"format":"httpie",...}}).
-    if (contains(head, "\"httpie\"")) {
+    // HTTPie export ({"meta":{"format":"httpie",...}}). Match the exact
+    // meta.format marker, not a bare "httpie" mention.
+    if (metaFormatIsHttpie(head)) {
         return importFromHttpie(spec, projectRoot);
     }
     // Apidog native export.
@@ -299,6 +418,36 @@ std::expected<OpenApiImportOutcome, ReqloomError> importAny(
     // Hoppscotch collection export (requests carry an `endpoint` field).
     if (contains(head, "\"endpoint\"")) {
         return importFromHoppscotch(spec, projectRoot);
+    }
+    // The fast head-sniff missed. A supported JSON collection whose marker sat
+    // past the sniff window still gets detected here by parsing the file and
+    // dispatching on its actual top-level structure.
+    if (const std::string full = readAll(spec); !full.empty()) {
+        nlohmann::json doc;
+        bool parsed = false;
+        try {
+            doc = nlohmann::json::parse(full);
+            parsed = true;
+        } catch (const nlohmann::json::parse_error&) {
+            parsed = false;  // not JSON (e.g. a YAML OpenAPI spec) → fall through
+        }
+        if (parsed) {
+            if (const ImportFn fn = detectJsonImporter(doc); fn != nullptr) {
+                return fn(spec, projectRoot);
+            }
+            // A JSON Schema document describes a format; it isn't an export.
+            // Say so plainly rather than falling through to a cryptic
+            // "not OpenAPI" error (users mistake schema files for exports).
+            if (doc.is_object() && doc.contains("$schema") && doc["$schema"].is_string() &&
+                doc["$schema"].get<std::string>().find("json-schema.org") != std::string::npos) {
+                return std::unexpected(ReqloomError{
+                    ErrorCode::SchemaInvalid,
+                    ErrorClass::Schema,
+                    "import: this is a JSON Schema document (it defines a format), not an API "
+                    "export. Export your collection from the tool (Postman, HTTPie, Insomnia, "
+                    "etc.) and import that file instead."});
+            }
+        }
     }
     // Default: OpenAPI (its own error surfaces for unrecognised input).
     return importFromOpenApi(spec, projectRoot);

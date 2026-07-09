@@ -20,6 +20,9 @@ namespace reqloom::engine {
 ///   - `oauth2_password`:              RFC 6749 §4.3 resource owner password grant
 ///   - `oauth1`:                       RFC 5849 HMAC-SHA1, signed per-request
 ///   - `aws_sigv4`:                    AWS Signature Version 4, signed per-request
+///   - `bearer`:                       static `Authorization: Bearer <token>`
+///   - `jwt`:                          self-signed JWT (HS256/HS512) as a Bearer
+///   - `mtls`:                         mutual TLS client cert/key (transport)
 enum class AuthStrategy : std::uint8_t {
     Simple,
     Chain,
@@ -29,6 +32,9 @@ enum class AuthStrategy : std::uint8_t {
     OAuth2Password,
     OAuth1,
     AwsSigV4,
+    Bearer,
+    Jwt,
+    Mtls,
 };
 
 /// One step in an actor's auth chain.

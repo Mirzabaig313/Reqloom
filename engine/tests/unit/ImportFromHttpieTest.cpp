@@ -152,6 +152,46 @@ TEST(ImportFromHttpie, importAny_routes_httpie_export) {
     EXPECT_TRUE(outcome->project.resources.contains(ce::ResourceId{"orders"}));
 }
 
+TEST(ImportFromHttpie, importAny_does_not_misroute_files_merely_mentioning_httpie) {
+    ScratchDir scratch;
+    // An OpenAPI doc whose description mentions "httpie" must NOT route to the
+    // HTTPie importer (regression: the sniff used to match a bare "httpie").
+    const auto file = scratch.write("openapi.yaml", R"YAML(
+openapi: "3.0.3"
+info:
+  title: Ping API
+  description: Try it with httpie or curl.
+paths:
+  /ping:
+    get:
+      responses:
+        "200": { description: ok }
+)YAML");
+
+    auto outcome = ce::importAny(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    EXPECT_EQ(outcome->project.name, "Ping API");
+    ASSERT_TRUE(outcome->project.resources.contains(ce::ResourceId{"ping"}));
+}
+
+TEST(ImportFromHttpie, importAny_reports_json_schema_files_clearly) {
+    ScratchDir scratch;
+    // A JSON Schema document (defines a format) is not an export — importAny
+    // should say so instead of a cryptic "not OpenAPI" error.
+    const auto file = scratch.write("httpie_schema.json", R"JSON(
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HTTPie Export Format",
+  "type": "object",
+  "definitions": { "HTTPieMeta": { "properties": { "format": { "const": "httpie" } } } }
+}
+)JSON");
+
+    auto outcome = ce::importAny(file, scratch.path());
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_NE(outcome.error().detail.find("JSON Schema document"), std::string::npos);
+}
+
 TEST(ImportFromHttpie, rejects_traversal_outside_project_root) {
     ScratchDir scratch;
     const auto outside = scratch.path().parent_path() / "reqloom-httpie-escape.json";

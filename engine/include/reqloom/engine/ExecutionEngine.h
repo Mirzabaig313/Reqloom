@@ -48,6 +48,12 @@ struct RunResult {
 struct Project {
     std::string name;
     std::string defaultEnvironment;
+
+    /// Project-wide default auth. Operations whose inline auth is
+    /// `InlineAuthType::Inherit` resolve to this (the "inherit from parent"
+    /// behavior). Empty means those operations run with no auth.
+    std::optional<InlineAuth> defaultAuth;
+
     std::map<ActorId, Actor> actors;
     std::map<ResourceId, Resource> resources;
     std::map<std::string, std::map<std::string, std::string>> environments;

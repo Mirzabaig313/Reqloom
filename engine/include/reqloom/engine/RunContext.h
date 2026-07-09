@@ -5,6 +5,7 @@
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/Events.h>
 #include <reqloom/engine/Operation.h>
+#include <reqloom/engine/Transport.h>
 
 #include <chrono>
 #include <cstdint>
@@ -40,6 +41,12 @@ struct ActorSession {
     /// When non-`None`, the executor calls the matching signer (e.g.
     /// `signOAuth1Request`) after inject merging but before `HttpClient::send`.
     SigningScheme signingScheme{SigningScheme::None};
+
+    /// Transport-level auth (mTLS): client cert/key/CA the actor presents on
+    /// every operation it owns. Set by the mTLS authenticator; the executor
+    /// overlays the non-empty fields onto each request's transport (composing
+    /// with, not replacing, the environment transport).
+    std::optional<TransportConfig> transport;
 
     std::chrono::steady_clock::time_point expiresAt;
 };

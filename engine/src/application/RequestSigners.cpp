@@ -386,6 +386,13 @@ bool signSigV4Request(HttpRequest& req,
     // partial failure leaves the request untouched.
     std::map<std::string, std::string> stagedHeaders = req.headers;
 
+    // Authorization is the signer's OUTPUT, never a signed header. Drop any
+    // value a prior signing attempt (e.g. a retried request) left behind, so
+    // re-signing the same request is idempotent instead of folding the stale
+    // Authorization into SignedHeaders and producing a rejected signature.
+    std::erase_if(stagedHeaders,
+                  [](const auto& kv) { return toLowerAscii(kv.first) == "authorization"; });
+
     // 1. Timestamp + date scope
     std::string amzDate;
     if (overrides.amzDate) {

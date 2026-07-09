@@ -3,6 +3,7 @@
 
 #include "ThemeController.h"
 #include "application/EnvironmentSettings.h"
+#include "application/OAuth2AuthCodeFlow.h"
 #include "application/ProjectModel.h"
 #include "application/WorkspaceModel.h"
 #include "views/Formatting.h"
@@ -17,6 +18,7 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QCryptographicHash>
 #include <QtCore/QDir>
@@ -30,6 +32,7 @@
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include <QtWidgets/QDialog>
+#include <QtWidgets/QFileDialog>
 
 #include <algorithm>
 #include <filesystem>
@@ -1089,6 +1092,11 @@ void AppController::setEditActor(const QString& actor) {
         return;
     }
     editActor_ = actor;
+    // Actor and inline auth are mutually exclusive — selecting an actor drops
+    // the inline type (fields kept, ignored while type is "none").
+    if (!editActor_.isEmpty()) {
+        editAuthType_ = QStringLiteral("none");
+    }
     emit editChanged();
 }
 
@@ -1197,6 +1205,364 @@ void AppController::setManagedContentType(const QString& desired) {
     editHeaders_.setPairs(std::move(pairs));
 }
 
+namespace {
+// Map between the InlineAuthType enum and the QML-facing type string.
+[[nodiscard]] QString inlineAuthTypeToQString(engine::InlineAuthType type) {
+    switch (type) {
+        case engine::InlineAuthType::Bearer:
+            return QStringLiteral("bearer");
+        case engine::InlineAuthType::Basic:
+            return QStringLiteral("basic");
+        case engine::InlineAuthType::ApiKey:
+            return QStringLiteral("apikey");
+        case engine::InlineAuthType::AwsSigV4:
+            return QStringLiteral("aws_sigv4");
+        case engine::InlineAuthType::OAuth1:
+            return QStringLiteral("oauth1");
+        case engine::InlineAuthType::OAuth2:
+            return QStringLiteral("oauth2");
+        case engine::InlineAuthType::Jwt:
+            return QStringLiteral("jwt");
+        case engine::InlineAuthType::Mtls:
+            return QStringLiteral("mtls");
+        case engine::InlineAuthType::Inherit:
+            return QStringLiteral("inherit");
+        case engine::InlineAuthType::None:
+            break;
+    }
+    return QStringLiteral("none");
+}
+
+[[nodiscard]] engine::InlineAuthType inlineAuthTypeFromQString(const QString& type) {
+    if (type == QStringLiteral("bearer")) {
+        return engine::InlineAuthType::Bearer;
+    }
+    if (type == QStringLiteral("basic")) {
+        return engine::InlineAuthType::Basic;
+    }
+    if (type == QStringLiteral("apikey")) {
+        return engine::InlineAuthType::ApiKey;
+    }
+    if (type == QStringLiteral("aws_sigv4")) {
+        return engine::InlineAuthType::AwsSigV4;
+    }
+    if (type == QStringLiteral("oauth1")) {
+        return engine::InlineAuthType::OAuth1;
+    }
+    if (type == QStringLiteral("oauth2")) {
+        return engine::InlineAuthType::OAuth2;
+    }
+    if (type == QStringLiteral("jwt")) {
+        return engine::InlineAuthType::Jwt;
+    }
+    if (type == QStringLiteral("mtls")) {
+        return engine::InlineAuthType::Mtls;
+    }
+    if (type == QStringLiteral("inherit")) {
+        return engine::InlineAuthType::Inherit;
+    }
+    return engine::InlineAuthType::None;
+}
+}  // namespace
+
+void AppController::setEditAuthType(const QString& type) {
+    if (editAuthType_ == type) {
+        return;
+    }
+    editAuthType_ = type;
+    // Mutually exclusive with actor — selecting a real inline type clears the
+    // actor so the two can never both be active.
+    if (editAuthType_ != QStringLiteral("none")) {
+        editActor_.clear();
+    }
+    emit editChanged();
+}
+
+void AppController::setEditAuthToken(const QString& token) {
+    if (editAuthToken_ == token) {
+        return;
+    }
+    editAuthToken_ = token;
+    emit editChanged();
+}
+
+void AppController::setEditAuthUsername(const QString& username) {
+    if (editAuthUsername_ == username) {
+        return;
+    }
+    editAuthUsername_ = username;
+    emit editChanged();
+}
+
+void AppController::setEditAuthPassword(const QString& password) {
+    if (editAuthPassword_ == password) {
+        return;
+    }
+    editAuthPassword_ = password;
+    emit editChanged();
+}
+
+void AppController::setEditAuthApiKeyName(const QString& name) {
+    if (editAuthApiKeyName_ == name) {
+        return;
+    }
+    editAuthApiKeyName_ = name;
+    emit editChanged();
+}
+
+void AppController::setEditAuthApiKeyValue(const QString& value) {
+    if (editAuthApiKeyValue_ == value) {
+        return;
+    }
+    editAuthApiKeyValue_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthApiKeyInQuery(bool inQuery) {
+    if (editAuthApiKeyInQuery_ == inQuery) {
+        return;
+    }
+    editAuthApiKeyInQuery_ = inQuery;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsAccessKey(const QString& value) {
+    if (editAuthAwsAccessKey_ == value) {
+        return;
+    }
+    editAuthAwsAccessKey_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsSecretKey(const QString& value) {
+    if (editAuthAwsSecretKey_ == value) {
+        return;
+    }
+    editAuthAwsSecretKey_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsRegion(const QString& value) {
+    if (editAuthAwsRegion_ == value) {
+        return;
+    }
+    editAuthAwsRegion_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsService(const QString& value) {
+    if (editAuthAwsService_ == value) {
+        return;
+    }
+    editAuthAwsService_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthAwsSessionToken(const QString& value) {
+    if (editAuthAwsSessionToken_ == value) {
+        return;
+    }
+    editAuthAwsSessionToken_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauthConsumerKey(const QString& value) {
+    if (editAuthOauthConsumerKey_ == value) {
+        return;
+    }
+    editAuthOauthConsumerKey_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauthConsumerSecret(const QString& value) {
+    if (editAuthOauthConsumerSecret_ == value) {
+        return;
+    }
+    editAuthOauthConsumerSecret_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauthToken(const QString& value) {
+    if (editAuthOauthToken_ == value) {
+        return;
+    }
+    editAuthOauthToken_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauthTokenSecret(const QString& value) {
+    if (editAuthOauthTokenSecret_ == value) {
+        return;
+    }
+    editAuthOauthTokenSecret_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2GrantType(const QString& value) {
+    if (editAuthOauth2GrantType_ == value) {
+        return;
+    }
+    editAuthOauth2GrantType_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2ClientAuth(const QString& value) {
+    if (editAuthOauth2ClientAuth_ == value) {
+        return;
+    }
+    editAuthOauth2ClientAuth_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2TokenUrl(const QString& value) {
+    if (editAuthOauth2TokenUrl_ == value) {
+        return;
+    }
+    editAuthOauth2TokenUrl_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2AuthUrl(const QString& value) {
+    if (editAuthOauth2AuthUrl_ == value) {
+        return;
+    }
+    editAuthOauth2AuthUrl_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2CallbackUrl(const QString& value) {
+    if (editAuthOauth2CallbackUrl_ == value) {
+        return;
+    }
+    editAuthOauth2CallbackUrl_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2PkceMethod(const QString& value) {
+    if (editAuthOauth2PkceMethod_ == value) {
+        return;
+    }
+    editAuthOauth2PkceMethod_ = value;
+    emit editChanged();
+}
+
+void AppController::oauth2GetNewToken() {
+    OAuth2AuthCodeFlow::Config config;
+    config.authUrl = editAuthOauth2AuthUrl_;
+    config.tokenUrl = editAuthOauth2TokenUrl_;
+    config.clientId = editAuthOauth2ClientId_;
+    config.clientSecret = editAuthOauth2ClientSecret_;
+    config.scope = editAuthOauth2Scope_;
+    config.callbackUrl = editAuthOauth2CallbackUrl_;
+    config.clientAuth = editAuthOauth2ClientAuth_;
+    config.pkceMethod = editAuthOauth2PkceMethod_;
+
+    // One flow at a time; a fresh click supersedes any in-flight attempt.
+    oauthFlow_ = std::make_unique<OAuth2AuthCodeFlow>();
+    connect(oauthFlow_.get(), &OAuth2AuthCodeFlow::succeeded, this, [this](const QString& token) {
+        editAuthOauth2AccessToken_ = token;
+        emit editChanged();
+        emit notify(QStringLiteral("Access token acquired"), false);
+    });
+    connect(oauthFlow_.get(), &OAuth2AuthCodeFlow::failed, this, [this](const QString& error) {
+        emit notify(QStringLiteral("OAuth2 authorization failed: %1").arg(error), true);
+    });
+    emit notify(QStringLiteral("Opening browser to authorize…"), false);
+    oauthFlow_->start(config);
+}
+
+void AppController::setEditAuthOauth2ClientId(const QString& value) {
+    if (editAuthOauth2ClientId_ == value) {
+        return;
+    }
+    editAuthOauth2ClientId_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2ClientSecret(const QString& value) {
+    if (editAuthOauth2ClientSecret_ == value) {
+        return;
+    }
+    editAuthOauth2ClientSecret_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthOauth2Scope(const QString& value) {
+    if (editAuthOauth2Scope_ == value) {
+        return;
+    }
+    editAuthOauth2Scope_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthJwtAlgorithm(const QString& value) {
+    if (editAuthJwtAlgorithm_ == value) {
+        return;
+    }
+    editAuthJwtAlgorithm_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthJwtSecret(const QString& value) {
+    if (editAuthJwtSecret_ == value) {
+        return;
+    }
+    editAuthJwtSecret_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthJwtPayload(const QString& value) {
+    if (editAuthJwtPayload_ == value) {
+        return;
+    }
+    editAuthJwtPayload_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthMtlsCertPath(const QString& value) {
+    if (editAuthMtlsCertPath_ == value) {
+        return;
+    }
+    editAuthMtlsCertPath_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthMtlsKeyPath(const QString& value) {
+    if (editAuthMtlsKeyPath_ == value) {
+        return;
+    }
+    editAuthMtlsKeyPath_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthMtlsKeyPassword(const QString& value) {
+    if (editAuthMtlsKeyPassword_ == value) {
+        return;
+    }
+    editAuthMtlsKeyPassword_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthMtlsFormat(const QString& value) {
+    if (editAuthMtlsFormat_ == value) {
+        return;
+    }
+    editAuthMtlsFormat_ = value;
+    emit editChanged();
+}
+
+void AppController::setEditAuthMtlsCaCertPath(const QString& value) {
+    if (editAuthMtlsCaCertPath_ == value) {
+        return;
+    }
+    editAuthMtlsCaCertPath_ = value;
+    emit editChanged();
+}
+
+QString AppController::pickFile(const QString& title, const QString& nameFilter) const {
+    return QFileDialog::getOpenFileName(nullptr, title, QString{}, nameFilter);
+}
+
 void AppController::beginEdit() {
     if (!hasOperation_ || !activeProject().hasProject()) {
         return;
@@ -1212,6 +1578,99 @@ void AppController::beginEdit() {
     editMethod_ = methodLabel(op->method);
     editPath_ = QString::fromStdString(op->pathTemplate);
     editActor_ = QString::fromStdString(op->actor.value);
+
+    // Inline (actor-less) auth: seed from the op, or reset to "none".
+    if (op->inlineAuth) {
+        const auto& a = *op->inlineAuth;
+        editAuthType_ = inlineAuthTypeToQString(a.type);
+        editAuthToken_ = QString::fromStdString(a.token);
+        editAuthUsername_ = QString::fromStdString(a.username);
+        editAuthPassword_ = QString::fromStdString(a.password);
+        editAuthApiKeyName_ = QString::fromStdString(a.apiKeyName);
+        editAuthApiKeyValue_ = QString::fromStdString(a.apiKeyValue);
+        editAuthApiKeyInQuery_ = a.apiKeyInQuery;
+        editAuthAwsAccessKey_ = QString::fromStdString(a.awsAccessKey);
+        editAuthAwsSecretKey_ = QString::fromStdString(a.awsSecretKey);
+        editAuthAwsRegion_ = QString::fromStdString(a.awsRegion);
+        editAuthAwsService_ = QString::fromStdString(a.awsService);
+        editAuthAwsSessionToken_ = QString::fromStdString(a.awsSessionToken);
+        editAuthOauthConsumerKey_ = QString::fromStdString(a.oauthConsumerKey);
+        editAuthOauthConsumerSecret_ = QString::fromStdString(a.oauthConsumerSecret);
+        editAuthOauthToken_ = QString::fromStdString(a.oauthToken);
+        editAuthOauthTokenSecret_ = QString::fromStdString(a.oauthTokenSecret);
+        // Clamp to the known options so the combo and the stored value never
+        // diverge (an unknown value from hand-edited YAML falls back to default,
+        // which is also how the engine interprets it).
+        editAuthOauth2GrantType_ = a.oauth2GrantType == "password"
+                                       ? QStringLiteral("password")
+                                       : QStringLiteral("client_credentials");
+        editAuthOauth2ClientAuth_ = a.oauth2ClientAuth == "basic"  ? QStringLiteral("basic")
+                                    : a.oauth2ClientAuth == "none" ? QStringLiteral("none")
+                                                                   : QStringLiteral("body");
+        editAuthOauth2TokenUrl_ = QString::fromStdString(a.oauth2TokenUrl);
+        editAuthOauth2ClientId_ = QString::fromStdString(a.oauth2ClientId);
+        editAuthOauth2ClientSecret_ = QString::fromStdString(a.oauth2ClientSecret);
+        editAuthOauth2Scope_ = QString::fromStdString(a.oauth2Scope);
+        editAuthOauth2AuthUrl_ = QString::fromStdString(a.oauth2AuthUrl);
+        editAuthOauth2CallbackUrl_ = a.oauth2CallbackUrl.empty()
+                                         ? QStringLiteral("http://127.0.0.1:8080/callback")
+                                         : QString::fromStdString(a.oauth2CallbackUrl);
+        editAuthOauth2PkceMethod_ =
+            a.oauth2PkceMethod == "plain" ? QStringLiteral("plain") : QStringLiteral("S256");
+        // Token is ephemeral (never persisted); always starts empty on edit.
+        editAuthOauth2AccessToken_.clear();
+        editAuthJwtAlgorithm_ = a.jwtAlgorithm.empty() ? QStringLiteral("HS256")
+                                                       : QString::fromStdString(a.jwtAlgorithm);
+        editAuthJwtSecret_ = QString::fromStdString(a.jwtSecret);
+        editAuthJwtPayload_ = QString::fromStdString(a.jwtPayload);
+        editAuthMtlsFormat_ = a.mtlsFormat == "p12" ? QStringLiteral("p12") : QStringLiteral("pem");
+        editAuthMtlsCertPath_ = QString::fromStdString(a.mtlsCertPath);
+        editAuthMtlsKeyPath_ = QString::fromStdString(a.mtlsKeyPath);
+        editAuthMtlsKeyPassword_ = QString::fromStdString(a.mtlsKeyPassword);
+        editAuthMtlsCaCertPath_ = QString::fromStdString(a.mtlsCaCertPath);
+    } else {
+        editAuthType_ = QStringLiteral("none");
+        editAuthToken_.clear();
+        editAuthUsername_.clear();
+        editAuthPassword_.clear();
+        editAuthApiKeyName_.clear();
+        editAuthApiKeyValue_.clear();
+        editAuthApiKeyInQuery_ = false;
+        editAuthAwsAccessKey_.clear();
+        editAuthAwsSecretKey_.clear();
+        editAuthAwsRegion_.clear();
+        editAuthAwsService_.clear();
+        editAuthAwsSessionToken_.clear();
+        editAuthOauthConsumerKey_.clear();
+        editAuthOauthConsumerSecret_.clear();
+        editAuthOauthToken_.clear();
+        editAuthOauthTokenSecret_.clear();
+        editAuthOauth2GrantType_ = QStringLiteral("client_credentials");
+        editAuthOauth2ClientAuth_ = QStringLiteral("basic");
+        editAuthOauth2TokenUrl_.clear();
+        editAuthOauth2ClientId_.clear();
+        editAuthOauth2ClientSecret_.clear();
+        editAuthOauth2Scope_.clear();
+        editAuthOauth2AuthUrl_.clear();
+        editAuthOauth2CallbackUrl_ = QStringLiteral("http://127.0.0.1:8080/callback");
+        editAuthOauth2PkceMethod_ = QStringLiteral("S256");
+        editAuthOauth2AccessToken_.clear();
+        editAuthJwtAlgorithm_ = QStringLiteral("HS256");
+        editAuthJwtSecret_.clear();
+        editAuthJwtPayload_.clear();
+        editAuthMtlsFormat_ = QStringLiteral("pem");
+        editAuthMtlsCertPath_.clear();
+        editAuthMtlsKeyPath_.clear();
+        editAuthMtlsKeyPassword_.clear();
+        editAuthMtlsCaCertPath_.clear();
+    }
+
+    // Actor and inline auth are mutually exclusive in the editor. If a
+    // hand-edited op carries both, inline auth wins (it's applied last at
+    // runtime), so drop the actor from the editor seed to match.
+    if (editAuthType_ != QStringLiteral("none")) {
+        editActor_.clear();
+    }
 
     if (!op->expectStatusList.empty()) {
         QStringList codes;
@@ -1316,6 +1775,76 @@ void AppController::cancelEdit() {
     emit chainChanged();
 }
 
+std::optional<engine::InlineAuth> AppController::buildInlineAuthFromEdit() const {
+    const auto authType = inlineAuthTypeFromQString(editAuthType_);
+    if (authType == engine::InlineAuthType::None) {
+        return std::nullopt;
+    }
+    engine::InlineAuth auth;
+    auth.type = authType;
+    auth.token = editAuthToken_.toStdString();
+    auth.username = editAuthUsername_.toStdString();
+    auth.password = editAuthPassword_.toStdString();
+    auth.apiKeyName = editAuthApiKeyName_.toStdString();
+    auth.apiKeyValue = editAuthApiKeyValue_.toStdString();
+    auth.apiKeyInQuery = editAuthApiKeyInQuery_;
+    auth.awsAccessKey = editAuthAwsAccessKey_.toStdString();
+    auth.awsSecretKey = editAuthAwsSecretKey_.toStdString();
+    auth.awsRegion = editAuthAwsRegion_.toStdString();
+    auth.awsService = editAuthAwsService_.toStdString();
+    auth.awsSessionToken = editAuthAwsSessionToken_.toStdString();
+    auth.oauthConsumerKey = editAuthOauthConsumerKey_.toStdString();
+    auth.oauthConsumerSecret = editAuthOauthConsumerSecret_.toStdString();
+    auth.oauthToken = editAuthOauthToken_.toStdString();
+    auth.oauthTokenSecret = editAuthOauthTokenSecret_.toStdString();
+    auth.oauth2GrantType = editAuthOauth2GrantType_.toStdString();
+    auth.oauth2ClientAuth = editAuthOauth2ClientAuth_.toStdString();
+    auth.oauth2TokenUrl = editAuthOauth2TokenUrl_.toStdString();
+    auth.oauth2ClientId = editAuthOauth2ClientId_.toStdString();
+    auth.oauth2ClientSecret = editAuthOauth2ClientSecret_.toStdString();
+    auth.oauth2Scope = editAuthOauth2Scope_.toStdString();
+    auth.oauth2AuthUrl = editAuthOauth2AuthUrl_.toStdString();
+    auth.oauth2CallbackUrl = editAuthOauth2CallbackUrl_.toStdString();
+    auth.oauth2PkceMethod = editAuthOauth2PkceMethod_.toStdString();
+    auth.oauth2AccessToken = editAuthOauth2AccessToken_.toStdString();
+    auth.jwtAlgorithm = editAuthJwtAlgorithm_.toStdString();
+    auth.jwtSecret = editAuthJwtSecret_.toStdString();
+    auth.jwtPayload = editAuthJwtPayload_.toStdString();
+    auth.mtlsFormat = editAuthMtlsFormat_.toStdString();
+    auth.mtlsCertPath = editAuthMtlsCertPath_.toStdString();
+    auth.mtlsKeyPath = editAuthMtlsKeyPath_.toStdString();
+    auth.mtlsKeyPassword = editAuthMtlsKeyPassword_.toStdString();
+    auth.mtlsCaCertPath = editAuthMtlsCaCertPath_.toStdString();
+    return auth;
+}
+
+void AppController::saveProjectDefaultAuth() {
+    if (!activeProject().hasProject()) {
+        emit notify(QStringLiteral("Open a project first"), true);
+        return;
+    }
+    const auto auth = buildInlineAuthFromEdit();
+    if (!auth || auth->type == engine::InlineAuthType::Inherit) {
+        emit notify(
+            QStringLiteral("Pick a concrete Auth Type before saving it as the project default"),
+            true);
+        return;
+    }
+    QString error;
+    if (activeProject().saveProjectDefaultAuth(auth, error)) {
+        emit notify(QStringLiteral("Saved project default auth (%1)").arg(editAuthType_), false);
+    } else {
+        emit notify(error, true);
+    }
+}
+
+QString AppController::projectDefaultAuthLabel() const {
+    if (!activeProject().hasProject() || !activeProject().project().defaultAuth) {
+        return QStringLiteral("(none set)");
+    }
+    return inlineAuthTypeToQString(activeProject().project().defaultAuth->type);
+}
+
 RequestOverride AppController::buildOverride() const {
     RequestOverride ov;
     ov.active = true;
@@ -1331,6 +1860,10 @@ RequestOverride AppController::buildOverride() const {
     ov.expectStatus = editExpectStatus_;
     ov.timeoutMs = editTimeout_;
     ov.forceReRun = editForce_;
+
+    // Inline auth: build the typed credential from the edit fields. "none"
+    // leaves it nullopt so applyOverrideToOperation clears any prior auth.
+    ov.inlineAuth = buildInlineAuthFromEdit();
 
     ov.bodyIsForm = editBodyIsForm_;
     if (editBodyIsForm_) {
@@ -1741,6 +2274,12 @@ QString AppController::actorAuthLabel(const QString& actorName) const {
             return QStringLiteral("OAuth 1.0 (HMAC-SHA1)");
         case engine::AuthStrategy::AwsSigV4:
             return QStringLiteral("AWS Signature v4");
+        case engine::AuthStrategy::Bearer:
+            return QStringLiteral("Bearer Token");
+        case engine::AuthStrategy::Jwt:
+            return QStringLiteral("JWT Bearer");
+        case engine::AuthStrategy::Mtls:
+            return QStringLiteral("mTLS (Client Cert)");
     }
     return QStringLiteral("Custom");
 }

@@ -33,6 +33,7 @@
 #include <QtCore/QVariant>
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include <cstdint>
@@ -40,6 +41,7 @@
 namespace reqloom::desktop {
 class ProjectModel;
 class WorkspaceModel;
+class OAuth2AuthCodeFlow;
 }  // namespace reqloom::desktop
 
 class QQmlEngine;
@@ -65,6 +67,7 @@ class AppController : public QObject {
     Q_PROPERTY(QAbstractItemModel* explorerModel READ explorerModel CONSTANT)
     Q_PROPERTY(int operationCount READ operationCount NOTIFY projectChanged)
     Q_PROPERTY(int actorCount READ actorCount NOTIFY projectChanged)
+    Q_PROPERTY(QString projectDefaultAuthLabel READ projectDefaultAuthLabel NOTIFY projectChanged)
     // Pickers for the create dialogs.
     Q_PROPERTY(QStringList moduleNames READ moduleNames NOTIFY projectChanged)
     Q_PROPERTY(QStringList actorNames READ actorNames NOTIFY projectChanged)
@@ -142,16 +145,96 @@ class AppController : public QObject {
     Q_PROPERTY(QString editBody READ editBody WRITE setEditBody NOTIFY editChanged)
     Q_PROPERTY(bool editBodyIsForm READ editBodyIsForm WRITE setEditBodyIsForm NOTIFY editChanged)
     Q_PROPERTY(QString editBodyType READ editBodyType WRITE setEditBodyType NOTIFY editChanged)
+    // Per-operation inline auth (actor-less). editAuthType is one of
+    // "none"/"bearer"/"basic"/"apikey"; the rest carry the credential for the
+    // selected type. Seeded from the op in beginEdit, folded into the request
+    // override on save/run.
+    Q_PROPERTY(QString editAuthType READ editAuthType WRITE setEditAuthType NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthToken READ editAuthToken WRITE setEditAuthToken NOTIFY editChanged)
+    Q_PROPERTY(
+        QString editAuthUsername READ editAuthUsername WRITE setEditAuthUsername NOTIFY editChanged)
+    Q_PROPERTY(
+        QString editAuthPassword READ editAuthPassword WRITE setEditAuthPassword NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthApiKeyName READ editAuthApiKeyName WRITE setEditAuthApiKeyName NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthApiKeyValue READ editAuthApiKeyValue WRITE setEditAuthApiKeyValue
+                   NOTIFY editChanged)
+    Q_PROPERTY(bool editAuthApiKeyInQuery READ editAuthApiKeyInQuery WRITE setEditAuthApiKeyInQuery
+                   NOTIFY editChanged)
+    // AWS Signature v4 credentials.
+    Q_PROPERTY(QString editAuthAwsAccessKey READ editAuthAwsAccessKey WRITE setEditAuthAwsAccessKey
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthAwsSecretKey READ editAuthAwsSecretKey WRITE setEditAuthAwsSecretKey
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthAwsRegion READ editAuthAwsRegion WRITE setEditAuthAwsRegion NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthAwsService READ editAuthAwsService WRITE setEditAuthAwsService NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthAwsSessionToken READ editAuthAwsSessionToken WRITE
+                   setEditAuthAwsSessionToken NOTIFY editChanged)
+    // OAuth 1.0a credentials.
+    Q_PROPERTY(QString editAuthOauthConsumerKey READ editAuthOauthConsumerKey WRITE
+                   setEditAuthOauthConsumerKey NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauthConsumerSecret READ editAuthOauthConsumerSecret WRITE
+                   setEditAuthOauthConsumerSecret NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauthToken READ editAuthOauthToken WRITE setEditAuthOauthToken NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthOauthTokenSecret READ editAuthOauthTokenSecret WRITE
+                   setEditAuthOauthTokenSecret NOTIFY editChanged)
+    // OAuth 2.0.
+    Q_PROPERTY(QString editAuthOauth2GrantType READ editAuthOauth2GrantType WRITE
+                   setEditAuthOauth2GrantType NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2ClientAuth READ editAuthOauth2ClientAuth WRITE
+                   setEditAuthOauth2ClientAuth NOTIFY editChanged)
+    // Authorization Code (PKCE) — interactive.
+    Q_PROPERTY(QString editAuthOauth2AuthUrl READ editAuthOauth2AuthUrl WRITE
+                   setEditAuthOauth2AuthUrl NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2CallbackUrl READ editAuthOauth2CallbackUrl WRITE
+                   setEditAuthOauth2CallbackUrl NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2PkceMethod READ editAuthOauth2PkceMethod WRITE
+                   setEditAuthOauth2PkceMethod NOTIFY editChanged)
+    /// True once an access token has been obtained via "Get New Token".
+    Q_PROPERTY(bool editAuthOauth2HasToken READ editAuthOauth2HasToken NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2TokenUrl READ editAuthOauth2TokenUrl WRITE
+                   setEditAuthOauth2TokenUrl NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2ClientId READ editAuthOauth2ClientId WRITE
+                   setEditAuthOauth2ClientId NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2ClientSecret READ editAuthOauth2ClientSecret WRITE
+                   setEditAuthOauth2ClientSecret NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthOauth2Scope READ editAuthOauth2Scope WRITE setEditAuthOauth2Scope
+                   NOTIFY editChanged)
+    // JWT Bearer.
+    Q_PROPERTY(QString editAuthJwtAlgorithm READ editAuthJwtAlgorithm WRITE setEditAuthJwtAlgorithm
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthJwtSecret READ editAuthJwtSecret WRITE setEditAuthJwtSecret NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthJwtPayload READ editAuthJwtPayload WRITE setEditAuthJwtPayload NOTIFY
+                   editChanged)
+    // Mutual TLS.
+    Q_PROPERTY(QString editAuthMtlsCertPath READ editAuthMtlsCertPath WRITE setEditAuthMtlsCertPath
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthMtlsKeyPath READ editAuthMtlsKeyPath WRITE setEditAuthMtlsKeyPath
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthMtlsKeyPassword READ editAuthMtlsKeyPassword WRITE
+                   setEditAuthMtlsKeyPassword NOTIFY editChanged)
+    Q_PROPERTY(QString editAuthMtlsFormat READ editAuthMtlsFormat WRITE setEditAuthMtlsFormat NOTIFY
+                   editChanged)
+    Q_PROPERTY(QString editAuthMtlsCaCertPath READ editAuthMtlsCaCertPath WRITE
+                   setEditAuthMtlsCaCertPath NOTIFY editChanged)
     Q_PROPERTY(EditableKeyValueModel* editHeaders READ editHeaders CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editQuery READ editQuery CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editActorConfig READ editActorConfig CONSTANT)
+    // Actor auth config as a key→value map, for typed strategy-specific fields
+    // (Basic/API Key/OAuth/AWS). Reactive so fields refresh when the editor is
+    // seeded on prepareEdit/NewActor.
+    Q_PROPERTY(QVariantMap actorConfig READ actorConfigMap NOTIFY actorEditChanged)
     Q_PROPERTY(EditableKeyValueModel* editEnvVars READ editEnvVars CONSTANT)
     Q_PROPERTY(QString editEnvBaseUrl READ editEnvBaseUrl WRITE setEditEnvBaseUrl NOTIFY
                    editEnvBaseUrlChanged)
     // Actor auth-endpoint editor (login request + refresh). Read-only seeds for
-    // the dialog (set on prepareEdit/NewActor); the dialog passes edits back to
-    // saveActorEdits. The kv models are mutated directly by QML.
+    // the inline ActorDetail panel (set on prepareEdit/NewActor); the panel
+    // passes edits back to saveActorInline. The kv models are mutated by QML.
     Q_PROPERTY(QString actorAuthMethod READ actorAuthMethod NOTIFY actorEditChanged)
     Q_PROPERTY(QString actorAuthPath READ actorAuthPath NOTIFY actorEditChanged)
     Q_PROPERTY(QString actorAuthBody READ actorAuthBody NOTIFY actorEditChanged)
@@ -237,27 +320,19 @@ public:
     /// owning collection, seeds the actor accessors (via prepareEditActor), and
     /// clears any open operation (they share the centre pane).
     Q_INVOKABLE void selectActor(const QString& projectRoot, const QString& actorId);
-    /// Create-or-update an actor. `originalId` empty → create; otherwise edit
-    /// (renaming when `name` differs). Config comes from `editActorConfig`; the
-    /// login request from the auth* args + `actorAuthExtract`; the refresh block
-    /// from the refresh* args + `actorRefreshExtract` (only when `refreshEnabled`).
-    /// Returns true on success; on failure a toast is shown and the caller
-    /// keeps the dialog open so the user's input isn't lost.
-    Q_INVOKABLE bool saveActorEdits(const QString& originalId,
-                                    const QString& name,
-                                    const QString& strategyLabel,
-                                    const QString& description,
-                                    const QString& authMethod,
-                                    const QString& authPath,
-                                    const QString& authBody,
-                                    const QString& authExpect,
-                                    bool refreshEnabled,
-                                    const QString& refreshMethod,
-                                    const QString& refreshPath,
-                                    const QString& refreshBody);
-    /// Save an actor edited inline in ActorDetail. Same as saveActorEdits but
-    /// the login steps come from the actorAuthSteps model (full N-step chain)
-    /// rather than a single flat request. Returns true on success.
+    /// Start a brand-new actor in the inline ActorDetail panel: seed a blank
+    /// editable state (via prepareNewActor), show the panel with an empty
+    /// selection so it opens straight in edit mode. Requires an open project.
+    Q_INVOKABLE void newActor();
+    /// Select an existing actor and immediately enter inline edit mode (used by
+    /// the explorer's "Edit…" menu, replacing the old modal dialog).
+    Q_INVOKABLE void requestActorEdit(const QString& projectRoot, const QString& actorId);
+    /// Discard a never-saved new-actor draft, clearing the panel.
+    Q_INVOKABLE void cancelActorDraft();
+    /// Save an actor edited inline in ActorDetail. The login steps come from the
+    /// actorAuthSteps model (full N-step chain); config from `editActorConfig`.
+    /// `originalId` empty → create; otherwise edit (rename when `name` differs).
+    /// Returns true on success (the panel stays in edit mode on failure).
     Q_INVOKABLE bool saveActorInline(const QString& originalId,
                                      const QString& name,
                                      const QString& strategyLabel,
@@ -368,6 +443,44 @@ public:
     [[nodiscard]] QString editBody() const { return editBody_; }
     [[nodiscard]] bool editBodyIsForm() const { return editBodyIsForm_; }
     [[nodiscard]] QString editBodyType() const { return editBodyType_; }
+    [[nodiscard]] QString editAuthType() const { return editAuthType_; }
+    [[nodiscard]] QString editAuthToken() const { return editAuthToken_; }
+    [[nodiscard]] QString editAuthUsername() const { return editAuthUsername_; }
+    [[nodiscard]] QString editAuthPassword() const { return editAuthPassword_; }
+    [[nodiscard]] QString editAuthApiKeyName() const { return editAuthApiKeyName_; }
+    [[nodiscard]] QString editAuthApiKeyValue() const { return editAuthApiKeyValue_; }
+    [[nodiscard]] bool editAuthApiKeyInQuery() const { return editAuthApiKeyInQuery_; }
+    [[nodiscard]] QString editAuthAwsAccessKey() const { return editAuthAwsAccessKey_; }
+    [[nodiscard]] QString editAuthAwsSecretKey() const { return editAuthAwsSecretKey_; }
+    [[nodiscard]] QString editAuthAwsRegion() const { return editAuthAwsRegion_; }
+    [[nodiscard]] QString editAuthAwsService() const { return editAuthAwsService_; }
+    [[nodiscard]] QString editAuthAwsSessionToken() const { return editAuthAwsSessionToken_; }
+    [[nodiscard]] QString editAuthOauthConsumerKey() const { return editAuthOauthConsumerKey_; }
+    [[nodiscard]] QString editAuthOauthConsumerSecret() const {
+        return editAuthOauthConsumerSecret_;
+    }
+    [[nodiscard]] QString editAuthOauthToken() const { return editAuthOauthToken_; }
+    [[nodiscard]] QString editAuthOauthTokenSecret() const { return editAuthOauthTokenSecret_; }
+    [[nodiscard]] QString editAuthOauth2GrantType() const { return editAuthOauth2GrantType_; }
+    [[nodiscard]] QString editAuthOauth2ClientAuth() const { return editAuthOauth2ClientAuth_; }
+    [[nodiscard]] QString editAuthOauth2AuthUrl() const { return editAuthOauth2AuthUrl_; }
+    [[nodiscard]] QString editAuthOauth2CallbackUrl() const { return editAuthOauth2CallbackUrl_; }
+    [[nodiscard]] QString editAuthOauth2PkceMethod() const { return editAuthOauth2PkceMethod_; }
+    [[nodiscard]] bool editAuthOauth2HasToken() const {
+        return !editAuthOauth2AccessToken_.isEmpty();
+    }
+    [[nodiscard]] QString editAuthOauth2TokenUrl() const { return editAuthOauth2TokenUrl_; }
+    [[nodiscard]] QString editAuthOauth2ClientId() const { return editAuthOauth2ClientId_; }
+    [[nodiscard]] QString editAuthOauth2ClientSecret() const { return editAuthOauth2ClientSecret_; }
+    [[nodiscard]] QString editAuthOauth2Scope() const { return editAuthOauth2Scope_; }
+    [[nodiscard]] QString editAuthJwtAlgorithm() const { return editAuthJwtAlgorithm_; }
+    [[nodiscard]] QString editAuthJwtSecret() const { return editAuthJwtSecret_; }
+    [[nodiscard]] QString editAuthJwtPayload() const { return editAuthJwtPayload_; }
+    [[nodiscard]] QString editAuthMtlsCertPath() const { return editAuthMtlsCertPath_; }
+    [[nodiscard]] QString editAuthMtlsKeyPath() const { return editAuthMtlsKeyPath_; }
+    [[nodiscard]] QString editAuthMtlsKeyPassword() const { return editAuthMtlsKeyPassword_; }
+    [[nodiscard]] QString editAuthMtlsFormat() const { return editAuthMtlsFormat_; }
+    [[nodiscard]] QString editAuthMtlsCaCertPath() const { return editAuthMtlsCaCertPath_; }
     void setEditMethod(const QString& method);
     void setEditPath(const QString& path);
     void setEditActor(const QString& actor);
@@ -381,10 +494,56 @@ public:
     /// politely sets the Content-Type header to the kind's canonical type
     /// (preserving a custom Content-Type the user set themselves).
     void setEditBodyType(const QString& type);
+    void setEditAuthType(const QString& type);
+    void setEditAuthToken(const QString& token);
+    void setEditAuthUsername(const QString& username);
+    void setEditAuthPassword(const QString& password);
+    void setEditAuthApiKeyName(const QString& name);
+    void setEditAuthApiKeyValue(const QString& value);
+    void setEditAuthApiKeyInQuery(bool inQuery);
+    void setEditAuthAwsAccessKey(const QString& value);
+    void setEditAuthAwsSecretKey(const QString& value);
+    void setEditAuthAwsRegion(const QString& value);
+    void setEditAuthAwsService(const QString& value);
+    void setEditAuthAwsSessionToken(const QString& value);
+    void setEditAuthOauthConsumerKey(const QString& value);
+    void setEditAuthOauthConsumerSecret(const QString& value);
+    void setEditAuthOauthToken(const QString& value);
+    void setEditAuthOauthTokenSecret(const QString& value);
+    void setEditAuthOauth2GrantType(const QString& value);
+    void setEditAuthOauth2ClientAuth(const QString& value);
+    void setEditAuthOauth2AuthUrl(const QString& value);
+    void setEditAuthOauth2CallbackUrl(const QString& value);
+    void setEditAuthOauth2PkceMethod(const QString& value);
+    /// Run the interactive Authorization Code + PKCE flow (opens the browser,
+    /// catches the loopback redirect, exchanges the code) and, on success,
+    /// stores the obtained token so this request injects it as a Bearer.
+    Q_INVOKABLE void oauth2GetNewToken();
+    void setEditAuthOauth2TokenUrl(const QString& value);
+    void setEditAuthOauth2ClientId(const QString& value);
+    void setEditAuthOauth2ClientSecret(const QString& value);
+    void setEditAuthOauth2Scope(const QString& value);
+    void setEditAuthJwtAlgorithm(const QString& value);
+    void setEditAuthJwtSecret(const QString& value);
+    void setEditAuthJwtPayload(const QString& value);
+    void setEditAuthMtlsCertPath(const QString& value);
+    void setEditAuthMtlsKeyPath(const QString& value);
+    void setEditAuthMtlsKeyPassword(const QString& value);
+    void setEditAuthMtlsFormat(const QString& value);
+    void setEditAuthMtlsCaCertPath(const QString& value);
+    /// Open a native file-open dialog and return the chosen path (empty if
+    /// cancelled). `nameFilter` uses Qt's filter syntax, e.g.
+    /// "Certificates (*.pem *.crt *.p12 *.pfx)".
+    Q_INVOKABLE [[nodiscard]] QString pickFile(const QString& title,
+                                               const QString& nameFilter) const;
     [[nodiscard]] EditableKeyValueModel* editHeaders() { return &editHeaders_; }
     [[nodiscard]] EditableKeyValueModel* editQuery() { return &editQuery_; }
     [[nodiscard]] EditableKeyValueModel* editForm() { return &editForm_; }
     [[nodiscard]] EditableKeyValueModel* editActorConfig() { return &actorConfig_; }
+    [[nodiscard]] QVariantMap actorConfigMap() const;
+    /// Upsert one auth-config key (empty value clears it). Drives the typed
+    /// per-strategy fields in the actor editor.
+    Q_INVOKABLE void setActorConfigValue(const QString& key, const QString& value);
     [[nodiscard]] EditableKeyValueModel* editEnvVars() { return &envVars_; }
     [[nodiscard]] QString editEnvBaseUrl() const { return editEnvBaseUrl_; }
     void setEditEnvBaseUrl(const QString& url);
@@ -597,6 +756,15 @@ public:
     /// undefined op is rejected with a notify() and nothing is written).
     Q_INVOKABLE void saveOperation();
 
+    /// Persist the current edit-auth fields as the project-wide default auth
+    /// (the target of endpoints whose Auth Type is "Inherit from parent").
+    Q_INVOKABLE void saveProjectDefaultAuth();
+
+    /// Human label for the current project default auth type, e.g. "bearer" or
+    /// "(none set)". A property (not an invokable) so the Inherit hint refreshes
+    /// when the project changes (e.g. after Save as project default).
+    [[nodiscard]] QString projectDefaultAuthLabel() const;
+
     /// Open the standalone hook-script editor (a Widgets dialog — the QML
     /// Migration Roadmap's sanctioned fallback) for the current operation.
     /// Edits to the pre-request / post-response JavaScript are persisted on
@@ -748,6 +916,9 @@ signals:
     /// Fired when the read-only actor detail selection changes (an actor was
     /// selected, or cleared because an operation/module was opened).
     void actorSelectionChanged();
+    /// Fired when the inline actor panel should switch into edit mode (a new
+    /// draft, or an "Edit…" request from the explorer).
+    void actorEditRequested();
 
     /// Fired when the env editor's Base URL field is seeded programmatically.
     void editEnvBaseUrlChanged();
@@ -855,6 +1026,10 @@ private:
     /// the old RequestEditorPanel::buildOverride (chainEdited tracks the guard).
     [[nodiscard]] RequestOverride buildOverride() const;
 
+    /// Build an InlineAuth from the current edit-auth fields, or nullopt when
+    /// the type is "none". Shared by buildOverride and saveProjectDefaultAuth.
+    [[nodiscard]] std::optional<engine::InlineAuth> buildInlineAuthFromEdit() const;
+
     /// Set the Content-Type header in editHeaders_ to `desired`, but only when
     /// the current Content-Type is empty or a canonical type we manage — never
     /// clobber a custom Content-Type the user typed.
@@ -936,6 +1111,41 @@ private:
     QString editBody_;
     bool editBodyIsForm_{false};
     QString editBodyType_{QStringLiteral("none")};
+    QString editAuthType_{QStringLiteral("none")};
+    QString editAuthToken_;
+    QString editAuthUsername_;
+    QString editAuthPassword_;
+    QString editAuthApiKeyName_;
+    QString editAuthApiKeyValue_;
+    bool editAuthApiKeyInQuery_{false};
+    QString editAuthAwsAccessKey_;
+    QString editAuthAwsSecretKey_;
+    QString editAuthAwsRegion_;
+    QString editAuthAwsService_;
+    QString editAuthAwsSessionToken_;
+    QString editAuthOauthConsumerKey_;
+    QString editAuthOauthConsumerSecret_;
+    QString editAuthOauthToken_;
+    QString editAuthOauthTokenSecret_;
+    QString editAuthOauth2GrantType_{QStringLiteral("client_credentials")};
+    QString editAuthOauth2ClientAuth_{QStringLiteral("basic")};
+    QString editAuthOauth2AuthUrl_;
+    QString editAuthOauth2CallbackUrl_{QStringLiteral("http://127.0.0.1:8080/callback")};
+    QString editAuthOauth2PkceMethod_{QStringLiteral("S256")};
+    QString editAuthOauth2AccessToken_;  ///< Ephemeral; never persisted to YAML.
+    std::unique_ptr<OAuth2AuthCodeFlow> oauthFlow_;
+    QString editAuthOauth2TokenUrl_;
+    QString editAuthOauth2ClientId_;
+    QString editAuthOauth2ClientSecret_;
+    QString editAuthOauth2Scope_;
+    QString editAuthJwtAlgorithm_{QStringLiteral("HS256")};
+    QString editAuthJwtSecret_;
+    QString editAuthJwtPayload_;
+    QString editAuthMtlsFormat_{QStringLiteral("pem")};
+    QString editAuthMtlsCertPath_;
+    QString editAuthMtlsKeyPath_;
+    QString editAuthMtlsKeyPassword_;
+    QString editAuthMtlsCaCertPath_;
     /// True once the Chain tab has been seeded for the open op, so the override
     /// only stamps chainEdited when the wiring it captures is a real snapshot.
     bool chainFieldsLoaded_{false};

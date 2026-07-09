@@ -10,6 +10,7 @@
 #include "../infrastructure/schema/SchemaParser.h"
 #include "../infrastructure/secrets/SecretStore.h"
 #include "../infrastructure/storage/HistoryStore.h"
+#include "../infrastructure/util/Crypto.h"
 #include "AuthStrategy.h"
 #include "Cookies.h"
 #include "HeaderMasking.h"
@@ -22,6 +23,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <ctime>
@@ -40,6 +42,32 @@ using json = nlohmann::json;
 namespace {
 
 using namespace codecs;
+
+/// Overlay an actor session's mTLS transport (client cert/key/CA) onto a
+/// request, composing with — not replacing — the environment transport already
+/// on `req`. Only non-empty fields win, so an mTLS actor adds its client cert
+/// while keeping the environment's proxy/timeout settings.
+void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
+    if (!session.transport) {
+        return;
+    }
+    const auto& t = *session.transport;
+    if (t.clientCertPath.has_value()) {
+        req.transport.clientCertPath = t.clientCertPath;
+    }
+    if (t.clientCertType.has_value()) {
+        req.transport.clientCertType = t.clientCertType;
+    }
+    if (t.clientKeyPath.has_value()) {
+        req.transport.clientKeyPath = t.clientKeyPath;
+    }
+    if (t.clientKeyPassword.has_value()) {
+        req.transport.clientKeyPassword = t.clientKeyPassword;
+    }
+    if (t.caBundlePath.has_value()) {
+        req.transport.caBundlePath = t.caBundlePath;
+    }
+}
 
 /// Build a HookContext snapshot from current run state. Per AGENTS.md
 /// hooks get read-only access to actor variables; we copy them so the
@@ -313,6 +341,19 @@ struct ExecutionEngine::Impl {
         HttpResponse lastResponse;
         bool haveLastResponse = false;
 
+        // Inline auth for the poll requests, computed once. OAuth2 fetches its
+        // token a single time here (not per poll attempt) and the resulting
+        // Bearer header is re-applied to every attempt.
+        const std::optional<InlineAuth> effAuth = effectiveInlineAuth(op, project);
+        std::map<std::string, std::string> inlineOAuth2Headers;
+        if (effAuth && effAuth->type == InlineAuthType::OAuth2) {
+            HttpRequest scratch;
+            if (auto oauth2Err = applyInlineOAuth2(scratch, effAuth, ctx, rctx, runId, stepIndex)) {
+                return std::unexpected(*oauth2Err);
+            }
+            inlineOAuth2Headers = std::move(scratch.headers);
+        }
+
         for (int attempt = 0; attempt < poll.maxAttempts; ++attempt) {
             if (isCancelled(runId)) {
                 return std::unexpected(
@@ -322,6 +363,7 @@ struct ExecutionEngine::Impl {
             HttpRequest req;
             req.method = poll.method;
             req.transport = rctx.transport;
+            applyInlineMtls(req, effAuth, ctx, rctx);
             auto resolvedPath = varResolver.resolve(poll.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
                 return std::unexpected(ReqloomError{
@@ -340,6 +382,7 @@ struct ExecutionEngine::Impl {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
                     }
+                    applyActorSessionTransport(req, *session);
                     if (!session->injectQueryParams.empty()) {
                         std::string qs;
                         for (const auto& [k, v] : session->injectQueryParams) {
@@ -364,6 +407,16 @@ struct ExecutionEngine::Impl {
                 }
             }
 
+            // Inline (actor-less) auth on the parent op also covers its poll
+            // requests. Applied before signing; inline-auth ops have no signing
+            // session, so the two never interact in practice.
+            if (auto authErr = applyInlineAuth(req, effAuth, ctx, rctx)) {
+                return std::unexpected(*authErr);
+            }
+            for (const auto& [key, value] : inlineOAuth2Headers) {
+                req.headers[key] = value;
+            }
+
             // Per-request signing done after inject merge so the signer sees the final shape.
             if (pollActor != nullptr) {
                 if (const auto* session = ctx.session(pollActor->id); session) {
@@ -386,6 +439,14 @@ struct ExecutionEngine::Impl {
                         }
                     }
                 }
+            }
+
+            // Inline (actor-less) signing on the parent op also covers polls.
+            if (!signInlineAuth(req, effAuth, ctx, rctx)) {
+                return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                    ErrorClass::Auth,
+                                                    "poll_until: inline auth signing failed "
+                                                    "(missing credentials or malformed URL)"});
             }
 
             emit(RequestPrepared{runId,
@@ -502,6 +563,285 @@ struct ExecutionEngine::Impl {
                 : "poll_until: max_attempts (" + std::to_string(poll.maxAttempts) + ") exceeded"});
     }
 
+    // Apply an operation's actor-less inline auth to a fully-built request.
+    // Values may contain {{variables}}, resolved here like any header. Called
+    // after actor/session injects so inline auth wins on the Authorization key.
+    [[nodiscard]] std::optional<ReqloomError> applyInlineAuth(HttpRequest& req,
+                                                              const std::optional<InlineAuth>& auth,
+                                                              const RunContext& ctx,
+                                                              const ResolveContext& rctx) const {
+        if (!auth || auth->type == InlineAuthType::None) {
+            return std::nullopt;
+        }
+        switch (auth->type) {
+            case InlineAuthType::Bearer: {
+                const auto token = varResolver.resolve(auth->token, ctx, rctx).output;
+                req.headers["Authorization"] = "Bearer " + token;
+                break;
+            }
+            case InlineAuthType::Basic: {
+                const auto user = varResolver.resolve(auth->username, ctx, rctx).output;
+                const auto pass = varResolver.resolve(auth->password, ctx, rctx).output;
+                req.headers["Authorization"] = "Basic " + base64Encode(user + ":" + pass);
+                break;
+            }
+            case InlineAuthType::ApiKey: {
+                if (auth->apiKeyName.empty()) {
+                    break;
+                }
+                const auto key = varResolver.resolve(auth->apiKeyName, ctx, rctx).output;
+                const auto value = varResolver.resolve(auth->apiKeyValue, ctx, rctx).output;
+                if (auth->apiKeyInQuery) {
+                    // Idempotent: re-applying on a reauth retry (where req.url
+                    // already carries the segment) must not append a duplicate.
+                    // ponytail: substring match, not a full query parse — a key
+                    // whose "k=v" is a substring of another param won't re-add,
+                    // acceptable for a single auth param.
+                    const auto segment = urlEncode(key) + "=" + urlEncode(value);
+                    if (req.url.find(segment) == std::string::npos) {
+                        req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + segment;
+                    }
+                } else {
+                    req.headers[key] = value;
+                }
+                break;
+            }
+            case InlineAuthType::Jwt: {
+                const auto secret = varResolver.resolve(auth->jwtSecret, ctx, rctx).output;
+                const auto payload = varResolver.resolve(auth->jwtPayload, ctx, rctx).output;
+                // Only HS256/HS512 are supported (crypto has no RS/ES). Empty
+                // algorithm defaults to HS256; anything else fails the step
+                // rather than silently signing with the wrong algorithm.
+                std::string algo = auth->jwtAlgorithm;
+                std::ranges::transform(algo, algo.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::toupper(c));
+                });
+                if (algo.empty()) {
+                    algo = "HS256";
+                }
+                if (algo != "HS256" && algo != "HS512") {
+                    return ReqloomError{ErrorCode::SessionRefreshFailed,
+                                        ErrorClass::Auth,
+                                        "jwt: unsupported algorithm '" + auth->jwtAlgorithm +
+                                            "' (only HS256 and HS512 are supported)"};
+                }
+                const std::string jwt = algo == "HS512" ? crypto::jwtSignHs512(payload, secret)
+                                                        : crypto::jwtSignHs256(payload, secret);
+                if (jwt.empty()) {
+                    return ReqloomError{ErrorCode::SessionRefreshFailed,
+                                        ErrorClass::Auth,
+                                        "jwt: signing failed (empty secret or crypto error)"};
+                }
+                req.headers["Authorization"] = "Bearer " + jwt;
+                break;
+            }
+            case InlineAuthType::None:
+            case InlineAuthType::AwsSigV4:
+            case InlineAuthType::OAuth1:
+            case InlineAuthType::OAuth2:
+            case InlineAuthType::Mtls:
+            case InlineAuthType::Inherit:
+                // AwsSigV4/OAuth1 sign per-attempt (signInlineAuth); OAuth2 is a
+                // token fetch (applyInlineOAuth2); Mtls is transport-level;
+                // Inherit is resolved to the project default before we get here.
+                break;
+        }
+        return std::nullopt;
+    }
+
+    // Per-request signing for inline (actor-less) AWS SigV4 / OAuth1. Reuses
+    // the same tested signers as the actor path by feeding the inline
+    // credentials into a transient session. Returns false on signing failure
+    // (missing credential / malformed URL), leaving req untouched.
+    [[nodiscard]] bool signInlineAuth(HttpRequest& req,
+                                      const std::optional<InlineAuth>& auth,
+                                      const RunContext& ctx,
+                                      const ResolveContext& rctx) const {
+        if (!auth) {
+            return true;
+        }
+        const auto resolve = [&](const std::string& value) {
+            return varResolver.resolve(value, ctx, rctx).output;
+        };
+        switch (auth->type) {
+            case InlineAuthType::AwsSigV4: {
+                ActorSession session;
+                session.variables["access_key"] = resolve(auth->awsAccessKey);
+                session.variables["secret_key"] = resolve(auth->awsSecretKey);
+                session.variables["region"] = resolve(auth->awsRegion);
+                session.variables["service"] = resolve(auth->awsService);
+                if (!auth->awsSessionToken.empty()) {
+                    session.variables["session_token"] = resolve(auth->awsSessionToken);
+                }
+                return signSigV4Request(req, session);
+            }
+            case InlineAuthType::OAuth1: {
+                ActorSession session;
+                session.variables["consumer_key"] = resolve(auth->oauthConsumerKey);
+                session.variables["consumer_secret"] = resolve(auth->oauthConsumerSecret);
+                session.variables["token"] = resolve(auth->oauthToken);
+                session.variables["token_secret"] = resolve(auth->oauthTokenSecret);
+                return signOAuth1Request(req, session);
+            }
+            case InlineAuthType::None:
+            case InlineAuthType::Bearer:
+            case InlineAuthType::Basic:
+            case InlineAuthType::ApiKey:
+            case InlineAuthType::OAuth2:
+            case InlineAuthType::Jwt:
+            case InlineAuthType::Mtls:
+            case InlineAuthType::Inherit:
+                return true;  // non-signing types handled elsewhere
+        }
+        return true;
+    }
+
+    // Resolve an operation's effective inline auth. Inherit resolves to the
+    // project default (which must not itself be Inherit; a nested Inherit or an
+    // absent default resolves to no auth).
+    [[nodiscard]] std::optional<InlineAuth> effectiveInlineAuth(const Operation& op,
+                                                                const Project& project) const {
+        if (op.inlineAuth && op.inlineAuth->type == InlineAuthType::Inherit) {
+            if (project.defaultAuth && project.defaultAuth->type != InlineAuthType::Inherit) {
+                return project.defaultAuth;
+            }
+            return std::nullopt;
+        }
+        return op.inlineAuth;
+    }
+
+    // Mutual TLS: stamp the client cert/key onto the request's transport so the
+    // HTTP client presents them during the handshake. Transport-level, so it
+    // composes with (does not replace) any header auth.
+    void applyInlineMtls(HttpRequest& req,
+                         const std::optional<InlineAuth>& auth,
+                         const RunContext& ctx,
+                         const ResolveContext& rctx) const {
+        if (!auth || auth->type != InlineAuthType::Mtls) {
+            return;
+        }
+        const bool p12 = auth->mtlsFormat == "p12";
+        if (!auth->mtlsCertPath.empty()) {
+            req.transport.clientCertPath =
+                varResolver.resolve(auth->mtlsCertPath, ctx, rctx).output;
+        }
+        if (p12) {
+            // PKCS#12 bundle: the key lives inside the cert; tell curl the type.
+            req.transport.clientCertType = "P12";
+        } else if (!auth->mtlsKeyPath.empty()) {
+            req.transport.clientKeyPath = varResolver.resolve(auth->mtlsKeyPath, ctx, rctx).output;
+        }
+        if (!auth->mtlsKeyPassword.empty()) {
+            req.transport.clientKeyPassword =
+                varResolver.resolve(auth->mtlsKeyPassword, ctx, rctx).output;
+        }
+        if (!auth->mtlsCaCertPath.empty()) {
+            req.transport.caBundlePath =
+                varResolver.resolve(auth->mtlsCaCertPath, ctx, rctx).output;
+        }
+    }
+
+    // OAuth 2.0 (client credentials): fetch a token by synthesizing a transient
+    // actor and reusing the tested OAuth2 authenticator, then inject the
+    // resulting Authorization: Bearer. Returns an error on token-fetch failure.
+    //
+    // The token is cached in the RunContext session store keyed by
+    // token_url|client_id|scope, honoring the token endpoint's `expires_in`
+    // (with a small safety margin), so ops sharing the same OAuth2 config —
+    // and repeated runs on the same context — reuse one token instead of
+    // re-fetching per operation.
+    [[nodiscard]] std::optional<ReqloomError> applyInlineOAuth2(
+        HttpRequest& req,
+        const std::optional<InlineAuth>& auth,
+        RunContext& ctx,
+        const ResolveContext& rctx,
+        RunId runId,
+        std::size_t stepIndex) {
+        if (!auth || auth->type != InlineAuthType::OAuth2) {
+            return std::nullopt;
+        }
+
+        // Authorization Code (PKCE) is interactive: the desktop runs the browser
+        // flow and stores the token on the op. The engine only injects it — it
+        // can't acquire one headlessly.
+        if (auth->oauth2GrantType == "authorization_code") {
+            const auto token = varResolver.resolve(auth->oauth2AccessToken, ctx, rctx).output;
+            if (token.empty()) {
+                return ReqloomError{ErrorCode::SessionRefreshFailed,
+                                    ErrorClass::Auth,
+                                    "oauth2 authorization_code: no access token — use "
+                                    "\"Get New Token\" in the desktop app to authorize"};
+            }
+            req.headers["Authorization"] = "Bearer " + token;
+            return std::nullopt;
+        }
+
+        const ActorId cacheId{"__inline_oauth2:" + auth->oauth2GrantType + "|" +
+                              auth->oauth2TokenUrl + "|" + auth->oauth2ClientId + "|" +
+                              auth->username + "|" + auth->oauth2Scope};
+
+        // Reuse a still-valid cached token.
+        if (const auto* cached = ctx.session(cacheId);
+            cached != nullptr && cached->state == ActorSession::State::Live &&
+            std::chrono::steady_clock::now() < cached->expiresAt) {
+            for (const auto& [key, value] : cached->injectHeaders) {
+                req.headers[key] = value;
+            }
+            return std::nullopt;
+        }
+
+        Actor actor;
+        actor.id = cacheId;
+        // Only the non-interactive grants are supported headlessly. "password"
+        // uses the password grant; anything else uses client_credentials.
+        actor.strategy = auth->oauth2GrantType == "password"
+                             ? AuthStrategy::OAuth2Password
+                             : AuthStrategy::OAuth2ClientCredentials;
+        actor.authConfig["token_url"] = auth->oauth2TokenUrl;
+        actor.authConfig["client_id"] = auth->oauth2ClientId;
+        actor.authConfig["client_secret"] = auth->oauth2ClientSecret;
+        actor.authConfig["username"] = auth->username;
+        actor.authConfig["password"] = auth->password;
+        actor.authConfig["scope"] = auth->oauth2Scope;
+        actor.authConfig["client_auth"] = auth->oauth2ClientAuth;
+
+        auto sink = [this](const RunEvent& ev) {
+            this->emit(ev);
+        };
+        AuthDependencies authDeps{
+            deps.http.get(), &varResolver, sink, runId, stepIndex, captureResponseBodies};
+        auto authenticator = selectAuthenticator(actor, std::move(authDeps));
+        if (!authenticator) {
+            return ReqloomError{ErrorCode::SessionRefreshFailed,
+                                ErrorClass::Auth,
+                                "inline oauth2: no authenticator for client_credentials"};
+        }
+        auto session = authenticator->authenticate(actor, ctx, rctx);
+        if (!session) {
+            return session.error();
+        }
+        for (const auto& [key, value] : session->injectHeaders) {
+            req.headers[key] = value;
+        }
+
+        // Cache with a lifetime from `expires_in` (default 5 min, minus a 30s
+        // safety margin so we never present a token about to expire).
+        auto ttl = std::chrono::seconds{300};
+        if (const auto it = session->variables.find("expires_in"); it != session->variables.end()) {
+            long secs{0};
+            const auto& s = it->second;
+            if (std::from_chars(s.data(), s.data() + s.size(), secs).ec == std::errc{} &&
+                secs > 0) {
+                ttl = std::chrono::seconds{secs};
+            }
+        }
+        const auto margin = std::chrono::seconds{30};
+        session->state = ActorSession::State::Live;
+        session->expiresAt = std::chrono::steady_clock::now() + (ttl > margin ? ttl - margin : ttl);
+        ctx.putSession(cacheId, *session);
+        return std::nullopt;
+    }
+
     // Execute a single operation step. pollAttemptRows is an out-parameter since
     // each timeline row is a separate StepResult (a parent can't carry a
     // vector<StepResult> without making the type recursive).
@@ -538,6 +878,13 @@ struct ExecutionEngine::Impl {
         HttpRequest req;
         req.method = op.method;
         req.transport = rctx.transport;
+
+        // Resolve the operation's effective inline auth once (Inherit → project
+        // default) and use it for every auth step below. mTLS is transport-
+        // level, so it's stamped right after the base transport config.
+        const std::optional<InlineAuth> effAuth = effectiveInlineAuth(op, project);
+        applyInlineMtls(req, effAuth, ctx, rctx);
+
         auto baseUrlIt = rctx.envVars.find("baseUrl");
         std::string const baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
         req.url = baseUrl + resolvedPath.output;
@@ -559,6 +906,8 @@ struct ExecutionEngine::Impl {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
                     }
+                    // mTLS actor: present its client cert on this request.
+                    applyActorSessionTransport(req, *session);
                 }
             }
 
@@ -596,6 +945,29 @@ struct ExecutionEngine::Impl {
                 qs += urlEncode(k) + "=" + urlEncode(v);
             }
             req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
+        }
+
+        // Inline (actor-less) auth: applied after actor/session injects and
+        // after the query string is assembled, so a Bearer/Basic header wins
+        // and an API-key query param appends to the finished URL.
+        if (auto authErr = applyInlineAuth(req, effAuth, ctx, rctx)) {
+            result.status = StepResult::Status::Failed;
+            result.error = authErr->code;
+            result.detail = authErr->detail;
+            auto elapsed = std::chrono::steady_clock::now() - startTime;
+            result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+            return result;
+        }
+
+        // OAuth 2.0 fetches a token (network) once here, before the retry loop,
+        // and injects Authorization: Bearer. A fetch failure fails the step.
+        if (auto oauth2Err = applyInlineOAuth2(req, effAuth, ctx, rctx, runId, stepIndex)) {
+            result.status = StepResult::Status::Failed;
+            result.error = oauth2Err->code;
+            result.detail = oauth2Err->detail;
+            auto elapsed = std::chrono::steady_clock::now() - startTime;
+            result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+            return result;
         }
 
         if (op.bodyTemplate) {
@@ -698,6 +1070,16 @@ struct ExecutionEngine::Impl {
                 }
             }
 
+            // Inline (actor-less) AWS SigV4 / OAuth1 signing — per-attempt so
+            // each retry gets a fresh nonce/timestamp, mirroring the actor path.
+            if (!signInlineAuth(req, effAuth, ctx, rctx)) {
+                result.status = StepResult::Status::Failed;
+                result.error = ErrorCode::SessionRefreshFailed;
+                result.detail = "inline auth signing failed (missing credentials or malformed URL)";
+                result.attempts = attemptCount;
+                return result;
+            }
+
             emit(RequestPrepared{runId,
                                  stepIndex,
                                  req.method,
@@ -789,6 +1171,14 @@ struct ExecutionEngine::Impl {
                             req.headers[k] = v;
                         }
                     }
+
+                    // Re-apply inline auth so it still wins after the header
+                    // rebuild (Operation::inlineAuth's documented contract).
+                    // Idempotent for the query-param case (see applyInlineAuth).
+                    // The result is discarded: any inline-auth config error
+                    // already failed the step on the first build, before we
+                    // could reach this reauth retry.
+                    (void)applyInlineAuth(req, effAuth, ctx, rctx);
 
                     // Refresh the Cookie header for the retry. Mirror
                     if (!req.headers.contains("Cookie")) {

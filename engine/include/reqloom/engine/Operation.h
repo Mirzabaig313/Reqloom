@@ -143,6 +143,87 @@ struct Provenance {
     std::map<std::string, std::string> evidence;
 };
 
+/// Per-operation inline auth kind. This is the actor-less alternative to
+/// running a request "as" an actor — a quick, Postman-style credential attached
+/// directly to one endpoint (e.g. hitting an out-of-project URL without
+/// standing up a full actor + login chain).
+enum class InlineAuthType : std::uint8_t {
+    None,      ///< No inline auth (field absent / explicitly cleared).
+    Bearer,    ///< Authorization: Bearer <token>
+    Basic,     ///< Authorization: Basic base64(username:password)
+    ApiKey,    ///< <name>: <value> as a header or query param
+    AwsSigV4,  ///< AWS Signature v4, signed per-request (reuses signSigV4Request).
+    OAuth1,    ///< OAuth 1.0a HMAC-SHA1, signed per-request (reuses signOAuth1Request).
+    OAuth2,    ///< OAuth 2.0 client-credentials; fetches a token, injects Bearer.
+    Jwt,       ///< Signs a JWT (HS256/HS512) and injects Authorization: Bearer.
+    Mtls,      ///< Mutual TLS — client cert/key for the TLS handshake (transport).
+    Inherit,   ///< Use the project's default auth (see Project::defaultAuth).
+};
+
+/// A credential bound to a single operation, applied at request-build time.
+/// All value fields may contain `{{variable}}` templates (resolved like
+/// headers) — prefer `{{secret.X}}` for real secrets rather than storing a
+/// plaintext token here, since these round-trip verbatim into the YAML.
+struct InlineAuth {
+    InlineAuthType type{InlineAuthType::None};
+
+    std::string token;     ///< Bearer.
+    std::string username;  ///< Basic.
+    std::string password;  ///< Basic.
+
+    std::string apiKeyName;     ///< ApiKey: header/query key.
+    std::string apiKeyValue;    ///< ApiKey: value.
+    bool apiKeyInQuery{false};  ///< ApiKey: true → query param, false → header.
+
+    // AWS Signature v4 — fed to signSigV4Request via a transient session.
+    std::string awsAccessKey;
+    std::string awsSecretKey;
+    std::string awsRegion;
+    std::string awsService;
+    std::string awsSessionToken;  ///< Optional (STS temporary credentials).
+
+    // OAuth 1.0a (HMAC-SHA1) — fed to signOAuth1Request via a transient session.
+    std::string oauthConsumerKey;
+    std::string oauthConsumerSecret;
+    std::string oauthToken;
+    std::string oauthTokenSecret;
+
+    // OAuth 2.0 — a token is fetched at request build and injected as
+    // Authorization: Bearer. Only the non-interactive grants are supported
+    // (a headless engine can't drive the authorization-code browser redirect).
+    std::string oauth2GrantType;  ///< "client_credentials", "password", or "authorization_code".
+    std::string oauth2TokenUrl;
+    std::string oauth2ClientId;
+    std::string oauth2ClientSecret;
+    std::string oauth2Scope;  ///< Optional space-separated scopes.
+    std::string
+        oauth2ClientAuth;  ///< "body" (default) or "basic" (client creds in a Basic header).
+    // Password grant reuses the generic `username`/`password` fields above.
+
+    // Authorization Code (with PKCE) — interactive grant. The engine can't run
+    // the browser flow; the desktop obtains the token and stores it here.
+    std::string oauth2AuthUrl;      ///< Authorization endpoint (browser).
+    std::string oauth2CallbackUrl;  ///< Loopback redirect URI.
+    std::string oauth2PkceMethod;   ///< "S256" (default) or "plain". Desktop-only.
+    std::string oauth2AccessToken;  ///< Token from the interactive flow. NEVER
+                                    ///< persisted to YAML (ephemeral secret).
+
+    // JWT Bearer — a JWT is signed and injected as Authorization: Bearer.
+    std::string jwtAlgorithm;  ///< "HS256" (default) or "HS512".
+    std::string jwtSecret;
+    std::string jwtPayload;  ///< Claims as a JSON object string.
+
+    // Mutual TLS — client certificate/key for the TLS handshake. Paths are
+    // variable-resolved then handed to the HTTP client as-is (same trust model
+    // as a CA bundle path); they are NOT sandboxed to the project root, since
+    // client certs commonly live outside the repo. Prefer absolute paths.
+    std::string mtlsFormat;       ///< "pem" (default) or "p12" (PKCS#12 bundle).
+    std::string mtlsCertPath;     ///< PEM cert, or the .p12/.pfx path when format is p12.
+    std::string mtlsKeyPath;      ///< PEM private key (unused for p12).
+    std::string mtlsKeyPassword;  ///< Encrypted-key passphrase, or the p12 password.
+    std::string mtlsCaCertPath;   ///< Optional custom CA bundle to trust the server.
+};
+
 /// A declared response assertion. `expr` is a predicate in the engine's
 /// predicate grammar (the same one `poll_until.success_when` uses): comparisons
 /// (`==, !=, <, <=, >, >=, in, matches`), boolean `&&`/`||`, `$.json.path`
@@ -158,6 +239,11 @@ struct Operation {
     OperationId id;
     ResourceId resource;
     ActorId actor;
+
+    /// Actor-less per-endpoint credential. Mutually exclusive with `actor` in
+    /// the UI (use an actor OR an inline auth type), but if both are set the
+    /// inline auth is applied last and wins on the Authorization header.
+    std::optional<InlineAuth> inlineAuth;
 
     HttpMethod method{HttpMethod::Get};
     std::string pathTemplate;  ///< e.g. /api/v1/orders/{{order.order_id}}

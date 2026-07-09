@@ -29,14 +29,14 @@ TEST(PathEval, empty_body_or_path_is_neutral) {
 
 TEST(PathEval, collect_paths_returns_leaf_paths_filtered) {
     const QString body = R"({"data":{"id":"x","items":[{"id":1}]},"ok":true})";
-    // No filter → every leaf path.
+    // No filter → every leaf path, in bare (no leading "$.") form.
     const QStringList all = collectJsonPaths(body, QString());
-    EXPECT_TRUE(all.contains("$.data.id"));
-    EXPECT_TRUE(all.contains("$.data.items[0].id"));
-    EXPECT_TRUE(all.contains("$.ok"));
+    EXPECT_TRUE(all.contains("data.id"));
+    EXPECT_TRUE(all.contains("data.items[0].id"));
+    EXPECT_TRUE(all.contains("ok"));
     // Filter narrows (case-insensitive substring).
     const QStringList items = collectJsonPaths(body, "items");
-    EXPECT_EQ(items, QStringList{"$.data.items[0].id"});
+    EXPECT_EQ(items, QStringList{"data.items[0].id"});
     // Invalid JSON → empty.
     EXPECT_TRUE(collectJsonPaths("not json", QString()).isEmpty());
 }

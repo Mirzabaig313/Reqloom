@@ -4,7 +4,8 @@
 // a full N-step login chain (AppController.actorAuthSteps): Add/Remove/reorder
 // steps, each with its own method/path/body/expect + extractions. Seeded by
 // selectActor→prepareEditActor; Save persists via saveActorInline. New-actor
-// creation still uses ActorDialog (no panel to edit before the actor exists).
+// creation reuses this same panel: AppController.newActor() shows it with an
+// empty selection, which opens straight in edit mode (no separate dialog).
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -37,7 +38,10 @@ ScrollView {
     // Step-based strategies carry "login" in their label. In edit mode the live
     // combo selection drives it; in read mode the selected actor's strategy.
     readonly property bool stepBased: editing ? (strategyCombo.currentText.indexOf("login") >= 0) : (AppController.selectedActorStrategy.indexOf("login") >= 0)
+    readonly property string strategy: editing ? strategyCombo.currentText : AppController.selectedActorStrategy
     readonly property bool nameValid: AppController.isValidName(fName)
+    // PKCS#12 vs PEM for the mTLS strategy's conditional fields.
+    readonly property bool mtlsIsP12: AppController.actorConfig["format"] === "p12"
 
     // Switching to a different actor (or a post-save re-seed) discards any
     // in-progress inline edit — the panel always reflects the current actor.
@@ -46,7 +50,16 @@ ScrollView {
     Connections {
         target: AppController
         function onActorSelectionChanged() {
-            root.editing = false;
+            // A brand-new actor (no name yet) opens straight in edit mode; any
+            // existing selection returns to the read view.
+            if (AppController.hasActor && AppController.selectedActorName.length === 0) {
+                root.beginEdit();
+            } else {
+                root.editing = false;
+            }
+        }
+        function onActorEditRequested() {
+            root.beginEdit();
         }
     }
 
@@ -65,6 +78,12 @@ ScrollView {
     }
 
     function cancelEdit() {
+        // A never-saved draft has no persisted actor to fall back to — close
+        // the panel entirely instead of leaving a blank read view.
+        if (AppController.selectedActorName.length === 0) {
+            AppController.cancelActorDraft();
+            return;
+        }
         // Discard edits to the shared step/config/refresh models by re-seeding
         // from the persisted actor (name == id for the selected actor).
         AppController.prepareEditActor(AppController.selectedActorName);
@@ -99,6 +118,16 @@ ScrollView {
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
+                // A never-saved draft has no name yet — label the panel so the
+                // empty name field reads as "New actor" rather than blank.
+                Label {
+                    visible: root.editing && AppController.selectedActorName.length === 0
+                    text: qsTr("New actor")
+                    color: DesignTokens.textPrimary
+                    font.pixelSize: DesignTokens.fontTitle
+                    font.weight: DesignTokens.weightSemiBold
+                    Layout.fillWidth: true
+                }
                 GlassTextField {
                     visible: root.editing
                     Layout.fillWidth: true
@@ -114,19 +143,22 @@ ScrollView {
                 }
             }
             GlassButton {
+                Layout.alignment: Qt.AlignTop
                 visible: !root.editing
                 text: qsTr("Edit")
                 primary: true
                 onClicked: root.beginEdit()
             }
             GlassButton {
+                Layout.alignment: Qt.AlignTop
                 visible: root.editing
                 text: qsTr("Cancel")
                 onClicked: root.cancelEdit()
             }
             GlassButton {
+                Layout.alignment: Qt.AlignTop
                 visible: root.editing
-                text: qsTr("Save")
+                text: AppController.selectedActorName.length === 0 ? qsTr("Create actor") : qsTr("Save")
                 primary: true
                 enabled: root.nameValid
                 onClicked: root.saveEdits()
@@ -172,20 +204,246 @@ ScrollView {
             }
         }
 
-        // ── Config-based strategies ──
+        // ── Config-based strategies: typed, labeled fields per strategy ──
         ColumnLayout {
             Layout.fillWidth: true
             visible: !root.stepBased
-            spacing: DesignTokens.spaceXs
+            enabled: root.editing
+            spacing: DesignTokens.spaceSm
             FieldLabel {
                 text: qsTr("Auth config")
             }
-            KeyValueEditorView {
+            Label {
+                visible: root.editing
                 Layout.fillWidth: true
-                enabled: root.editing
-                kvModel: AppController.editActorConfig
-                keyPlaceholder: qsTr("key")
-                valuePlaceholder: qsTr("value  (use {{secret.NAME}})")
+                text: qsTr("Values may use {{secret.NAME}} to reference a stored secret.")
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontCaption
+                wrapMode: Text.WordWrap
+            }
+
+            // Basic Auth
+            ConfigField {
+                visible: root.strategy === "Basic Auth"
+                label: qsTr("Username")
+                cfgKey: "username"
+            }
+            ConfigField {
+                visible: root.strategy === "Basic Auth"
+                label: qsTr("Password")
+                cfgKey: "password"
+                secret: true
+            }
+
+            // API Key
+            ConfigField {
+                visible: root.strategy === "API Key"
+                label: qsTr("Name")
+                cfgKey: "name"
+                placeholder: qsTr("e.g. X-API-Key")
+            }
+            ConfigField {
+                visible: root.strategy === "API Key"
+                label: qsTr("Key")
+                cfgKey: "key"
+                secret: true
+            }
+            ConfigCombo {
+                visible: root.strategy === "API Key"
+                label: qsTr("Location")
+                cfgKey: "location"
+                values: ["header", "query", "cookie"]
+                labels: [qsTr("Header"), qsTr("Query Param"), qsTr("Cookie")]
+                defaultValue: "header"
+            }
+
+            // OAuth 2.0 (Client Credentials / Password)
+            ConfigField {
+                visible: root.strategy.indexOf("OAuth 2.0") === 0
+                label: qsTr("Token URL")
+                cfgKey: "token_url"
+                placeholder: qsTr("https://id.example.com/oauth/token")
+            }
+            ConfigField {
+                visible: root.strategy.indexOf("OAuth 2.0") === 0
+                label: qsTr("Client ID")
+                cfgKey: "client_id"
+            }
+            ConfigField {
+                visible: root.strategy.indexOf("OAuth 2.0") === 0
+                label: qsTr("Client Secret")
+                cfgKey: "client_secret"
+                secret: true
+            }
+            ConfigField {
+                visible: root.strategy === "OAuth 2.0 (Password)"
+                label: qsTr("Username")
+                cfgKey: "username"
+            }
+            ConfigField {
+                visible: root.strategy === "OAuth 2.0 (Password)"
+                label: qsTr("Password")
+                cfgKey: "password"
+                secret: true
+            }
+            ConfigField {
+                visible: root.strategy.indexOf("OAuth 2.0") === 0
+                label: qsTr("Scope")
+                cfgKey: "scope"
+                placeholder: qsTr("optional — e.g. read write profile")
+            }
+            ConfigCombo {
+                visible: root.strategy.indexOf("OAuth 2.0") === 0
+                label: qsTr("Client Auth")
+                cfgKey: "client_auth"
+                values: ["basic", "body", "none"]
+                labels: [qsTr("Send as Basic Auth header"), qsTr("Send in request body"), qsTr("None (Public Client)")]
+                defaultValue: "basic"
+            }
+
+            // OAuth 1.0 (HMAC-SHA1)
+            ConfigField {
+                visible: root.strategy === "OAuth 1.0 (HMAC-SHA1)"
+                label: qsTr("Consumer Key")
+                cfgKey: "consumer_key"
+            }
+            ConfigField {
+                visible: root.strategy === "OAuth 1.0 (HMAC-SHA1)"
+                label: qsTr("Consumer Secret")
+                cfgKey: "consumer_secret"
+                secret: true
+            }
+            ConfigField {
+                visible: root.strategy === "OAuth 1.0 (HMAC-SHA1)"
+                label: qsTr("Token")
+                cfgKey: "token"
+            }
+            ConfigField {
+                visible: root.strategy === "OAuth 1.0 (HMAC-SHA1)"
+                label: qsTr("Token Secret")
+                cfgKey: "token_secret"
+                secret: true
+            }
+
+            // AWS Signature v4
+            ConfigField {
+                visible: root.strategy === "AWS Signature v4"
+                label: qsTr("Access Key")
+                cfgKey: "access_key"
+            }
+            ConfigField {
+                visible: root.strategy === "AWS Signature v4"
+                label: qsTr("Secret Key")
+                cfgKey: "secret_key"
+                secret: true
+            }
+            ConfigField {
+                visible: root.strategy === "AWS Signature v4"
+                label: qsTr("Region")
+                cfgKey: "region"
+                placeholder: qsTr("e.g. us-east-1")
+            }
+            ConfigField {
+                visible: root.strategy === "AWS Signature v4"
+                label: qsTr("Service")
+                cfgKey: "service"
+                placeholder: qsTr("e.g. execute-api, s3")
+            }
+            ConfigField {
+                visible: root.strategy === "AWS Signature v4"
+                label: qsTr("Session Token")
+                cfgKey: "session_token"
+                secret: true
+                placeholder: qsTr("optional (STS)")
+            }
+
+            // Bearer Token
+            ConfigField {
+                visible: root.strategy === "Bearer Token"
+                label: qsTr("Token")
+                cfgKey: "token"
+                secret: true
+                placeholder: qsTr("or {{secret.API_TOKEN}}")
+            }
+
+            // JWT Bearer
+            ConfigCombo {
+                visible: root.strategy === "JWT Bearer"
+                label: qsTr("Algorithm")
+                cfgKey: "algorithm"
+                values: ["HS256", "HS512"]
+                labels: ["HS256", "HS512"]
+                defaultValue: "HS256"
+            }
+            ConfigField {
+                visible: root.strategy === "JWT Bearer"
+                label: qsTr("Secret")
+                cfgKey: "secret"
+                secret: true
+            }
+            ConfigField {
+                visible: root.strategy === "JWT Bearer"
+                label: qsTr("Payload (JSON)")
+                cfgKey: "payload"
+                placeholder: qsTr("{ \"sub\": \"1234\", \"role\": \"admin\" }")
+            }
+
+            // mTLS (Client Cert) — Certificate Format then conditional fields.
+            ConfigCombo {
+                visible: root.strategy === "mTLS (Client Cert)"
+                label: qsTr("Certificate Format")
+                cfgKey: "format"
+                values: ["pem", "p12"]
+                labels: [qsTr("PEM Certificate + Key"), qsTr("PKCS#12 (.p12/.pfx)")]
+                defaultValue: "pem"
+            }
+            // PEM fields
+            ConfigFileField {
+                visible: root.strategy === "mTLS (Client Cert)" && !root.mtlsIsP12
+                label: qsTr("Client Certificate")
+                cfgKey: "cert_path"
+                placeholder: qsTr("client.pem / client.crt")
+                dialogTitle: qsTr("Choose client certificate")
+                nameFilter: qsTr("Certificates (*.pem *.crt *.cer)")
+            }
+            ConfigFileField {
+                visible: root.strategy === "mTLS (Client Cert)" && !root.mtlsIsP12
+                label: qsTr("Private Key")
+                cfgKey: "key_path"
+                placeholder: qsTr("client.key")
+                dialogTitle: qsTr("Choose private key")
+                nameFilter: qsTr("Keys (*.key *.pem)")
+            }
+            ConfigField {
+                visible: root.strategy === "mTLS (Client Cert)" && !root.mtlsIsP12
+                label: qsTr("Private Key Passphrase")
+                cfgKey: "key_password"
+                secret: true
+                placeholder: qsTr("optional")
+            }
+            // PKCS#12 fields
+            ConfigFileField {
+                visible: root.strategy === "mTLS (Client Cert)" && root.mtlsIsP12
+                label: qsTr("PKCS#12 File")
+                cfgKey: "cert_path"
+                placeholder: qsTr("client.p12 / client.pfx")
+                dialogTitle: qsTr("Choose PKCS#12 bundle")
+                nameFilter: qsTr("PKCS#12 (*.p12 *.pfx)")
+            }
+            ConfigField {
+                visible: root.strategy === "mTLS (Client Cert)" && root.mtlsIsP12
+                label: qsTr("PKCS#12 Password")
+                cfgKey: "key_password"
+                secret: true
+            }
+            // Shared optional CA cert
+            ConfigFileField {
+                visible: root.strategy === "mTLS (Client Cert)"
+                label: qsTr("CA Certificate")
+                cfgKey: "ca_cert_path"
+                placeholder: qsTr("optional — custom CA to trust the server")
+                dialogTitle: qsTr("Choose CA certificate")
+                nameFilter: qsTr("Certificates (*.pem *.crt *.cer)")
             }
         }
 
@@ -417,6 +675,87 @@ ScrollView {
                     valuePlaceholder: qsTr("data.accessToken")
                 }
             }
+        }
+    }
+
+    // A labeled config field bound to one authConfig key (shared actorConfig
+    // model). Disabled state comes from the enclosing ColumnLayout.
+    component ConfigField: RowLayout {
+        id: cfgFieldRoot
+        property string label: ""
+        property string cfgKey: ""
+        property bool secret: false
+        property string placeholder: ""
+        Layout.fillWidth: true
+        spacing: DesignTokens.spaceMd
+        FieldLabel {
+            text: cfgFieldRoot.label
+            Layout.preferredWidth: 140
+        }
+        GlassTextField {
+            Layout.fillWidth: true
+            echoMode: cfgFieldRoot.secret ? TextInput.Password : TextInput.Normal
+            placeholderText: cfgFieldRoot.placeholder
+            text: AppController.actorConfig[cfgFieldRoot.cfgKey] !== undefined ? AppController.actorConfig[cfgFieldRoot.cfgKey] : ""
+            onTextEdited: AppController.setActorConfigValue(cfgFieldRoot.cfgKey, text)
+        }
+    }
+
+    // A labeled config field with a native file picker (for cert/key paths).
+    component ConfigFileField: RowLayout {
+        id: cfgFileRoot
+        property string label: ""
+        property string cfgKey: ""
+        property string placeholder: ""
+        property string dialogTitle: qsTr("Choose file")
+        property string nameFilter: qsTr("All files (*)")
+        Layout.fillWidth: true
+        spacing: DesignTokens.spaceMd
+        FieldLabel {
+            text: cfgFileRoot.label
+            Layout.preferredWidth: 140
+        }
+        GlassTextField {
+            Layout.fillWidth: true
+            placeholderText: cfgFileRoot.placeholder
+            text: AppController.actorConfig[cfgFileRoot.cfgKey] !== undefined ? AppController.actorConfig[cfgFileRoot.cfgKey] : ""
+            onTextEdited: AppController.setActorConfigValue(cfgFileRoot.cfgKey, text)
+        }
+        GlassButton {
+            text: qsTr("Browse…")
+            onClicked: {
+                const picked = AppController.pickFile(cfgFileRoot.dialogTitle, cfgFileRoot.nameFilter);
+                if (picked.length > 0) {
+                    AppController.setActorConfigValue(cfgFileRoot.cfgKey, picked);
+                }
+            }
+        }
+    }
+
+    // A labeled config dropdown bound to one authConfig key.
+    component ConfigCombo: RowLayout {
+        id: cfgComboRoot
+        property string label: ""
+        property string cfgKey: ""
+        property var values: []
+        property var labels: []
+        property string defaultValue: ""
+        Layout.fillWidth: true
+        spacing: DesignTokens.spaceMd
+        FieldLabel {
+            text: cfgComboRoot.label
+            Layout.preferredWidth: 140
+        }
+        GlassComboBox {
+            Layout.fillWidth: true
+            model: cfgComboRoot.labels
+            currentIndex: {
+                var v = AppController.actorConfig[cfgComboRoot.cfgKey];
+                if (v === undefined || v === "")
+                    v = cfgComboRoot.defaultValue;
+                return Math.max(0, cfgComboRoot.values.indexOf(v));
+            }
+            onActivated: AppController.setActorConfigValue(cfgComboRoot.cfgKey, cfgComboRoot.values[currentIndex])
         }
     }
 

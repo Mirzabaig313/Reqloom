@@ -54,6 +54,8 @@ qt_add_executable(reqloom-desktop
     src/application/WorkspaceModel.h
     src/application/Bootstrapper.cpp
     src/application/Bootstrapper.h
+    src/application/OAuth2AuthCodeFlow.cpp
+    src/application/OAuth2AuthCodeFlow.h
     src/application/RunController.cpp
     src/application/RunController.h
     src/application/SavedResponseStore.cpp
@@ -101,7 +103,6 @@ qt_add_qml_module(reqloom-desktop
         qml/views/TimelinePanel.qml
         qml/views/NewModuleDialog.qml
         qml/views/NewEndpointDialog.qml
-        qml/views/ActorDialog.qml
         qml/views/ActorDetail.qml
         qml/views/ManageEnvironmentDialog.qml
         qml/widgets/MethodBadge.qml
@@ -126,6 +127,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/GlassToolTip.qml
         qml/widgets/KeyValueList.qml
         qml/widgets/KeyValueEditorView.qml
+        qml/widgets/HeaderNameAutocomplete.qml
         qml/widgets/ChainView.qml
         qml/widgets/StatusBadge.qml
         qml/widgets/DependencyEditor.qml
@@ -178,6 +180,7 @@ target_link_libraries(reqloom-desktop
         scintilla
         Qt6::Core
         Qt6::Concurrent
+        Qt6::Network
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
