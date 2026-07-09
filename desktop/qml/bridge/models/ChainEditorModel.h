@@ -57,6 +57,10 @@ public:
     /// Replace all rows with fresh per-operation editors seeded from `seeds`.
     void rebuild(const std::vector<OpSeed>& seeds);
 
+    /// Capture the current rows (including live depends_on / extract / for-each
+    /// edits) as seeds, so a caller can park the chain and rebuild() it later.
+    [[nodiscard]] std::vector<OpSeed> snapshotSeeds() const;
+
     // Read-back accessors for the save path.
     [[nodiscard]] int count() const { return static_cast<int>(rows_.size()); }
     [[nodiscard]] QString operationIdAt(int row) const;

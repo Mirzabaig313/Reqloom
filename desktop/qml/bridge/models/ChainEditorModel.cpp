@@ -74,6 +74,28 @@ void ChainEditorModel::rebuild(const std::vector<OpSeed>& seeds) {
     endResetModel();
 }
 
+std::vector<ChainEditorModel::OpSeed> ChainEditorModel::snapshotSeeds() const {
+    std::vector<OpSeed> seeds;
+    seeds.reserve(rows_.size());
+    for (const Row& row : rows_) {
+        OpSeed seed;
+        seed.operationId = row.operationId;
+        seed.method = row.method;
+        seed.isTarget = row.isTarget;
+        seed.candidates = row.candidates;
+        seed.forEachOver = row.forEachOver;
+        seed.forEachContinueOnError = row.forEachContinueOnError;
+        if (row.deps) {
+            seed.dependencies = row.deps->dependencies();
+        }
+        if (row.extracts) {
+            seed.extractions = row.extracts->pairs();
+        }
+        seeds.push_back(std::move(seed));
+    }
+    return seeds;
+}
+
 QString ChainEditorModel::operationIdAt(int row) const {
     if (row < 0 || row >= static_cast<int>(rows_.size())) {
         return {};

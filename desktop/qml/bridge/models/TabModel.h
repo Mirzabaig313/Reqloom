@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AuthStepListModel.h"  // AuthStepListModel::StepSeed for actor login steps
+#include "ChainEditorModel.h"   // ChainEditorModel::OpSeed for the per-tab chain snapshot
 #include "TimelineModel.h"      // TimelineModel::Snapshot for the per-tab run timeline
 
 #include <QtQml/qqmlregistration.h>
@@ -101,6 +102,13 @@ struct TabState {
     TabKvPairs editAssertions;
     std::vector<QString> editDependencies;
 
+    // ── Whole-chain editor snapshot (per tab) ──
+    // The Chain tab's per-step depends_on / extract / for-each editors. Captured
+    // so unsaved chain wiring survives a tab switch instead of being re-derived
+    // from the saved project. Only meaningful for an operation tab in edit mode.
+    std::vector<ChainEditorModel::OpSeed> chainSeeds;
+    bool chainSnapshotValid{false};
+
     // ── Actor state ──
     QString actorId;
     QString actorName;
@@ -176,6 +184,8 @@ public:
 
     /// Append `state` as a new tab; returns its index.
     int append(TabState state);
+    /// Move the tab at `from` to `to` (drag-to-reorder). No-op if out of range.
+    void move(int from, int to);
     /// Remove the tab at `index` (no-op if out of range).
     void removeAt(int index);
     /// Remove every tab (used by "close others" which re-appends the kept one).

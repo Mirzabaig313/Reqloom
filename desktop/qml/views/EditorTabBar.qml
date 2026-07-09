@@ -46,9 +46,15 @@ Rectangle {
             required property string method
             required property bool dirty
             readonly property bool active: tabRoot.index === AppController.activeTabIndex
+            // Visual x-offset while dragging to reorder; reset on drop.
+            property real dragDx: 0
 
             height: tabsView.height
             width: Math.min(220, Math.max(112, titleMetrics.width + 96))
+            z: dragDx !== 0 ? 2 : 0
+            transform: Translate {
+                x: tabRoot.dragDx
+            }
 
             TextMetrics {
                 id: titleMetrics
@@ -87,6 +93,41 @@ Rectangle {
                 TapHandler {
                     acceptedButtons: Qt.RightButton
                     onTapped: tabMenu.popup()
+                }
+                // Drag horizontally to reorder. We offset the chip visually and
+                // commit the new position on drop (target resolved by the chip's
+                // centre), so variable-width tabs reorder correctly.
+                DragHandler {
+                    id: reorder
+                    target: null
+                    xAxis.enabled: true
+                    yAxis.enabled: false
+                    cursorShape: Qt.ClosedHandCursor
+                    onActiveTranslationChanged: tabRoot.dragDx = activeTranslation.x
+                    onActiveChanged: {
+                        if (active) {
+                            tabRoot.dragDx = 0;
+                            return;
+                        }
+                        const centreX = tabRoot.x + tabRoot.width / 2 + tabRoot.dragDx;
+                        let target = tabsView.indexAt(centreX, tabsView.height / 2);
+                        if (target < 0) {
+                            // Landed in an inter-tab spacing gap — probe just
+                            // beside the centre before treating it as an end drop.
+                            target = tabsView.indexAt(centreX - tabsView.spacing, tabsView.height / 2);
+                        }
+                        if (target < 0) {
+                            target = tabsView.indexAt(centreX + tabsView.spacing, tabsView.height / 2);
+                        }
+                        if (target < 0) {
+                            // Genuine past-the-end drop: snap to the near end.
+                            target = centreX <= tabsView.contentX ? 0 : tabsView.count - 1;
+                        }
+                        tabRoot.dragDx = 0;
+                        if (target !== tabRoot.index) {
+                            AppController.moveTab(tabRoot.index, target);
+                        }
+                    }
                 }
 
                 RowLayout {

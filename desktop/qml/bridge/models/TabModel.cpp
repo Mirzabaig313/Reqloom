@@ -63,6 +63,19 @@ int TabModel::append(TabState state) {
     return row;
 }
 
+void TabModel::move(int from, int to) {
+    if (from == to || !valid(from) || !valid(to)) {
+        return;
+    }
+    // beginMoveRows quirk: for a forward move the destination row is `to + 1`.
+    const int destination = to > from ? to + 1 : to;
+    beginMoveRows({}, from, from, {}, destination);
+    TabState moved = std::move(tabs_[static_cast<std::size_t>(from)]);
+    tabs_.erase(tabs_.begin() + static_cast<std::ptrdiff_t>(from));
+    tabs_.insert(tabs_.begin() + static_cast<std::ptrdiff_t>(to), std::move(moved));
+    endMoveRows();
+}
+
 void TabModel::removeAt(int index) {
     if (!valid(index)) {
         return;

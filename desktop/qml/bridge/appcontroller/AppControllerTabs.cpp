@@ -7,6 +7,10 @@
 
 #include <reqloom/engine/Operation.h>
 
+#include <QtCore/QLatin1Char>
+#include <QtCore/QSettings>
+#include <QtCore/QString>
+
 #include <algorithm>
 #include <string>
 #include <utility>
@@ -36,6 +40,17 @@ namespace {
         out.push_back(QString::fromStdString(d));
     }
     return out;
+}
+
+// Open tabs persist under one settings group, keyed by the project root. As in
+// EnvironmentSettings, '/' in the key is remapped to '|' so QSettings doesn't
+// treat a POSIX root as a nested path.
+constexpr const char* kTabsGroup = "openTabs";
+
+[[nodiscard]] QString sanitizeRoot(const QString& root) {
+    QString key = root;
+    key.replace(QLatin1Char('/'), QLatin1Char('|'));
+    return key;
 }
 
 }  // namespace
@@ -297,6 +312,14 @@ void AppController::captureActiveTab() {
         tab.method = opMethod_;
         tab.subtitle = opPath_;
         tab.dirty = editing_;  // v1: "in edit mode" is the unsaved proxy
+        // Snapshot the whole-chain editor so unsaved per-step wiring survives a
+        // switch. Only meaningful once the chain has been seeded (edit mode).
+        if (chainFieldsLoaded_ && chainEditor_.count() > 0) {
+            tab.chainSeeds = chainEditor_.snapshotSeeds();
+            tab.chainSnapshotValid = true;
+        } else {
+            tab.chainSnapshotValid = false;
+        }
     } else {
         captureActorInto(tab);
         tab.title = selectedActorName_.isEmpty() ? tr("New actor") : selectedActorName_;
@@ -335,11 +358,13 @@ void AppController::restoreActiveTab() {
         loadOperationReadState(tab.module, tab.opName);
         restoreOperationEditFrom(tab);
         if (editing_) {
-            // The Chain tab is re-derived from the (restored) deps rather than
-            // snapshotted. ponytail: unsaved per-step chain-extract edits are
-            // re-derived from saved deps on tab switch; upgrade path is to
-            // snapshot ChainEditorModel's nested rows.
-            prepareChainEditor();
+            if (tab.chainSnapshotValid) {
+                // Restore the tab's own unsaved chain wiring verbatim.
+                chainEditor_.rebuild(tab.chainSeeds);
+            } else {
+                // No snapshot (first time in edit mode): derive from saved deps.
+                prepareChainEditor();
+            }
         }
     } else {
         hasOperation_ = false;
@@ -423,6 +448,7 @@ void AppController::openOperationTab(const QString& projectRoot,
     emit selectionChanged();
     emit activeTabChanged();
     refreshOpenOpExamples();
+    persistOpenTabs();
 }
 
 void AppController::openActorTab(const QString& projectRoot,
@@ -468,6 +494,26 @@ void AppController::openActorTab(const QString& projectRoot,
     emit actorSelectionChanged();
     emit actorEditChanged();
     emit activeTabChanged();
+    persistOpenTabs();
+}
+
+void AppController::moveTab(int from, int to) {
+    if (from == to || !tabs_.valid(from) || !tabs_.valid(to)) {
+        return;
+    }
+    // Track the active tab across the reorder so it stays selected. Only the
+    // ordering changes — the live editor state doesn't, so no restore needed.
+    const int active = activeTabIndex_;
+    tabs_.move(from, to);
+    if (active == from) {
+        activeTabIndex_ = to;
+    } else if (from < active && active <= to) {
+        activeTabIndex_ = active - 1;
+    } else if (to <= active && active < from) {
+        activeTabIndex_ = active + 1;
+    }
+    persistOpenTabs();
+    emit activeTabChanged();
 }
 
 void AppController::activateTab(int index) {
@@ -477,6 +523,7 @@ void AppController::activateTab(int index) {
     captureActiveTab();
     activeTabIndex_ = index;
     restoreActiveTab();
+    persistOpenTabs();
     emit activeTabChanged();
 }
 
@@ -490,6 +537,7 @@ void AppController::closeTab(int index) {
     if (tabs_.count() == 0) {
         activeTabIndex_ = -1;
         syncActiveKindFlags();
+        persistOpenTabs();
         emit activeTabChanged();
         return;
     }
@@ -501,6 +549,7 @@ void AppController::closeTab(int index) {
         // A tab before the active one shifted every later index down by one.
         --activeTabIndex_;
     }
+    persistOpenTabs();
     emit activeTabChanged();
 }
 
@@ -513,6 +562,131 @@ void AppController::closeOtherTabs(int index) {
     TabState keep = tabs_.stateAt(activeTabIndex_);
     tabs_.clearAll();
     activeTabIndex_ = tabs_.append(std::move(keep));
+    persistOpenTabs();
+    emit activeTabChanged();
+}
+
+void AppController::persistOpenTabs() const {
+    if (restoringTabs_) {
+        return;  // a restore is re-opening tabs; it persists once at the end
+    }
+    const QString root = activeProject().rootPath();
+    if (root.isEmpty()) {
+        return;  // no project → nothing to key the tabs against
+    }
+    const QString key = sanitizeRoot(root);
+
+    // Collect the reopenable tabs (skip never-saved actor drafts — they have no
+    // id to reload) and note which persisted slot is the active one.
+    struct Entry {
+        int kind{0};
+        QString id;
+    };
+    std::vector<Entry> entries;
+    int activeKind = -1;
+    QString activeId;
+    for (int i = 0; i < tabs_.count(); ++i) {
+        const TabState& tab = tabs_.stateAt(i);
+        if (tab.kind == TabState::Kind::Actor && tab.id.isEmpty()) {
+            continue;
+        }
+        if (i == activeTabIndex_) {
+            activeKind = static_cast<int>(tab.kind);
+            activeId = tab.id;
+        }
+        entries.push_back(Entry{static_cast<int>(tab.kind), tab.id});
+    }
+
+    QSettings settings;
+    settings.beginGroup(QString::fromUtf8(kTabsGroup));
+    settings.remove(key);
+    settings.remove(key + QStringLiteral("|activeKind"));
+    settings.remove(key + QStringLiteral("|activeId"));
+    settings.beginWriteArray(key);
+    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+        settings.setArrayIndex(i);
+        settings.setValue(QStringLiteral("kind"), entries[static_cast<std::size_t>(i)].kind);
+        settings.setValue(QStringLiteral("id"), entries[static_cast<std::size_t>(i)].id);
+    }
+    settings.endArray();
+    // Persist the active tab's identity (kind + id), not its position, so a tab
+    // deleted between sessions can't shift which tab reactivates.
+    settings.setValue(key + QStringLiteral("|activeKind"), activeKind);
+    settings.setValue(key + QStringLiteral("|activeId"), activeId);
+    settings.endGroup();
+    // No explicit sync() here: tab switches are frequent, and losing the very
+    // latest strip state on a hard crash is harmless. Qt flushes on exit.
+}
+
+void AppController::restoreOpenTabs(const QString& projectRoot) {
+    if (projectRoot.isEmpty()) {
+        return;
+    }
+    const QString key = sanitizeRoot(projectRoot);
+
+    struct Entry {
+        int kind{0};
+        QString id;
+    };
+    std::vector<Entry> entries;
+    int activeKind = -1;
+    QString activeId;
+    {
+        QSettings settings;
+        settings.beginGroup(QString::fromUtf8(kTabsGroup));
+        const int count = settings.beginReadArray(key);
+        entries.reserve(static_cast<std::size_t>(count));
+        for (int i = 0; i < count; ++i) {
+            settings.setArrayIndex(i);
+            Entry entry;
+            entry.kind = settings.value(QStringLiteral("kind")).toInt();
+            entry.id = settings.value(QStringLiteral("id")).toString();
+            if (!entry.id.isEmpty()) {
+                entries.push_back(std::move(entry));
+            }
+        }
+        settings.endArray();
+        activeKind = settings.value(key + QStringLiteral("|activeKind"), -1).toInt();
+        activeId = settings.value(key + QStringLiteral("|activeId")).toString();
+        settings.endGroup();
+    }
+
+    if (entries.empty()) {
+        return;
+    }
+
+    // Re-open each saved tab. openOperationTab drops a since-deleted op (its
+    // read-state load fails), so stale tabs fall away like stale recents.
+    restoringTabs_ = true;
+    for (const Entry& entry : entries) {
+        if (entry.kind == static_cast<int>(TabState::Kind::Operation)) {
+            const qsizetype dot = entry.id.indexOf(QLatin1Char('.'));
+            if (dot <= 0) {
+                continue;  // malformed id
+            }
+            openOperationTab(projectRoot, entry.id.left(dot), entry.id.mid(dot + 1));
+        } else {
+            // Skip a since-deleted actor so it doesn't reopen as a blank tab.
+            if (activeProject().hasProject() && activeProject().project().actors.count(
+                                                    engine::ActorId{entry.id.toStdString()}) == 0) {
+                continue;
+            }
+            openActorTab(projectRoot, entry.id, /*isNewDraft=*/false);
+        }
+    }
+    restoringTabs_ = false;
+    // Activate the saved tab by its identity (kind + id), so a tab deleted
+    // between sessions can't shift which one reactivates. Fall back to the last
+    // opened tab when the saved active tab is gone.
+    if (tabs_.count() > 0) {
+        int target = -1;
+        if (activeKind >= 0 && !activeId.isEmpty()) {
+            target = tabs_.indexOf(static_cast<TabState::Kind>(activeKind), activeId);
+        }
+        activeTabIndex_ = tabs_.valid(target) ? target : tabs_.count() - 1;
+        restoreActiveTab();
+    }
+    persistOpenTabs();  // reconcile settings with what actually re-opened
     emit activeTabChanged();
 }
 

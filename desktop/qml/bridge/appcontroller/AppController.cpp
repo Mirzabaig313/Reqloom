@@ -464,6 +464,11 @@ void AppController::populateWorkspaceTree() {
 }
 
 void AppController::selectFirstModule() {
+    // If the workspace restored open tabs for this project, don't auto-open the
+    // first module on top of them — the restored active tab already shows.
+    if (tabs_.count() > 0) {
+        return;
+    }
     if (activeProject().hasProject() && !activeProject().project().resources.empty()) {
         selectModule(
             QString::fromStdString(activeProject().project().resources.begin()->first.value));
@@ -546,6 +551,10 @@ void AppController::rebindActiveProject(bool repopulateTree) {
     // when repopulateTree is set; a plain project switch must NOT reset the
     // tree (it would collapse/re-expand the whole thing).
     refreshOpenOpExamples();
+    // Re-open this project's saved editor tabs (per-project persistence). The
+    // tab strip was cleared above; restore what was open last time this
+    // collection was active (survives project switch-and-return + app restart).
+    restoreOpenTabs(activeProject().rootPath());
     emit projectChanged();
     emit selectionChanged();
     emit openProjectsChanged();

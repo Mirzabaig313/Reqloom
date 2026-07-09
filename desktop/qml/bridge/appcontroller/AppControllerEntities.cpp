@@ -392,6 +392,7 @@ bool AppController::saveActorInline(const QString& originalId,
             tab.title = savedName;
             tab.dirty = false;  // just saved — clear the unsaved dot
             tabModel()->refreshRow(activeTabIndex());
+            persistOpenTabs();  // a draft's blank id is now reopenable
         }
         emit notify(QStringLiteral("Saved actor “%1”").arg(savedName), false);
         return true;

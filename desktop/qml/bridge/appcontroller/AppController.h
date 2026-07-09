@@ -311,6 +311,9 @@ public:
     /// Make the tab at `index` active: snapshot the current tab, then restore
     /// the target tab's buffer into the live models/scalars.
     Q_INVOKABLE void activateTab(int index);
+    /// Reorder tabs: move the tab at `from` to `to` (drag-and-drop in the
+    /// strip). The active tab follows the reorder; the open set persists.
+    Q_INVOKABLE void moveTab(int from, int to);
     /// Close the tab at `index`. Activates a neighbour (or clears the pane when
     /// the last tab closes). Unsaved edits in the closed tab are discarded.
     Q_INVOKABLE void closeTab(int index);
@@ -1059,6 +1062,13 @@ private:
     void persistOpenProjects();
     void persistActiveProject();
     void restoreOpenProjects();
+    /// Persist / restore the open editor tabs (kind + id + active index) per
+    /// project root in QSettings, so the tab strip survives a project switch-
+    /// and-return and an app restart. Only tab descriptors are stored — never
+    /// the per-tab edit buffers (which may hold secrets); a restored tab re-
+    /// derives its read state from the project.
+    void persistOpenTabs() const;
+    void restoreOpenTabs(const QString& projectRoot);
     /// Refresh `exampleList_` for the open operation, and rebuild the explorer
     /// tree's example child rows from the store. Called on load + after any
     /// example mutation so the panel and explorer stay in sync.
@@ -1133,6 +1143,9 @@ private:
     ExampleListModel exampleList_;
     TabModel tabs_;
     int activeTabIndex_{-1};
+    /// True while restoreOpenTabs is re-opening saved tabs, so the per-mutation
+    /// persistOpenTabs() calls don't rewrite settings mid-restore.
+    bool restoringTabs_{false};
     KeyValueModel opHeaders_;
     KeyValueModel opQuery_;
     KeyValueModel opExtractions_;
