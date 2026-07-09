@@ -225,12 +225,16 @@ class AppController : public QObject {
     Q_PROPERTY(EditableKeyValueModel* editQuery READ editQuery CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editActorConfig READ editActorConfig CONSTANT)
+    // Actor auth config as a key→value map, for typed strategy-specific fields
+    // (Basic/API Key/OAuth/AWS). Reactive so fields refresh when the editor is
+    // seeded on prepareEdit/NewActor.
+    Q_PROPERTY(QVariantMap actorConfig READ actorConfigMap NOTIFY actorEditChanged)
     Q_PROPERTY(EditableKeyValueModel* editEnvVars READ editEnvVars CONSTANT)
     Q_PROPERTY(QString editEnvBaseUrl READ editEnvBaseUrl WRITE setEditEnvBaseUrl NOTIFY
                    editEnvBaseUrlChanged)
     // Actor auth-endpoint editor (login request + refresh). Read-only seeds for
-    // the dialog (set on prepareEdit/NewActor); the dialog passes edits back to
-    // saveActorEdits. The kv models are mutated directly by QML.
+    // the inline ActorDetail panel (set on prepareEdit/NewActor); the panel
+    // passes edits back to saveActorInline. The kv models are mutated by QML.
     Q_PROPERTY(QString actorAuthMethod READ actorAuthMethod NOTIFY actorEditChanged)
     Q_PROPERTY(QString actorAuthPath READ actorAuthPath NOTIFY actorEditChanged)
     Q_PROPERTY(QString actorAuthBody READ actorAuthBody NOTIFY actorEditChanged)
@@ -316,27 +320,19 @@ public:
     /// owning collection, seeds the actor accessors (via prepareEditActor), and
     /// clears any open operation (they share the centre pane).
     Q_INVOKABLE void selectActor(const QString& projectRoot, const QString& actorId);
-    /// Create-or-update an actor. `originalId` empty → create; otherwise edit
-    /// (renaming when `name` differs). Config comes from `editActorConfig`; the
-    /// login request from the auth* args + `actorAuthExtract`; the refresh block
-    /// from the refresh* args + `actorRefreshExtract` (only when `refreshEnabled`).
-    /// Returns true on success; on failure a toast is shown and the caller
-    /// keeps the dialog open so the user's input isn't lost.
-    Q_INVOKABLE bool saveActorEdits(const QString& originalId,
-                                    const QString& name,
-                                    const QString& strategyLabel,
-                                    const QString& description,
-                                    const QString& authMethod,
-                                    const QString& authPath,
-                                    const QString& authBody,
-                                    const QString& authExpect,
-                                    bool refreshEnabled,
-                                    const QString& refreshMethod,
-                                    const QString& refreshPath,
-                                    const QString& refreshBody);
-    /// Save an actor edited inline in ActorDetail. Same as saveActorEdits but
-    /// the login steps come from the actorAuthSteps model (full N-step chain)
-    /// rather than a single flat request. Returns true on success.
+    /// Start a brand-new actor in the inline ActorDetail panel: seed a blank
+    /// editable state (via prepareNewActor), show the panel with an empty
+    /// selection so it opens straight in edit mode. Requires an open project.
+    Q_INVOKABLE void newActor();
+    /// Select an existing actor and immediately enter inline edit mode (used by
+    /// the explorer's "Edit…" menu, replacing the old modal dialog).
+    Q_INVOKABLE void requestActorEdit(const QString& projectRoot, const QString& actorId);
+    /// Discard a never-saved new-actor draft, clearing the panel.
+    Q_INVOKABLE void cancelActorDraft();
+    /// Save an actor edited inline in ActorDetail. The login steps come from the
+    /// actorAuthSteps model (full N-step chain); config from `editActorConfig`.
+    /// `originalId` empty → create; otherwise edit (rename when `name` differs).
+    /// Returns true on success (the panel stays in edit mode on failure).
     Q_INVOKABLE bool saveActorInline(const QString& originalId,
                                      const QString& name,
                                      const QString& strategyLabel,
@@ -544,6 +540,10 @@ public:
     [[nodiscard]] EditableKeyValueModel* editQuery() { return &editQuery_; }
     [[nodiscard]] EditableKeyValueModel* editForm() { return &editForm_; }
     [[nodiscard]] EditableKeyValueModel* editActorConfig() { return &actorConfig_; }
+    [[nodiscard]] QVariantMap actorConfigMap() const;
+    /// Upsert one auth-config key (empty value clears it). Drives the typed
+    /// per-strategy fields in the actor editor.
+    Q_INVOKABLE void setActorConfigValue(const QString& key, const QString& value);
     [[nodiscard]] EditableKeyValueModel* editEnvVars() { return &envVars_; }
     [[nodiscard]] QString editEnvBaseUrl() const { return editEnvBaseUrl_; }
     void setEditEnvBaseUrl(const QString& url);
@@ -916,6 +916,9 @@ signals:
     /// Fired when the read-only actor detail selection changes (an actor was
     /// selected, or cleared because an operation/module was opened).
     void actorSelectionChanged();
+    /// Fired when the inline actor panel should switch into edit mode (a new
+    /// draft, or an "Edit…" request from the explorer).
+    void actorEditRequested();
 
     /// Fired when the env editor's Base URL field is seeded programmatically.
     void editEnvBaseUrlChanged();

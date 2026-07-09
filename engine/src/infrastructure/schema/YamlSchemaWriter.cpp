@@ -599,6 +599,26 @@ std::string emitActor(const Actor& actor) {
                 e << YAML::Key << field << YAML::Value << it->second;
             }
         }
+    } else if (actor.strategy == AuthStrategy::Bearer) {
+        e << YAML::Key << "strategy" << YAML::Value << "bearer";
+        if (auto it = actor.authConfig.find("token"); it != actor.authConfig.end()) {
+            e << YAML::Key << "token" << YAML::Value << it->second;
+        }
+    } else if (actor.strategy == AuthStrategy::Jwt) {
+        e << YAML::Key << "strategy" << YAML::Value << "jwt";
+        for (const auto* field : {"algorithm", "secret", "payload"}) {
+            if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
+                e << YAML::Key << field << YAML::Value << it->second;
+            }
+        }
+    } else if (actor.strategy == AuthStrategy::Mtls) {
+        e << YAML::Key << "strategy" << YAML::Value << "mtls";
+        for (const auto* field :
+             {"format", "cert_path", "key_path", "key_password", "ca_cert_path"}) {
+            if (auto it = actor.authConfig.find(field); it != actor.authConfig.end()) {
+                e << YAML::Key << field << YAML::Value << it->second;
+            }
+        }
     } else {
         e << YAML::Key << "strategy" << YAML::Value << "simple";
         if (!actor.authSteps.empty()) {

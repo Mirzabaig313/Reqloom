@@ -43,6 +43,32 @@ namespace {
 
 using namespace codecs;
 
+/// Overlay an actor session's mTLS transport (client cert/key/CA) onto a
+/// request, composing with — not replacing — the environment transport already
+/// on `req`. Only non-empty fields win, so an mTLS actor adds its client cert
+/// while keeping the environment's proxy/timeout settings.
+void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
+    if (!session.transport) {
+        return;
+    }
+    const auto& t = *session.transport;
+    if (t.clientCertPath.has_value()) {
+        req.transport.clientCertPath = t.clientCertPath;
+    }
+    if (t.clientCertType.has_value()) {
+        req.transport.clientCertType = t.clientCertType;
+    }
+    if (t.clientKeyPath.has_value()) {
+        req.transport.clientKeyPath = t.clientKeyPath;
+    }
+    if (t.clientKeyPassword.has_value()) {
+        req.transport.clientKeyPassword = t.clientKeyPassword;
+    }
+    if (t.caBundlePath.has_value()) {
+        req.transport.caBundlePath = t.caBundlePath;
+    }
+}
+
 /// Build a HookContext snapshot from current run state. Per AGENTS.md
 /// hooks get read-only access to actor variables; we copy them so the
 /// hook can't reach back into RunContext via reference.
@@ -356,6 +382,7 @@ struct ExecutionEngine::Impl {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
                     }
+                    applyActorSessionTransport(req, *session);
                     if (!session->injectQueryParams.empty()) {
                         std::string qs;
                         for (const auto& [k, v] : session->injectQueryParams) {
@@ -879,6 +906,8 @@ struct ExecutionEngine::Impl {
                     for (const auto& [k, v] : session->injectHeaders) {
                         req.headers[k] = v;
                     }
+                    // mTLS actor: present its client cert on this request.
+                    applyActorSessionTransport(req, *session);
                 }
             }
 

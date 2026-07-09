@@ -10,6 +10,10 @@ ComboBox {
     id: control
     implicitHeight: DesignTokens.controlHeight
     padding: 0
+    // A model row equal to this token renders as a non-interactive divider
+    // (used to group long option lists). Combos that don't use it are
+    // unaffected.
+    readonly property string separatorToken: "──────────"
     // Reserve room for the chevron via `spacing` (ComboBox lays the content out
     // to the left of the indicator) rather than padding the text, so the text
     // gets the full width up to the chevron and short values don't elide.
@@ -77,18 +81,36 @@ ComboBox {
         required property int index
         required property var model
         required property var modelData
+        readonly property string rowText: control.textRole && control.textRole.length > 0 ? row.model[control.textRole] : row.modelData
+        readonly property bool isSeparator: row.rowText === control.separatorToken
         width: ListView.view ? ListView.view.width : control.width
-        implicitHeight: DesignTokens.controlHeight
+        implicitHeight: row.isSeparator ? 9 : DesignTokens.controlHeight
+        // Separators are inert: not clickable, not keyboard-selectable.
+        enabled: !row.isSeparator
         padding: 0
-        highlighted: control.highlightedIndex === row.index
-        contentItem: Text {
-            leftPadding: DesignTokens.spaceSm
-            text: control.textRole && control.textRole.length > 0 ? row.model[control.textRole] : row.modelData
-            color: DesignTokens.textPrimary
-            font.pixelSize: DesignTokens.fontLabel
-            font.family: DesignTokens.fontSans
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+        highlighted: !row.isSeparator && control.highlightedIndex === row.index
+        contentItem: Item {
+            Text {
+                anchors.fill: parent
+                visible: !row.isSeparator
+                leftPadding: DesignTokens.spaceSm
+                text: row.isSeparator ? "" : row.rowText
+                color: DesignTokens.textPrimary
+                font.pixelSize: DesignTokens.fontLabel
+                font.family: DesignTokens.fontSans
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+            }
+            Rectangle {
+                visible: row.isSeparator
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: DesignTokens.spaceSm
+                anchors.rightMargin: DesignTokens.spaceSm
+                implicitHeight: 1
+                color: DesignTokens.borderSubtle
+            }
         }
         background: Rectangle {
             radius: DesignTokens.radiusSm

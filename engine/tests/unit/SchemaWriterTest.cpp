@@ -1216,3 +1216,125 @@ TEST(SchemaWriter, project_default_auth_and_inherit_round_trip) {
     ASSERT_TRUE(op.inlineAuth.has_value());
     EXPECT_EQ(op.inlineAuth->type, ce::InlineAuthType::Inherit);
 }
+
+// ─── bearer / jwt / mtls actor strategy round-trips ─────────────────────────
+
+TEST(SchemaWriter, bearer_actor_round_trips) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "BearerRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    ce::Actor svc;
+    svc.id = ce::ActorId{"svc"};
+    svc.strategy = ce::AuthStrategy::Bearer;
+    svc.authConfig = {{"token", "{{secret.API_TOKEN}}"}};
+    original.actors[svc.id] = std::move(svc);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"svc"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::Bearer);
+    EXPECT_TRUE(reload.authSteps.empty());
+    EXPECT_EQ(reload.authConfig.at("token"), "{{secret.API_TOKEN}}");
+}
+
+TEST(SchemaWriter, jwt_actor_round_trips) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "JwtRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    ce::Actor svc;
+    svc.id = ce::ActorId{"svc"};
+    svc.strategy = ce::AuthStrategy::Jwt;
+    svc.authConfig = {
+        {"algorithm", "HS512"},
+        {"secret", "{{secret.JWT_SIGNING_KEY}}"},
+        {"payload", R"({"sub":"svc-1","role":"admin"})"},
+    };
+    original.actors[svc.id] = std::move(svc);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"svc"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::Jwt);
+    EXPECT_EQ(reload.authConfig.at("algorithm"), "HS512");
+    EXPECT_EQ(reload.authConfig.at("secret"), "{{secret.JWT_SIGNING_KEY}}");
+    EXPECT_EQ(reload.authConfig.at("payload"), R"({"sub":"svc-1","role":"admin"})");
+}
+
+TEST(SchemaWriter, mtls_pem_actor_round_trips) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "MtlsPemRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://mtls.test"}};
+
+    ce::Actor svc;
+    svc.id = ce::ActorId{"svc"};
+    svc.strategy = ce::AuthStrategy::Mtls;
+    svc.authConfig = {
+        {"format", "pem"},
+        {"cert_path", "/certs/client.pem"},
+        {"key_path", "/certs/client.key"},
+        {"key_password", "{{secret.KEY_PASS}}"},
+        {"ca_cert_path", "/certs/ca.pem"},
+    };
+    original.actors[svc.id] = std::move(svc);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"svc"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::Mtls);
+    EXPECT_EQ(reload.authConfig.at("format"), "pem");
+    EXPECT_EQ(reload.authConfig.at("cert_path"), "/certs/client.pem");
+    EXPECT_EQ(reload.authConfig.at("key_path"), "/certs/client.key");
+    EXPECT_EQ(reload.authConfig.at("key_password"), "{{secret.KEY_PASS}}");
+    EXPECT_EQ(reload.authConfig.at("ca_cert_path"), "/certs/ca.pem");
+}
+
+TEST(SchemaWriter, mtls_p12_actor_round_trips) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "MtlsP12RoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://mtls.test"}};
+
+    ce::Actor svc;
+    svc.id = ce::ActorId{"svc"};
+    svc.strategy = ce::AuthStrategy::Mtls;
+    svc.authConfig = {
+        {"format", "p12"},
+        {"cert_path", "/certs/client.p12"},
+        {"key_password", "{{secret.P12_PASS}}"},
+    };
+    original.actors[svc.id] = std::move(svc);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"svc"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::Mtls);
+    EXPECT_EQ(reload.authConfig.at("format"), "p12");
+    EXPECT_EQ(reload.authConfig.at("cert_path"), "/certs/client.p12");
+    EXPECT_EQ(reload.authConfig.at("key_password"), "{{secret.P12_PASS}}");
+    EXPECT_FALSE(reload.authConfig.contains("key_path"));
+}

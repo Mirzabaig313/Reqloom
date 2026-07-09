@@ -1142,10 +1142,19 @@ ColumnLayout {
                             // Disabled while an Actor is selected (see above).
                             enabled: AppController.editActor.length === 0
                             opacity: enabled ? 1.0 : 0.5
-                            property var types: ["none", "inherit", "bearer", "basic", "apikey", "oauth2", "oauth1", "aws_sigv4", "jwt", "mtls"]
-                            model: [qsTr("No Auth"), qsTr("Inherit from parent"), qsTr("Bearer Token"), qsTr("Basic Auth"), qsTr("API Key"), qsTr("OAuth 2.0"), qsTr("OAuth 1.0"), qsTr("AWS Signature"), qsTr("JWT Bearer"), qsTr("mTLS (Client Cert)")]
+                            property var types: ["inherit", "none", authTypeCombo.separatorToken, "apikey", "bearer", "basic", "oauth2", authTypeCombo.separatorToken, "jwt", "aws_sigv4", "mtls", authTypeCombo.separatorToken, "oauth1"]
+                            model: [qsTr("Inherit from parent"), qsTr("No Auth"), authTypeCombo.separatorToken, qsTr("API Key"), qsTr("Bearer Token"), qsTr("Basic Auth"), qsTr("OAuth 2.0"), authTypeCombo.separatorToken, qsTr("JWT Bearer"), qsTr("AWS Signature"), qsTr("mTLS (Client Cert)"), authTypeCombo.separatorToken, qsTr("OAuth 1.0 (Legacy)")]
                             currentIndex: Math.max(0, types.indexOf(AppController.editAuthType))
-                            onActivated: AppController.editAuthType = types[currentIndex]
+                            onActivated: {
+                                // Keyboard Up/Down can land currentIndex on a divider row.
+                                // Commit only real types; otherwise snap the index back to
+                                // the current selection so the field never shows a divider.
+                                if (types[currentIndex] !== authTypeCombo.separatorToken) {
+                                    AppController.editAuthType = types[currentIndex];
+                                } else {
+                                    currentIndex = Math.max(0, types.indexOf(AppController.editAuthType));
+                                }
+                            }
                         }
                     }
                     // Bearer

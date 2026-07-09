@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <expected>
 #include <map>
 #include <string>
@@ -1650,4 +1651,190 @@ TEST(AuthStrategyRefresh, rejects_status_outside_listed_values) {
 
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+}
+
+// ─── BearerAuthenticator ─────────────────────────────────────────────────────
+
+TEST(AuthStrategy, bearer_injects_authorization_header) {
+    FakeHttpClient http;  // no HTTP call — pure compute
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"svc"};
+    actor.strategy = ce::AuthStrategy::Bearer;
+    actor.authConfig["token"] = "tok-abc";
+
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ASSERT_NE(auther, nullptr);
+
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->injectHeaders.at("Authorization"), "Bearer tok-abc");
+    EXPECT_TRUE(http.recorded().empty());
+}
+
+TEST(AuthStrategy, bearer_resolves_secret_reference) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"svc"};
+    actor.strategy = ce::AuthStrategy::Bearer;
+    actor.authConfig["token"] = "{{secret.API_TOKEN}}";
+
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    auto rctx = makeRctx();
+    rctx.secrets["API_TOKEN"] = "sk_live_x";
+    auto result = auther->authenticate(actor, ctx, rctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->injectHeaders.at("Authorization"), "Bearer sk_live_x");
+}
+
+TEST(AuthStrategy, bearer_missing_token_surfaces_session_refresh_failed) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"svc"};
+    actor.strategy = ce::AuthStrategy::Bearer;  // no token
+
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("token"), std::string::npos);
+}
+
+// ─── JwtAuthenticator ────────────────────────────────────────────────────────
+
+TEST(AuthStrategy, jwt_signs_and_injects_bearer) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"svc"};
+    actor.strategy = ce::AuthStrategy::Jwt;
+    actor.authConfig["secret"] = "topsecret";
+    actor.authConfig["payload"] = R"({"sub":"1234"})";
+
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ASSERT_NE(auther, nullptr);
+
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& header = result->injectHeaders.at("Authorization");
+    EXPECT_TRUE(header.starts_with("Bearer "));
+    // HS256 JWT is header.payload.signature — three dot-separated segments.
+    const auto jwt = header.substr(std::string("Bearer ").size());
+    EXPECT_EQ(std::ranges::count(jwt, '.'), 2);
+    EXPECT_TRUE(http.recorded().empty());
+}
+
+TEST(AuthStrategy, jwt_rejects_unsupported_algorithm) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"svc"};
+    actor.strategy = ce::AuthStrategy::Jwt;
+    actor.authConfig["secret"] = "s";
+    actor.authConfig["payload"] = "{}";
+    actor.authConfig["algorithm"] = "RS256";  // asymmetric — unsupported
+
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("algorithm"), std::string::npos);
+}
+
+TEST(AuthStrategy, jwt_missing_secret_surfaces_session_refresh_failed) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"svc"};
+    actor.strategy = ce::AuthStrategy::Jwt;
+    actor.authConfig["payload"] = "{}";  // no secret
+
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("secret"), std::string::npos);
+}
+
+// ─── MtlsAuthenticator ───────────────────────────────────────────────────────
+
+TEST(AuthStrategy, mtls_pem_sets_client_cert_and_key_on_session_transport) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"svc"};
+    actor.strategy = ce::AuthStrategy::Mtls;
+    actor.authConfig["cert_path"] = "/certs/client.pem";
+    actor.authConfig["key_path"] = "/certs/client.key";
+    actor.authConfig["key_password"] = "keypass";
+    actor.authConfig["ca_cert_path"] = "/certs/ca.pem";
+
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ASSERT_NE(auther, nullptr);
+
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->transport.has_value());
+    EXPECT_EQ(result->transport->clientCertPath.value_or(""), "/certs/client.pem");
+    EXPECT_EQ(result->transport->clientKeyPath.value_or(""), "/certs/client.key");
+    EXPECT_EQ(result->transport->clientKeyPassword.value_or(""), "keypass");
+    EXPECT_EQ(result->transport->caBundlePath.value_or(""), "/certs/ca.pem");
+    // PEM → no cert-type override (libcurl defaults to PEM).
+    EXPECT_FALSE(result->transport->clientCertType.has_value());
+    EXPECT_TRUE(http.recorded().empty());
+}
+
+TEST(AuthStrategy, mtls_p12_sets_cert_type_and_omits_key_path) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"svc"};
+    actor.strategy = ce::AuthStrategy::Mtls;
+    actor.authConfig["format"] = "p12";
+    actor.authConfig["cert_path"] = "/certs/client.p12";
+    actor.authConfig["key_password"] = "p12pass";
+
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->transport.has_value());
+    EXPECT_EQ(result->transport->clientCertPath.value_or(""), "/certs/client.p12");
+    EXPECT_EQ(result->transport->clientCertType.value_or(""), "P12");
+    // P12 bundles carry the key inside — no separate key path.
+    EXPECT_FALSE(result->transport->clientKeyPath.has_value());
+    EXPECT_EQ(result->transport->clientKeyPassword.value_or(""), "p12pass");
+}
+
+TEST(AuthStrategy, mtls_missing_cert_path_surfaces_session_refresh_failed) {
+    FakeHttpClient http;
+    ce::VariableResolver resolver;
+
+    ce::Actor actor;
+    actor.id = ce::ActorId{"svc"};
+    actor.strategy = ce::AuthStrategy::Mtls;  // no cert_path
+
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
+    EXPECT_NE(result.error().detail.find("cert_path"), std::string::npos);
 }

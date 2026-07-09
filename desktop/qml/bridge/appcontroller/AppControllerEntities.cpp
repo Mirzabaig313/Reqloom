@@ -28,6 +28,7 @@
 #include <QtCore/QSet>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QStringList>
+#include <QtCore/QVariantMap>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include <QtWidgets/QDialog>
@@ -70,6 +71,15 @@ namespace {
     }
     if (label == QStringLiteral("AWS Signature v4")) {
         return engine::AuthStrategy::AwsSigV4;
+    }
+    if (label == QStringLiteral("Bearer Token")) {
+        return engine::AuthStrategy::Bearer;
+    }
+    if (label == QStringLiteral("JWT Bearer")) {
+        return engine::AuthStrategy::Jwt;
+    }
+    if (label == QStringLiteral("mTLS (Client Cert)")) {
+        return engine::AuthStrategy::Mtls;
     }
     return engine::AuthStrategy::Simple;
 }
@@ -116,14 +126,45 @@ namespace {
 }  // namespace
 
 QStringList AppController::actorStrategies() const {
-    return {QStringLiteral("Basic Auth"),
-            QStringLiteral("API Key"),
+    return {QStringLiteral("Multi-step login chain"),
+            QStringLiteral("Single-step login"),
+            QStringLiteral("Bearer Token"),
             QStringLiteral("OAuth 2.0 (Client Credentials)"),
             QStringLiteral("OAuth 2.0 (Password)"),
-            QStringLiteral("OAuth 1.0 (HMAC-SHA1)"),
+            QStringLiteral("API Key"),
+            QStringLiteral("Basic Auth"),
+            QStringLiteral("JWT Bearer"),
+            QStringLiteral("mTLS (Client Cert)"),
             QStringLiteral("AWS Signature v4"),
-            QStringLiteral("Single-step login"),
-            QStringLiteral("Multi-step login chain")};
+            QStringLiteral("OAuth 1.0 (HMAC-SHA1)")};
+}
+
+QVariantMap AppController::actorConfigMap() const {
+    QVariantMap out;
+    for (const auto& [key, value] : actorConfig_.pairs()) {
+        out.insert(key, value);
+    }
+    return out;
+}
+
+void AppController::setActorConfigValue(const QString& key, const QString& value) {
+    auto pairs = actorConfig_.pairs();
+    bool found = false;
+    for (auto& [existingKey, existingValue] : pairs) {
+        if (existingKey == key) {
+            if (existingValue == value) {
+                return;  // no change — avoid re-emitting on every keystroke
+            }
+            existingValue = value;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        pairs.emplace_back(key, value);
+    }
+    actorConfig_.setPairs(std::move(pairs));
+    emit actorEditChanged();
 }
 
 QString AppController::actorDescription(const QString& actorId) const {
@@ -231,92 +272,35 @@ void AppController::prepareEditActor(const QString& actorId) {
     emit actorEditChanged();
 }
 
-bool AppController::saveActorEdits(const QString& originalId,
-                                   const QString& name,
-                                   const QString& strategyLabel,
-                                   const QString& description,
-                                   const QString& authMethod,
-                                   const QString& authPath,
-                                   const QString& authBody,
-                                   const QString& authExpect,
-                                   bool refreshEnabled,
-                                   const QString& refreshMethod,
-                                   const QString& refreshPath,
-                                   const QString& refreshBody) {
-    // Start from the existing actor (preserving inject headers, session TTL and
-    // any chain steps beyond the first) when editing.
-    engine::Actor actor;
-    if (!originalId.isEmpty() && activeProject().hasProject()) {
-        const auto& actors = activeProject().project().actors;
-        const auto it = actors.find(engine::ActorId{originalId.toStdString()});
-        if (it != actors.end()) {
-            actor = it->second;
-        }
+void AppController::newActor() {
+    if (!activeProject().hasProject()) {
+        emit notify(QStringLiteral("Open a project before creating an actor."), true);
+        return;
     }
-    actor.id = engine::ActorId{name.trimmed().toStdString()};
-    actor.description = description.trimmed().toStdString();
-    const engine::AuthStrategy strategy = authStrategyFromLabel(strategyLabel);
-    actor.strategy = strategy;
+    // Blank editable state; an empty selection tells the inline panel this is a
+    // new draft (it opens straight in edit mode).
+    prepareNewActor();
+    selectedActorId_.clear();
+    selectedActorName_.clear();
+    selectedActorDescription_.clear();
+    // Default to the flagship multi-step login chain (prepareNewActor already
+    // seeds one blank login step for it).
+    selectedActorStrategy_ = QStringLiteral("Multi-step login chain");
+    hasActor_ = true;
+    // The actor detail and the request editor share the centre pane.
+    closeOperation();
+    emit actorSelectionChanged();
+}
 
-    std::map<std::string, std::string> config;
-    for (const auto& [key, value] : actorConfig_.pairs()) {
-        if (!key.isEmpty()) {
-            config.insert_or_assign(key.toStdString(), value.toStdString());
-        }
+void AppController::requestActorEdit(const QString& projectRoot, const QString& actorId) {
+    selectActor(projectRoot, actorId);
+    if (hasActor_) {
+        emit actorEditRequested();
     }
-    actor.authConfig = std::move(config);
+}
 
-    const bool stepBased =
-        (strategy == engine::AuthStrategy::Simple || strategy == engine::AuthStrategy::Chain);
-    if (stepBased) {
-        engine::AuthStep step;
-        if (!actor.authSteps.empty()) {
-            step = actor.authSteps.front();  // keep id + headers
-        }
-        if (step.id.empty()) {
-            step.id = "login";
-        }
-        step.method = httpMethodFromLabel(authMethod);
-        step.pathTemplate = authPath.trimmed().toStdString();
-        const QString body = authBody.trimmed();
-        step.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
-                                           : std::optional<std::string>{body.toStdString()};
-        bool okExpect = false;
-        const int expect = authExpect.trimmed().toInt(&okExpect);
-        step.expectStatus = okExpect ? std::optional<int>{expect} : std::optional<int>{};
-        step.extractions = extractionsFromPairs(actorAuthExtract_.pairs());
-        if (actor.authSteps.empty()) {
-            actor.authSteps.push_back(std::move(step));
-        } else {
-            actor.authSteps.front() = std::move(step);
-        }
-    } else {
-        actor.authSteps.clear();
-    }
-
-    if (refreshEnabled) {
-        engine::SessionRefresh refresh;
-        if (actor.refresh) {
-            refresh = *actor.refresh;
-        }
-        refresh.method = httpMethodFromLabel(refreshMethod);
-        refresh.pathTemplate = refreshPath.trimmed().toStdString();
-        const QString body = refreshBody.trimmed();
-        refresh.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
-                                              : std::optional<std::string>{body.toStdString()};
-        refresh.extractions = extractionsFromPairs(actorRefreshExtract_.pairs());
-        actor.refresh = std::move(refresh);
-    } else {
-        actor.refresh.reset();
-    }
-
-    QString error;
-    if (activeProject().saveActor(originalId, actor, error)) {
-        emit notify(QStringLiteral("Saved actor “%1”").arg(name.trimmed()), false);
-        return true;
-    }
-    emit notify(error, true);
-    return false;
+void AppController::cancelActorDraft() {
+    clearActorSelection();
 }
 
 bool AppController::saveActorInline(const QString& originalId,
@@ -395,10 +379,22 @@ bool AppController::saveActorInline(const QString& originalId,
     }
 
     QString error;
+    // Point the read-only selection at the (about-to-exist) actor so onSaved —
+    // which runs synchronously inside saveActor on success — re-seeds it (covers
+    // create with an empty originalId, and rename). Restore on failure so a
+    // rejected save leaves the draft identity intact (an empty name still reads
+    // as a "New actor" draft in the panel).
+    const QString savedName = name.trimmed();
+    const QString prevId = selectedActorId_;
+    const QString prevName = selectedActorName_;
+    selectedActorId_ = savedName;
+    selectedActorName_ = savedName;
     if (activeProject().saveActor(originalId, actor, error)) {
-        emit notify(QStringLiteral("Saved actor “%1”").arg(name.trimmed()), false);
+        emit notify(QStringLiteral("Saved actor “%1”").arg(savedName), false);
         return true;
     }
+    selectedActorId_ = prevId;
+    selectedActorName_ = prevName;
     emit notify(error, true);
     return false;
 }

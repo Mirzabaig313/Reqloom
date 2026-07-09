@@ -630,6 +630,12 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             actor.strategy = AuthStrategy::OAuth1;
         } else if (strategy == "aws_sigv4") {
             actor.strategy = AuthStrategy::AwsSigV4;
+        } else if (strategy == "bearer") {
+            actor.strategy = AuthStrategy::Bearer;
+        } else if (strategy == "jwt") {
+            actor.strategy = AuthStrategy::Jwt;
+        } else if (strategy == "mtls") {
+            actor.strategy = AuthStrategy::Mtls;
         } else {
             actor.strategy = AuthStrategy::Simple;
         }
@@ -702,6 +708,31 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             actor.authConfig["service"] = auth["service"].as<std::string>("");
             if (auth["session_token"]) {
                 actor.authConfig["session_token"] = auth["session_token"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::Bearer) {
+            // Static Bearer token (may contain {{X.y}}).
+            actor.authConfig["token"] = auth["token"].as<std::string>("");
+        } else if (actor.strategy == AuthStrategy::Jwt) {
+            // Self-signed JWT: secret + JSON claims payload; algorithm optional.
+            actor.authConfig["secret"] = auth["secret"].as<std::string>("");
+            actor.authConfig["payload"] = auth["payload"].as<std::string>("");
+            if (auth["algorithm"]) {
+                actor.authConfig["algorithm"] = auth["algorithm"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::Mtls) {
+            // Client cert/key paths (not sandboxed — handed to curl as-is).
+            actor.authConfig["cert_path"] = auth["cert_path"].as<std::string>("");
+            if (auth["format"]) {
+                actor.authConfig["format"] = auth["format"].as<std::string>();
+            }
+            if (auth["key_path"]) {
+                actor.authConfig["key_path"] = auth["key_path"].as<std::string>();
+            }
+            if (auth["key_password"]) {
+                actor.authConfig["key_password"] = auth["key_password"].as<std::string>();
+            }
+            if (auth["ca_cert_path"]) {
+                actor.authConfig["ca_cert_path"] = auth["ca_cert_path"].as<std::string>();
             }
         } else {
             AuthStep step;

@@ -2274,6 +2274,12 @@ QString AppController::actorAuthLabel(const QString& actorName) const {
             return QStringLiteral("OAuth 1.0 (HMAC-SHA1)");
         case engine::AuthStrategy::AwsSigV4:
             return QStringLiteral("AWS Signature v4");
+        case engine::AuthStrategy::Bearer:
+            return QStringLiteral("Bearer Token");
+        case engine::AuthStrategy::Jwt:
+            return QStringLiteral("JWT Bearer");
+        case engine::AuthStrategy::Mtls:
+            return QStringLiteral("mTLS (Client Cert)");
     }
     return QStringLiteral("Custom");
 }
