@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AuthStepListModel.h"  // AuthStepListModel::StepSeed for actor login steps
+#include "TimelineModel.h"      // TimelineModel::Snapshot for the per-tab run timeline
 
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractListModel>
@@ -127,6 +128,12 @@ struct TabState {
     QString respBody;
     QString runOutcome;
     QString shownExample;
+
+    // ── Run timeline snapshot (per tab) ──
+    // The live TimelineModel is a single instance; each tab parks its own run
+    // timeline here so switching tabs restores that tab's timeline instead of
+    // wiping it.
+    TimelineModel::Snapshot timeline;
 };
 
 /// List of open tabs. Owns the TabState buffers; exposes lightweight display

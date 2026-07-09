@@ -59,6 +59,41 @@ public:
         SubLabelRole,     ///< QString: sub-step badge for child rows ("1.1", "1.2")
     };
 
+private:
+    struct Row {
+        Kind kind{Kind::Step};
+        int stepIndex{0};
+        QString title;
+        QString detail;
+        QString statusToken;
+        QString statusLabel;
+        QString value;
+        QString method;        ///< Request rows only.
+        QString path;          ///< Request rows only (URL path).
+        QString sizeText;      ///< Request + response rows.
+        QString clockText;     ///< Request + response rows.
+        QString durationText;  ///< Response rows + step-header totals.
+        QString subLabel;      ///< Child rows: "1.1", "1.2", …
+    };
+
+public:
+    /// A full copy of the timeline's state, so a multi-tab host can park one
+    /// tab's run timeline and restore it on switch instead of losing it. Holds
+    /// the (private) Row rows plus the latency/step bookkeeping. Opaque to
+    /// callers — they only take/restore it, never inspect it.
+    struct Snapshot {
+        std::vector<Row> rows;
+        std::vector<double> latencyMs;
+        QVariantList latencyBars;
+        QHash<int, int> stepRowByIndex;
+        QHash<int, int> stepChildSeq;
+        QHash<int, double> stepMs;
+        double runTotalMs{0.0};
+        int runChainSize{0};
+        QString runEnv;
+        int runStartRow{-1};
+    };
+
     explicit TimelineModel(QObject* parent = nullptr);
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
@@ -71,6 +106,11 @@ public:
     /// Model row of the step header for a 1-based step number, or -1 if absent.
     /// Lets the sparkline scroll the timeline to a clicked bar's step.
     [[nodiscard]] Q_INVOKABLE int rowForStep(int stepNumber) const;
+
+    /// Copy out the full timeline state (for a tab about to be backgrounded).
+    [[nodiscard]] Snapshot takeSnapshot() const;
+    /// Replace the timeline with a previously taken snapshot (tab activated).
+    void restoreSnapshot(Snapshot snapshot);
 
 signals:
     void latenciesChanged();
@@ -99,22 +139,6 @@ public slots:
     void reset();
 
 private:
-    struct Row {
-        Kind kind{Kind::Step};
-        int stepIndex{0};
-        QString title;
-        QString detail;
-        QString statusToken;
-        QString statusLabel;
-        QString value;
-        QString method;        ///< Request rows only.
-        QString path;          ///< Request rows only (URL path).
-        QString sizeText;      ///< Request + response rows.
-        QString clockText;     ///< Request + response rows.
-        QString durationText;  ///< Response rows + step-header totals.
-        QString subLabel;      ///< Child rows: "1.1", "1.2", …
-    };
-
     /// Find the existing top-level step row for `index`, or append one. Mirrors
     /// the old TimelinePanel::stepRow so streamed events settle the same row.
     [[nodiscard]] int stepRowFor(int index, const QString& op);

@@ -303,6 +303,7 @@ void AppController::captureActiveTab() {
         tab.subtitle = selectedActorStrategy_;
         tab.dirty = selectedActorId_.isEmpty();  // never-saved draft
     }
+    tab.timeline = timeline_.takeSnapshot();
     tabs_.refreshRow(activeTabIndex_);
 }
 
@@ -311,8 +312,7 @@ void AppController::updateActiveTabDirty() {
         return;
     }
     TabState& tab = tabs_.stateAt(activeTabIndex_);
-    const bool dirty = (tab.kind == TabState::Kind::Operation) ? editing_
-                                                               : tab.id.isEmpty();
+    const bool dirty = (tab.kind == TabState::Kind::Operation) ? editing_ : tab.id.isEmpty();
     if (tab.dirty != dirty) {
         tab.dirty = dirty;
         tabs_.refreshRow(activeTabIndex_);
@@ -325,11 +325,9 @@ void AppController::restoreActiveTab() {
         return;
     }
     const TabState& tab = tabs_.stateAt(activeTabIndex_);
-    // The live run timeline isn't snapshotted per tab (v1); reset it on switch
-    // so the Timeline tab shows a clean slate for the newly-active tab rather
-    // than a different endpoint's run. Response body/status ARE per tab.
-    // ponytail: upgrade path is to snapshot TimelineModel's event rows per tab.
-    timeline_.reset();
+    // Restore this tab's own run timeline (parked on the last switch away).
+    // Response body/status are also per tab.
+    timeline_.restoreSnapshot(tab.timeline);
     if (tab.kind == TabState::Kind::Operation) {
         hasActor_ = false;
         // Read fields come from the project (they only change on save); the
@@ -400,6 +398,9 @@ void AppController::openOperationTab(const QString& projectRoot,
     responseBody_.setBody(QString{});
     runOutcome_.clear();
     shownExample_.clear();
+    // A new tab has no run of its own yet; start its timeline empty so the
+    // snapshot below doesn't inherit the previously active tab's timeline.
+    timeline_.reset();
 
     TabState tab;
     tab.kind = TabState::Kind::Operation;
@@ -451,6 +452,8 @@ void AppController::openActorTab(const QString& projectRoot,
     }
     hasActor_ = true;
     hasOperation_ = false;
+    // A new actor tab has no run timeline of its own yet.
+    timeline_.reset();
 
     TabState tab;
     tab.kind = TabState::Kind::Actor;
