@@ -53,6 +53,87 @@ HttpMethod parseMethod(const std::string& m) {
     return HttpMethod::Get;
 }
 
+InlineAuthType parseInlineAuthType(const std::string& t) {
+    if (t == "bearer") {
+        return InlineAuthType::Bearer;
+    }
+    if (t == "basic") {
+        return InlineAuthType::Basic;
+    }
+    if (t == "apikey" || t == "api_key") {
+        return InlineAuthType::ApiKey;
+    }
+    if (t == "aws_sigv4" || t == "awssigv4" || t == "aws") {
+        return InlineAuthType::AwsSigV4;
+    }
+    if (t == "oauth1" || t == "oauth_1") {
+        return InlineAuthType::OAuth1;
+    }
+    if (t == "oauth2" || t == "oauth_2" || t == "oauth2_client_credentials") {
+        return InlineAuthType::OAuth2;
+    }
+    if (t == "jwt" || t == "jwt_bearer") {
+        return InlineAuthType::Jwt;
+    }
+    if (t == "mtls" || t == "mutual_tls") {
+        return InlineAuthType::Mtls;
+    }
+    if (t == "inherit") {
+        return InlineAuthType::Inherit;
+    }
+    return InlineAuthType::None;
+}
+
+/// Parse an `auth:` map (operation-level or project-level default) into an
+/// InlineAuth. Returns nullopt when the map is absent or its type is `none`.
+std::optional<InlineAuth> parseInlineAuth(const YAML::Node& node) {
+    if (!node || !node.IsMap()) {
+        return std::nullopt;
+    }
+    InlineAuth auth;
+    auth.type = parseInlineAuthType(node["type"].as<std::string>("none"));
+    if (auth.type == InlineAuthType::None) {
+        return std::nullopt;
+    }
+    auth.token = node["token"].as<std::string>("");
+    auth.username = node["username"].as<std::string>("");
+    auth.password = node["password"].as<std::string>("");
+    auth.apiKeyName = node["key"].as<std::string>("");
+    auth.apiKeyValue = node["value"].as<std::string>("");
+    auth.apiKeyInQuery = node["in"].as<std::string>("header") == "query";
+    auth.awsAccessKey = node["access_key"].as<std::string>("");
+    auth.awsSecretKey = node["secret_key"].as<std::string>("");
+    auth.awsRegion = node["region"].as<std::string>("");
+    auth.awsService = node["service"].as<std::string>("");
+    auth.awsSessionToken = node["session_token"].as<std::string>("");
+    auth.oauthConsumerKey = node["consumer_key"].as<std::string>("");
+    auth.oauthConsumerSecret = node["consumer_secret"].as<std::string>("");
+    auth.oauthToken = node["oauth_token"].as<std::string>("");
+    auth.oauthTokenSecret = node["token_secret"].as<std::string>("");
+    auth.oauth2GrantType = node["grant_type"].as<std::string>("");
+    auth.oauth2TokenUrl = node["token_url"].as<std::string>("");
+    auth.oauth2ClientId = node["client_id"].as<std::string>("");
+    auth.oauth2ClientSecret = node["client_secret"].as<std::string>("");
+    auth.oauth2Scope = node["scope"].as<std::string>("");
+    auth.oauth2ClientAuth = node["client_auth"].as<std::string>("");
+    auth.oauth2AuthUrl = node["auth_url"].as<std::string>("");
+    auth.oauth2CallbackUrl = node["callback_url"].as<std::string>("");
+    auth.oauth2PkceMethod = node["pkce_method"].as<std::string>("");
+    // oauth2AccessToken is intentionally never read/written — it is an
+    // ephemeral secret obtained at runtime, not project configuration.
+    auth.jwtAlgorithm = node["algorithm"].as<std::string>("");
+    auth.jwtSecret = node["secret"].as<std::string>("");
+    auth.jwtPayload = node["payload"].as<std::string>("");
+    auth.mtlsFormat = node["format"].as<std::string>("");
+    // Same key names as the actor-level mTLS block (parseActor) so the two
+    // YAML surfaces for the same mechanism stay consistent.
+    auth.mtlsCertPath = node["cert_path"].as<std::string>("");
+    auth.mtlsKeyPath = node["key_path"].as<std::string>("");
+    auth.mtlsKeyPassword = node["key_password"].as<std::string>("");
+    auth.mtlsCaCertPath = node["ca_cert_path"].as<std::string>("");
+    return auth;
+}
+
 std::map<std::string, std::string> parseStringMap(const YAML::Node& node) {
     std::map<std::string, std::string> result;
     if (!node || !node.IsMap()) {
@@ -551,6 +632,12 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             actor.strategy = AuthStrategy::OAuth1;
         } else if (strategy == "aws_sigv4") {
             actor.strategy = AuthStrategy::AwsSigV4;
+        } else if (strategy == "bearer") {
+            actor.strategy = AuthStrategy::Bearer;
+        } else if (strategy == "jwt") {
+            actor.strategy = AuthStrategy::Jwt;
+        } else if (strategy == "mtls") {
+            actor.strategy = AuthStrategy::Mtls;
         } else {
             actor.strategy = AuthStrategy::Simple;
         }
@@ -623,6 +710,31 @@ Actor parseActor(const std::string& actorId, const YAML::Node& node) {
             actor.authConfig["service"] = auth["service"].as<std::string>("");
             if (auth["session_token"]) {
                 actor.authConfig["session_token"] = auth["session_token"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::Bearer) {
+            // Static Bearer token (may contain {{X.y}}).
+            actor.authConfig["token"] = auth["token"].as<std::string>("");
+        } else if (actor.strategy == AuthStrategy::Jwt) {
+            // Self-signed JWT: secret + JSON claims payload; algorithm optional.
+            actor.authConfig["secret"] = auth["secret"].as<std::string>("");
+            actor.authConfig["payload"] = auth["payload"].as<std::string>("");
+            if (auth["algorithm"]) {
+                actor.authConfig["algorithm"] = auth["algorithm"].as<std::string>();
+            }
+        } else if (actor.strategy == AuthStrategy::Mtls) {
+            // Client cert/key paths (not sandboxed — handed to curl as-is).
+            actor.authConfig["cert_path"] = auth["cert_path"].as<std::string>("");
+            if (auth["format"]) {
+                actor.authConfig["format"] = auth["format"].as<std::string>();
+            }
+            if (auth["key_path"]) {
+                actor.authConfig["key_path"] = auth["key_path"].as<std::string>();
+            }
+            if (auth["key_password"]) {
+                actor.authConfig["key_password"] = auth["key_password"].as<std::string>();
+            }
+            if (auth["ca_cert_path"]) {
+                actor.authConfig["ca_cert_path"] = auth["ca_cert_path"].as<std::string>();
             }
         } else {
             AuthStep step;
@@ -774,6 +886,8 @@ std::expected<Resource, ReqloomError> parseResource(const std::string& resourceI
         if (opNode["actor"]) {
             op.actor = ActorId{opNode["actor"].as<std::string>()};
         }
+
+        op.inlineAuth = parseInlineAuth(opNode["auth"]);
 
         op.headers = parseStringMap(opNode["headers"]);
         op.queryParams = parseStringMap(opNode["query_params"]);
@@ -1002,6 +1116,10 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         Project project;
         project.name = root["name"].as<std::string>("Unnamed Project");
         project.defaultEnvironment = root["default_environment"].as<std::string>("local");
+
+        // Project-wide default auth (the "inherit from parent" target). An
+        // operation whose auth type is `inherit` resolves to this.
+        project.defaultAuth = parseInlineAuth(root["auth"]);
 
         // Optional latency SLO: latency_slo: { p95_ms: 800 }. Negative or
         // missing → unset (0). Surfaced on the desktop latency chart.

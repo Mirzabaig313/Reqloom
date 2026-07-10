@@ -210,3 +210,26 @@ TEST(ImportFromPostman, formdata_file_fields_become_at_path_references) {
     // slot. The only thing worth flagging would be genuinely lossy cases.
     EXPECT_TRUE(outcome->warnings.empty()) << outcome->warnings;
 }
+
+TEST(ImportFromPostman, importAny_detects_collection_when_marker_past_head_window) {
+    // A Postman collection whose `schema`/`_postman_id` markers sit AFTER a
+    // >8 KiB leading description — the fast head-sniff misses them, but
+    // importAny's structural fallback (info + item[]) still routes to Postman.
+    ScratchDir scratch;
+    const std::string pad(9000, 'x');
+    const std::string body = std::string{"{\"info\":{\"description\":\""} + pad +
+                             "\",\"_postman_id\":\"abc-123\",\"name\":\"Deep\","
+                             "\"schema\":\"https://schema.getpostman.com/json/collection/"
+                             "v2.1.0/collection.json\"},"
+                             "\"item\":[{\"name\":\"Ping\",\"request\":{\"method\":\"GET\","
+                             "\"url\":{\"raw\":\"https://api.example.com/ping\","
+                             "\"path\":[\"ping\"]}}}]}";
+    const auto file = scratch.write("deep.json", body);
+
+    auto outcome = ce::importAny(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    EXPECT_EQ(outcome->project.name, "Deep");
+    // Routed to the Postman importer (not the OpenAPI default) despite the
+    // marker being past the head-sniff window.
+    ASSERT_FALSE(outcome->project.resources.empty());
+}

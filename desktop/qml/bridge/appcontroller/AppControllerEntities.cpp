@@ -28,6 +28,7 @@
 #include <QtCore/QSet>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QStringList>
+#include <QtCore/QVariantMap>
 #include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include <QtWidgets/QDialog>
@@ -70,6 +71,15 @@ namespace {
     }
     if (label == QStringLiteral("AWS Signature v4")) {
         return engine::AuthStrategy::AwsSigV4;
+    }
+    if (label == QStringLiteral("Bearer Token")) {
+        return engine::AuthStrategy::Bearer;
+    }
+    if (label == QStringLiteral("JWT Bearer")) {
+        return engine::AuthStrategy::Jwt;
+    }
+    if (label == QStringLiteral("mTLS (Client Cert)")) {
+        return engine::AuthStrategy::Mtls;
     }
     return engine::AuthStrategy::Simple;
 }
@@ -116,14 +126,58 @@ namespace {
 }  // namespace
 
 QStringList AppController::actorStrategies() const {
-    return {QStringLiteral("Basic Auth"),
-            QStringLiteral("API Key"),
+    return {QStringLiteral("Multi-step login chain"),
+            QStringLiteral("Single-step login"),
+            QStringLiteral("Bearer Token"),
             QStringLiteral("OAuth 2.0 (Client Credentials)"),
             QStringLiteral("OAuth 2.0 (Password)"),
-            QStringLiteral("OAuth 1.0 (HMAC-SHA1)"),
+            QStringLiteral("API Key"),
+            QStringLiteral("Basic Auth"),
+            QStringLiteral("JWT Bearer"),
+            QStringLiteral("mTLS (Client Cert)"),
             QStringLiteral("AWS Signature v4"),
-            QStringLiteral("Single-step login"),
-            QStringLiteral("Multi-step login chain")};
+            QStringLiteral("OAuth 1.0 (HMAC-SHA1)")};
+}
+
+QVariantMap AppController::actorConfigMap() const {
+    QVariantMap out;
+    for (const auto& [key, value] : actorConfig_.pairs()) {
+        out.insert(key, value);
+    }
+    return out;
+}
+
+void AppController::setActorConfigValue(const QString& key, const QString& value) {
+    auto pairs = actorConfig_.pairs();
+
+    // Contract: an empty value clears the key. Drop it if present; if it was
+    // absent, nothing changed. (Otherwise a cleared field would persist as an
+    // empty config entry via saveActorInline instead of being removed.)
+    if (value.isEmpty()) {
+        if (std::erase_if(pairs, [&key](const auto& kv) { return kv.first == key; }) == 0) {
+            return;
+        }
+        actorConfig_.setPairs(std::move(pairs));
+        emit actorEditChanged();
+        return;
+    }
+
+    bool found = false;
+    for (auto& [existingKey, existingValue] : pairs) {
+        if (existingKey == key) {
+            if (existingValue == value) {
+                return;  // no change — avoid re-emitting on every keystroke
+            }
+            existingValue = value;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        pairs.emplace_back(key, value);
+    }
+    actorConfig_.setPairs(std::move(pairs));
+    emit actorEditChanged();
 }
 
 QString AppController::actorDescription(const QString& actorId) const {
@@ -231,92 +285,28 @@ void AppController::prepareEditActor(const QString& actorId) {
     emit actorEditChanged();
 }
 
-bool AppController::saveActorEdits(const QString& originalId,
-                                   const QString& name,
-                                   const QString& strategyLabel,
-                                   const QString& description,
-                                   const QString& authMethod,
-                                   const QString& authPath,
-                                   const QString& authBody,
-                                   const QString& authExpect,
-                                   bool refreshEnabled,
-                                   const QString& refreshMethod,
-                                   const QString& refreshPath,
-                                   const QString& refreshBody) {
-    // Start from the existing actor (preserving inject headers, session TTL and
-    // any chain steps beyond the first) when editing.
-    engine::Actor actor;
-    if (!originalId.isEmpty() && activeProject().hasProject()) {
-        const auto& actors = activeProject().project().actors;
-        const auto it = actors.find(engine::ActorId{originalId.toStdString()});
-        if (it != actors.end()) {
-            actor = it->second;
-        }
+void AppController::newActor() {
+    if (!activeProject().hasProject()) {
+        emit notify(QStringLiteral("Open a project before creating an actor."), true);
+        return;
     }
-    actor.id = engine::ActorId{name.trimmed().toStdString()};
-    actor.description = description.trimmed().toStdString();
-    const engine::AuthStrategy strategy = authStrategyFromLabel(strategyLabel);
-    actor.strategy = strategy;
+    // Open a fresh actor draft as its own tab (blank id → the inline panel
+    // opens straight in edit mode).
+    openActorTab(activeProject().rootPath(), QString{}, /*isNewDraft=*/true);
+}
 
-    std::map<std::string, std::string> config;
-    for (const auto& [key, value] : actorConfig_.pairs()) {
-        if (!key.isEmpty()) {
-            config.insert_or_assign(key.toStdString(), value.toStdString());
-        }
+void AppController::requestActorEdit(const QString& projectRoot, const QString& actorId) {
+    selectActor(projectRoot, actorId);
+    if (hasActor_) {
+        emit actorEditRequested();
     }
-    actor.authConfig = std::move(config);
+}
 
-    const bool stepBased =
-        (strategy == engine::AuthStrategy::Simple || strategy == engine::AuthStrategy::Chain);
-    if (stepBased) {
-        engine::AuthStep step;
-        if (!actor.authSteps.empty()) {
-            step = actor.authSteps.front();  // keep id + headers
-        }
-        if (step.id.empty()) {
-            step.id = "login";
-        }
-        step.method = httpMethodFromLabel(authMethod);
-        step.pathTemplate = authPath.trimmed().toStdString();
-        const QString body = authBody.trimmed();
-        step.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
-                                           : std::optional<std::string>{body.toStdString()};
-        bool okExpect = false;
-        const int expect = authExpect.trimmed().toInt(&okExpect);
-        step.expectStatus = okExpect ? std::optional<int>{expect} : std::optional<int>{};
-        step.extractions = extractionsFromPairs(actorAuthExtract_.pairs());
-        if (actor.authSteps.empty()) {
-            actor.authSteps.push_back(std::move(step));
-        } else {
-            actor.authSteps.front() = std::move(step);
-        }
-    } else {
-        actor.authSteps.clear();
+void AppController::cancelActorDraft() {
+    // Cancelling a never-saved draft closes its tab.
+    if (tabModel()->valid(activeTabIndex())) {
+        closeTab(activeTabIndex());
     }
-
-    if (refreshEnabled) {
-        engine::SessionRefresh refresh;
-        if (actor.refresh) {
-            refresh = *actor.refresh;
-        }
-        refresh.method = httpMethodFromLabel(refreshMethod);
-        refresh.pathTemplate = refreshPath.trimmed().toStdString();
-        const QString body = refreshBody.trimmed();
-        refresh.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
-                                              : std::optional<std::string>{body.toStdString()};
-        refresh.extractions = extractionsFromPairs(actorRefreshExtract_.pairs());
-        actor.refresh = std::move(refresh);
-    } else {
-        actor.refresh.reset();
-    }
-
-    QString error;
-    if (activeProject().saveActor(originalId, actor, error)) {
-        emit notify(QStringLiteral("Saved actor “%1”").arg(name.trimmed()), false);
-        return true;
-    }
-    emit notify(error, true);
-    return false;
 }
 
 bool AppController::saveActorInline(const QString& originalId,
@@ -395,10 +385,33 @@ bool AppController::saveActorInline(const QString& originalId,
     }
 
     QString error;
+    // Point the read-only selection at the (about-to-exist) actor so onSaved —
+    // which runs synchronously inside saveActor on success — re-seeds it (covers
+    // create with an empty originalId, and rename). Restore on failure so a
+    // rejected save leaves the draft identity intact (an empty name still reads
+    // as a "New actor" draft in the panel).
+    const QString savedName = name.trimmed();
+    const QString prevId = selectedActorId_;
+    const QString prevName = selectedActorName_;
+    selectedActorId_ = savedName;
+    selectedActorName_ = savedName;
     if (activeProject().saveActor(originalId, actor, error)) {
-        emit notify(QStringLiteral("Saved actor “%1”").arg(name.trimmed()), false);
+        // Point the active actor tab at the saved id (a draft's blank id
+        // becomes the real name) so switching away/back finds it.
+        if (tabModel()->valid(activeTabIndex()) &&
+            tabModel()->stateAt(activeTabIndex()).kind == TabState::Kind::Actor) {
+            TabState& tab = tabModel()->stateAt(activeTabIndex());
+            tab.id = savedName;
+            tab.title = savedName;
+            tab.dirty = false;  // just saved — clear the unsaved dot
+            tabModel()->refreshRow(activeTabIndex());
+            persistOpenTabs();  // a draft's blank id is now reopenable
+        }
+        emit notify(QStringLiteral("Saved actor “%1”").arg(savedName), false);
         return true;
     }
+    selectedActorId_ = prevId;
+    selectedActorName_ = prevName;
     emit notify(error, true);
     return false;
 }
@@ -633,9 +646,8 @@ void AppController::selectOperationById(const QString& operationId) {
     }
     const QString module = operationId.left(dot);
     const QString opName = operationId.mid(dot + 1);
-    if (selectedModule_ != module) {
-        selectModule(module);
-    }
+    // openOperationTab (via selectOperation) sets the module context itself;
+    // no separate selectModule (which would blank the active tab).
     selectOperation(module, opName);
 }
 
@@ -651,10 +663,6 @@ void AppController::activateOperationById(const QString& operationId) {
     if (hasOperation_) {
         runSelected(/*clean=*/false, /*dryRun=*/false);
     }
-}
-
-void AppController::setExplorerFilter(const QString& text) {
-    treeFilter_.setFilterText(text);
 }
 
 bool AppController::isValidName(const QString& name) const {

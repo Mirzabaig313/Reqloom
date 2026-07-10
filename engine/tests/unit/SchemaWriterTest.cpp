@@ -936,3 +936,405 @@ TEST(SchemaWriter, latency_slo_absent_when_unset) {
     ASSERT_TRUE(reloaded.has_value());
     EXPECT_EQ(reloaded->latencySloP95Ms, 0);
 }
+
+TEST(SchemaWriter, multiline_body_round_trips_exactly_and_stays_idempotent) {
+    // A multi-line JSON body (as imported from Apidog/Postman examples) must
+    // read back byte-for-byte, be written as a readable block literal (not an
+    // escaped one-liner), and re-save byte-identically.
+    ScratchDir scratch;
+    ce::Project p;
+    p.name = "Bodies";
+    p.defaultEnvironment = "local";
+    p.environments["local"] = {{"baseUrl", "http://localhost:0"}};
+    ce::Resource res;
+    res.id = ce::ResourceId{"profile"};
+    ce::Operation op;
+    op.id = ce::OperationId{"profile.create"};
+    op.resource = res.id;
+    op.method = ce::HttpMethod::Post;
+    op.pathTemplate = "/profile";
+    const std::string body = "{\n  \"email\": \"a@b.com\",\n  \"phone\": \"+1\"\n}";
+    op.bodyTemplate = body;
+    res.operations["create"] = std::move(op);
+    p.resources[res.id] = std::move(res);
+
+    const auto written = ce::writeProject(scratch.path(), p, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    // Parse back: body must equal the original bytes exactly.
+    auto reparsed = ce::parseProject(*written);
+    ASSERT_TRUE(reparsed.has_value()) << reparsed.error().detail;
+    const auto& rop = reparsed->resources.at(ce::ResourceId{"profile"}).operations.at("create");
+    ASSERT_TRUE(rop.bodyTemplate.has_value());
+    EXPECT_EQ(*rop.bodyTemplate, body);
+
+    const auto slurp = [](const fs::path& f) {
+        std::ifstream in(f, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const fs::path resourceFile = scratch.path() / "resources" / "profile.yaml";
+    const std::string firstBytes = slurp(resourceFile);
+
+    // Readable: emitted as a block literal, no escaped "\n" one-liner.
+    EXPECT_NE(firstBytes.find("body: |"), std::string::npos);
+    EXPECT_EQ(firstBytes.find("\\n"), std::string::npos);
+
+    // Idempotent: re-writing the reparsed project yields identical bytes.
+    ASSERT_TRUE(ce::writeProject(scratch.path(), *reparsed, /*overwrite=*/true).has_value());
+    EXPECT_EQ(slurp(resourceFile), firstBytes);
+}
+
+TEST(SchemaWriter, inline_auth_round_trips_all_types) {
+    // Per-operation inline auth (the actor-less, Postman-style credential)
+    // must survive write → parse for every type. Fails on the parent commit:
+    // Operation::inlineAuth and the auth: YAML block did not exist.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& ops = project.resources.at(ce::ResourceId{"payment"}).operations;
+
+    ce::Operation bearer;
+    bearer.id = ce::OperationId{"payment.bearer"};
+    bearer.resource = ce::ResourceId{"payment"};
+    bearer.method = ce::HttpMethod::Get;
+    bearer.pathTemplate = "/api/v1/bearer";
+    bearer.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::Bearer, .token = "{{env.tok}}"};
+    ops["bearer"] = std::move(bearer);
+
+    ce::Operation basic;
+    basic.id = ce::OperationId{"payment.basic"};
+    basic.resource = ce::ResourceId{"payment"};
+    basic.method = ce::HttpMethod::Get;
+    basic.pathTemplate = "/api/v1/basic";
+    basic.inlineAuth = ce::InlineAuth{
+        .type = ce::InlineAuthType::Basic, .username = "admin", .password = "s3cr3t"};
+    ops["basic"] = std::move(basic);
+
+    ce::Operation apikey;
+    apikey.id = ce::OperationId{"payment.apikey"};
+    apikey.resource = ce::ResourceId{"payment"};
+    apikey.method = ce::HttpMethod::Get;
+    apikey.pathTemplate = "/api/v1/apikey";
+    apikey.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::ApiKey,
+                                       .apiKeyName = "X-API-Key",
+                                       .apiKeyValue = "{{secret.key}}",
+                                       .apiKeyInQuery = true};
+    ops["apikey"] = std::move(apikey);
+
+    ce::Operation aws;
+    aws.id = ce::OperationId{"payment.aws"};
+    aws.resource = ce::ResourceId{"payment"};
+    aws.method = ce::HttpMethod::Get;
+    aws.pathTemplate = "/api/v1/aws";
+    aws.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::AwsSigV4,
+                                    .awsAccessKey = "AKIA...",
+                                    .awsSecretKey = "{{secret.aws}}",
+                                    .awsRegion = "us-east-1",
+                                    .awsService = "execute-api",
+                                    .awsSessionToken = "sess-tok"};
+    ops["aws"] = std::move(aws);
+
+    ce::Operation oauth;
+    oauth.id = ce::OperationId{"payment.oauth"};
+    oauth.resource = ce::ResourceId{"payment"};
+    oauth.method = ce::HttpMethod::Get;
+    oauth.pathTemplate = "/api/v1/oauth";
+    oauth.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::OAuth1,
+                                      .oauthConsumerKey = "ck",
+                                      .oauthConsumerSecret = "{{secret.cs}}",
+                                      .oauthToken = "tk",
+                                      .oauthTokenSecret = "{{secret.ts}}"};
+    ops["oauth"] = std::move(oauth);
+
+    ce::Operation oauth2;
+    oauth2.id = ce::OperationId{"payment.oauth2"};
+    oauth2.resource = ce::ResourceId{"payment"};
+    oauth2.method = ce::HttpMethod::Get;
+    oauth2.pathTemplate = "/api/v1/oauth2";
+    oauth2.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                                       .username = "u",
+                                       .password = "{{secret.pw}}",
+                                       .oauth2GrantType = "password",
+                                       .oauth2TokenUrl = "https://id.test/token",
+                                       .oauth2ClientId = "cid",
+                                       .oauth2ClientSecret = "{{secret.cs}}",
+                                       .oauth2Scope = "read write",
+                                       .oauth2ClientAuth = "basic"};
+    ops["oauth2"] = std::move(oauth2);
+
+    ce::Operation jwt;
+    jwt.id = ce::OperationId{"payment.jwt"};
+    jwt.resource = ce::ResourceId{"payment"};
+    jwt.method = ce::HttpMethod::Get;
+    jwt.pathTemplate = "/api/v1/jwt";
+    jwt.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::Jwt,
+                                    .jwtAlgorithm = "HS512",
+                                    .jwtSecret = "{{secret.jwt}}",
+                                    .jwtPayload = R"({"sub":"123"})"};
+    ops["jwt"] = std::move(jwt);
+
+    ce::Operation mtls;
+    mtls.id = ce::OperationId{"payment.mtls"};
+    mtls.resource = ce::ResourceId{"payment"};
+    mtls.method = ce::HttpMethod::Get;
+    mtls.pathTemplate = "/api/v1/mtls";
+    mtls.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::Mtls,
+                                     .mtlsFormat = "p12",
+                                     .mtlsCertPath = "certs/client.p12",
+                                     .mtlsKeyPassword = "{{secret.pfx}}",
+                                     .mtlsCaCertPath = "certs/ca.pem"};
+    ops["mtls"] = std::move(mtls);
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& out = reloaded->resources.at(ce::ResourceId{"payment"}).operations;
+
+    ASSERT_TRUE(out.at("bearer").inlineAuth.has_value());
+    EXPECT_EQ(out.at("bearer").inlineAuth->type, ce::InlineAuthType::Bearer);
+    EXPECT_EQ(out.at("bearer").inlineAuth->token, "{{env.tok}}");
+
+    ASSERT_TRUE(out.at("basic").inlineAuth.has_value());
+    EXPECT_EQ(out.at("basic").inlineAuth->type, ce::InlineAuthType::Basic);
+    EXPECT_EQ(out.at("basic").inlineAuth->username, "admin");
+    EXPECT_EQ(out.at("basic").inlineAuth->password, "s3cr3t");
+
+    ASSERT_TRUE(out.at("apikey").inlineAuth.has_value());
+    EXPECT_EQ(out.at("apikey").inlineAuth->type, ce::InlineAuthType::ApiKey);
+    EXPECT_EQ(out.at("apikey").inlineAuth->apiKeyName, "X-API-Key");
+    EXPECT_EQ(out.at("apikey").inlineAuth->apiKeyValue, "{{secret.key}}");
+    EXPECT_TRUE(out.at("apikey").inlineAuth->apiKeyInQuery);
+
+    ASSERT_TRUE(out.at("aws").inlineAuth.has_value());
+    EXPECT_EQ(out.at("aws").inlineAuth->type, ce::InlineAuthType::AwsSigV4);
+    EXPECT_EQ(out.at("aws").inlineAuth->awsAccessKey, "AKIA...");
+    EXPECT_EQ(out.at("aws").inlineAuth->awsSecretKey, "{{secret.aws}}");
+    EXPECT_EQ(out.at("aws").inlineAuth->awsRegion, "us-east-1");
+    EXPECT_EQ(out.at("aws").inlineAuth->awsService, "execute-api");
+    EXPECT_EQ(out.at("aws").inlineAuth->awsSessionToken, "sess-tok");
+
+    ASSERT_TRUE(out.at("oauth").inlineAuth.has_value());
+    EXPECT_EQ(out.at("oauth").inlineAuth->type, ce::InlineAuthType::OAuth1);
+    EXPECT_EQ(out.at("oauth").inlineAuth->oauthConsumerKey, "ck");
+    EXPECT_EQ(out.at("oauth").inlineAuth->oauthConsumerSecret, "{{secret.cs}}");
+    EXPECT_EQ(out.at("oauth").inlineAuth->oauthToken, "tk");
+    EXPECT_EQ(out.at("oauth").inlineAuth->oauthTokenSecret, "{{secret.ts}}");
+
+    ASSERT_TRUE(out.at("oauth2").inlineAuth.has_value());
+    EXPECT_EQ(out.at("oauth2").inlineAuth->type, ce::InlineAuthType::OAuth2);
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2GrantType, "password");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2TokenUrl, "https://id.test/token");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2ClientId, "cid");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2ClientSecret, "{{secret.cs}}");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2Scope, "read write");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->oauth2ClientAuth, "basic");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->username, "u");
+    EXPECT_EQ(out.at("oauth2").inlineAuth->password, "{{secret.pw}}");
+
+    ASSERT_TRUE(out.at("jwt").inlineAuth.has_value());
+    EXPECT_EQ(out.at("jwt").inlineAuth->type, ce::InlineAuthType::Jwt);
+    EXPECT_EQ(out.at("jwt").inlineAuth->jwtAlgorithm, "HS512");
+    EXPECT_EQ(out.at("jwt").inlineAuth->jwtSecret, "{{secret.jwt}}");
+    EXPECT_EQ(out.at("jwt").inlineAuth->jwtPayload, R"({"sub":"123"})");
+
+    ASSERT_TRUE(out.at("mtls").inlineAuth.has_value());
+    EXPECT_EQ(out.at("mtls").inlineAuth->type, ce::InlineAuthType::Mtls);
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsFormat, "p12");
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsCertPath, "certs/client.p12");
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsKeyPassword, "{{secret.pfx}}");
+    EXPECT_EQ(out.at("mtls").inlineAuth->mtlsCaCertPath, "certs/ca.pem");
+}
+
+TEST(SchemaWriter, oauth2_authorization_code_persists_config_but_never_the_token) {
+    // Authorization Code config (grant/auth_url/callback) round-trips, but the
+    // interactively-obtained access token is an ephemeral secret and must NOT
+    // be written to YAML.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    ce::Operation authcode;
+    authcode.id = ce::OperationId{"payment.authcode"};
+    authcode.resource = ce::ResourceId{"payment"};
+    authcode.method = ce::HttpMethod::Get;
+    authcode.pathTemplate = "/api/v1/authcode";
+    authcode.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                                         .oauth2GrantType = "authorization_code",
+                                         .oauth2ClientId = "cid",
+                                         .oauth2AuthUrl = "https://id.test/authorize",
+                                         .oauth2CallbackUrl = "http://127.0.0.1:8080/callback",
+                                         .oauth2PkceMethod = "plain",
+                                         .oauth2AccessToken = "SUPER-SECRET-TOKEN"};
+    project.resources.at(ce::ResourceId{"payment"}).operations["authcode"] = std::move(authcode);
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    // The token must not appear anywhere on disk.
+    const auto slurp = [](const fs::path& f) {
+        std::ifstream in(f, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    EXPECT_EQ(slurp(scratch.path() / "resources" / "payment.yaml").find("SUPER-SECRET-TOKEN"),
+              std::string::npos);
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& op = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("authcode");
+    ASSERT_TRUE(op.inlineAuth.has_value());
+    EXPECT_EQ(op.inlineAuth->oauth2GrantType, "authorization_code");
+    EXPECT_EQ(op.inlineAuth->oauth2AuthUrl, "https://id.test/authorize");
+    EXPECT_EQ(op.inlineAuth->oauth2CallbackUrl, "http://127.0.0.1:8080/callback");
+    EXPECT_EQ(op.inlineAuth->oauth2PkceMethod, "plain");
+    EXPECT_TRUE(op.inlineAuth->oauth2AccessToken.empty()) << "token must not persist";
+}
+
+TEST(SchemaWriter, project_default_auth_and_inherit_round_trip) {
+    // The project-wide default auth (the "inherit from parent" target) and an
+    // operation set to Inherit must both survive write → parse.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    project.defaultAuth =
+        ce::InlineAuth{.type = ce::InlineAuthType::Bearer, .token = "{{secret.shared}}"};
+
+    ce::Operation inherit;
+    inherit.id = ce::OperationId{"payment.inherit"};
+    inherit.resource = ce::ResourceId{"payment"};
+    inherit.method = ce::HttpMethod::Get;
+    inherit.pathTemplate = "/api/v1/inherit";
+    inherit.inlineAuth = ce::InlineAuth{.type = ce::InlineAuthType::Inherit};
+    project.resources.at(ce::ResourceId{"payment"}).operations["inherit"] = std::move(inherit);
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    ASSERT_TRUE(reloaded->defaultAuth.has_value());
+    EXPECT_EQ(reloaded->defaultAuth->type, ce::InlineAuthType::Bearer);
+    EXPECT_EQ(reloaded->defaultAuth->token, "{{secret.shared}}");
+
+    const auto& op = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("inherit");
+    ASSERT_TRUE(op.inlineAuth.has_value());
+    EXPECT_EQ(op.inlineAuth->type, ce::InlineAuthType::Inherit);
+}
+
+// ─── bearer / jwt / mtls actor strategy round-trips ─────────────────────────
+
+TEST(SchemaWriter, bearer_actor_round_trips) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "BearerRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    ce::Actor svc;
+    svc.id = ce::ActorId{"svc"};
+    svc.strategy = ce::AuthStrategy::Bearer;
+    svc.authConfig = {{"token", "{{secret.API_TOKEN}}"}};
+    original.actors[svc.id] = std::move(svc);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"svc"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::Bearer);
+    EXPECT_TRUE(reload.authSteps.empty());
+    EXPECT_EQ(reload.authConfig.at("token"), "{{secret.API_TOKEN}}");
+}
+
+TEST(SchemaWriter, jwt_actor_round_trips) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "JwtRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "http://t.test"}};
+
+    ce::Actor svc;
+    svc.id = ce::ActorId{"svc"};
+    svc.strategy = ce::AuthStrategy::Jwt;
+    svc.authConfig = {
+        {"algorithm", "HS512"},
+        {"secret", "{{secret.JWT_SIGNING_KEY}}"},
+        {"payload", R"({"sub":"svc-1","role":"admin"})"},
+    };
+    original.actors[svc.id] = std::move(svc);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"svc"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::Jwt);
+    EXPECT_EQ(reload.authConfig.at("algorithm"), "HS512");
+    EXPECT_EQ(reload.authConfig.at("secret"), "{{secret.JWT_SIGNING_KEY}}");
+    EXPECT_EQ(reload.authConfig.at("payload"), R"({"sub":"svc-1","role":"admin"})");
+}
+
+TEST(SchemaWriter, mtls_pem_actor_round_trips) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "MtlsPemRoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://mtls.test"}};
+
+    ce::Actor svc;
+    svc.id = ce::ActorId{"svc"};
+    svc.strategy = ce::AuthStrategy::Mtls;
+    svc.authConfig = {
+        {"format", "pem"},
+        {"cert_path", "/certs/client.pem"},
+        {"key_path", "/certs/client.key"},
+        {"key_password", "{{secret.KEY_PASS}}"},
+        {"ca_cert_path", "/certs/ca.pem"},
+    };
+    original.actors[svc.id] = std::move(svc);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"svc"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::Mtls);
+    EXPECT_EQ(reload.authConfig.at("format"), "pem");
+    EXPECT_EQ(reload.authConfig.at("cert_path"), "/certs/client.pem");
+    EXPECT_EQ(reload.authConfig.at("key_path"), "/certs/client.key");
+    EXPECT_EQ(reload.authConfig.at("key_password"), "{{secret.KEY_PASS}}");
+    EXPECT_EQ(reload.authConfig.at("ca_cert_path"), "/certs/ca.pem");
+}
+
+TEST(SchemaWriter, mtls_p12_actor_round_trips) {
+    ScratchDir scratch;
+
+    ce::Project original;
+    original.name = "MtlsP12RoundTrip";
+    original.defaultEnvironment = "local";
+    original.environments["local"] = {{"baseUrl", "https://mtls.test"}};
+
+    ce::Actor svc;
+    svc.id = ce::ActorId{"svc"};
+    svc.strategy = ce::AuthStrategy::Mtls;
+    svc.authConfig = {
+        {"format", "p12"},
+        {"cert_path", "/certs/client.p12"},
+        {"key_password", "{{secret.P12_PASS}}"},
+    };
+    original.actors[svc.id] = std::move(svc);
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+
+    const auto& reload = reloaded->actors.at(ce::ActorId{"svc"});
+    EXPECT_EQ(reload.strategy, ce::AuthStrategy::Mtls);
+    EXPECT_EQ(reload.authConfig.at("format"), "p12");
+    EXPECT_EQ(reload.authConfig.at("cert_path"), "/certs/client.p12");
+    EXPECT_EQ(reload.authConfig.at("key_password"), "{{secret.P12_PASS}}");
+    EXPECT_FALSE(reload.authConfig.contains("key_path"));
+}

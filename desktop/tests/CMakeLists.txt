@@ -111,7 +111,14 @@ reqloom_set_warnings(reqloom-desktop-secret-tests)
 reqloom_apply_sanitizers(reqloom-desktop-secret-tests)
 
 gtest_discover_tests(reqloom-desktop-secret-tests
+    # PRE_TEST defers enumeration to ctest run time. POST_BUILD (the default)
+    # executes this Qt-linked binary during the build; on macOS that can block
+    # (keychain/TCC access on an ad-hoc-signed binary, or Qt platform init)
+    # past DISCOVERY_TIMEOUT and fail the build. PRE_TEST runs discovery at
+    # test time with the offscreen platform in effect. Mirrors the UI tests.
+    DISCOVERY_MODE PRE_TEST
     PROPERTIES
         LABELS "desktop_unit"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     DISCOVERY_TIMEOUT 60
 )

@@ -43,17 +43,22 @@ qt_add_executable(reqloom-desktop
     qml/bridge/support/LayoutSolver.h
     qml/bridge/models/ExampleListModel.cpp
     qml/bridge/models/ExampleListModel.h
+    qml/bridge/models/TabModel.cpp
+    qml/bridge/models/TabModel.h
     qml/bridge/appcontroller/AppController.cpp
     qml/bridge/appcontroller/AppController.h
     qml/bridge/appcontroller/AppControllerInternal.h
     qml/bridge/appcontroller/AppControllerChain.cpp
     qml/bridge/appcontroller/AppControllerEntities.cpp
+    qml/bridge/appcontroller/AppControllerTabs.cpp
     src/application/ProjectModel.cpp
     src/application/ProjectModel.h
     src/application/WorkspaceModel.cpp
     src/application/WorkspaceModel.h
     src/application/Bootstrapper.cpp
     src/application/Bootstrapper.h
+    src/application/OAuth2AuthCodeFlow.cpp
+    src/application/OAuth2AuthCodeFlow.h
     src/application/RunController.cpp
     src/application/RunController.h
     src/application/SavedResponseStore.cpp
@@ -101,8 +106,8 @@ qt_add_qml_module(reqloom-desktop
         qml/views/TimelinePanel.qml
         qml/views/NewModuleDialog.qml
         qml/views/NewEndpointDialog.qml
-        qml/views/ActorDialog.qml
         qml/views/ActorDetail.qml
+        qml/views/EditorTabBar.qml
         qml/views/ManageEnvironmentDialog.qml
         qml/widgets/MethodBadge.qml
         qml/widgets/Card.qml
@@ -126,6 +131,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/GlassToolTip.qml
         qml/widgets/KeyValueList.qml
         qml/widgets/KeyValueEditorView.qml
+        qml/widgets/HeaderNameAutocomplete.qml
         qml/widgets/ChainView.qml
         qml/widgets/StatusBadge.qml
         qml/widgets/DependencyEditor.qml
@@ -178,6 +184,7 @@ target_link_libraries(reqloom-desktop
         scintilla
         Qt6::Core
         Qt6::Concurrent
+        Qt6::Network
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
@@ -212,6 +219,22 @@ set_target_properties(reqloom-desktop PROPERTIES
 # taskbar, and title bar show the brand icon. No-op on other platforms.
 if(WIN32)
     target_sources(reqloom-desktop PRIVATE Reqloom.rc)
+endif()
+
+# macOS: re-sign the built .app with a hardened runtime + a dev entitlement that
+# disables library validation. macOS 15/26/27 SIGKILLs an ad-hoc-signed app that
+# loads externally-signed dylibs (Homebrew Qt frameworks, and the sanitizer
+# runtime in Debug) when launched via Finder/launchd. Without this the app only
+# runs from a terminal. Dev convenience only — a release/notarized build signs
+# with a real Developer ID identity instead.
+if(APPLE)
+    add_custom_command(TARGET reqloom-desktop POST_BUILD
+        COMMAND codesign --force --options runtime
+                --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/dev-entitlements.plist"
+                --sign - "$<TARGET_BUNDLE_DIR:reqloom-desktop>"
+        COMMENT "Ad-hoc signing Reqloom.app for local launch (disable library validation)"
+        VERBATIM
+    )
 endif()
 
 reqloom_set_warnings(reqloom-desktop)

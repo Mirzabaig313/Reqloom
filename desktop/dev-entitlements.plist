@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Local-dev signing only. The app links Homebrew-signed Qt frameworks
+         (and, in Debug, the sanitizer runtime) from outside the bundle. macOS
+         15+/26+/27 enforces library validation, so an ad-hoc-signed app that
+         loads externally-signed dylibs is SIGKILLed ("Code Signature Invalid")
+         when launched via Finder/launchd. Disabling library validation lets a
+         locally built bundle launch. A shipped/notarized build is signed with a
+         real Developer ID and does NOT use these entitlements. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

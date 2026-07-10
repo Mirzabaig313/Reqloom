@@ -166,7 +166,7 @@ ColumnLayout {
                                     Layout.fillWidth: true
                                     Layout.preferredWidth: 1
                                     text: exRow.value
-                                    placeholderText: qsTr("$.body.path / $.headers.X")
+                                    placeholderText: qsTr("data.id")
                                     rightPadding: 22
                                     onTextEdited: {
                                         step.extractModel.setValue(exRow.index, text);
@@ -355,7 +355,7 @@ ColumnLayout {
     Label {
         Layout.fillWidth: true
         Layout.topMargin: DesignTokens.spaceSm
-        text: qsTr("$.body.path · $.headers.X · $.cookies.X · $.status_code · anything else is a JSON path")
+        text: qsTr("Body paths need no $ (data.id · items[0].id). Special sources need it: $.status_code · $.headers.X · $.cookies.X")
         color: DesignTokens.textSecondary
         font.pixelSize: DesignTokens.fontCaption
         wrapMode: Text.WordWrap

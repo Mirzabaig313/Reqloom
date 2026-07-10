@@ -244,6 +244,28 @@ bool ProjectModel::saveOperation(const engine::OperationId& id,
     return true;
 }
 
+bool ProjectModel::saveProjectDefaultAuth(const std::optional<engine::InlineAuth>& defaultAuth,
+                                          QString& error) {
+    if (!project_) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    engine::Project draft = *project_;
+    draft.defaultAuth = defaultAuth;
+    if (auto valid = engine::validateProject(draft); !valid) {
+        error = QString::fromStdString(valid.error().detail);
+        return false;
+    }
+    auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
+    if (!written) {
+        error = QString::fromStdString(written.error().detail);
+        return false;
+    }
+    project_ = std::make_shared<const engine::Project>(std::move(draft));
+    emit saved();
+    return true;
+}
+
 bool ProjectModel::saveOperations(const std::map<std::string, engine::Operation>& updates,
                                   QString& error) {
     if (!project_) {

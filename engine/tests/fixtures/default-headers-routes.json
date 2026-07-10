@@ -1,0 +1,20 @@
+{
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/plain",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/custom-ua",
+      "status": 200,
+      "body": {
+        "ok": true
+      }
+    }
+  ]
+}
