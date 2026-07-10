@@ -44,6 +44,7 @@ public:
         StatusTokenRole,  ///< QString: success/warning/error token for the status badge
         ProjectRootRole,  ///< QString: owning project's root path (every row carries it)
         ActiveRole,       ///< bool: true on the active project's row
+        PathRole,         ///< QString: operation path template (for search matching)
     };
 
     /// One saved-example child row: its display name + the HTTP status it
@@ -121,6 +122,7 @@ private:
         QString operationId;
         QString resourceId;
         QString method;
+        QString path;  ///< operation path template (search only)
         QString exampleName;
         QString tooltip;
         QString projectRoot;  ///< owning project's root (set on every descendant)

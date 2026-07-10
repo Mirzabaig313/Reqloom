@@ -180,6 +180,37 @@ void TimelineModel::reset() {
     }
 }
 
+TimelineModel::Snapshot TimelineModel::takeSnapshot() const {
+    return Snapshot{.rows = rows_,
+                    .latencyMs = latencyMs_,
+                    .latencyBars = latencyBars_,
+                    .stepRowByIndex = stepRowByIndex_,
+                    .stepChildSeq = stepChildSeq_,
+                    .stepMs = stepMs_,
+                    .runTotalMs = runTotalMs_,
+                    .runChainSize = runChainSize_,
+                    .runEnv = runEnv_,
+                    .runStartRow = runStartRow_};
+}
+
+void TimelineModel::restoreSnapshot(Snapshot snapshot) {
+    beginResetModel();
+    rows_ = std::move(snapshot.rows);
+    stepRowByIndex_ = std::move(snapshot.stepRowByIndex);
+    stepChildSeq_ = std::move(snapshot.stepChildSeq);
+    stepMs_ = std::move(snapshot.stepMs);
+    runTotalMs_ = snapshot.runTotalMs;
+    runChainSize_ = snapshot.runChainSize;
+    runEnv_ = std::move(snapshot.runEnv);
+    runStartRow_ = snapshot.runStartRow;
+    // Swap latency data in before endResetModel so a view reacting to the reset
+    // never observes the previous tab's bars against the new tab's rows.
+    latencyMs_ = std::move(snapshot.latencyMs);
+    latencyBars_ = std::move(snapshot.latencyBars);
+    endResetModel();
+    emit latenciesChanged();
+}
+
 int TimelineModel::rowForStep(int stepNumber) const {
     // Bars carry the 1-based step number; stepRowByIndex_ is keyed by the
     // 0-based event index, so translate before looking up.

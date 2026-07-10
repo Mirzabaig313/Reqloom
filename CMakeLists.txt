@@ -12,6 +12,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Project version, injected as a preprocessor define so code (e.g. the HTTP
+# client's User-Agent) can reference a single source of truth. See HttpDefaults.h.
+add_compile_definitions(REQLOOM_VERSION="${PROJECT_VERSION}")
+
 # On Windows, prevent <windows.h> (pulled in transitively by curl, the Qt
 # platform layer, and others) from defining the function-like `min`/`max`
 # macros that collide with std::min/std::max and numeric_limits::max().
@@ -93,6 +97,14 @@ endif()
 if(REQLOOM_BUILD_TESTS)
     enable_testing()
     include(CTest)
+    # Enumerate tests at ctest run time, not during the build. The default
+    # POST_BUILD mode executes every test binary as a build step; our
+    # ASan-instrumented, Qt/keychain-touching binaries can block past the
+    # discovery timeout on some machines (notably macOS with ad-hoc signing),
+    # which fails the build (and the pre-push hook). PRE_TEST is the safe
+    # project-wide default; individual targets may still layer on ENVIRONMENT
+    # (e.g. QT_QPA_PLATFORM=offscreen) for the deferred enumeration.
+    set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
 endif()
 
 add_subdirectory(third_party)

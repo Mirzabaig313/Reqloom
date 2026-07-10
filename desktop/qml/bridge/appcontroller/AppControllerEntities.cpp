@@ -629,9 +629,8 @@ void AppController::selectOperationById(const QString& operationId) {
     }
     const QString module = operationId.left(dot);
     const QString opName = operationId.mid(dot + 1);
-    if (selectedModule_ != module) {
-        selectModule(module);
-    }
+    // openOperationTab (via selectOperation) sets the module context itself;
+    // no separate selectModule (which would blank the active tab).
     selectOperation(module, opName);
 }
 
@@ -647,10 +646,6 @@ void AppController::activateOperationById(const QString& operationId) {
     if (hasOperation_) {
         runSelected(/*clean=*/false, /*dryRun=*/false);
     }
-}
-
-void AppController::setExplorerFilter(const QString& text) {
-    treeFilter_.setFilterText(text);
 }
 
 bool AppController::isValidName(const QString& name) const {

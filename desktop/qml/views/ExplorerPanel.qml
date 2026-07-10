@@ -135,8 +135,7 @@ Rectangle {
 
         PanelHeader {
             Layout.fillWidth: true
-            title: AppController.projectName.length > 0 ? AppController.projectName : qsTr("Explorer")
-            subtitle: AppController.projectName.length > 0 ? qsTr("%1 operations · %2 actors").arg(AppController.operationCount).arg(AppController.actorCount) : qsTr("No project open")
+            title: qsTr("Collections")
 
             ToolButton {
                 id: addBtn
@@ -197,6 +196,30 @@ Rectangle {
                     radius: DesignTokens.radiusSm
                     color: collapseBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
                 }
+            }
+        }
+
+        // Sidebar search: live fuzzy filter across every open collection's
+        // operations (id + method verb). Empty shows everything. Mirrors the
+        // top-of-sidebar search in Postman / Apidog.
+        GlassTextField {
+            id: searchField
+            Layout.fillWidth: true
+            placeholderText: qsTr("Search endpoints…")
+            // Room for the leading search icon: its left margin + glyph width +
+            // a gap, derived from tokens so it can't overlap the text if spacing
+            // changes.
+            leftPadding: DesignTokens.spaceSm * 2 + 14
+            text: AppController.explorerFilter
+            onTextEdited: AppController.explorerFilter = text
+
+            AppIcon {
+                name: "search"
+                size: 14
+                color: DesignTokens.textSecondary
+                anchors.left: parent.left
+                anchors.leftMargin: DesignTokens.spaceSm
+                anchors.verticalCenter: parent.verticalCenter
             }
         }
 

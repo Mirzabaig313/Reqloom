@@ -562,7 +562,7 @@ ColumnLayout {
         LineTabBar {
             id: readTabs
             Layout.fillWidth: true
-            model: [qsTr("Headers"), qsTr("Params"), qsTr("Body"), qsTr("Auth"), qsTr("Chain"), qsTr("Assertions")]
+            model: [qsTr("Params"), qsTr("Headers"), qsTr("Body"), qsTr("Auth"), qsTr("Chain"), qsTr("Assertions")]
         }
 
         StackLayout {
@@ -571,21 +571,21 @@ ColumnLayout {
             currentIndex: readTabs.currentIndex
 
             KeyValueList {
-                model: AppController.opHeaders
-                emptyText: qsTr("No headers.")
-                actionText: qsTr("＋ Add header")
-                onActionTriggered: {
-                    AppController.beginEdit();
-                    editTabs.currentIndex = 1;
-                }
-            }
-            KeyValueList {
                 model: AppController.opQuery
                 emptyText: qsTr("No query parameters.")
                 actionText: qsTr("＋ Add parameter")
                 onActionTriggered: {
                     AppController.beginEdit();
                     editTabs.currentIndex = 0;
+                }
+            }
+            KeyValueList {
+                model: AppController.opHeaders
+                emptyText: qsTr("No headers.")
+                actionText: qsTr("＋ Add header")
+                onActionTriggered: {
+                    AppController.beginEdit();
+                    editTabs.currentIndex = 1;
                 }
             }
             CodeView {
@@ -690,7 +690,8 @@ ColumnLayout {
                 id: headersScroll
                 clip: true
                 contentWidth: availableWidth
-                KeyValueEditorView {
+                ColumnLayout {
+                    id: headersCol
                     width: headersScroll.availableWidth
                     kvModel: AppController.editHeaders
                     suggestHeaderNames: true
@@ -1835,6 +1836,30 @@ ColumnLayout {
                     assertModel: AppController.editAssertions
                 }
             }
+        }
+    }
+
+    // Read-only cells styled like the editable key/value
+    // fields above, so auto headers read as continuous
+    // table rows (Postman-style) rather than loose text.
+    component AutoCell: Rectangle {
+        property alias text: cellLabel.text
+        implicitHeight: 32
+        radius: DesignTokens.radiusSm
+        color: DesignTokens.surfaceSunken
+        border.width: 1
+        border.color: DesignTokens.borderSubtle
+        opacity: 0.7
+        Label {
+            id: cellLabel
+            anchors.fill: parent
+            anchors.leftMargin: DesignTokens.spaceSm
+            anchors.rightMargin: DesignTokens.spaceSm
+            verticalAlignment: Text.AlignVCenter
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontLabel
+            font.family: DesignTokens.fontMono
+            elide: Text.ElideRight
         }
     }
 

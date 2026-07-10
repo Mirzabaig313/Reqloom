@@ -1,8 +1,11 @@
 // CurlHttpClient — libcurl-backed HttpClient.
 #include "CurlHttpClient.h"
 
+#include <reqloom/engine/HttpDefaults.h>
+
 #include <curl/curl.h>
 
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -10,10 +13,27 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <string>
+#include <string_view>
 
 namespace reqloom::engine {
 
 namespace {
+
+/// Case-insensitive header-name comparison (ASCII), so a caller-supplied
+/// "user-agent" still counts as overriding our default "User-Agent".
+[[nodiscard]] bool headerNameEquals(std::string_view a, std::string_view b) noexcept {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
 
 // Clamp a 64-bit count into libcurl's `long`-sized timeout slots.
 // On Windows, `long` is 32-bit and `chrono::milliseconds::rep` is 64-bit,
@@ -228,29 +248,65 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     }
 
     CurlSlistHandle headerList;
-    for (const auto& [key, value] : request.headers) {
-        // Multipart routing sets Content-Type itself (with the boundary),
-        // so suppress any caller-supplied Content-Type for those requests.
-        if (!request.multipart.empty() && key == "Content-Type") {
-            continue;
-        }
-        auto headerLine = std::format("{}: {}", key, value);
-        auto* appended = curl_slist_append(headerList.get(), headerLine.c_str());
+    // Append `line` to headerList, adopting libcurl's returned head. The
+    // released pointer is the same node `appended` already references (the head
+    // is unchanged after the first append), so discarding it is correct —
+    // headerList has already disowned the storage.
+    auto appendHeaderLine = [&headerList](const std::string& line) -> bool {
+        auto* appended = curl_slist_append(headerList.get(), line.c_str());
         if (appended == nullptr) {
-            return std::unexpected(ReqloomError{
-                ErrorCode::NetworkTimeout, ErrorClass::Network, "Failed to append header: " + key});
+            return false;
         }
-        // curl_slist_append returns the updated head; we release the old
-        // and adopt the new. The released pointer is the same node
-        // `appended` already references (libcurl returns the head, which
-        // is unchanged after the first append), so discarding it is
-        // correct — `headerList` has already disowned the storage.
         // NOLINTNEXTLINE(bugprone-unused-return-value)
         (void)headerList.release();
         headerList.reset(appended);
+        return true;
+    };
+
+    // Track whether the caller pinned any of the headers we otherwise default,
+    // so a user-supplied value always wins. (User-Agent needs no flag: we
+    // always set CURLOPT_USERAGENT and a caller's header overrides it in libcurl.)
+    bool hasAcceptEncoding{false};
+    bool hasConnection{false};
+    for (const auto& [key, value] : request.headers) {
+        // Multipart routing sets Content-Type itself (with the boundary),
+        // so suppress any caller-supplied Content-Type for those requests.
+        // Case-insensitive: a "content-type" header must not slip through and
+        // override libcurl's boundary-bearing multipart Content-Type.
+        if (!request.multipart.empty() && headerNameEquals(key, "Content-Type")) {
+            continue;
+        }
+        if (headerNameEquals(key, "Accept-Encoding")) {
+            hasAcceptEncoding = true;
+        } else if (headerNameEquals(key, "Connection")) {
+            hasConnection = true;
+        }
+        if (!appendHeaderLine(std::format("{}: {}", key, value))) {
+            return std::unexpected(ReqloomError{
+                ErrorCode::NetworkTimeout, ErrorClass::Network, "Failed to append header: " + key});
+        }
+    }
+
+    // Auto-generated headers (mirrored in the UI's auto-header panel). Connection
+    // rides the header list; only add it when the caller didn't set their own.
+    if (!hasConnection && !appendHeaderLine(std::format("Connection: {}", kDefaultConnection))) {
+        return std::unexpected(ReqloomError{ErrorCode::NetworkTimeout,
+                                            ErrorClass::Network,
+                                            "Failed to append default Connection header"});
     }
     if (headerList) {
         curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headerList.get());
+    }
+
+    // User-Agent: libcurl sends none by default. Set ours; a caller-supplied
+    // User-Agent in the header list above overrides this in libcurl, so it's a
+    // safe fallback. libcurl copies the string, so a temporary is fine.
+    curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, std::string(kDefaultUserAgent).c_str());
+    // Accept-Encoding: advertise gzip/deflate and let libcurl decompress
+    // transparently, unless the caller pinned their own encoding.
+    if (!hasAcceptEncoding) {
+        curl_easy_setopt(
+            curl.get(), CURLOPT_ACCEPT_ENCODING, std::string(kDefaultAcceptEncoding).c_str());
     }
 
     // Multipart and inline body are mutually exclusive. Multipart wins
