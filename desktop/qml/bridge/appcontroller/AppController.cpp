@@ -301,6 +301,18 @@ void AppController::setLatencySlo(int ms) {
     }
 }
 
+QString AppController::explorerFilter() const {
+    return treeFilter_.filterText();
+}
+
+void AppController::setExplorerFilter(const QString& text) {
+    if (treeFilter_.filterText() == text) {
+        return;
+    }
+    treeFilter_.setFilterText(text);
+    emit explorerFilterChanged();
+}
+
 QStringList AppController::loadTreeExpansion() const {
     QSettings settings;
     return settings.value(QStringLiteral("explorer/expandedKeys")).toStringList();

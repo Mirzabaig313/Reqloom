@@ -652,10 +652,6 @@ void AppController::activateOperationById(const QString& operationId) {
     }
 }
 
-void AppController::setExplorerFilter(const QString& text) {
-    treeFilter_.setFilterText(text);
-}
-
 bool AppController::isValidName(const QString& name) const {
     const QString trimmed = name.trimmed();
     return !trimmed.isEmpty() && !hasIdBreakingChars(trimmed);

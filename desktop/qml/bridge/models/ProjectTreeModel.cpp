@@ -122,6 +122,8 @@ QVariant ProjectTreeModel::data(const QModelIndex& index, int role) const {
             return node->resourceId;
         case MethodRole:
             return node->method;
+        case PathRole:
+            return node->path;
         case ExampleNameRole:
             return node->exampleName;
         case TooltipRole:
@@ -168,6 +170,7 @@ QHash<int, QByteArray> ProjectTreeModel::roleNames() const {
         {OperationIdRole, "operationId"},
         {ResourceIdRole, "resourceId"},
         {MethodRole, "method"},
+        {PathRole, "opPath"},
         {ExampleNameRole, "exampleName"},
         {TooltipRole, "tooltip"},
         {CountRole, "count"},
@@ -249,9 +252,9 @@ void ProjectTreeModel::rebuild() {
                 opNode->operationId = opId;
                 opNode->projectRoot = entry.root;
                 opNode->method = methodLabel(op.method);
+                opNode->path = QString::fromStdString(op.pathTemplate);
                 opNode->tooltip =
-                    QStringLiteral("%1\n%2 %3")
-                        .arg(opId, opNode->method, QString::fromStdString(op.pathTemplate));
+                    QStringLiteral("%1\n%2 %3").arg(opId, opNode->method, opNode->path);
                 const auto exIt = examples_.constFind(exampleKey(entry.root, opId));
                 if (exIt != examples_.constEnd()) {
                     for (const ExampleRow& example : exIt.value()) {

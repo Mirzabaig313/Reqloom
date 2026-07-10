@@ -493,56 +493,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
             }
 
-            // Global filter — a pill search that narrows the explorer tree,
-            // the prominent control the layout is built around. A stable
-            // preferred/min width keeps it a comfortable size; the flanking
-            // fill spacers absorb slack and centre it rather than starving it.
-            Rectangle {
-                Layout.preferredWidth: 380
-                Layout.minimumWidth: 220
-                Layout.maximumWidth: 560
-                implicitHeight: 36
-                radius: DesignTokens.radiusPill
-                color: DesignTokens.surfaceSunken
-                border.width: 1
-                border.color: headerSearch.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: DesignTokens.spaceMd
-                    anchors.rightMargin: DesignTokens.spaceSm
-                    spacing: DesignTokens.spaceSm
-                    AppIcon {
-                        name: "search"
-                        size: 16
-                    }
-                    TextField {
-                        id: headerSearch
-                        Layout.fillWidth: true
-                        placeholderText: qsTr("Search operations")
-                        color: DesignTokens.textPrimary
-                        placeholderTextColor: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontBody
-                        background: null
-                        leftPadding: 0
-                        onTextChanged: AppController.setExplorerFilter(text)
-                    }
-                    AppIcon {
-                        visible: headerSearch.text.length > 0
-                        name: "x"
-                        size: 14
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -6
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: headerSearch.clear()
-                        }
-                    }
-                }
-            }
-
-            Item {
-                Layout.fillWidth: true
-            }
+            // (The operation search lives in the explorer sidebar now — see
+            // ExplorerPanel's search field. Ctrl+P still opens the command
+            // palette for a global keyboard jump.)
             Row {
                 spacing: 0
                 Repeater {

@@ -5,6 +5,8 @@
 
 #include "widgets/FuzzyMatch.h"
 
+#include <QtCore/QStringList>
+
 namespace reqloom::desktop::qml {
 
 ProjectTreeFilterModel::ProjectTreeFilterModel(QObject* parent) : QSortFilterProxyModel(parent) {
@@ -58,7 +60,23 @@ bool ProjectTreeFilterModel::filterAcceptsRow(int sourceRow,
     }
     const QString opId = idx.data(ProjectTreeModel::OperationIdRole).toString();
     const QString method = idx.data(ProjectTreeModel::MethodRole).toString();
-    return widgets::fuzzy::matches(needle, opId) || widgets::fuzzy::matches(needle, method);
+    const QString path = idx.data(ProjectTreeModel::PathRole).toString();
+    const QString name = idx.data(ProjectTreeModel::NameRole).toString();
+
+    // Space-separated tokens are AND-ed, and each token may fuzzy-match any of
+    // the operation's fields (id / verb / path / display name). So "get
+    // sections" or "post /attendance" narrow the way a user expects, instead of
+    // the whole phrase having to be one subsequence of the id.
+    const QStringList tokens = needle.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    for (const QString& token : tokens) {
+        const bool hit =
+            widgets::fuzzy::matches(token, opId) || widgets::fuzzy::matches(token, method) ||
+            widgets::fuzzy::matches(token, path) || widgets::fuzzy::matches(token, name);
+        if (!hit) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace reqloom::desktop::qml

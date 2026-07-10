@@ -75,6 +75,11 @@ class AppController : public QObject {
 
     // Explorer tree (Actors + Resources → operations → examples) + its filter.
     Q_PROPERTY(QAbstractItemModel* explorerModel READ explorerModel CONSTANT)
+    // Live fuzzy filter for the explorer (the sidebar search box). Empty shows
+    // everything. Thin passthrough to the tree filter model so QML binds a
+    // typed QString instead of reaching into explorerModel's dynamic props.
+    Q_PROPERTY(QString explorerFilter READ explorerFilter WRITE setExplorerFilter NOTIFY
+                   explorerFilterChanged)
     Q_PROPERTY(int operationCount READ operationCount NOTIFY projectChanged)
     Q_PROPERTY(int actorCount READ actorCount NOTIFY projectChanged)
     Q_PROPERTY(QString projectDefaultAuthLabel READ projectDefaultAuthLabel NOTIFY projectChanged)
@@ -328,6 +333,8 @@ public:
     Q_INVOKABLE void closeOtherTabs(int index);
 
     [[nodiscard]] QAbstractItemModel* explorerModel() { return &treeFilter_; }
+    [[nodiscard]] QString explorerFilter() const;
+    void setExplorerFilter(const QString& text);
     [[nodiscard]] int operationCount() const;
     [[nodiscard]] int actorCount() const;
     [[nodiscard]] QStringList moduleNames() const;
@@ -869,10 +876,6 @@ public:
     /// caller must not perform a project-scoped action when false.
     Q_INVOKABLE bool activateProjectByRoot(const QString& projectRoot);
 
-    // ── Live filter ────────────────────────────────────────────────────────
-    /// Set the explorer's fuzzy filter text.
-    Q_INVOKABLE void setExplorerFilter(const QString& text);
-
     // ── Create / rename / delete (each routes through ProjectModel, which
     //    validates via the engine before writing — cycles/undefined refs are
     //    rejected and nothing changes on disk). Emit `notify` on the outcome. ─
@@ -922,6 +925,8 @@ public:
 
 signals:
     void projectChanged();
+    /// Emitted when the explorer's live filter text changes.
+    void explorerFilterChanged();
     /// Emitted when the workspace's recent-projects list changes (a project was
     /// opened, imported, or removed), so the switcher refreshes.
     void recentProjectsChanged();
