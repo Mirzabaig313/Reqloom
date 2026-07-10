@@ -953,9 +953,6 @@ signals:
     /// Fired when the read-only actor detail selection changes (an actor was
     /// selected, or cleared because an operation/module was opened).
     void actorSelectionChanged();
-    /// Fired when the active tab changes or the tab set changes (open/close),
-    /// so the tab strip re-highlights and centre-pane visibility updates.
-    void activeTabChanged();
     /// Fired when the inline actor panel should switch into edit mode (a new
     /// draft, or an "Edit…" request from the explorer).
     void actorEditRequested();

@@ -149,19 +149,6 @@ QVariantMap AppController::actorConfigMap() const {
 
 void AppController::setActorConfigValue(const QString& key, const QString& value) {
     auto pairs = actorConfig_.pairs();
-
-    // Contract: an empty value clears the key. Drop it if present; if it was
-    // absent, nothing changed. (Otherwise a cleared field would persist as an
-    // empty config entry via saveActorInline instead of being removed.)
-    if (value.isEmpty()) {
-        if (std::erase_if(pairs, [&key](const auto& kv) { return kv.first == key; }) == 0) {
-            return;
-        }
-        actorConfig_.setPairs(std::move(pairs));
-        emit actorEditChanged();
-        return;
-    }
-
     bool found = false;
     for (auto& [existingKey, existingValue] : pairs) {
         if (existingKey == key) {
@@ -290,9 +277,19 @@ void AppController::newActor() {
         emit notify(QStringLiteral("Open a project before creating an actor."), true);
         return;
     }
-    // Open a fresh actor draft as its own tab (blank id → the inline panel
-    // opens straight in edit mode).
-    openActorTab(activeProject().rootPath(), QString{}, /*isNewDraft=*/true);
+    // Blank editable state; an empty selection tells the inline panel this is a
+    // new draft (it opens straight in edit mode).
+    prepareNewActor();
+    selectedActorId_.clear();
+    selectedActorName_.clear();
+    selectedActorDescription_.clear();
+    // Default to the flagship multi-step login chain (prepareNewActor already
+    // seeds one blank login step for it).
+    selectedActorStrategy_ = QStringLiteral("Multi-step login chain");
+    hasActor_ = true;
+    // The actor detail and the request editor share the centre pane.
+    closeOperation();
+    emit actorSelectionChanged();
 }
 
 void AppController::requestActorEdit(const QString& projectRoot, const QString& actorId) {
@@ -303,10 +300,7 @@ void AppController::requestActorEdit(const QString& projectRoot, const QString& 
 }
 
 void AppController::cancelActorDraft() {
-    // Cancelling a never-saved draft closes its tab.
-    if (tabModel()->valid(activeTabIndex())) {
-        closeTab(activeTabIndex());
-    }
+    clearActorSelection();
 }
 
 bool AppController::saveActorInline(const QString& originalId,
@@ -396,17 +390,6 @@ bool AppController::saveActorInline(const QString& originalId,
     selectedActorId_ = savedName;
     selectedActorName_ = savedName;
     if (activeProject().saveActor(originalId, actor, error)) {
-        // Point the active actor tab at the saved id (a draft's blank id
-        // becomes the real name) so switching away/back finds it.
-        if (tabModel()->valid(activeTabIndex()) &&
-            tabModel()->stateAt(activeTabIndex()).kind == TabState::Kind::Actor) {
-            TabState& tab = tabModel()->stateAt(activeTabIndex());
-            tab.id = savedName;
-            tab.title = savedName;
-            tab.dirty = false;  // just saved — clear the unsaved dot
-            tabModel()->refreshRow(activeTabIndex());
-            persistOpenTabs();  // a draft's blank id is now reopenable
-        }
         emit notify(QStringLiteral("Saved actor “%1”").arg(savedName), false);
         return true;
     }
