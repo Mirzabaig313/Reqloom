@@ -221,6 +221,22 @@ if(WIN32)
     target_sources(reqloom-desktop PRIVATE Reqloom.rc)
 endif()
 
+# macOS: re-sign the built .app with a hardened runtime + a dev entitlement that
+# disables library validation. macOS 15/26/27 SIGKILLs an ad-hoc-signed app that
+# loads externally-signed dylibs (Homebrew Qt frameworks, and the sanitizer
+# runtime in Debug) when launched via Finder/launchd. Without this the app only
+# runs from a terminal. Dev convenience only — a release/notarized build signs
+# with a real Developer ID identity instead.
+if(APPLE)
+    add_custom_command(TARGET reqloom-desktop POST_BUILD
+        COMMAND codesign --force --options runtime
+                --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/dev-entitlements.plist"
+                --sign - "$<TARGET_BUNDLE_DIR:reqloom-desktop>"
+        COMMENT "Ad-hoc signing Reqloom.app for local launch (disable library validation)"
+        VERBATIM
+    )
+endif()
+
 reqloom_set_warnings(reqloom-desktop)
 reqloom_apply_sanitizers(reqloom-desktop)
 

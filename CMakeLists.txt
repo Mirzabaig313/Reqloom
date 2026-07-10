@@ -12,6 +12,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Project version, injected as a preprocessor define so code (e.g. the HTTP
+# client's User-Agent) can reference a single source of truth. See HttpDefaults.h.
+add_compile_definitions(REQLOOM_VERSION="${PROJECT_VERSION}")
+
 # On Windows, prevent <windows.h> (pulled in transitively by curl, the Qt
 # platform layer, and others) from defining the function-like `min`/`max`
 # macros that collide with std::min/std::max and numeric_limits::max().
