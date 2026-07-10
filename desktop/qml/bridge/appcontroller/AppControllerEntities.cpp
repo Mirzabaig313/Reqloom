@@ -149,6 +149,19 @@ QVariantMap AppController::actorConfigMap() const {
 
 void AppController::setActorConfigValue(const QString& key, const QString& value) {
     auto pairs = actorConfig_.pairs();
+
+    // Contract: an empty value clears the key. Drop it if present; if it was
+    // absent, nothing changed. (Otherwise a cleared field would persist as an
+    // empty config entry via saveActorInline instead of being removed.)
+    if (value.isEmpty()) {
+        if (std::erase_if(pairs, [&key](const auto& kv) { return kv.first == key; }) == 0) {
+            return;
+        }
+        actorConfig_.setPairs(std::move(pairs));
+        emit actorEditChanged();
+        return;
+    }
+
     bool found = false;
     for (auto& [existingKey, existingValue] : pairs) {
         if (existingKey == key) {

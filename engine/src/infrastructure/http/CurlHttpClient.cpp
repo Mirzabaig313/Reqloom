@@ -271,7 +271,9 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     for (const auto& [key, value] : request.headers) {
         // Multipart routing sets Content-Type itself (with the boundary),
         // so suppress any caller-supplied Content-Type for those requests.
-        if (!request.multipart.empty() && key == "Content-Type") {
+        // Case-insensitive: a "content-type" header must not slip through and
+        // override libcurl's boundary-bearing multipart Content-Type.
+        if (!request.multipart.empty() && headerNameEquals(key, "Content-Type")) {
             continue;
         }
         if (headerNameEquals(key, "Accept-Encoding")) {

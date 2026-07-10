@@ -206,7 +206,10 @@ Rectangle {
             id: searchField
             Layout.fillWidth: true
             placeholderText: qsTr("Search endpoints…")
-            leftPadding: 30
+            // Room for the leading search icon: its left margin + glyph width +
+            // a gap, derived from tokens so it can't overlap the text if spacing
+            // changes.
+            leftPadding: DesignTokens.spaceSm * 2 + 14
             text: AppController.explorerFilter
             onTextEdited: AppController.explorerFilter = text
 

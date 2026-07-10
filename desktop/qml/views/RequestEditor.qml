@@ -716,8 +716,18 @@ ColumnLayout {
                         Label {
                             id: autoToggle
                             text: headersCol.showAuto ? qsTr("Hide auto-generated headers") : qsTr("Show auto-generated headers")
-                            color: toggleHover.hovered ? DesignTokens.accent : DesignTokens.textSecondary
+                            // Accent on hover OR keyboard focus so the focus ring
+                            // is visible for keyboard users.
+                            color: (toggleHover.hovered || autoToggle.activeFocus) ? DesignTokens.accent : DesignTokens.textSecondary
                             font.pixelSize: DesignTokens.fontLabel
+                            // Keyboard + screen-reader accessible: it's a real
+                            // toggle control, not decorative text.
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: text
+                            Accessible.onPressAction: headersCol.showAuto = !headersCol.showAuto
+                            Keys.onReturnPressed: headersCol.showAuto = !headersCol.showAuto
+                            Keys.onSpacePressed: headersCol.showAuto = !headersCol.showAuto
                             HoverHandler {
                                 id: toggleHover
                                 cursorShape: Qt.PointingHandCursor
