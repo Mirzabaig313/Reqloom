@@ -1218,7 +1218,7 @@ ColumnLayout {
                                 if (types[currentIndex] !== authTypeCombo.separatorToken) {
                                     AppController.editAuthType = types[currentIndex];
                                 } else {
-                                    currentIndex = Math.max(0, types.indexOf(AppController.editAuthType));
+                                    currentIndex = Qt.binding(() => Math.max(0, authTypeCombo.types.indexOf(AppController.editAuthType)));
                                 }
                             }
                         }

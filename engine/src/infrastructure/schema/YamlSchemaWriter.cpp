@@ -367,15 +367,15 @@ void emitInlineAuth(YAML::Emitter& e, const InlineAuth& a) {
         case InlineAuthType::Mtls:
             e << YAML::Key << "format" << YAML::Value
               << (a.mtlsFormat.empty() ? std::string{"pem"} : a.mtlsFormat);
-            e << YAML::Key << "cert" << YAML::Value << a.mtlsCertPath;
+            e << YAML::Key << "cert_path" << YAML::Value << a.mtlsCertPath;
             if (a.mtlsFormat != "p12") {
-                e << YAML::Key << "key_file" << YAML::Value << a.mtlsKeyPath;
+                e << YAML::Key << "key_path" << YAML::Value << a.mtlsKeyPath;
             }
             if (!a.mtlsKeyPassword.empty()) {
                 e << YAML::Key << "key_password" << YAML::Value << a.mtlsKeyPassword;
             }
             if (!a.mtlsCaCertPath.empty()) {
-                e << YAML::Key << "ca_cert" << YAML::Value << a.mtlsCaCertPath;
+                e << YAML::Key << "ca_cert_path" << YAML::Value << a.mtlsCaCertPath;
             }
             break;
         case InlineAuthType::Inherit:
