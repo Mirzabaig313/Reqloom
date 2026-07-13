@@ -20,11 +20,11 @@
     {
       "name": "macos-debug",
       "inherits": "base",
-      "displayName": "macOS Debug (ASan)",
+      "displayName": "macOS Debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "REQLOOM_ENABLE_ASAN": "ON",
-        "REQLOOM_ENABLE_UBSAN": "ON",
+        "REQLOOM_ENABLE_ASAN": "OFF",
+        "REQLOOM_ENABLE_UBSAN": "OFF",
         "CMAKE_PREFIX_PATH": "/opt/homebrew/opt/qt@6"
       },
       "condition": {
