@@ -139,7 +139,7 @@ void OAuth2AuthCodeFlow::onCallbackConnection() {
             return;
         }
         buffer->append(socket->readAll());
-        const int eol = buffer->indexOf("\r\n");
+        const qsizetype eol = buffer->indexOf("\r\n");
         if (eol < 0) {
             return;  // request line not complete yet
         }
@@ -148,17 +148,44 @@ void OAuth2AuthCodeFlow::onCallbackConnection() {
         // First line: "GET /callback?code=...&state=... HTTP/1.1".
         const QByteArray firstLine = buffer->left(eol);
         const auto parts = firstLine.split(' ');
-        QString code;
-        QString returnedState;
-        QString providerError;
+
+        // Only the configured callback PATH is the genuine redirect. A browser
+        // can open other connections to this loopback origin around the same
+        // time (favicon, a reload, an OPTIONS preflight); if such a stray
+        // request finished parsing first it would win the flow and fire a
+        // spurious "no code" failure while the real callback is still in
+        // flight. Reply 404 to anything that isn't the callback path (and to a
+        // malformed request line) and keep listening — do NOT touch done_ or
+        // server_ here.
+        QString requestPath;
         if (parts.size() >= 2) {
-            const QUrl target(QStringLiteral("http://localhost") +
-                              QString::fromLatin1(parts.at(1)));
-            const QUrlQuery q(target);
-            code = q.queryItemValue(QStringLiteral("code"));
-            returnedState = q.queryItemValue(QStringLiteral("state"));
-            providerError = q.queryItemValue(QStringLiteral("error"));
+            requestPath =
+                QUrl(QStringLiteral("http://localhost") + QString::fromLatin1(parts.at(1))).path();
         }
+        QString expectedPath = QUrl(config_.callbackUrl).path();
+        if (expectedPath.isEmpty()) {
+            expectedPath = QStringLiteral("/");
+        }
+        if (requestPath.isEmpty()) {
+            requestPath = QStringLiteral("/");
+        }
+        if (parts.size() < 2 || requestPath != expectedPath) {
+            const QByteArray notFound = QByteArrayLiteral("Not found.");
+            socket->write(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n"
+                "Content-Length: " +
+                QByteArray::number(notFound.size()) + "\r\n\r\n" + notFound);
+            socket->flush();
+            socket->disconnectFromHost();
+            return;  // ignore; keep the server waiting for the real callback
+        }
+
+        // Genuine callback → parse the OAuth response parameters.
+        const QUrl target(QStringLiteral("http://localhost") + QString::fromLatin1(parts.at(1)));
+        const QUrlQuery q(target);
+        const QString code = q.queryItemValue(QStringLiteral("code"));
+        const QString returnedState = q.queryItemValue(QStringLiteral("state"));
+        const QString providerError = q.queryItemValue(QStringLiteral("error"));
 
         const bool ok = providerError.isEmpty() && !code.isEmpty() && returnedState == state_;
         const QByteArray page =
