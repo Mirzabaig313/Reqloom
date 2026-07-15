@@ -11,6 +11,6 @@ Label {
     Layout.fillWidth: true
     visible: text.length > 0
     color: DesignTokens.statusError
-    font.pixelSize: DesignTokens.fontLabel
+    font.pointSize: DesignTokens.fontLabelPointSize
     wrapMode: Text.WordWrap
 }

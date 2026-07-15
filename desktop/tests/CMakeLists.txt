@@ -10,7 +10,12 @@ add_executable(reqloom-desktop-ui-tests
     ui/EnvironmentSettingsTest.cpp
     unit/ColorTest.cpp
     unit/ContrastTest.cpp
+    unit/DesignTokensTest.cpp
     unit/LayoutSettingsTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/theming/DesignTokens.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/theming/DesignTokens.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/ThemeController.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/ThemeController.h
     unit/FuzzyMatchTest.cpp
     unit/LineDiffTest.cpp
     unit/GraphLayoutTest.cpp
@@ -39,12 +44,17 @@ add_executable(reqloom-desktop-ui-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.h
 )
 target_include_directories(reqloom-desktop-ui-tests
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qml/theming
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
 target_link_libraries(reqloom-desktop-ui-tests
     PRIVATE
         Qt6::Core
         Qt6::Gui
+        Qt6::Qml
         Qt6::Widgets
         GTest::gtest
 )

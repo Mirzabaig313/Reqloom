@@ -12,7 +12,13 @@ Item {
     property var model: []
     property int currentIndex: 0
 
-    implicitHeight: DesignTokens.controlHeight
+    implicitHeight: Math.max(DesignTokens.controlHeight, tabFontMetrics.height + DesignTokens.spaceSm * 2)
+
+    FontMetrics {
+        id: tabFontMetrics
+        font.family: DesignTokens.fontSans
+        font.pointSize: DesignTokens.fontBodyPointSize
+    }
 
     // Full-width baseline under the tab row.
     Rectangle {
@@ -47,7 +53,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     text: tab.modelData
                     color: bar.currentIndex === tab.index ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontBody
+                    font.pointSize: DesignTokens.fontBodyPointSize
                     font.weight: bar.currentIndex === tab.index ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                     Behavior on color {
                         ColorMotion {}

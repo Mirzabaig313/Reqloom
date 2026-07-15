@@ -16,9 +16,10 @@ Item {
     signal accepted
     signal rejected
 
-    implicitHeight: 60
+    implicitHeight: Math.max(60, buttons.implicitHeight + DesignTokens.spaceLg * 2)
 
     RowLayout {
+        id: buttons
         anchors.fill: parent
         anchors.margins: DesignTokens.spaceLg
         spacing: DesignTokens.spaceSm

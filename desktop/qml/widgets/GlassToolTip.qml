@@ -50,7 +50,7 @@ ToolTip {
     contentItem: Text {
         text: tip.text
         color: DesignTokens.textPrimary
-        font.pixelSize: DesignTokens.fontLabel
+        font.pointSize: DesignTokens.fontLabelPointSize
         wrapMode: Text.WordWrap
         width: Math.min(implicitWidth, tip.maxWidth)
         leftPadding: DesignTokens.spaceSm

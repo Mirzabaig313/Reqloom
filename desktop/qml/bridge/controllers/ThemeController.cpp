@@ -11,6 +11,11 @@ namespace {
 constexpr auto kModeKey = "appearance/mode";
 constexpr auto kDensityKey = "appearance/density";
 
+[[nodiscard]] QString normalizedDensity(const QString& density) {
+    return density.toLower().trimmed() == QLatin1String("compact") ? QStringLiteral("compact")
+                                                                   : QStringLiteral("comfortable");
+}
+
 }  // namespace
 
 ThemeController::ThemeController(QObject* parent) : QObject(parent) {
@@ -70,7 +75,7 @@ void ThemeController::setMode(const QString& mode) {
 }
 
 void ThemeController::setDensity(const QString& density) {
-    const QString normalized = density.toLower().trimmed();
+    const QString normalized{normalizedDensity(density)};
     if (normalized == density_) {
         return;
     }
@@ -85,10 +90,7 @@ void ThemeController::loadSettings() {
     if (!savedMode.isEmpty()) {
         mode_ = savedMode;
     }
-    const QString savedDensity = settings.value(QString::fromUtf8(kDensityKey)).toString();
-    if (!savedDensity.isEmpty()) {
-        density_ = savedDensity;
-    }
+    density_ = normalizedDensity(settings.value(QString::fromUtf8(kDensityKey)).toString());
 }
 
 void ThemeController::saveSettings() const {

@@ -8,7 +8,7 @@ import Reqloom
 
 Label {
     color: DesignTokens.textSecondary
-    font.pixelSize: DesignTokens.fontCaption
+    font.pointSize: DesignTokens.fontCaptionPointSize
     font.weight: DesignTokens.weightSemiBold
     font.letterSpacing: 1.2
     elide: Text.ElideRight

@@ -2,19 +2,69 @@
 #include "DesignTokens.h"
 #include "ThemeController.h"
 
+#include <QtCore/QCoreApplication>
+#include <QtCore/QEvent>
+#include <QtGui/QFont>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QScreen>
 #include <QtQml/QQmlEngine>
+
+namespace {
+
+constexpr qreal kPointsPerInch{72.0};
+// 96 DPI is Qt's conventional logical-DPI fallback when no screen is available.
+constexpr qreal kFallbackLogicalDpi{96.0};
+// Qt's default application font is typically 9pt when neither size is specified.
+constexpr qreal kFallbackPointSize{9.0};
+
+}  // namespace
 
 namespace reqloom::desktop::qml {
 
 DesignTokens::DesignTokens(QObject* parent) : QObject(parent) {
-    // ThemeController is a static singleton; connect to its modeChanged so
-    // we re-resolve the palette and broadcast tokensChanged to all QML bindings.
+    // ThemeController is a static singleton; connect once so palette and
+    // density changes update every QML binding that consumes these tokens.
     auto* ctrl = ThemeController::create(nullptr, nullptr);
     connect(ctrl, &ThemeController::modeChanged, this, &DesignTokens::onModeChanged);
-    onModeChanged();  // seed the initial palette
+    connect(ctrl, &ThemeController::densityChanged, this, &DesignTokens::onDensityChanged);
+    // Qt 6.8 deprecates QGuiApplication::fontChanged in favor of this event.
+    if (auto* app{QCoreApplication::instance()}; app != nullptr) {
+        app->installEventFilter(this);
+    }
+    onModeChanged();
+    onDensityChanged();
 }
 
 DesignTokens::~DesignTokens() = default;
+
+QString DesignTokens::fontSans() const {
+    return QGuiApplication::font().family();
+}
+
+qreal DesignTokens::fontBasePointSize() const {
+    const QFont font{QGuiApplication::font()};
+    if (font.pointSizeF() > 0.0) {
+        return font.pointSizeF();
+    }
+
+    if (font.pixelSize() > 0) {
+        const QScreen* screen{QGuiApplication::primaryScreen()};
+        const qreal logicalDpi{
+            screen != nullptr && screen->logicalDotsPerInch() > 0.0 ? screen->logicalDotsPerInch()
+                                                                    : kFallbackLogicalDpi,
+        };
+        return static_cast<qreal>(font.pixelSize()) * kPointsPerInch / logicalDpi;
+    }
+
+    return kFallbackPointSize;
+}
+
+bool DesignTokens::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == QCoreApplication::instance() && event->type() == QEvent::ApplicationFontChange) {
+        emit typographyChanged();
+    }
+    return QObject::eventFilter(watched, event);
+}
 
 DesignTokens* DesignTokens::create(QQmlEngine*, QJSEngine*) {
     // Single-TU instance (see ThemeController::create for the rationale): an
@@ -81,6 +131,16 @@ void DesignTokens::onModeChanged() {
     auto* ctrl = ThemeController::create(nullptr, nullptr);
     theme_ = theming::Theme::resolve(ctrl->resolvedAppearance());
     emit tokensChanged();
+}
+
+void DesignTokens::onDensityChanged() {
+    auto* ctrl = ThemeController::create(nullptr, nullptr);
+    const bool compact{ctrl->density() == QLatin1String("compact")};
+    if (compact == compactDensity_) {
+        return;
+    }
+    compactDensity_ = compact;
+    emit metricsChanged();
 }
 
 QColor DesignTokens::methodColor(const QString& method) const {
