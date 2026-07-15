@@ -1,5 +1,5 @@
 // EmptyState — a teaching zero-state screen (no project open or no operation
-// selected). Mirrors the old Widgets EmptyState (DESIGN.md §10).
+// selected). Mirrors the old Widgets EmptyState .
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts

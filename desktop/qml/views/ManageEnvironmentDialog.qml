@@ -1,4 +1,4 @@
-// ManageEnvironmentDialog — Apidog-style environment manager: a left sidebar
+// ManageEnvironmentDialog —  environment manager: a left sidebar
 // lists every environment (coloured initials badge + name) with a "New
 // Environment" action; the right pane edits the selected environment's name and
 // variable table. Reuses AppController's env editor state (prepareEditEnvironment

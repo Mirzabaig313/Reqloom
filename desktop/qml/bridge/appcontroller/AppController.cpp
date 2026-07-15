@@ -804,7 +804,7 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
     const QString dirPath =
         targetDir.isLocalFile() ? targetDir.toLocalFile() : targetDir.toString();
 
-    // Parse + verify + write off the GUI thread (AGENTS.md threading rule): a
+    // Parse + verify + write off the GUI thread: a
     // large spec can take noticeable time. These engine free functions touch
     // no shared engine state, so running them concurrently with the GUI is
     // safe. The worker captures only owned copies (no `this`); the result is

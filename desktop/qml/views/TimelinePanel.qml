@@ -1,9 +1,9 @@
-// TimelinePanel — the live run timeline (QML Migration Roadmap WS-C). Renders
+// TimelinePanel — the live run timeline . Renders
 // AppController.timeline (a TimelineModel fed by every RunController signal):
 // a run header, per-step rows with a status badge, and indented request /
 // response / extraction child rows. Extraction outcomes are green when
 // resolved and AMBER (not red) when null/missing — mirroring the old Widgets
-// TimelinePanel and DESIGN.md §2.5. Presentation only.
+// TimelinePanel and Presentation only.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic

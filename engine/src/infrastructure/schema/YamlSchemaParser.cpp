@@ -1024,7 +1024,7 @@ std::expected<Resource, ReqloomError> parseResource(const std::string& resourceI
 // ─── File loading ────────────────────────────────────────────────────────────
 
 // Cap raw schema document size before handing bytes to yaml-cpp. The YAML
-// layer is an attacker-controlled surface (AGENTS.md §"Reading user input");
+// layer is an attacker-controlled surface ;
 // an unbounded document is a trivial memory-exhaustion vector. 8 MiB is far
 // above any legitimate hand-written schema.
 constexpr std::uintmax_t kMaxYamlBytes = std::uintmax_t{8} * 1024 * 1024;

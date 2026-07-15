@@ -386,7 +386,7 @@ void TimelineModel::onExtractionCompleted(int index,
         row.value = value;
     } else {
         // null / missing / invalid is a non-error condition that still demands
-        // attention — DESIGN.md §2.5 reserves status.warning (AMBER) for it,
+        // attention  reserves status.warning (AMBER) for it,
         // never red. Mirrors the old TimelinePanel exactly.
         row.statusToken = QStringLiteral("warning");
         row.statusLabel = outcome;

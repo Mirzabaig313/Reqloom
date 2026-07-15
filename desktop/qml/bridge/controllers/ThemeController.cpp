@@ -10,6 +10,7 @@ namespace {
 
 constexpr auto kModeKey = "appearance/mode";
 constexpr auto kDensityKey = "appearance/density";
+constexpr auto kLegacyDensityKey = "layout/density";
 
 [[nodiscard]] QString normalizedDensity(const QString& density) {
     return density.toLower().trimmed() == QLatin1String("compact") ? QStringLiteral("compact")
@@ -45,6 +46,20 @@ ThemeController* ThemeController::create(QQmlEngine*, QJSEngine*) {
     // CppOwnership to stop it from calling delete on non-heap memory.
     QQmlEngine::setObjectOwnership(&instance, QQmlEngine::CppOwnership);
     return &instance;
+}
+
+void ThemeController::migrateLegacyDensity(QSettings& settings) {
+    const QString canonicalKey{QString::fromUtf8(kDensityKey)};
+    const QString legacyKey{QString::fromUtf8(kLegacyDensityKey)};
+    if (settings.contains(canonicalKey)) {
+        settings.setValue(canonicalKey, normalizedDensity(settings.value(canonicalKey).toString()));
+        settings.remove(legacyKey);
+        return;
+    }
+    if (settings.contains(legacyKey)) {
+        settings.setValue(canonicalKey, normalizedDensity(settings.value(legacyKey).toString()));
+        settings.remove(legacyKey);
+    }
 }
 
 bool ThemeController::isDark() const {
@@ -86,6 +101,7 @@ void ThemeController::setDensity(const QString& density) {
 
 void ThemeController::loadSettings() {
     QSettings settings;
+    migrateLegacyDensity(settings);
     const QString savedMode = settings.value(QString::fromUtf8(kModeKey)).toString();
     if (!savedMode.isEmpty()) {
         mode_ = savedMode;

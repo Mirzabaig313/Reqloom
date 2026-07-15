@@ -1,4 +1,4 @@
-// DesignTokens — appearance-aware QML design-system singleton (ADR-007, WS-D).
+// DesignTokens — appearance-aware QML design-system singleton .
 // Replaces the old QSS Theme.cpp for QML. All properties are NOTIFY-driven —
 // when ThemeController changes mode the whole QML tree repaints via bindings.
 // Token values are sourced from Theme.cpp's two OKLCH palettes (reusing the
@@ -41,13 +41,13 @@ class DesignTokens : public QObject {
     Q_PROPERTY(QColor accent READ accent NOTIFY tokensChanged)
     Q_PROPERTY(QColor accentHover READ accentHover NOTIFY tokensChanged)
     Q_PROPERTY(QColor accentMuted READ accentMuted NOTIFY tokensChanged)
-    // HTTP method hues (DESIGN.md §6.2a)
+    // HTTP method hues
     Q_PROPERTY(QColor methodGet READ methodGet NOTIFY tokensChanged)
     Q_PROPERTY(QColor methodPost READ methodPost NOTIFY tokensChanged)
     Q_PROPERTY(QColor methodPut READ methodPut NOTIFY tokensChanged)
     Q_PROPERTY(QColor methodPatch READ methodPatch NOTIFY tokensChanged)
     Q_PROPERTY(QColor methodDelete READ methodDelete NOTIFY tokensChanged)
-    // Status palette (DESIGN.md §2.5)
+    // Status palette
     Q_PROPERTY(QColor statusIdle READ statusIdle NOTIFY tokensChanged)
     Q_PROPERTY(QColor statusRunning READ statusRunning NOTIFY tokensChanged)
     Q_PROPERTY(QColor statusSuccess READ statusSuccess NOTIFY tokensChanged)
@@ -56,7 +56,7 @@ class DesignTokens : public QObject {
     Q_PROPERTY(QColor statusCancelled READ statusCancelled NOTIFY tokensChanged)
     Q_PROPERTY(QColor statusBlocked READ statusBlocked NOTIFY tokensChanged)
     Q_PROPERTY(QColor statusSkipped READ statusSkipped NOTIFY tokensChanged)
-    // Spacing scale matching Theme::space (DESIGN.md §5.1).
+    // Spacing scale matching Theme::space
     // T-D1 decision: use Theme.cpp's scale (Lg=16/Xl=24) not the old QML
     // scale (Lg=20/Xl=32) so tokens stay consistent with the Widgets app.
     Q_PROPERTY(int spaceXs READ spaceXs CONSTANT)
@@ -204,7 +204,7 @@ public:
     Q_INVOKABLE [[nodiscard]] QColor methodColor(const QString& method) const;
     /// Status token → resolved colour (matches TimelineModel token strings).
     Q_INVOKABLE [[nodiscard]] QColor statusColor(const QString& token) const;
-    /// Status token → glyph (colour+glyph pair per DESIGN.md §6.1 / a11y).
+    /// Status token → glyph (colour+glyph pair per .
     Q_INVOKABLE [[nodiscard]] QString statusGlyph(const QString& token) const;
 
 signals:

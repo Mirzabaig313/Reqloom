@@ -1,5 +1,4 @@
-// RequestEditor — request view + editor for the selected endpoint (ADR-007
-// migration phase 3, WS-B). Read mode previews the request (method pill,
+// RequestEditor — request view + editor for the selected endpoint . Read mode previews the request (method pill,
 // {{var}}-highlighted path, execution chain, Headers / Params / Body / Chain).
 // Edit mode reveals editable controls (method combo, path field, Params /
 // Headers / Body raw↔form / Options / Chain) with live per-tab count badges.
@@ -121,7 +120,7 @@ ColumnLayout {
     // ── Address bar: method + path + Send ──
     // Constraint-solved row (LayoutSolver) instead of magic pixel widths: the
     // method slot sizes to its widest item, Send to its widest label, and the
-    // path fills the remainder. See doc/local/UI_improment.md §3.
+    // path fills the remainder. .
     Item {
         id: addressBar
         Layout.fillWidth: true

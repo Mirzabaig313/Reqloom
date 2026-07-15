@@ -1,4 +1,4 @@
-// OKLCH → sRGB conversion. DESIGN.md §2 keeps color perceptual at the source
+// OKLCH → sRGB conversion. keeps color perceptual at the source
 // (OKLCH ramps) and converts to sRGB once here, since Qt's QSS parser does not
 // read OKLCH. Pure functions, no Qt-widget dependency — unit-tested.
 #pragma once

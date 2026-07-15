@@ -5,7 +5,7 @@
 // Threading: engine::ExecutionEngine::run blocks (real HTTP, polling sleeps),
 // so it runs on a QtConcurrent worker. The engine's event callback fires on
 // that worker thread but only emits signals — it never calls back into the
-// engine — which is the marshalling discipline AGENTS.md requires.
+// engine — which is the marshalling discipline requires.
 #pragma once
 
 #include <reqloom/engine/PublicApi.h>
@@ -28,7 +28,7 @@ namespace reqloom::desktop {
 
 class ProjectModel;
 
-/// One-shot request override for an Override-Mode run (DESIGN.md §6.3). When
+/// One-shot request override for an Override-Mode run. When
 /// `active`, the controller deep-copies the project, patches the target
 /// operation with these values, and runs against the copy — the loaded project
 /// is never mutated, so the override applies to this run only.

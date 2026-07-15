@@ -1,4 +1,4 @@
-// Theme — see header. Resolves the OKLCH token values from DESIGN.md §2.6/§2.7
+// Theme — see header. Resolves the OKLCH token values from
 // to sRGB and assembles the application QSS.
 #include "Theme.h"
 
@@ -40,7 +40,7 @@ constexpr double kAccentHue = 200.0;
     // Status + method foregrounds are solved to AA contrast (≥4.5:1) against
     // their own 16% tint over the raised surface, rather than hand-tuned: the
     // designed hue/chroma/lightness is the starting point and the lightness is
-    // nudged only if it falls short (WCAG §1.4.3, DESIGN.md §2.7). The tint
+    // nudged only if it falls short (WCAG §1.4.3, §2.7). The tint
     // itself shifts with the solved foreground, so iterate to a fixed point.
     const QColor raisedLight = p.surfaceRaised;
     const auto accessible = [&raisedLight](double l, double c, double h, double tintWeight) {
@@ -109,7 +109,7 @@ constexpr double kAccentHue = 200.0;
 
     // Status + method foregrounds solved to AA (≥4.5:1) against their 16% tint
     // over the dark raised surface; designed values are kept when already
-    // accessible (WCAG §1.4.3, DESIGN.md §2.7). Iterate: the tint shifts with
+    // accessible (WCAG §1.4.3, §2.7). Iterate: the tint shifts with
     // the solved foreground.
     const QColor raisedDark = p.surfaceRaised;
     const auto accessible = [&raisedDark](double l, double c, double h, double tintWeight) {
@@ -187,7 +187,7 @@ QColor Theme::status(StatusToken token) const noexcept {
 
 QColor Theme::statusTint(StatusToken token) const noexcept {
     // Opaque mix of the status colour toward the raised surface — a precomputed
-    // tint rather than an alpha composite (DESIGN.md §2.9), so contrast is
+    // tint rather than an alpha composite , so contrast is
     // predictable regardless of what sits behind the pill. ~16% status weight.
     const QColor base = status(token);
     const QColor surface = palette_.surfaceRaised;
@@ -219,7 +219,7 @@ QColor Theme::method(MethodColor token) const noexcept {
 }
 
 QColor Theme::methodTint(MethodColor token) const noexcept {
-    // Same opaque-mix technique as statusTint (DESIGN.md §2.9): blend the
+    // Same opaque-mix technique as statusTint  §2.9): blend the
     // method hue toward the raised surface so the chip fill is predictable.
     const QColor base = method(token);
     const QColor surface = palette_.surfaceRaised;
@@ -285,7 +285,7 @@ QFont Theme::font(TextStyle style) const {
             mono.setPointSizeF(scaled(0.92));
             mono.setStyleHint(QFont::Monospace);
             // Tabular figures so columns of status codes, durations, and byte
-            // counts don't jitter as digit widths vary (DESIGN.md §4.3).
+            // counts don't jitter as digit widths vary  §4.3).
             mono.setFeature("tnum", 1);
             return mono;
         }
@@ -304,7 +304,7 @@ QString Theme::styleSheet() const {
     const int md = space(Space::Md);
     const int xs = space(Space::Xs);
 
-    // One central sheet, token-derived (DESIGN.md §13: no inline per-widget
+    // One central sheet, token-derived  §13: no inline per-widget
     // styles, no raw literals). Object-name selectors target specific roles.
     return QStringLiteral(R"(
 QWidget {
@@ -363,7 +363,7 @@ QStatusBar {
     color: %13;
 }
 
-/* Surface elevation (DESIGN.md §2.8: depth from surface lightness, not
+/* Surface elevation  §2.8: depth from surface lightness, not
    shadow). The explorer sits on the deepest surface.base; the center and
    right workspaces are elevated onto surface.raised so the three panes read
    as distinct layers. Set on the panels via object name + WA_StyledBackground. */
@@ -444,7 +444,7 @@ QWidget#requestLineBar QComboBox {
     border: none;
     border-radius: 0;
 }
-/* Keep a visible focus state for keyboard users (DESIGN.md §11.1 / NFR-5.1):
+/* Keep a visible focus state for keyboard users  §11.1 / NFR-5.1):
    a 1px accent underline rather than a full ring, so it still reads as part of
    the single bar frame. */
 QWidget#requestLineBar QLineEdit:focus,
@@ -465,7 +465,7 @@ QWidget#requestLineBar QComboBox#methodCombo:focus {
 }
 
 /* Method pill badge in the request address bar. Per-method colour comes from
-   the dedicated method vocabulary (DESIGN.md §6.2a) via a dynamic `methodClass`
+   the dedicated method vocabulary  §6.2a) via a dynamic `methodClass`
    property — a mnemonic hue per verb, distinct from the status palette so a
    method chip never reads as a run state. Backgrounds are the opaque methodTint. */
 QLabel#methodPill {
@@ -483,7 +483,7 @@ QLabel#methodPill[methodClass="patch"]  { background-color: %23; color: %28; }
 QLabel#methodPill[methodClass="delete"] { background-color: %24; color: %29; }
 
 /* Trees, lists, tables — the data surfaces. Flat: no card border, separated
-   by surface colour and panel dividers (Apidog/Linear read, DESIGN.md §15 "no
+   by surface colour and panel dividers (Apidog/Linear read, §15 "no
    nested cards"). */
 QTreeWidget, QTreeView, QListWidget, QListView, QTableWidget, QTableView {
     background-color: %4;
@@ -573,7 +573,7 @@ QPushButton#primaryAction:hover { background-color: %19; border-color: %19; }
 QPushButton#primaryAction:disabled { background-color: %3; border-color: %3; color: %18; }
 
 /* Ghost action: a low-emphasis button (no fill, no border at rest) for rare
-   actions like Save to Project, so it never competes with Send (DESIGN.md
+   actions like Save to Project, so it never competes with Send 
    §7.2 button hierarchy). */
 QPushButton#ghostAction {
     background-color: transparent;
@@ -710,7 +710,7 @@ QListWidget#paletteList::item:selected {
 }
 
 /* Section headings inside panels: a light subtitle, not a framed group box
-   (DESIGN.md §5 bans nested cards). */
+   bans nested cards). */
 QLabel[role="sectionHeading"] {
     color: %13;
     font-weight: 600;
@@ -769,7 +769,7 @@ QToolTip {
     padding: %7px;
 }
 
-/* Compact density (DESIGN.md §5.3): tighten tree/list row padding for users
+/* Compact density : tighten tree/list row padding for users
    with hundreds of operations. Keyed on a dynamic property the shell sets. */
 QWidget[density="compact"] QTreeWidget::item,
 QWidget[density="compact"] QListWidget::item,

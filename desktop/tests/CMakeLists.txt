@@ -4,7 +4,7 @@ include(GoogleTest)
 # Logic + reused-component tests. These compile only the survivable C++ logic
 # (settings, Color/Theme, FuzzyMatch, LineDiff, SavedResponseStore) straight
 # into the test binary. The Widgets-bound UI tests (StatusBadge, KeyValueEditor,
-# ResponseViewerPanel) were retired with the Widgets app in Phase 5.
+
 add_executable(reqloom-desktop-ui-tests
     TestMain.cpp
     ui/EnvironmentSettingsTest.cpp
@@ -16,6 +16,8 @@ add_executable(reqloom-desktop-ui-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/theming/DesignTokens.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/ThemeController.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/ThemeController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/LayoutSettingsController.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/LayoutSettingsController.h
     unit/FuzzyMatchTest.cpp
     unit/LineDiffTest.cpp
     unit/GraphLayoutTest.cpp

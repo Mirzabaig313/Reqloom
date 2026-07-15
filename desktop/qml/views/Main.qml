@@ -1,4 +1,4 @@
-// Main — the Reqloom application shell (ADR-007 WS-D). A 3-pane SplitView
+// Main — the Reqloom application shell . A 3-pane SplitView
 // (explorer | editor | response/timeline), collapsible left+right rails,
 // a native MenuBar, top toolbar, keyboard shortcuts, toasts, and an empty
 // state. Logic lives in AppController/SecretsController/ThemeController.

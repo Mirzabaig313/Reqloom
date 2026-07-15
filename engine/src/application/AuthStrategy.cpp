@@ -826,7 +826,7 @@ private:
 // (a JSON claims object) from authConfig; `algorithm` is optional (default
 // HS256). Only HMAC variants are supported (crypto has no RS/ES).
 //
-// ponytail: the JWT is signed once at session creation, not per request — a
+//  the JWT is signed once at session creation, not per request — a
 // payload with time-based claims (exp/iat) is fixed for the session lifetime.
 // Upgrade path: re-sign per request (like the inline path) if actors need
 // short-lived per-request JWTs.

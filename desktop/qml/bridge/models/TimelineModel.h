@@ -1,7 +1,7 @@
-// TimelineModel — the live run timeline (QML Migration Roadmap WS-C). A flat
+// TimelineModel — the live run timeline . A flat
 // list model fed by ALL RunController signals; each streamed RunEvent appends
 // (or settles) a row, mirroring the old Widgets TimelinePanel's content and
-// its amber-not-red colouring for non-resolved extractions (DESIGN.md §2.5).
+// its amber-not-red colouring for non-resolved extractions (DESIGN..
 // C++ owns the rows; QML (TimelinePanel.qml) renders them.
 #pragma once
 

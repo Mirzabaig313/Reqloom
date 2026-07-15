@@ -1,4 +1,4 @@
-// QML desktop entry point (ADR-007). Boots a QApplication + QML engine and
+// QML desktop entry point . Boots a QApplication + QML engine and
 // loads the Reqloom module's Main window. Logic lives in C++ (AppController);
 // presentation lives in QML.
 //

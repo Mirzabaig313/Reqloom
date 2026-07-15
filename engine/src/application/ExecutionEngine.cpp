@@ -69,7 +69,7 @@ void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
     }
 }
 
-/// Build a HookContext snapshot from current run state. Per AGENTS.md
+/// Build a HookContext snapshot from current run state.
 /// hooks get read-only access to actor variables; we copy them so the
 /// hook can't reach back into RunContext via reference.
 [[nodiscard]] HookContext buildHookContext(const HttpRequest& req,
@@ -594,7 +594,7 @@ struct ExecutionEngine::Impl {
                 if (auth->apiKeyInQuery) {
                     // Idempotent: re-applying on a reauth retry (where req.url
                     // already carries the segment) must not append a duplicate.
-                    // ponytail: substring match, not a full query parse — a key
+                    //  substring match, not a full query parse — a key
                     // whose "k=v" is a substring of another param won't re-add,
                     // acceptable for a single auth param.
                     const auto segment = urlEncode(key) + "=" + urlEncode(value);

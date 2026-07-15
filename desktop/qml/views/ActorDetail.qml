@@ -45,7 +45,7 @@ ScrollView {
 
     // Switching to a different actor (or a post-save re-seed) discards any
     // in-progress inline edit — the panel always reflects the current actor.
-    // ponytail: no "unsaved changes" prompt; a mis-click loses edits. Upgrade
+    //: no "unsaved changes" prompt; a mis-click loses edits. Upgrade
     // path: guard with a confirm dialog if users report lost work.
     Connections {
         target: AppController

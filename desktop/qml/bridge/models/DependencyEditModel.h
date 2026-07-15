@@ -1,5 +1,5 @@
-// DependencyEditModel — editable depends_on picker list (QML Migration Roadmap
-// WS-A). Each row is a selection among existing operation ids, so a dependency
+// DependencyEditModel — editable depends_on picker list
+//  Each row is a selection among existing operation ids, so a dependency
 // can never name something undefined. An always-present trailing blank row
 // grows the list (Apidog ghost-row pattern). C++ owns state; QML renders combos.
 #pragma once

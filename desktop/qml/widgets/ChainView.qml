@@ -1,5 +1,5 @@
 // ChainView — the execution chain rendered as a layered dependency graph
-// (DESIGN.md §6.3, the product's hero surface). Fed a laid-out graph from
+//  Fed a laid-out graph from
 // AppController.chainGraph ({nodes:[{operationId,method,isTarget,x,y}], edges:
 // [{from,to}], width, height, nodeWidth, nodeHeight}); prerequisites sit above
 // their dependents, edges curve between them (Bézier on a Canvas), and the
@@ -327,7 +327,7 @@ Rectangle {
                             elide: Text.ElideMiddle
                         }
                         // Live run-status glyph (colour + glyph, never colour
-                        // alone — DESIGN.md §6.1) once a run touches this node.
+                        //  once a run touches this node.
                         StatusBadge {
                             visible: card.nodeStatus.length > 0
                             token: card.nodeStatus

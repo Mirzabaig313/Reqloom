@@ -1,4 +1,4 @@
-// ExplorerPanel — the project explorer (QML Migration Roadmap WS-A). A single
+// ExplorerPanel — the project explorer . A single
 // tree mirroring the old ProjectExplorerWidget: an "Actors" group and a
 // "Resources" group → resource folders → operation leaves (method badge + name)
 // → saved-example child rows. Live fuzzy filter (op id + method verb, empty

@@ -1,6 +1,6 @@
 // StatusBadge — a small status pill (glyph + optional label) coloured from the
 // status vocabulary (QML Migration Roadmap WS-C). Mirrors the C++ StatusBadge
-// (DESIGN.md §6.1): colour is always paired with a glyph, never colour alone,
+//  colour is always paired with a glyph, never colour alone,
 // so colour-blind users can still distinguish states. The glyph + colour come
 // from DesignTokens so QML and C++ share one vocabulary.
 import QtQuick
