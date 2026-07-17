@@ -103,6 +103,7 @@ qt_add_qml_module(reqloom-desktop
     OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qml_modules/Reqloom
     QML_FILES
         qml/views/Main.qml
+        qml/views/WorkbenchLayout.qml
         qml/views/ExplorerPanel.qml
         qml/views/RequestEditor.qml
         qml/views/ResponsePanel.qml

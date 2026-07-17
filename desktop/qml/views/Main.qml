@@ -1,7 +1,7 @@
-// Main — the Reqloom application shell . A 3-pane SplitView
-// (explorer | editor | response/timeline), collapsible left+right rails,
-// a native MenuBar, top toolbar, keyboard shortcuts, toasts, and an empty
-// state. Logic lives in AppController/SecretsController/ThemeController.
+// Main — the Reqloom application shell: a native MenuBar, top toolbar,
+// keyboard shortcuts, dialogs, command palette, and toasts. The three-pane
+// body (explorer | editor | response/timeline) is delegated to WorkbenchLayout.
+// Logic lives in AppController/SecretsController/ThemeController.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -22,6 +22,9 @@ ApplicationWindow {
         return p.length > 0 ? (p + " — Reqloom") : qsTr("Reqloom");
     }
     color: DesignTokens.canvasBottom
+
+    // Persist splitter geometry / collapse / orientation on an orderly close.
+    onClosing: workbench.saveLayout()
 
     // ── Frosted backdrop ─────────────────────────────────────────────────────
     // An iridescent gradient with soft nacre glow-blobs, blurred so the
@@ -131,12 +134,19 @@ ApplicationWindow {
         Menu {
             title: qsTr("View")
             MenuItem {
-                text: window.explorerCollapsed ? qsTr("Show Explorer") : qsTr("Hide Explorer")
-                onTriggered: window.explorerCollapsed = !window.explorerCollapsed
+                text: workbench.explorerCollapsed ? qsTr("Show Explorer") : qsTr("Hide Explorer")
+                onTriggered: workbench.explorerCollapsed = !workbench.explorerCollapsed
             }
             MenuItem {
-                text: window.responseCollapsed ? qsTr("Show Response") : qsTr("Hide Response")
-                onTriggered: window.responseCollapsed = !window.responseCollapsed
+                text: workbench.responseCollapsed ? qsTr("Show Response") : qsTr("Hide Response")
+                onTriggered: workbench.responseCollapsed = !workbench.responseCollapsed
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: qsTr("Automatic Response Layout")
+                checkable: true
+                checked: workbench.orientationMode === "auto"
+                onTriggered: workbench.orientationMode = "auto"
             }
         }
         Menu {
@@ -175,46 +185,14 @@ ApplicationWindow {
         }
     }
 
-    // ── Rail / collapse state ──────────────────────────────────────────────
-    property bool explorerCollapsed: false
-    property bool responseCollapsed: false
-    /// Editor + response stacked vertically (true) vs side-by-side (false).
-    property bool responseStacked: false
-    /// Once the user picks a split orientation we stop auto-managing it, so
-    /// resizing never fights their choice. Until then the layout responds to
-    /// width: side-by-side when wide, stacked when too narrow for two columns.
-    property bool userChoseStack: false
-    readonly property int autoStackBelow: 1040
-
-    onWidthChanged: if (!userChoseStack) {
-        responseStacked = width < autoStackBelow;
-    }
-    Component.onCompleted: if (!userChoseStack) {
-        responseStacked = width < autoStackBelow;
-    }
-    /// Keeps the response/timeline pane visible while viewing a replayed run
-    /// from history, even when no operation is open.
-    property bool historyReplayActive: false
-
-    // When a past run is replayed from history, reveal the pane and switch to
-    // the Timeline tab so the replayed steps are actually visible.
-    Connections {
-        target: AppController
-        function onRunReplayed() {
-            window.historyReplayActive = true;
-            window.responseCollapsed = false;
-            responsePanel.showTimeline();
-        }
-    }
-
     // ── Global shortcuts ───────────────────────────────────────────────────
     Shortcut {
         sequence: "Ctrl+B"
-        onActivated: window.explorerCollapsed = !window.explorerCollapsed
+        onActivated: workbench.explorerCollapsed = !workbench.explorerCollapsed
     }
     Shortcut {
         sequence: "Ctrl+J"
-        onActivated: window.responseCollapsed = !window.responseCollapsed
+        onActivated: workbench.responseCollapsed = !workbench.responseCollapsed
     }
     Shortcut {
         sequence: "Ctrl+P"
@@ -580,351 +558,13 @@ ApplicationWindow {
         }
     }
 
-    // ── Main body: 3-pane SplitView ────────────────────────────────────────
-    SplitView {
-        id: mainSplit
+    // ── Main body: concrete three-pane workbench with durable fluid layout ──
+    WorkbenchLayout {
+        id: workbench
         anchors.fill: parent
-        anchors.margins: 0
-        spacing: 0
-        orientation: Qt.Horizontal
-        handle: Rectangle {
-            implicitWidth: 6
-            implicitHeight: 6
-            color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
-            opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
-            Behavior on opacity {
-                FadeMotion {}
-            }
-        }
-
-        // Left: Explorer panel or collapsed rail.
-        Rectangle {
-            id: explorerPane
-            SplitView.preferredWidth: window.explorerCollapsed ? 32 : 280
-            SplitView.minimumWidth: window.explorerCollapsed ? 32 : 180
-            SplitView.maximumWidth: window.explorerCollapsed ? 32 : 400
-            color: "transparent"
-            clip: true
-
-            ExplorerPanel {
-                id: explorerPanel
-                anchors.fill: parent
-                visible: !window.explorerCollapsed
-                onCollapseRequested: window.explorerCollapsed = true
-            }
-
-            // Collapsed rail: single expand chevron.
-            Rectangle {
-                id: explorerRail
-                anchors.fill: parent
-                visible: window.explorerCollapsed
-                radius: 0
-                color: explorerRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
-                border.width: 1
-                border.color: DesignTokens.glassBorder
-                Behavior on color {
-                    ColorMotion {}
-                }
-
-                AppIcon {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: parent.top
-                    anchors.topMargin: DesignTokens.spaceLg
-                    name: "chevron-right"
-                    size: 18
-                    color: explorerRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                }
-                Label {
-                    anchors.centerIn: parent
-                    text: qsTr("Explorer")
-                    rotation: -90
-                    color: explorerRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    font.weight: DesignTokens.weightMedium
-                }
-                MouseArea {
-                    id: explorerRailArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: window.explorerCollapsed = false
-                }
-                GlassToolTip {
-                    active: explorerRailArea.containsMouse
-                    text: qsTr("Show Explorer")
-                    x: parent.width + 6
-                    y: DesignTokens.spaceLg
-                }
-            }
-        }
-
-        // Centre + Response live in a nested SplitView so they can be arranged
-        // side-by-side (horizontal) or stacked (vertical) via the toolbar.
-        SplitView {
-            id: centerSplit
-            SplitView.fillWidth: true
-            orientation: window.responseStacked ? Qt.Vertical : Qt.Horizontal
-            spacing: 0
-            handle: Rectangle {
-                implicitWidth: 6
-                implicitHeight: 6
-                color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
-                opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
-                Behavior on opacity {
-                    FadeMotion {}
-                }
-            }
-
-            // Centre: endpoint list or request editor (or empty state).
-            Rectangle {
-                id: centerPane
-                SplitView.fillWidth: true
-                SplitView.fillHeight: true
-                SplitView.minimumWidth: 320
-                SplitView.minimumHeight: 200
-                radius: 0
-                // Clip so the editor's fixed-width content (action toolbar,
-                // 200px graph cards) can't bleed over the response pane when
-                // the pane is narrower than its content.
-                clip: true
-                color: DesignTokens.glassFill
-                border.width: 1
-                border.color: DesignTokens.glassBorder
-
-                // Open-tabs strip (endpoints + actors). Hidden when nothing is
-                // open; the empty state / endpoint list show in that case.
-                EditorTabBar {
-                    id: editorTabs
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    visible: AppController.tabCount > 0
-                }
-
-                // Empty state when no project loaded.
-                EmptyState {
-                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount === 0
-                    anchors.centerIn: parent
-                    useBrandLogo: true
-                    heading: qsTr("Welcome to Reqloom")
-                    body: qsTr("Create a new project to start building requests, open an existing one, or import an OpenAPI spec or Postman collection.")
-                    actionText: qsTr("New Project")
-                    onActionTriggered: newProjectDialog.openDialog()
-                    secondaryActionText: qsTr("Open Project")
-                    onSecondaryActionTriggered: folderDialog.open()
-                    tertiaryActionText: qsTr("Import (OpenAPI, Postman, Insomnia, …)…")
-                    onTertiaryActionTriggered: importSpecDialog.open()
-                }
-
-                // Endpoint list for the selected module.
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: DesignTokens.spaceXl
-                    spacing: DesignTokens.spaceLg
-                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount > 0
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 2
-                        Label {
-                            text: AppController.selectedModule.length > 0 ? AppController.selectedModule : qsTr("Select a module")
-                            color: DesignTokens.textPrimary
-                            font.pixelSize: DesignTokens.fontTitle
-                            font.weight: DesignTokens.weightSemiBold
-                        }
-                        Label {
-                            id: epCountLabel
-                            color: DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontBody
-                        }
-                    }
-                    ListView {
-                        id: endpointList
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        spacing: DesignTokens.spaceXs
-                        model: AppController.operations
-                        onCountChanged: epCountLabel.text = (count === 1 ? qsTr("1 endpoint") : qsTr("%1 endpoints").arg(count))
-
-                        delegate: ItemDelegate {
-                            id: opRow
-                            required property string method
-                            required property string name
-                            required property string path
-                            width: ListView.view.width
-                            height: 56
-                            background: Rectangle {
-                                radius: DesignTokens.radiusSm
-                                color: opRow.hovered ? Qt.rgba(1, 1, 1, 0.04) : DesignTokens.surfaceSunken
-                                border.width: 1
-                                border.color: opRow.hovered ? DesignTokens.borderStrong : DesignTokens.borderSubtle
-                            }
-                            contentItem: RowLayout {
-                                anchors.fill: parent
-                                spacing: DesignTokens.spaceMd
-                                MethodBadge {
-                                    method: opRow.method
-                                }
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 1
-                                    Label {
-                                        text: opRow.name
-                                        color: DesignTokens.textPrimary
-                                        font.pixelSize: DesignTokens.fontBody
-                                        font.weight: DesignTokens.weightMedium
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: opRow.path
-                                        color: DesignTokens.textSecondary
-                                        font.pixelSize: DesignTokens.fontLabel
-                                        font.family: DesignTokens.fontMono
-                                        elide: Text.ElideRight
-                                    }
-                                }
-                                Label {
-                                    text: "›"
-                                    color: DesignTokens.textSecondary
-                                    font.pixelSize: DesignTokens.fontSubtitle
-                                    opacity: opRow.hovered ? 1.0 : 0.4
-                                }
-                            }
-                            onClicked: AppController.selectOperation(AppController.selectedModule, opRow.name)
-                        }
-                        EmptyState {
-                            visible: endpointList.count === 0 && AppController.resourceCount > 0
-                            iconName: "plus"
-                            heading: qsTr("No endpoints yet")
-                            body: qsTr("Add an endpoint to this module to start sending requests.")
-                            actionText: qsTr("New Endpoint")
-                            onActionTriggered: explorerPanel.openNewEndpoint(AppController.selectedModule)
-                        }
-                    }
-                }
-
-                // Request editor (active tab is an operation). Sits below the
-                // tab strip.
-                RequestEditor {
-                    anchors.top: editorTabs.bottom
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.margins: DesignTokens.spaceLg
-                    visible: AppController.hasOperation
-                }
-
-                // Actor detail (active tab is an actor). Sits below the tab
-                // strip; the request editor and this are driven by the active
-                // tab's kind, so only one is visible at a time.
-                ActorDetail {
-                    anchors.top: editorTabs.bottom
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.margins: DesignTokens.spaceLg
-                    visible: AppController.hasActor
-                }
-            }
-
-            // Right: Response + Timeline (or collapsed rail).
-            Rectangle {
-                id: responsePane
-                // Golden split: at the default 1280 window the centre area
-                // (window − explorer) divides editor:response = φ:1, so
-                // response ≈ (1280−280)/(φ+1). A constant, not a live binding,
-                // so manual drags and window resizes don't re-snap it.
-                SplitView.preferredWidth: window.responseCollapsed ? 32 : Math.round((1280 - 280) / (DesignTokens.phi + 1))
-                SplitView.minimumWidth: window.responseCollapsed ? 32 : 200
-                SplitView.maximumWidth: window.responseCollapsed ? 32 : 700
-                SplitView.preferredHeight: window.responseCollapsed ? 32 : 320
-                SplitView.minimumHeight: window.responseCollapsed ? 32 : 160
-                color: "transparent"
-                clip: true
-                visible: AppController.hasOperation || AppController.hasResponse || window.historyReplayActive
-
-                ResponsePanel {
-                    id: responsePanel
-                    anchors.fill: parent
-                    visible: !window.responseCollapsed
-                    stacked: window.responseStacked
-                    onCloseRequested: window.responseCollapsed = true
-                    onToggleStackRequested: {
-                        window.userChoseStack = true;
-                        window.responseStacked = !window.responseStacked;
-                    }
-                    onSetStackedRequested: value => {
-                        window.userChoseStack = true;
-                        window.responseStacked = value;
-                    }
-                }
-
-                Rectangle {
-                    anchors.fill: parent
-                    visible: window.responseCollapsed
-                    radius: 0
-                    color: responseRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
-                    border.width: 1
-                    border.color: DesignTokens.glassBorder
-                    Behavior on color {
-                        ColorMotion {}
-                    }
-
-                    // Side-by-side: vertical strip — chevron on top, rotated label.
-                    Item {
-                        anchors.fill: parent
-                        visible: !window.responseStacked
-                        AppIcon {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.top: parent.top
-                            anchors.topMargin: DesignTokens.spaceLg
-                            name: "chevron-left"
-                            size: 18
-                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                        }
-                        Label {
-                            anchors.centerIn: parent
-                            text: qsTr("Response")
-                            rotation: -90
-                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontLabel
-                            font.weight: DesignTokens.weightMedium
-                        }
-                    }
-                    // Stacked: horizontal bar — chevron + label in a row.
-                    RowLayout {
-                        anchors.centerIn: parent
-                        visible: window.responseStacked
-                        spacing: DesignTokens.spaceSm
-                        AppIcon {
-                            name: "chevron-up"
-                            size: 18
-                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                        }
-                        Label {
-                            text: qsTr("Response")
-                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontLabel
-                            font.weight: DesignTokens.weightMedium
-                        }
-                    }
-                    MouseArea {
-                        id: responseRailArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: window.responseCollapsed = false
-                    }
-                    GlassToolTip {
-                        active: responseRailArea.containsMouse
-                        text: qsTr("Show Response")
-                        x: -width - 6
-                        y: DesignTokens.spaceLg
-                    }
-                }
-            }
-        }
+        onNewProjectRequested: newProjectDialog.openDialog()
+        onOpenProjectRequested: folderDialog.open()
+        onImportRequested: importSpecDialog.open()
     }
 
     // ── Toast overlay (bottom centre) ──────────────────────────────────────
@@ -1532,10 +1172,10 @@ ApplicationWindow {
                             cookieDialog.openDialog();
                             break;
                         case "newModule":
-                            explorerPanel.openNewModule();
+                            workbench.openNewModule();
                             break;
                         case "newEndpoint":
-                            explorerPanel.openNewEndpoint("");
+                            workbench.openNewEndpoint("");
                             break;
                         case "run":
                             AppController.runSelected(false, false);
