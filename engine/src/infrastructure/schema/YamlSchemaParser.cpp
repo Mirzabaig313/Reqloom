@@ -125,10 +125,12 @@ std::optional<InlineAuth> parseInlineAuth(const YAML::Node& node) {
     auth.jwtSecret = node["secret"].as<std::string>("");
     auth.jwtPayload = node["payload"].as<std::string>("");
     auth.mtlsFormat = node["format"].as<std::string>("");
-    auth.mtlsCertPath = node["cert"].as<std::string>("");
-    auth.mtlsKeyPath = node["key_file"].as<std::string>("");
+    // Same key names as the actor-level mTLS block (parseActor) so the two
+    // YAML surfaces for the same mechanism stay consistent.
+    auth.mtlsCertPath = node["cert_path"].as<std::string>("");
+    auth.mtlsKeyPath = node["key_path"].as<std::string>("");
     auth.mtlsKeyPassword = node["key_password"].as<std::string>("");
-    auth.mtlsCaCertPath = node["ca_cert"].as<std::string>("");
+    auth.mtlsCaCertPath = node["ca_cert_path"].as<std::string>("");
     return auth;
 }
 
