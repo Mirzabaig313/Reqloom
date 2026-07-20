@@ -484,7 +484,13 @@ Item {
                 }
 
                 ColumnLayout {
-                    anchors.fill: parent
+                    // Sit below the tab strip when it's shown, like RequestEditor
+                    // and ActorDetail do — otherwise the module header paints over
+                    // the open tabs.
+                    anchors.top: editorTabs.visible ? editorTabs.bottom : parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
                     anchors.margins: DesignTokens.spaceXl
                     spacing: DesignTokens.spaceLg
                     visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount > 0

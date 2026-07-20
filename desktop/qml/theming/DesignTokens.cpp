@@ -2,6 +2,7 @@
 #include "DesignTokens.h"
 #include "ThemeController.h"
 
+#include <QtCore/qnumeric.h>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QEvent>
 #include <QtGui/QFont>
@@ -57,6 +58,33 @@ qreal DesignTokens::fontBasePointSize() const {
     }
 
     return kFallbackPointSize;
+}
+
+int DesignTokens::pointToPixel(qreal points) const {
+    const QScreen* screen{QGuiApplication::primaryScreen()};
+    const qreal logicalDpi{
+        screen != nullptr && screen->logicalDotsPerInch() > 0.0 ? screen->logicalDotsPerInch()
+                                                                : kFallbackLogicalDpi,
+    };
+    return qRound(points * logicalDpi / kPointsPerInch);
+}
+
+// Pixel roles mirror the point roles (same base × the same multipliers) so a
+// surface on font.pixelSize renders identically to one on font.pointSize.
+int DesignTokens::fontTitle() const {
+    return pointToPixel(fontTitlePointSize());
+}
+int DesignTokens::fontSubtitle() const {
+    return pointToPixel(fontSubtitlePointSize());
+}
+int DesignTokens::fontBody() const {
+    return pointToPixel(fontBodyPointSize());
+}
+int DesignTokens::fontLabel() const {
+    return pointToPixel(fontLabelPointSize());
+}
+int DesignTokens::fontCaption() const {
+    return pointToPixel(fontCaptionPointSize());
 }
 
 bool DesignTokens::eventFilter(QObject* watched, QEvent* event) {

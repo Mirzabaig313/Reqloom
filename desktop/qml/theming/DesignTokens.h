@@ -78,6 +78,14 @@ class DesignTokens : public QObject {
     Q_PROPERTY(qreal fontLabelPointSize READ fontLabelPointSize NOTIFY typographyChanged)
     Q_PROPERTY(qreal fontCaptionPointSize READ fontCaptionPointSize NOTIFY typographyChanged)
     Q_PROPERTY(qreal fontMonoPointSize READ fontMonoPointSize NOTIFY typographyChanged)
+    // Pixel font roles (px), derived from the point roles above via screen DPI
+    // so they render identically to *PointSize. Kept for surfaces not yet
+    // migrated to *PointSize; prefer *PointSize in new code.
+    Q_PROPERTY(int fontTitle READ fontTitle NOTIFY typographyChanged)
+    Q_PROPERTY(int fontSubtitle READ fontSubtitle NOTIFY typographyChanged)
+    Q_PROPERTY(int fontBody READ fontBody NOTIFY typographyChanged)
+    Q_PROPERTY(int fontLabel READ fontLabel NOTIFY typographyChanged)
+    Q_PROPERTY(int fontCaption READ fontCaption NOTIFY typographyChanged)
     Q_PROPERTY(int weightRegular READ weightRegular CONSTANT)
     Q_PROPERTY(int weightMedium READ weightMedium CONSTANT)
     Q_PROPERTY(int weightSemiBold READ weightSemiBold CONSTANT)
@@ -170,6 +178,11 @@ public:
     [[nodiscard]] qreal fontLabelPointSize() const { return fontBasePointSize() * 0.92; }
     [[nodiscard]] qreal fontCaptionPointSize() const { return fontBasePointSize() * 0.85; }
     [[nodiscard]] qreal fontMonoPointSize() const { return fontBasePointSize(); }
+    [[nodiscard]] int fontTitle() const;
+    [[nodiscard]] int fontSubtitle() const;
+    [[nodiscard]] int fontBody() const;
+    [[nodiscard]] int fontLabel() const;
+    [[nodiscard]] int fontCaption() const;
     [[nodiscard]] int weightRegular() const { return 400; }
     [[nodiscard]] int weightMedium() const { return 500; }
     [[nodiscard]] int weightSemiBold() const { return 600; }
@@ -216,6 +229,7 @@ private:
     /// Returns the resolved palette for the current appearance.
     [[nodiscard]] const theming::Palette& p() const noexcept { return theme_.palette(); }
     [[nodiscard]] qreal fontBasePointSize() const;
+    [[nodiscard]] int pointToPixel(qreal points) const;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
     void onModeChanged();

@@ -281,7 +281,10 @@ Rectangle {
                 required property int status
                 required property string statusToken
 
-                implicitHeight: 34
+                // Density floor (controlHeight) that grows with row content at
+                // large OS text instead of clipping. indentation stays 16 — a
+                // semantic hierarchy metric, not a density token.
+                implicitHeight: Math.max(DesignTokens.controlHeight, del.implicitContentHeight + DesignTokens.spaceXs * 2)
                 indentation: 16
 
                 readonly property bool isProject: kind === "project"
@@ -368,7 +371,7 @@ Rectangle {
                         Layout.alignment: Qt.AlignVCenter
                         text: del.name
                         color: del.isActiveProject ? DesignTokens.accent : (del.isExample ? DesignTokens.textSecondary : DesignTokens.textPrimary)
-                        font.pixelSize: DesignTokens.fontBody
+                        font.pointSize: DesignTokens.fontBodyPointSize
                         font.weight: (del.current || del.isProject) ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                         elide: Text.ElideRight
                         Layout.maximumWidth: implicitWidth
@@ -382,7 +385,9 @@ Rectangle {
                     }
                     // Child-count pill on folder rows (Actors 5, Resources 12…).
                     Rectangle {
-                        visible: del.count > 0 && !del.isOperation && !del.isExample
+                        // Secondary metadata: drop the child-count pill in a
+                        // very narrow (<240 DIP) sidebar so the name keeps room.
+                        visible: del.count > 0 && !del.isOperation && !del.isExample && panel.width >= 240
                         Layout.alignment: Qt.AlignVCenter
                         implicitHeight: 18
                         implicitWidth: countLabel.implicitWidth + DesignTokens.spaceSm * 2
@@ -393,7 +398,7 @@ Rectangle {
                             anchors.centerIn: parent
                             text: del.count
                             color: DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontCaption
+                            font.pointSize: DesignTokens.fontCaptionPointSize
                             font.weight: DesignTokens.weightMedium
                         }
                     }
@@ -414,7 +419,7 @@ Rectangle {
                             anchors.centerIn: parent
                             text: del.status
                             color: parent.hue
-                            font.pixelSize: DesignTokens.fontCaption
+                            font.pointSize: DesignTokens.fontCaptionPointSize
                             font.weight: DesignTokens.weightSemiBold
                             font.family: DesignTokens.fontMono
                         }
@@ -728,7 +733,7 @@ Rectangle {
         contentItem: Label {
             text: deleteDialog.targetKind === "resource" ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId) : (deleteDialog.targetKind === "actor" ? qsTr("Delete actor “%1”? Operations using it will become unauthenticated.").arg(deleteDialog.targetId) : qsTr("Delete endpoint “%1”?").arg(deleteDialog.targetId))
             color: DesignTokens.textPrimary
-            font.pixelSize: DesignTokens.fontBody
+            font.pointSize: DesignTokens.fontBodyPointSize
             wrapMode: Text.WordWrap
         }
 
@@ -838,7 +843,7 @@ Rectangle {
         contentItem: Label {
             text: qsTr("Delete saved example “%1”? This can't be undone.").arg(exampleDeleteDialog.targetName)
             color: DesignTokens.textPrimary
-            font.pixelSize: DesignTokens.fontBody
+            font.pointSize: DesignTokens.fontBodyPointSize
             wrapMode: Text.WordWrap
         }
 
