@@ -124,7 +124,23 @@ ColumnLayout {
     Item {
         id: addressBar
         Layout.fillWidth: true
-        implicitHeight: 38
+        // Text-scale-safe row height, relaxed from a fixed 38 so large OS text
+        // doesn't clip the field / badge / button.
+        readonly property real rowH: Math.max(38, Math.round(addrMetrics.height + DesignTokens.spaceMd))
+        // Two-row when method + path + Send can't share one line (path would be
+        // squeezed below its 140 minimum): Send drops to a full-width 2nd row.
+        // Path never shrinks below this; shared by the reflow threshold and the
+        // solver descriptor so the two can't drift apart.
+        readonly property real pathMin: 140
+        readonly property real oneRowMin: addressBar.methodSlot + addressBar.pathMin + addressBar.sendSlot + 2 * DesignTokens.spaceSm
+        readonly property bool twoRow: width < addressBar.oneRowMin
+        implicitHeight: addressBar.twoRow ? addressBar.rowH * 2 + DesignTokens.spaceSm : addressBar.rowH
+
+        FontMetrics {
+            id: addrMetrics
+            font.family: DesignTokens.fontSans
+            font.pointSize: DesignTokens.fontBodyPointSize
+        }
 
         readonly property var methodItems: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
         // Method slot = widest method label + chevron + field padding.
@@ -132,21 +148,25 @@ ColumnLayout {
         // Send slot = widest of its labels + button padding.
         readonly property real sendSlot: Math.max(90, LayoutSolver.contentWidth([qsTr("Running…"), qsTr("Send")], DesignTokens.fontBody, DesignTokens.fontSans, 44))
 
-        readonly property var solved: LayoutSolver.solveLinear([({
-                    "minimum": addressBar.methodSlot,
-                    "preferred": addressBar.methodSlot,
-                    "maximum": addressBar.methodSlot,
-                    "stretch": 0
-                }), ({
-                    "minimum": 140,
-                    "preferred": 140,
-                    "stretch": 1
-                }), ({
-                    "minimum": addressBar.sendSlot,
-                    "preferred": addressBar.sendSlot,
-                    "maximum": addressBar.sendSlot,
-                    "stretch": 0
-                })], addressBar.width, DesignTokens.spaceSm)
+        readonly property var methodDesc: ({
+                "minimum": addressBar.methodSlot,
+                "preferred": addressBar.methodSlot,
+                "maximum": addressBar.methodSlot,
+                "stretch": 0
+            })
+        readonly property var pathDesc: ({
+                "minimum": addressBar.pathMin,
+                "preferred": addressBar.pathMin,
+                "stretch": 1
+            })
+        readonly property var sendDesc: ({
+                "minimum": addressBar.sendSlot,
+                "preferred": addressBar.sendSlot,
+                "maximum": addressBar.sendSlot,
+                "stretch": 0
+            })
+        // Row 1 solves method + path (+ Send only when it fits on one row).
+        readonly property var solved: LayoutSolver.solveLinear(addressBar.twoRow ? [addressBar.methodDesc, addressBar.pathDesc] : [addressBar.methodDesc, addressBar.pathDesc, addressBar.sendDesc], addressBar.width, DesignTokens.spaceSm)
 
         readonly property var methodGeom: addressBar.solved[0] || ({
                 "offset": 0,
@@ -156,16 +176,20 @@ ColumnLayout {
                 "offset": 0,
                 "size": 0
             })
-        readonly property var sendGeom: addressBar.solved[2] || ({
+        // On one row Send comes from the solver; on two rows it spans the width.
+        readonly property var sendGeom: addressBar.twoRow ? ({
                 "offset": 0,
-                "size": addressBar.sendSlot
-            })
+                "size": addressBar.width
+            }) : (addressBar.solved[2] || ({
+                    "offset": 0,
+                    "size": addressBar.sendSlot
+                }))
 
         MethodBadge {
             visible: !editor.editing
             x: addressBar.methodGeom.offset
             width: addressBar.methodGeom.size
-            height: 38
+            height: addressBar.rowH
             method: AppController.opMethod
         }
         GlassComboBox {
@@ -173,7 +197,7 @@ ColumnLayout {
             visible: editor.editing
             x: addressBar.methodGeom.offset
             width: addressBar.methodGeom.size
-            height: 38
+            height: addressBar.rowH
             model: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
             currentIndex: Math.max(0, find(AppController.editMethod))
             onActivated: AppController.editMethod = currentText
@@ -184,7 +208,7 @@ ColumnLayout {
             visible: !editor.editing
             x: addressBar.pathGeom.offset
             width: addressBar.pathGeom.size
-            height: 38
+            height: addressBar.rowH
             radius: DesignTokens.radiusSm
             color: DesignTokens.surfaceSunken
             border.width: 1
@@ -201,7 +225,7 @@ ColumnLayout {
             visible: editor.editing
             x: addressBar.pathGeom.offset
             width: addressBar.pathGeom.size
-            height: 38
+            height: addressBar.rowH
             text: AppController.editPath
             placeholderText: qsTr("/api/v1/…")
             color: DesignTokens.textPrimary
@@ -235,7 +259,9 @@ ColumnLayout {
             id: sendButton
             x: addressBar.sendGeom.offset
             width: addressBar.sendGeom.size
-            height: 38
+            height: addressBar.rowH
+            // Full-width second row when the address bar can't fit it inline.
+            y: addressBar.twoRow ? addressBar.rowH + DesignTokens.spaceSm : 0
             text: AppController.running ? qsTr("Running…") : qsTr("Send")
             enabled: !AppController.running
             GlassToolTip {

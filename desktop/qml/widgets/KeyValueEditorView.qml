@@ -43,7 +43,11 @@ ColumnLayout {
         placeholderTextColor: DesignTokens.textSecondary
         font.pixelSize: DesignTokens.fontLabel
         font.family: DesignTokens.fontMono
-        implicitHeight: 32
+        // Content-driven so the field grows with OS text instead of a fixed 32
+        // that clips; floored at the density control height.
+        topPadding: DesignTokens.spaceXs
+        bottomPadding: DesignTokens.spaceXs
+        implicitHeight: Math.max(DesignTokens.controlHeight, contentHeight + topPadding + bottomPadding)
         // Explicit, shared metrics so the placeholder (ghost row) and typed
         // text sit on the exact same horizontal + vertical axis.
         leftPadding: DesignTokens.spaceSm
@@ -83,7 +87,11 @@ ColumnLayout {
 
             Field {
                 id: keyField
+                // Shrinkable so the value keeps a usable editing width as the
+                // editor narrows (one-line stays usable down to ~270 DIP, under
+                // the 320 minimum); the value field carries its own floor.
                 Layout.preferredWidth: 200
+                Layout.minimumWidth: 96
                 text: row.key
                 placeholderText: root.keyPlaceholder
                 onTextEdited: root.kvModel.setKey(row.index, text)
@@ -106,6 +114,9 @@ ColumnLayout {
             // plain editable field.
             Field {
                 Layout.fillWidth: true
+                // Useful editing floor; with the key's 96 shrink minimum the row
+                // stays one-line and usable down to ~270 DIP.
+                Layout.minimumWidth: 120
                 visible: !root.allowFiles || !root.isFileValue(row.value)
                 text: row.value
                 placeholderText: root.valuePlaceholder
@@ -113,13 +124,15 @@ ColumnLayout {
             }
             Rectangle {
                 Layout.fillWidth: true
+                Layout.minimumWidth: 120
                 visible: root.allowFiles && root.isFileValue(row.value)
-                implicitHeight: 32
+                implicitHeight: Math.max(DesignTokens.controlHeight, chipRow.implicitHeight + DesignTokens.spaceXs * 2)
                 radius: DesignTokens.radiusSm
                 color: DesignTokens.surfaceSunken
                 border.width: 1
                 border.color: DesignTokens.accent
                 RowLayout {
+                    id: chipRow
                     anchors.fill: parent
                     anchors.leftMargin: DesignTokens.spaceSm
                     anchors.rightMargin: DesignTokens.spaceXs

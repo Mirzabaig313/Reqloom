@@ -132,7 +132,10 @@ Item {
 
     Popup {
         id: popup
-        width: 360
+        // Keep inside the window; cap width so the fixed 360 never overflows a
+        // narrow (e.g. 320-DIP) editor.
+        margins: DesignTokens.spaceSm
+        width: Math.min(360, (Overlay.overlay ? Overlay.overlay.width : 640) - 2 * DesignTokens.spaceSm)
         focus: true
         padding: DesignTokens.spaceXs
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
