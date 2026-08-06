@@ -63,6 +63,16 @@ Rectangle {
     // Preview rendered HTML / Markdown instead of the coloured source.
     property bool previewMode: false
 
+    readonly property real availableContentWidth: Math.max(0, width - DesignTokens.spaceLg * 2)
+    readonly property bool topControlsReflow: availableContentWidth < topTabs.implicitWidth + stackBtn.implicitWidth + closeBtn.implicitWidth + DesignTokens.spaceSm * 2
+    // 220 DIP keeps status, elapsed time, and body size useful before actions move.
+    readonly property bool statusActionsReflow: availableContentWidth < 220 + copyBodyBtn.implicitWidth + saveExampleBtn.implicitWidth + DesignTokens.spaceMd * 2
+    readonly property bool statusButtonsStack: availableContentWidth < copyBodyBtn.implicitWidth + saveExampleBtn.implicitWidth + DesignTokens.spaceMd
+    readonly property bool examplesReflow: availableContentWidth < examplesLabel.implicitWidth + 260 + DesignTokens.spaceSm
+    readonly property bool responseTabsReflow: prettyBtn.visible && availableContentWidth < respTabs.implicitWidth + prettyBtn.implicitWidth + DesignTokens.spaceSm
+    readonly property bool rawControlsReflow: availableContentWidth < 150 + Math.max(previewBtn.implicitWidth, rawPrettyBtn.implicitWidth) + DesignTokens.spaceSm
+    readonly property bool diffPickerReflow: availableContentWidth < compareLabel.implicitWidth + 180 + DesignTokens.spaceSm
+
     // Map a response's Content-Type to a display-format token. Defaults to JSON
     // (the overwhelmingly common API shape) when there's no usable hint.
     function detectFormat(headers) {
@@ -120,12 +130,18 @@ Rectangle {
         }
 
         // ── Response | Timeline switch + close button ───────────────────────
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
-            spacing: DesignTokens.spaceSm
+            columns: 3
+            rowSpacing: DesignTokens.spaceXs
+            columnSpacing: DesignTokens.spaceSm
             TabBar {
                 id: topTabs
+                Layout.row: 0
+                Layout.column: 0
+                Layout.columnSpan: panel.topControlsReflow ? 3 : 1
                 Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 background: Rectangle {
                     color: "transparent"
                 }
@@ -157,6 +173,8 @@ Rectangle {
             }
             Button {
                 id: stackBtn
+                Layout.row: panel.topControlsReflow ? 1 : 0
+                Layout.column: 1
                 implicitWidth: 28
                 implicitHeight: 28
                 GlassToolTip {
@@ -234,6 +252,8 @@ Rectangle {
             }
             Button {
                 id: closeBtn
+                Layout.row: panel.topControlsReflow ? 1 : 0
+                Layout.column: 2
                 implicitWidth: 28
                 implicitHeight: 28
                 GlassToolTip {
@@ -263,24 +283,35 @@ Rectangle {
                 spacing: DesignTokens.spaceMd
 
                 // Status tray + Copy + Save-as-example.
-                RowLayout {
+                GridLayout {
                     Layout.fillWidth: true
                     visible: AppController.hasResponse
-                    spacing: DesignTokens.spaceMd
+                    columns: 3
+                    rowSpacing: DesignTokens.spaceXs
+                    columnSpacing: DesignTokens.spaceMd
 
                     // Grouped status tray: code + example + timing + size read
                     // as one unit instead of four loose labels (UI/UX review §5).
                     Rectangle {
-                        Layout.alignment: Qt.AlignVCenter
-                        implicitHeight: 32
-                        implicitWidth: statusTray.implicitWidth + DesignTokens.spaceMd * 2
+                        id: statusSummary
+                        Layout.row: 0
+                        Layout.column: 0
+                        Layout.columnSpan: panel.statusActionsReflow ? 3 : 1
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        implicitWidth: 220
+                        implicitHeight: Math.max(32, statusTray.implicitHeight + DesignTokens.spaceXs * 2)
                         radius: DesignTokens.radiusPill
                         color: DesignTokens.surfaceSunken
                         border.width: 1
                         border.color: DesignTokens.borderSubtle
-                        RowLayout {
+                        Flow {
                             id: statusTray
-                            anchors.centerIn: parent
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: DesignTokens.spaceMd
+                            anchors.rightMargin: DesignTokens.spaceMd
                             spacing: DesignTokens.spaceSm
                             Label {
                                 text: AppController.respStatus > 0 ? ("HTTP " + AppController.respStatus) : AppController.runOutcome
@@ -289,22 +320,21 @@ Rectangle {
                                 font.weight: DesignTokens.weightSemiBold
                             }
                             Rectangle {
-                                visible: AppController.shownExample.length > 0
-                                Layout.alignment: Qt.AlignVCenter
+                                visible: AppController.shownExample.length > 0 && !panel.statusActionsReflow
                                 implicitWidth: 1
                                 implicitHeight: 14
                                 color: DesignTokens.borderSubtle
                             }
                             Label {
                                 visible: AppController.shownExample.length > 0
+                                width: Math.min(implicitWidth, 160)
                                 text: AppController.shownExample
                                 color: DesignTokens.textSecondary
                                 font.pixelSize: DesignTokens.fontLabel
                                 elide: Text.ElideRight
-                                Layout.maximumWidth: 160
                             }
                             Rectangle {
-                                Layout.alignment: Qt.AlignVCenter
+                                visible: !panel.statusActionsReflow
                                 implicitWidth: 1
                                 implicitHeight: 14
                                 color: DesignTokens.borderSubtle
@@ -330,13 +360,14 @@ Rectangle {
                         }
                     }
 
-                    Item {
-                        Layout.fillWidth: true
-                    }
                     Button {
                         id: copyBodyBtn
+                        Layout.row: panel.statusButtonsStack ? 1 : (panel.statusActionsReflow ? 1 : 0)
+                        Layout.column: panel.statusButtonsStack ? 0 : 1
+                        Layout.columnSpan: panel.statusButtonsStack ? 3 : 1
+                        Layout.fillWidth: panel.statusButtonsStack
                         text: qsTr("Copy")
-                        implicitHeight: 28
+                        implicitHeight: Math.max(28, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                         leftPadding: DesignTokens.spaceSm
                         rightPadding: DesignTokens.spaceSm
                         enabled: AppController.respBody.length > 0
@@ -362,7 +393,12 @@ Rectangle {
                     }
                     Button {
                         id: saveExampleBtn
+                        Layout.row: panel.statusButtonsStack ? 2 : (panel.statusActionsReflow ? 1 : 0)
+                        Layout.column: panel.statusButtonsStack ? 0 : 2
+                        Layout.columnSpan: panel.statusButtonsStack ? 3 : 1
+                        Layout.fillWidth: panel.statusButtonsStack
                         text: qsTr("Save as example")
+                        implicitHeight: Math.max(28, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                         onClicked: saveExampleDialog.open()
                         contentItem: Text {
                             text: saveExampleBtn.text
@@ -382,38 +418,51 @@ Rectangle {
                 }
 
                 // Examples dropdown — re-show a saved example for this op.
-                RowLayout {
+                GridLayout {
                     Layout.fillWidth: true
                     visible: examplesCombo.count > 0
-                    spacing: DesignTokens.spaceSm
+                    columns: 2
+                    rowSpacing: DesignTokens.spaceXs
+                    columnSpacing: DesignTokens.spaceSm
                     Label {
+                        id: examplesLabel
+                        Layout.row: 0
+                        Layout.column: 0
                         text: qsTr("Examples")
                         color: DesignTokens.textSecondary
                         font.pixelSize: DesignTokens.fontLabel
                     }
                     GlassComboBox {
                         id: examplesCombo
+                        Layout.row: panel.examplesReflow ? 1 : 0
+                        Layout.column: panel.examplesReflow ? 0 : 1
+                        Layout.columnSpan: panel.examplesReflow ? 2 : 1
+                        Layout.fillWidth: panel.examplesReflow
+                        Layout.minimumWidth: 0
                         // A compact dropdown reads as a picker; full-width it
                         // looked like an empty input field (UI/UX review §5).
-                        Layout.preferredWidth: 260
-                        Layout.maximumWidth: 320
+                        Layout.preferredWidth: Math.min(260, panel.availableContentWidth)
+                        Layout.maximumWidth: Math.min(320, panel.availableContentWidth)
                         model: AppController.examples
                         textRole: "name"
                         onActivated: AppController.showExample(currentText)
                     }
-                    Item {
-                        Layout.fillWidth: true
-                    }
                 }
 
                 // Inner Body(Tree) | Body(Raw) | Headers | Diff tabs + Pretty.
-                RowLayout {
+                GridLayout {
                     Layout.fillWidth: true
                     visible: AppController.hasResponse
-                    spacing: DesignTokens.spaceSm
+                    columns: 2
+                    rowSpacing: DesignTokens.spaceXs
+                    columnSpacing: DesignTokens.spaceSm
                     TabBar {
                         id: respTabs
+                        Layout.row: 0
+                        Layout.column: 0
+                        Layout.columnSpan: panel.responseTabsReflow ? 2 : 1
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         visible: AppController.hasResponse
                         background: Rectangle {
                             color: "transparent"
@@ -444,13 +493,13 @@ Rectangle {
                             }
                         }
                     }
-                    Item {
-                        Layout.fillWidth: true
-                    }
                     Button {
                         id: prettyBtn
                         visible: respTabs.currentIndex === 3
-                        implicitHeight: 26
+                        Layout.row: panel.responseTabsReflow ? 1 : 0
+                        Layout.column: 1
+                        Layout.alignment: Qt.AlignRight
+                        implicitHeight: Math.max(26, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                         leftPadding: DesignTokens.spaceSm
                         rightPadding: DesignTokens.spaceSm
                         checkable: true
@@ -606,12 +655,20 @@ Rectangle {
                     ColumnLayout {
                         spacing: DesignTokens.spaceSm
 
-                        RowLayout {
+                        GridLayout {
                             Layout.fillWidth: true
-                            spacing: DesignTokens.spaceSm
+                            columns: 2
+                            rowSpacing: DesignTokens.spaceXs
+                            columnSpacing: DesignTokens.spaceSm
                             GlassComboBox {
                                 id: formatCombo
-                                Layout.preferredWidth: 150
+                                Layout.row: 0
+                                Layout.column: 0
+                                Layout.columnSpan: panel.rawControlsReflow ? 2 : 1
+                                Layout.fillWidth: panel.rawControlsReflow
+                                Layout.minimumWidth: 0
+                                Layout.preferredWidth: Math.min(150, panel.availableContentWidth)
+                                Layout.maximumWidth: Math.min(150, panel.availableContentWidth)
                                 model: panel.formatLabels
                                 Component.onCompleted: currentIndex = panel.formatValues.indexOf(panel.respFormat)
                                 onActivated: panel.respFormat = panel.formatValues[currentIndex]
@@ -625,7 +682,10 @@ Rectangle {
                             Button {
                                 id: previewBtn
                                 visible: panel.respFormat === "html" || panel.respFormat === "markdown"
-                                implicitHeight: 30
+                                Layout.row: panel.rawControlsReflow ? 1 : 0
+                                Layout.column: 1
+                                Layout.alignment: Qt.AlignRight
+                                implicitHeight: Math.max(30, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                                 leftPadding: DesignTokens.spaceMd
                                 rightPadding: DesignTokens.spaceMd
                                 checkable: true
@@ -651,7 +711,10 @@ Rectangle {
                             Button {
                                 id: rawPrettyBtn
                                 visible: panel.respFormat === "json"
-                                implicitHeight: 30
+                                Layout.row: panel.rawControlsReflow ? 1 : 0
+                                Layout.column: 1
+                                Layout.alignment: Qt.AlignRight
+                                implicitHeight: Math.max(30, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                                 leftPadding: DesignTokens.spaceMd
                                 rightPadding: DesignTokens.spaceMd
                                 checkable: true
@@ -671,9 +734,6 @@ Rectangle {
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                 }
-                            }
-                            Item {
-                                Layout.fillWidth: true
                             }
                         }
 
@@ -724,17 +784,26 @@ Rectangle {
                     // Diff — compare the live body against a saved example.
                     ColumnLayout {
                         spacing: DesignTokens.spaceSm
-                        RowLayout {
+                        GridLayout {
                             Layout.fillWidth: true
-                            spacing: DesignTokens.spaceSm
+                            columns: 2
+                            rowSpacing: DesignTokens.spaceXs
+                            columnSpacing: DesignTokens.spaceSm
                             Label {
+                                id: compareLabel
+                                Layout.row: 0
+                                Layout.column: 0
                                 text: qsTr("Compare with")
                                 color: DesignTokens.textSecondary
                                 font.pixelSize: DesignTokens.fontLabel
                             }
                             GlassComboBox {
                                 id: diffCombo
+                                Layout.row: panel.diffPickerReflow ? 1 : 0
+                                Layout.column: panel.diffPickerReflow ? 0 : 1
+                                Layout.columnSpan: panel.diffPickerReflow ? 2 : 1
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 model: AppController.examples
                                 textRole: "name"
                             }

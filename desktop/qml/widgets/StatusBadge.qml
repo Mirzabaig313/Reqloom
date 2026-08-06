@@ -18,7 +18,7 @@ Rectangle {
     readonly property color hue: DesignTokens.statusColor(token)
 
     implicitWidth: row.implicitWidth + DesignTokens.spaceSm * 2
-    implicitHeight: 20
+    implicitHeight: Math.max(20, row.implicitHeight + DesignTokens.spaceXs * 2)
     radius: DesignTokens.radiusSm
     color: Qt.rgba(hue.r, hue.g, hue.b, 0.16)
     Behavior on color {

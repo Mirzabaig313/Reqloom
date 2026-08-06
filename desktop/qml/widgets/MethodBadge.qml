@@ -16,7 +16,7 @@ Rectangle {
     }
 
     implicitWidth: Math.max(label.implicitWidth + DesignTokens.spaceSm * 2, minWidth)
-    implicitHeight: 22
+    implicitHeight: Math.max(22, label.implicitHeight + DesignTokens.spaceXs * 2)
     radius: DesignTokens.radiusSm
     color: Qt.rgba(hue(method).r, hue(method).g, hue(method).b, 0.16)
     Behavior on color {

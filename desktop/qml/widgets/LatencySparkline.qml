@@ -81,7 +81,7 @@ ColumnLayout {
     visible: root.bars.length > 0
     spacing: DesignTokens.spaceXs
 
-    RowLayout {
+    Flow {
         Layout.fillWidth: true
         spacing: DesignTokens.spaceSm
         Label {
@@ -91,16 +91,13 @@ ColumnLayout {
             font.weight: DesignTokens.weightSemiBold
             font.letterSpacing: 1.2
         }
-        Item {
-            Layout.fillWidth: true
-        }
         // SLO verdict pill: green when within budget, red when breached.
         // Click to edit; click "+ SLO" (below) to set one when unset.
         Rectangle {
             id: sloPill
             visible: root.sloP95Ms > 0
             implicitWidth: sloRow.implicitWidth + DesignTokens.spaceSm * 2
-            implicitHeight: 18
+            implicitHeight: Math.max(18, sloRow.implicitHeight + DesignTokens.spaceXs * 2)
             radius: DesignTokens.radiusSm
             readonly property color hue: root.sloBreached ? DesignTokens.statusError : DesignTokens.statusSuccess
             color: Qt.rgba(sloPill.hue.r, sloPill.hue.g, sloPill.hue.b, 0.16)
@@ -164,8 +161,7 @@ ColumnLayout {
         // Histogram) with the active segment filled, instead of a single
         // cycling word that didn't read as a control.
         Rectangle {
-            Layout.alignment: Qt.AlignVCenter
-            implicitHeight: 24
+            implicitHeight: Math.max(24, segRow.implicitHeight + 2)
             implicitWidth: segRow.implicitWidth + 2
             radius: DesignTokens.radiusSm
             color: DesignTokens.surfaceSunken
@@ -182,7 +178,7 @@ ColumnLayout {
                         required property int index
                         required property string modelData
                         readonly property bool active: root.viewMode === seg.index
-                        implicitHeight: 22
+                        implicitHeight: Math.max(22, segText.implicitHeight + DesignTokens.spaceXs * 2)
                         implicitWidth: segText.implicitWidth + DesignTokens.spaceMd
                         radius: DesignTokens.radiusSm - 1
                         color: seg.active ? DesignTokens.accent : (segHover.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
@@ -241,7 +237,7 @@ ColumnLayout {
             delegate: Rectangle {
                 id: statChip
                 required property var modelData
-                implicitHeight: 22
+                implicitHeight: Math.max(22, statRow.implicitHeight + DesignTokens.spaceXs * 2)
                 implicitWidth: statRow.implicitWidth + DesignTokens.spaceSm * 2
                 radius: DesignTokens.radiusSm
                 color: "transparent"

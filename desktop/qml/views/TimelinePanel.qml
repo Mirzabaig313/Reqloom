@@ -134,6 +134,12 @@ Rectangle {
                 // starts collapsed. Tapping the row still toggles it freely.
                 property bool expanded: expandable && statusToken === "error"
 
+                // One-line rows need the fixed method/size/clock/duration columns
+                // plus useful operation/path space. Below that sum, secondary
+                // detail and the complete aligned metrics move to later lines.
+                readonly property real inlineMinimumWidth: 54 + 56 + 64 + 48 + 160 + DesignTokens.spaceMd * 2 + DesignTokens.spaceSm * 7
+                readonly property bool reflowDetails: width < inlineMinimumWidth
+
                 // Label the revealed payload by what kind of row owns it.
                 readonly property string valueLabel: statusToken === "error" ? qsTr("Failure details") : kind === "request" ? qsTr("Request") : kind === "response" ? qsTr("Response") : kind === "extraction" ? qsTr("Source") : qsTr("Details")
 
@@ -172,10 +178,12 @@ Rectangle {
                     anchors.rightMargin: DesignTokens.spaceXs
                     spacing: DesignTokens.spaceXs
 
-                    RowLayout {
+                    GridLayout {
                         id: rowContent
                         Layout.fillWidth: true
-                        spacing: DesignTokens.spaceSm
+                        columns: 8
+                        rowSpacing: DesignTokens.spaceXs
+                        columnSpacing: DesignTokens.spaceSm
 
                         // Tap the summary line to expand/collapse. Scoped to the
                         // header row so selecting text in the expanded body below
@@ -188,6 +196,8 @@ Rectangle {
                         // Disclosure chevron — only on rows that have more to show.
                         Label {
                             visible: row.expandable
+                            Layout.row: 0
+                            Layout.column: 0
                             text: row.expanded ? "\u25BE" : "\u25B8"
                             color: DesignTokens.textSecondary
                             font.pixelSize: DesignTokens.fontCaption
@@ -197,8 +207,10 @@ Rectangle {
                         // response rows, mirroring the mockup.
                         Rectangle {
                             visible: row.subLabel.length > 0
+                            Layout.row: row.reflowDetails ? 1 : 0
+                            Layout.column: row.reflowDetails ? 0 : 1
                             Layout.alignment: Qt.AlignVCenter
-                            implicitHeight: 18
+                            implicitHeight: Math.max(18, subBadge.implicitHeight + DesignTokens.spaceXs)
                             implicitWidth: subBadge.implicitWidth + DesignTokens.spaceSm * 2
                             radius: DesignTokens.radiusSm
                             color: DesignTokens.accentMuted
@@ -217,6 +229,8 @@ Rectangle {
                         // mockup's check / cross before the operation name.
                         Rectangle {
                             visible: row.isStep && (row.statusToken === "success" || row.statusToken === "error")
+                            Layout.row: 0
+                            Layout.column: row.reflowDetails ? 1 : 2
                             Layout.alignment: Qt.AlignVCenter
                             implicitWidth: 16
                             implicitHeight: 16
@@ -234,6 +248,11 @@ Rectangle {
                         }
 
                         Label {
+                            Layout.row: 0
+                            Layout.column: row.reflowDetails ? 2 : 3
+                            Layout.columnSpan: row.reflowDetails ? 3 : 1
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             text: row.title
                             color: row.kind === "runEnd" ? (row.statusToken === "error" ? DesignTokens.statusError : row.statusToken === "success" ? DesignTokens.statusSuccess : row.statusToken === "cancelled" ? DesignTokens.statusWarning : DesignTokens.textPrimary) : row.isChild ? DesignTokens.textSecondary : DesignTokens.textPrimary
                             font.pixelSize: row.isHeader ? 13 : 12
@@ -244,6 +263,8 @@ Rectangle {
 
                         StatusBadge {
                             visible: row.statusLabel.length > 0
+                            Layout.row: 0
+                            Layout.column: row.reflowDetails ? 5 : 4
                             token: row.statusToken.length > 0 ? row.statusToken : "idle"
                             label: row.statusLabel
                         }
@@ -251,6 +272,8 @@ Rectangle {
                         // Method pill for request rows (mirrors the sidebar verb badge).
                         MethodBadge {
                             visible: row.method.length > 0
+                            Layout.row: row.reflowDetails ? 1 : 0
+                            Layout.column: row.reflowDetails ? 1 : 5
                             method: row.method.length > 0 ? row.method : "GET"
                             minWidth: 54
                         }
@@ -261,6 +284,9 @@ Rectangle {
                         // expansion (click the chevron).
                         Label {
                             visible: row.isColumnar && row.path.length > 0
+                            Layout.row: row.reflowDetails ? 1 : 0
+                            Layout.column: row.reflowDetails ? 2 : 6
+                            Layout.columnSpan: row.reflowDetails ? 6 : 1
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             Layout.alignment: Qt.AlignVCenter
@@ -275,7 +301,11 @@ Rectangle {
                         // (step status, extraction value, failure summary, …).
                         Label {
                             visible: !row.isColumnar
+                            Layout.row: row.reflowDetails ? 1 : 0
+                            Layout.column: row.reflowDetails ? 0 : 5
+                            Layout.columnSpan: row.reflowDetails ? 8 : 2
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             Layout.alignment: Qt.AlignVCenter
                             text: row.detail
                             color: row.statusToken === "warning" ? DesignTokens.statusWarning : row.statusToken === "error" ? DesignTokens.statusError : row.statusToken === "success" && row.kind === "extraction" ? DesignTokens.statusSuccess : DesignTokens.textSecondary
@@ -294,6 +324,9 @@ Rectangle {
                         // detail label above takes the slack and pushes it right).
                         Label {
                             visible: row.isStep && row.duration.length > 0
+                            Layout.row: 0
+                            Layout.column: row.reflowDetails ? 6 : 7
+                            Layout.columnSpan: row.reflowDetails ? 2 : 1
                             Layout.alignment: Qt.AlignVCenter
                             Layout.rightMargin: DesignTokens.spaceXs
                             text: row.duration
@@ -310,48 +343,70 @@ Rectangle {
                         // rows: size · clock · duration. Fixed-width, right-
                         // aligned columns so the values line up cleanly down the
                         // list (clean data separation, mockup parity).
-                        RowLayout {
+                        Flickable {
+                            id: metricViewport
                             visible: row.isColumnar
-                            Layout.alignment: Qt.AlignVCenter
-                            spacing: DesignTokens.spaceMd
-                            Label {
-                                visible: row.size.length > 0
-                                Layout.preferredWidth: 56
-                                horizontalAlignment: Text.AlignRight
-                                text: row.size
-                                color: DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontCaption
-                                font.family: DesignTokens.fontMono
-                                font.features: ({
-                                        "tnum": 1
-                                    })
+                            Layout.row: row.reflowDetails ? 2 : 0
+                            Layout.column: row.reflowDetails ? 0 : 7
+                            Layout.columnSpan: row.reflowDetails ? 8 : 1
+                            Layout.fillWidth: row.reflowDetails
+                            Layout.minimumWidth: 0
+                            implicitWidth: metricColumns.implicitWidth
+                            implicitHeight: metricColumns.implicitHeight
+                            contentWidth: metricColumns.implicitWidth
+                            contentHeight: metricColumns.implicitHeight
+                            clip: row.reflowDetails
+                            boundsBehavior: Flickable.StopAtBounds
+                            flickableDirection: Flickable.HorizontalFlick
+                            ScrollBar.horizontal: ScrollBar {
+                                policy: row.reflowDetails && metricViewport.contentWidth > metricViewport.width ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
                             }
-                            Label {
-                                visible: row.clock.length > 0
-                                Layout.preferredWidth: 64
-                                horizontalAlignment: Text.AlignRight
-                                text: row.clock
-                                color: DesignTokens.textSecondary
-                                opacity: 0.75
-                                font.pixelSize: DesignTokens.fontCaption
-                                font.family: DesignTokens.fontMono
-                                font.features: ({
-                                        "tnum": 1
-                                    })
-                            }
-                            Label {
-                                Layout.preferredWidth: 48
-                                horizontalAlignment: Text.AlignRight
-                                text: row.duration
-                                // Duration carries the row's status hue so a slow
-                                // / failed response reads at a glance.
-                                color: row.statusToken === "error" ? DesignTokens.statusError : row.statusToken === "warning" ? DesignTokens.statusWarning : DesignTokens.statusSuccess
-                                font.pixelSize: DesignTokens.fontCaption
-                                font.family: DesignTokens.fontMono
-                                font.weight: DesignTokens.weightSemiBold
-                                font.features: ({
-                                        "tnum": 1
-                                    })
+                            GridLayout {
+                                id: metricColumns
+                                columns: 3
+                                columnSpacing: DesignTokens.spaceMd
+                                Label {
+                                    visible: row.size.length > 0
+                                    Layout.column: row.reflowDetails ? 1 : 0
+                                    Layout.preferredWidth: 56
+                                    horizontalAlignment: Text.AlignRight
+                                    text: row.size
+                                    color: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.family: DesignTokens.fontMono
+                                    font.features: ({
+                                            "tnum": 1
+                                        })
+                                }
+                                Label {
+                                    visible: row.clock.length > 0
+                                    Layout.column: row.reflowDetails ? 2 : 1
+                                    Layout.preferredWidth: 64
+                                    horizontalAlignment: Text.AlignRight
+                                    text: row.clock
+                                    color: DesignTokens.textSecondary
+                                    opacity: 0.75
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.family: DesignTokens.fontMono
+                                    font.features: ({
+                                            "tnum": 1
+                                        })
+                                }
+                                Label {
+                                    Layout.column: row.reflowDetails ? 0 : 2
+                                    Layout.preferredWidth: 48
+                                    horizontalAlignment: Text.AlignRight
+                                    text: row.duration
+                                    // Duration leads the scrolled narrow row so
+                                    // the essential outcome stays immediately visible.
+                                    color: row.statusToken === "error" ? DesignTokens.statusError : row.statusToken === "warning" ? DesignTokens.statusWarning : DesignTokens.statusSuccess
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.family: DesignTokens.fontMono
+                                    font.weight: DesignTokens.weightSemiBold
+                                    font.features: ({
+                                            "tnum": 1
+                                        })
+                                }
                             }
                         }
                     }
