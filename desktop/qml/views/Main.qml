@@ -645,8 +645,12 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 460
+        // Fit the window rather than a fixed 460 so the name, location and
+        // Create action stay reachable in a small window at large text sizes.
+        width: Math.min(460, Overlay.overlay ? Overlay.overlay.width - 64 : 460)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("New Project")
 
         property url folderUrl
@@ -671,87 +675,94 @@ ApplicationWindow {
             border.color: DesignTokens.glassBorder
         }
 
-        contentItem: ColumnLayout {
-            spacing: DesignTokens.spaceSm
+        contentItem: ScrollView {
+            id: npBodyScroll
+            contentWidth: availableWidth
+            clip: true
 
-            Label {
-                text: qsTr("Project name")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontLabel
-            }
-            TextField {
-                id: npNameField
-                Layout.fillWidth: true
-                placeholderText: qsTr("My API project")
-                color: DesignTokens.textPrimary
-                placeholderTextColor: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontBody
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: npNameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                }
-                onAccepted: if (newProjectDialog.canCreate) {
-                    newProjectDialog.accept();
-                }
-            }
-
-            Label {
-                text: qsTr("Location")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontLabel
-                Layout.topMargin: DesignTokens.spaceXs
-            }
-            RowLayout {
-                Layout.fillWidth: true
+            ColumnLayout {
+                width: npBodyScroll.availableWidth
                 spacing: DesignTokens.spaceSm
+
+                Label {
+                    text: qsTr("Project name")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                }
                 TextField {
-                    id: npLocationField
+                    id: npNameField
                     Layout.fillWidth: true
-                    readOnly: true
-                    text: newProjectDialog.folderDisplay
-                    placeholderText: qsTr("Choose a folder…")
+                    placeholderText: qsTr("My API project")
                     color: DesignTokens.textPrimary
                     placeholderTextColor: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    font.family: DesignTokens.fontMono
+                    font.pixelSize: DesignTokens.fontBody
                     background: Rectangle {
                         radius: DesignTokens.radiusSm
                         color: DesignTokens.surfaceSunken
                         border.width: 1
-                        border.color: DesignTokens.borderSubtle
+                        border.color: npNameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                    }
+                    onAccepted: if (newProjectDialog.canCreate) {
+                        newProjectDialog.accept();
                     }
                 }
-                Button {
-                    id: npBrowseBtn
-                    text: qsTr("Browse…")
-                    implicitHeight: 34
-                    leftPadding: DesignTokens.spaceMd
-                    rightPadding: DesignTokens.spaceMd
-                    onClicked: newProjectFolderDialog.open()
-                    background: Rectangle {
-                        radius: DesignTokens.radiusSm
-                        color: "transparent"
-                        border.width: 1
-                        border.color: DesignTokens.borderSubtle
-                    }
-                    contentItem: Text {
-                        text: npBrowseBtn.text
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-            }
 
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("A reqloom.yaml is created in the chosen folder.")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontLabel
-                wrapMode: Text.WordWrap
+                Label {
+                    text: qsTr("Location")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    Layout.topMargin: DesignTokens.spaceXs
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: DesignTokens.spaceSm
+                    TextField {
+                        id: npLocationField
+                        Layout.fillWidth: true
+                        readOnly: true
+                        text: newProjectDialog.folderDisplay
+                        placeholderText: qsTr("Choose a folder…")
+                        color: DesignTokens.textPrimary
+                        placeholderTextColor: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontLabel
+                        font.family: DesignTokens.fontMono
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.surfaceSunken
+                            border.width: 1
+                            border.color: DesignTokens.borderSubtle
+                        }
+                    }
+                    Button {
+                        id: npBrowseBtn
+                        text: qsTr("Browse…")
+                        implicitHeight: 34
+                        leftPadding: DesignTokens.spaceMd
+                        rightPadding: DesignTokens.spaceMd
+                        onClicked: newProjectFolderDialog.open()
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: "transparent"
+                            border.width: 1
+                            border.color: DesignTokens.borderSubtle
+                        }
+                        contentItem: Text {
+                            text: npBrowseBtn.text
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("A reqloom.yaml is created in the chosen folder.")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    wrapMode: Text.WordWrap
+                }
             }
         }
 
@@ -783,8 +794,10 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 420
+        width: Math.min(420, Overlay.overlay ? Overlay.overlay.width - 64 : 420)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("Overwrite project")
 
         property url specUrl
@@ -831,8 +844,10 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 560
+        width: Math.min(560, Overlay.overlay ? Overlay.overlay.width - 64 : 560)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("Import review notes")
 
         property string notes: ""
@@ -882,8 +897,10 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 560
+        width: Math.min(560, Overlay.overlay ? Overlay.overlay.width - 64 : 560)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("Cookies")
 
         property var jars: []
@@ -927,13 +944,18 @@ ApplicationWindow {
             }
 
             ScrollView {
+                id: cookieScroll
                 Layout.fillWidth: true
                 Layout.preferredHeight: 320
                 visible: cookieDialog.jars.length > 0
                 clip: true
+                contentWidth: availableWidth
 
                 ColumnLayout {
-                    width: parent.width
+                    // availableWidth, not parent.width: the Flickable's width is
+                    // its own content width, so parent.width would keep the rows
+                    // at their implicit size and defeat the dialog's clamp.
+                    width: cookieScroll.availableWidth
                     spacing: DesignTokens.spaceMd
 
                     Repeater {
@@ -1016,8 +1038,10 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 400
+        width: Math.min(400, Overlay.overlay ? Overlay.overlay.width - 64 : 400)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("Delete environment")
         header: DialogHeader {
             title: qsTr("Delete environment")
@@ -1068,7 +1092,7 @@ ApplicationWindow {
     // ── Command palette (Ctrl+P) ────────────────────────────────────────────
     Popup {
         id: commandPalette
-        width: 480
+        width: Math.min(480, Overlay.overlay ? Overlay.overlay.width - 64 : 480)
         implicitHeight: Math.min(paletteList.contentHeight + palInput.implicitHeight + DesignTokens.spaceLg * 3, 440)
         anchors.centerIn: Overlay.overlay
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -1193,6 +1217,9 @@ ApplicationWindow {
                     }
                     contentItem: Text {
                         text: paletteItem.itemLabel
+                        // Long localized command names ellipsize rather than
+                        // being hard-clipped by the list's clip rectangle.
+                        elide: Text.ElideRight
                         color: DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontBody
                         verticalAlignment: Text.AlignVCenter

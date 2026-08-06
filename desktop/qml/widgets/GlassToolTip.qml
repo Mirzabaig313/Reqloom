@@ -13,12 +13,34 @@ ToolTip {
     // Bind to the host control's `hovered`. The tip shows only after showDelay.
     property bool active: false
     property int showDelay: 500
-    // Wrap point for long messages — keeps the tip a readable column.
-    property int maxWidth: 280
+    // Wrap point for long messages — keeps the tip a readable column, capped to
+    // the window so a long localized message can't grow past the edge.
+    property int maxWidth: Math.min(280, Overlay.overlay ? Overlay.overlay.width - DesignTokens.spaceLg * 2 : 280)
+
+    // Gap between the anchor and the tip, both below and above.
+    readonly property int anchorGap: 6
+    // Room left under the anchor, in overlay coordinates. MAX_VALUE while the
+    // tip has no parent/overlay yet so the default below-anchor branch wins.
+    readonly property real spaceBelowAnchor: {
+        // tip.visible is read on purpose: mapToItem is not reactive to ancestor
+        // movement, so this re-measures every time the tip is shown rather than
+        // trusting a value captured when the tip was created.
+        if (!tip.visible || !tip.parent || !Overlay.overlay) {
+            return Number.MAX_VALUE;
+        }
+        return Overlay.overlay.height - tip.parent.mapToItem(Overlay.overlay, 0, tip.parent.height).y;
+    }
+    readonly property bool flipAbove: tip.spaceBelowAnchor < tip.implicitHeight + tip.anchorGap + DesignTokens.spaceSm
 
     // Sit below the hovered control so the tip doesn't overlay the row above
-    // (e.g. the Send button sitting over the Dry Run / Send Cleanly row).
-    y: (parent ? parent.height : 0) + 6
+    // (e.g. the Send button sitting over the Dry Run / Send Cleanly row), and
+    // flip above only when the window edge leaves no room below.
+    y: tip.flipAbove ? -(tip.implicitHeight + tip.anchorGap) : ((tip.parent ? tip.parent.height : 0) + tip.anchorGap)
+    // The content Text wraps at maxWidth, but the popup's implicit width comes
+    // from the unwrapped text, so cap the surface as well or it renders wider
+    // than the message it contains.
+    width: Math.min(implicitWidth, tip.maxWidth)
+    margins: DesignTokens.spaceSm
     padding: 0
 
     onActiveChanged: {
@@ -52,7 +74,6 @@ ToolTip {
         color: DesignTokens.textPrimary
         font.pointSize: DesignTokens.fontLabelPointSize
         wrapMode: Text.WordWrap
-        width: Math.min(implicitWidth, tip.maxWidth)
         leftPadding: DesignTokens.spaceSm
         rightPadding: DesignTokens.spaceSm
         topPadding: DesignTokens.spaceXs

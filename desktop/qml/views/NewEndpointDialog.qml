@@ -19,8 +19,20 @@ Dialog {
     enter: PopupEnter {}
     exit: PopupExit {}
     anchors.centerIn: Overlay.overlay
-    width: 540
+    // Fit the window instead of a fixed 540x(content): the optional chain
+    // section can make this the tallest dialog in the app, so clamp to the
+    // available space and let the body scroll.
+    width: Math.min(540, Overlay.overlay ? Overlay.overlay.width - 64 : 540)
+    height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
     padding: DesignTokens.spaceLg
+    focus: true
+
+    // Enter in a single-line field submits when the form is valid.
+    function submit() {
+        if (dialog.canSubmit) {
+            dialog.accept();
+        }
+    }
 
     function openFor(preselectedResource) {
         AppController.prepareNewEndpoint(preselectedResource);
@@ -64,263 +76,315 @@ Dialog {
         title: qsTr("New endpoint")
     }
 
-    contentItem: ColumnLayout {
-        spacing: DesignTokens.spaceMd
+    contentItem: ScrollView {
+        id: bodyScroll
+        contentWidth: availableWidth
+        clip: true
 
-        Label {
-            Layout.fillWidth: true
-            text: qsTr("Define the request. You can wire its dependency chain now or later in " + "the editor.")
-            wrapMode: Text.WordWrap
-            color: DesignTokens.textSecondary
-            font.pixelSize: DesignTokens.fontLabel
-        }
+        // ScrollView's contentItem is the Flickable it scrolls; narrow the type
+        // so the viewport arithmetic below stays statically checked.
+        readonly property Flickable viewport: bodyScroll.contentItem as Flickable
 
-        GridLayout {
-            columns: 2
-            columnSpacing: DesignTokens.spaceMd
-            rowSpacing: DesignTokens.spaceSm
-            Layout.fillWidth: true
-
-            FieldLabel {
-                text: qsTr("Module")
+        // ScrollView does not follow the focus ring, so with the chain section
+        // expanded Tab could move the caret below the fold — visible focus lost,
+        // typing going somewhere off-screen. Pull the focused field back in.
+        function revealFocusedField() {
+            const win = bodyScroll.Window.window;
+            const flick = bodyScroll.viewport;
+            const item = win ? win.activeFocusItem : null;
+            if (!item || !flick) {
+                return;
             }
-            GlassComboBox {
-                id: moduleCombo
-                Layout.fillWidth: true
-                model: AppController.moduleNames
-            }
-
-            FieldLabel {
-                text: qsTr("Name")
-            }
-            GlassTextField {
-                id: nameField
-                Layout.fillWidth: true
-                placeholderText: qsTr("verify")
-                // Flag the field only for a genuinely bad name, not the initial
-                // empty state (which the message below already explains).
-                error: nameField.text.trim().length > 0 && !AppController.isValidName(nameField.text.trim())
-                onTextChanged: dialog.revalidate()
-            }
-
-            FieldLabel {
-                text: qsTr("Method")
-            }
-            GlassComboBox {
-                id: methodCombo
-                Layout.fillWidth: true
-                model: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-            }
-
-            FieldLabel {
-                text: qsTr("Path")
-            }
-            GlassTextField {
-                id: pathField
-                Layout.fillWidth: true
-                mono: true
-                placeholderText: qsTr("/api/v1/admin/orgs/{{id}}/verify")
-            }
-
-            FieldLabel {
-                text: qsTr("Actor")
-            }
-            GlassComboBox {
-                id: actorCombo
-                Layout.fillWidth: true
-                model: AppController.actorNames
-            }
-        }
-
-        FieldError {
-            text: dialog.errorText
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: DesignTokens.borderSubtle
-        }
-
-        // Optional, collapsed chain section.
-        AbstractButton {
-            id: chainToggle
-            checkable: true
-            implicitHeight: 24
-            Layout.fillWidth: true
-            contentItem: RowLayout {
-                spacing: DesignTokens.spaceXs
-                AppIcon {
-                    name: chainToggle.checked ? "chevron-down" : "chevron-right"
-                    size: 14
+            // Ignore focus that isn't inside this body (footer, other dialogs).
+            let inside = false;
+            for (let node = item; node; node = node.parent) {
+                if (node === flick.contentItem) {
+                    inside = true;
+                    break;
                 }
-                Label {
-                    text: qsTr("Chain (optional)")
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    font.weight: DesignTokens.weightSemiBold
-                }
+            }
+            if (!inside) {
+                return;
+            }
+            const top = item.mapToItem(flick.contentItem, 0, 0).y;
+            const bottom = top + item.height;
+            const maxY = Math.max(0, flick.contentHeight - flick.height);
+            if (top < flick.contentY) {
+                flick.contentY = Math.max(0, top - DesignTokens.spaceSm);
+            } else if (bottom > flick.contentY + flick.height) {
+                flick.contentY = Math.min(maxY, bottom - flick.height + DesignTokens.spaceSm);
+            }
+        }
+
+        Connections {
+            target: bodyScroll.Window.window
+            enabled: dialog.visible
+            function onActiveFocusItemChanged() {
+                bodyScroll.revealFocusedField();
             }
         }
 
         ColumnLayout {
-            Layout.fillWidth: true
-            visible: chainToggle.checked
-            spacing: DesignTokens.spaceSm
+            width: bodyScroll.availableWidth
+            spacing: DesignTokens.spaceMd
 
-            // Depends on + Extract live in one grouped card so they read as a
-            // single "wiring" unit for this endpoint, stacked below each other.
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Define the request. You can wire its dependency chain now or later in " + "the editor.")
+                wrapMode: Text.WordWrap
+                color: DesignTokens.textSecondary
+                font.pixelSize: DesignTokens.fontLabel
+            }
+
+            GridLayout {
+                columns: 2
+                columnSpacing: DesignTokens.spaceMd
+                rowSpacing: DesignTokens.spaceSm
+                Layout.fillWidth: true
+
+                FieldLabel {
+                    text: qsTr("Module")
+                }
+                GlassComboBox {
+                    id: moduleCombo
+                    Layout.fillWidth: true
+                    model: AppController.moduleNames
+                }
+
+                FieldLabel {
+                    text: qsTr("Name")
+                }
+                GlassTextField {
+                    id: nameField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("verify")
+                    // Flag the field only for a genuinely bad name, not the initial
+                    // empty state (which the message below already explains).
+                    error: nameField.text.trim().length > 0 && !AppController.isValidName(nameField.text.trim())
+                    onTextChanged: dialog.revalidate()
+                    onAccepted: dialog.submit()
+                }
+
+                FieldLabel {
+                    text: qsTr("Method")
+                }
+                GlassComboBox {
+                    id: methodCombo
+                    Layout.fillWidth: true
+                    model: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+                }
+
+                FieldLabel {
+                    text: qsTr("Path")
+                }
+                GlassTextField {
+                    id: pathField
+                    Layout.fillWidth: true
+                    mono: true
+                    placeholderText: qsTr("/api/v1/admin/orgs/{{id}}/verify")
+                    onAccepted: dialog.submit()
+                }
+
+                FieldLabel {
+                    text: qsTr("Actor")
+                }
+                GlassComboBox {
+                    id: actorCombo
+                    Layout.fillWidth: true
+                    model: AppController.actorNames
+                }
+            }
+
+            FieldError {
+                text: dialog.errorText
+            }
+
             Rectangle {
                 Layout.fillWidth: true
-                radius: DesignTokens.radiusSm
-                color: DesignTokens.surfaceSunken
-                border.width: 1
-                border.color: DesignTokens.borderSubtle
-                implicitHeight: chainGroup.implicitHeight + DesignTokens.spaceMd * 2
+                Layout.preferredHeight: 1
+                color: DesignTokens.borderSubtle
+            }
 
-                ColumnLayout {
-                    id: chainGroup
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.margins: DesignTokens.spaceMd
-                    spacing: DesignTokens.spaceSm
-
+            // Optional, collapsed chain section.
+            AbstractButton {
+                id: chainToggle
+                checkable: true
+                implicitHeight: 24
+                Layout.fillWidth: true
+                contentItem: RowLayout {
+                    spacing: DesignTokens.spaceXs
+                    AppIcon {
+                        name: chainToggle.checked ? "chevron-down" : "chevron-right"
+                        size: 14
+                    }
                     Label {
-                        text: qsTr("Depends on")
-                        color: DesignTokens.textPrimary
+                        text: qsTr("Chain (optional)")
+                        color: DesignTokens.textSecondary
                         font.pixelSize: DesignTokens.fontLabel
                         font.weight: DesignTokens.weightSemiBold
                     }
+                }
+            }
 
-                    // Column headers.
-                    RowLayout {
-                        Layout.fillWidth: true
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: chainToggle.checked
+                spacing: DesignTokens.spaceSm
+
+                // Depends on + Extract live in one grouped card so they read as a
+                // single "wiring" unit for this endpoint, stacked below each other.
+                Rectangle {
+                    Layout.fillWidth: true
+                    radius: DesignTokens.radiusSm
+                    color: DesignTokens.surfaceSunken
+                    border.width: 1
+                    border.color: DesignTokens.borderSubtle
+                    implicitHeight: chainGroup.implicitHeight + DesignTokens.spaceMd * 2
+
+                    ColumnLayout {
+                        id: chainGroup
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: DesignTokens.spaceMd
                         spacing: DesignTokens.spaceSm
-                        Label {
-                            Layout.preferredWidth: 150
-                            text: qsTr("Endpoint")
-                            color: DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontCaption
-                            font.weight: DesignTokens.weightSemiBold
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: qsTr("Save as")
-                            color: DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontCaption
-                            font.weight: DesignTokens.weightSemiBold
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: qsTr("Extract from response")
-                            color: DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontCaption
-                            font.weight: DesignTokens.weightSemiBold
-                        }
-                        Item {
-                            Layout.preferredWidth: 24
-                        }
-                    }
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 1
-                        color: DesignTokens.borderSubtle
-                    }
 
-                    // One row per chosen dependency: endpoint id + its var/path
-                    // pairs (its own extract block) + a remove button.
-                    Repeater {
-                        model: AppController.newEndpointDepExtracts
-                        delegate: RowLayout {
-                            id: depRow
-                            required property string operationId
-                            required property var extractModel
+                        Label {
+                            text: qsTr("Depends on")
+                            color: DesignTokens.textPrimary
+                            font.pixelSize: DesignTokens.fontLabel
+                            font.weight: DesignTokens.weightSemiBold
+                        }
+
+                        // Column headers.
+                        RowLayout {
                             Layout.fillWidth: true
-                            Layout.topMargin: DesignTokens.spaceXs
                             spacing: DesignTokens.spaceSm
-
                             Label {
                                 Layout.preferredWidth: 150
-                                Layout.alignment: Qt.AlignTop
-                                Layout.topMargin: 6
-                                text: depRow.operationId
-                                color: DesignTokens.textPrimary
-                                font.pixelSize: DesignTokens.fontLabel
-                                font.family: DesignTokens.fontMono
-                                wrapMode: Text.WrapAnywhere
+                                text: qsTr("Endpoint")
+                                color: DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontCaption
+                                font.weight: DesignTokens.weightSemiBold
                             }
-                            ColumnLayout {
+                            Label {
                                 Layout.fillWidth: true
-                                spacing: DesignTokens.spaceXs
-                                Repeater {
-                                    model: depRow.extractModel
-                                    delegate: RowLayout {
-                                        id: exRow
-                                        required property int index
-                                        required property string key
-                                        required property string value
-                                        Layout.fillWidth: true
-                                        spacing: DesignTokens.spaceSm
-                                        CellField {
+                                text: qsTr("Save as")
+                                color: DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontCaption
+                                font.weight: DesignTokens.weightSemiBold
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Extract from response")
+                                color: DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontCaption
+                                font.weight: DesignTokens.weightSemiBold
+                            }
+                            Item {
+                                Layout.preferredWidth: 24
+                            }
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 1
+                            color: DesignTokens.borderSubtle
+                        }
+
+                        // One row per chosen dependency: endpoint id + its var/path
+                        // pairs (its own extract block) + a remove button.
+                        Repeater {
+                            model: AppController.newEndpointDepExtracts
+                            delegate: RowLayout {
+                                id: depRow
+                                required property string operationId
+                                required property var extractModel
+                                Layout.fillWidth: true
+                                Layout.topMargin: DesignTokens.spaceXs
+                                spacing: DesignTokens.spaceSm
+
+                                Label {
+                                    Layout.preferredWidth: 150
+                                    Layout.alignment: Qt.AlignTop
+                                    Layout.topMargin: 6
+                                    text: depRow.operationId
+                                    color: DesignTokens.textPrimary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.family: DesignTokens.fontMono
+                                    wrapMode: Text.WrapAnywhere
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: DesignTokens.spaceXs
+                                    Repeater {
+                                        model: depRow.extractModel
+                                        delegate: RowLayout {
+                                            id: exRow
+                                            required property int index
+                                            required property string key
+                                            required property string value
                                             Layout.fillWidth: true
-                                            text: exRow.key
-                                            placeholderText: qsTr("variable_name")
-                                            onTextEdited: depRow.extractModel.setKey(exRow.index, text)
-                                        }
-                                        CellField {
-                                            Layout.fillWidth: true
-                                            text: exRow.value
-                                            placeholderText: qsTr("data.id")
-                                            onTextEdited: depRow.extractModel.setValue(exRow.index, text)
+                                            spacing: DesignTokens.spaceSm
+                                            CellField {
+                                                Layout.fillWidth: true
+                                                text: exRow.key
+                                                placeholderText: qsTr("variable_name")
+                                                onTextEdited: depRow.extractModel.setKey(exRow.index, text)
+                                            }
+                                            CellField {
+                                                Layout.fillWidth: true
+                                                text: exRow.value
+                                                placeholderText: qsTr("data.id")
+                                                onTextEdited: depRow.extractModel.setValue(exRow.index, text)
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            ToolButton {
-                                id: removeDepBtn
-                                Layout.alignment: Qt.AlignTop
-                                implicitWidth: 24
-                                implicitHeight: 24
-                                text: "✕"
-                                onClicked: AppController.removeNewEndpointDependency(depRow.operationId)
-                                contentItem: Text {
-                                    text: removeDepBtn.text
-                                    color: DesignTokens.textSecondary
-                                    font.pixelSize: DesignTokens.fontLabel
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                                background: Rectangle {
-                                    radius: DesignTokens.radiusSm
-                                    color: removeDepBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                                ToolButton {
+                                    id: removeDepBtn
+                                    Layout.alignment: Qt.AlignTop
+                                    implicitWidth: 24
+                                    implicitHeight: 24
+                                    text: "✕"
+                                    onClicked: AppController.removeNewEndpointDependency(depRow.operationId)
+                                    contentItem: Text {
+                                        text: removeDepBtn.text
+                                        color: DesignTokens.textSecondary
+                                        font.pixelSize: DesignTokens.fontLabel
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        radius: DesignTokens.radiusSm
+                                        color: removeDepBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Add a dependency (becomes a new table row).
-                    GlassComboBox {
-                        id: addDepCombo
-                        Layout.fillWidth: true
-                        Layout.topMargin: DesignTokens.spaceXs
-                        readonly property var options: [qsTr("+ Add dependency")].concat(AppController.operationIds)
-                        model: addDepCombo.options
-                        currentIndex: 0
-                        onActivated: function (i) {
-                            if (i > 0) {
-                                AppController.addNewEndpointDependency(addDepCombo.options[i]);
-                                addDepCombo.currentIndex = 0;
+                        // Add a dependency (becomes a new table row).
+                        GlassComboBox {
+                            id: addDepCombo
+                            Layout.fillWidth: true
+                            Layout.topMargin: DesignTokens.spaceXs
+                            readonly property var options: [qsTr("+ Add dependency")].concat(AppController.operationIds)
+                            model: addDepCombo.options
+                            currentIndex: 0
+                            onActivated: function (i) {
+                                if (i > 0) {
+                                    AppController.addNewEndpointDependency(addDepCombo.options[i]);
+                                    addDepCombo.currentIndex = 0;
+                                }
                             }
                         }
-                    }
 
-                    Label {
-                        Layout.fillWidth: true
-                        text: qsTr("Body paths need no $ (data.id · items[0].id). Special sources need it: $.status_code · $.headers.X · $.cookies.X")
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontCaption
-                        wrapMode: Text.WordWrap
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Body paths need no $ (data.id · items[0].id). Special sources need it: $.status_code · $.headers.X · $.cookies.X")
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
             }
@@ -340,26 +404,11 @@ Dialog {
         }
     }
 
-    footer: Item {
-        implicitHeight: 60
-        RowLayout {
-            anchors.fill: parent
-            anchors.margins: DesignTokens.spaceLg
-            spacing: DesignTokens.spaceSm
-            Item {
-                Layout.fillWidth: true
-            }
-            GlassButton {
-                text: qsTr("Cancel")
-                onClicked: dialog.reject()
-            }
-            GlassButton {
-                text: qsTr("Create endpoint")
-                primary: true
-                enabled: dialog.canSubmit
-                onClicked: dialog.accept()
-            }
-        }
+    footer: DialogButtons {
+        okText: qsTr("Create endpoint")
+        okEnabled: dialog.canSubmit
+        onAccepted: dialog.accept()
+        onRejected: dialog.reject()
     }
 
     onAccepted: AppController.createOperation(moduleCombo.currentText, nameField.text.trim(), methodCombo.currentText, pathField.text.trim(), actorCombo.currentText)
