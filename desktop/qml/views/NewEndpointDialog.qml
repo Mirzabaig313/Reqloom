@@ -370,6 +370,10 @@ Dialog {
                             readonly property var options: [qsTr("+ Add dependency")].concat(AppController.operationIds)
                             model: addDepCombo.options
                             currentIndex: 0
+                            // Same verb badges as the editor's Chain tab.
+                            methodResolver: function (id) {
+                                return AppController.operationMethod(id);
+                            }
                             onActivated: function (i) {
                                 if (i > 0) {
                                     AppController.addNewEndpointDependency(addDepCombo.options[i]);

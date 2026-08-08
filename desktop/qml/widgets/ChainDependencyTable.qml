@@ -348,6 +348,11 @@ ColumnLayout {
         readonly property var options: [qsTr("+ Add dependency")].concat(AppController.operationIds)
         model: addCombo.options
         currentIndex: 0
+        // Badge each candidate with its verb: picking a dependency shouldn't
+        // require remembering whether an endpoint is a GET or a POST.
+        methodResolver: function (id) {
+            return AppController.operationMethod(id);
+        }
         onActivated: function (i) {
             if (i > 0) {
                 AppController.chainAddDependency(addCombo.options[i]);

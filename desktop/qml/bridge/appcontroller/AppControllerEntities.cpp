@@ -639,6 +639,12 @@ QStringList AppController::operationIds() const {
     return ids;
 }
 
+QString AppController::operationMethod(const QString& operationId) const {
+    const auto* op =
+        activeProject().findOperation(engine::OperationId{operationId.toStdString()});
+    return op != nullptr ? methodLabel(op->method) : QString{};
+}
+
 void AppController::selectOperationById(const QString& operationId) {
     const qsizetype dot = operationId.indexOf(QLatin1Char('.'));
     if (dot < 0) {

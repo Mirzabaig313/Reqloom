@@ -427,6 +427,7 @@ public:
     [[nodiscard]] EditableKeyValueModel* actorRefreshExtract() { return &actorRefreshExtract_; }
     [[nodiscard]] AuthStepListModel* actorAuthSteps() { return &actorAuthSteps_; }
     [[nodiscard]] QStringList operationIds() const;
+    Q_INVOKABLE [[nodiscard]] QString operationMethod(const QString& operationId) const;
     [[nodiscard]] DependencyEditModel* newEndpointDependencies() { return &newEndpointDeps_; }
     [[nodiscard]] EditableKeyValueModel* newEndpointExtractions() {
         return &newEndpointExtractions_;
