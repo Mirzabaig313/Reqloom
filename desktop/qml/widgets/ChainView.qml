@@ -137,6 +137,9 @@ Rectangle {
         function onTokensChanged() {
             edgeCanvas.requestPaint();
         }
+        function onMetricsChanged() {
+            edgeCanvas.requestPaint();
+        }
     }
 
     Label {
@@ -213,20 +216,31 @@ Rectangle {
                         // Dim edges not touching the hovered node.
                         const connected = root.hoveredOp.length === 0 || sOp === root.hoveredOp || tOp === root.hoveredOp;
                         ctx.globalAlpha = connected ? 1.0 : 0.16;
-                        ctx.strokeStyle = col;
-                        ctx.fillStyle = col;
                         const sx = ox + s.x + root.nodeW / 2;
                         const sy = s.y + root.nodeH;
                         const tx = ox + t.x + root.nodeW / 2;
                         const ty = t.y;
                         const dy = ty - sy;
                         // Smooth vertical S-curve from source bottom to target top.
-                        // Derived (auto, from {{}} usage) edges are dashed;
-                        // explicit depends_on edges are solid.
-                        ctx.setLineDash(root.edges[i].explicit ? [] : [5, 4]);
                         ctx.beginPath();
                         ctx.moveTo(sx, sy);
                         ctx.bezierCurveTo(sx, sy + dy * 0.5, tx, ty - dy * 0.5, tx, ty);
+                        // The neutral track keeps the causal thread continuous;
+                        // the thinner overlay carries live execution semantics.
+                        ctx.save();
+                        ctx.setLineDash([]);
+                        ctx.lineWidth = 4;
+                        ctx.lineCap = "round";
+                        ctx.lineJoin = "round";
+                        ctx.strokeStyle = DesignTokens.borderSubtle;
+                        ctx.stroke();
+                        ctx.restore();
+                        // Derived (auto, from {{}} usage) edges are dashed;
+                        // explicit depends_on edges are solid.
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeStyle = col;
+                        ctx.fillStyle = col;
+                        ctx.setLineDash(root.edges[i].explicit ? [] : [5, 4]);
                         ctx.stroke();
                         ctx.setLineDash([]);
                         // Arrowhead tucked into the target's top edge.
@@ -236,19 +250,43 @@ Rectangle {
                         ctx.lineTo(tx + 4, ty - 7);
                         ctx.closePath();
                         ctx.fill();
-                        // Label the edge with the variable(s) that flow along it.
+                        // Prefer flowing-variable annotations beside the path.
+                        // Fall back to a bounded midpoint chip when neither side fits.
                         const label = root.edges[i].label || "";
                         if (label.length > 0) {
-                            const mx = (sx + tx) / 2;
+                            const midpointX = (sx + tx) / 2;
                             const my = (sy + ty) / 2;
                             ctx.font = "10px monospace";
                             ctx.textAlign = "center";
                             ctx.textBaseline = "middle";
                             const tw = ctx.measureText(label).width;
+                            const chipWidth = tw + 10;
+                            const chipGap = DesignTokens.spaceSm;
+                            const pathLeft = Math.min(sx, tx);
+                            const pathRight = Math.max(sx, tx);
+                            const leftRoom = pathLeft;
+                            const rightRoom = plane.width - pathRight;
+                            const leftFits = leftRoom >= chipWidth + chipGap;
+                            const rightFits = rightRoom >= chipWidth + chipGap;
+                            let drawnChipWidth = chipWidth;
+                            let labelX;
+                            if (leftFits || rightFits) {
+                                let placeRight = rightRoom >= leftRoom;
+                                if (leftFits !== rightFits) {
+                                    placeRight = rightFits;
+                                }
+                                labelX = placeRight ? pathRight + chipGap + chipWidth / 2 : pathLeft - chipGap - chipWidth / 2;
+                            } else {
+                                drawnChipWidth = Math.min(chipWidth, plane.width);
+                                labelX = Math.max(drawnChipWidth / 2, Math.min(midpointX, plane.width - drawnChipWidth / 2));
+                            }
                             ctx.fillStyle = DesignTokens.surfaceSunken;
-                            ctx.fillRect(mx - tw / 2 - 5, my - 8, tw + 10, 16);
+                            ctx.fillRect(labelX - drawnChipWidth / 2, my - 8, drawnChipWidth, 16);
                             ctx.fillStyle = col;
-                            ctx.fillText(label, mx, my);
+                            const textWidth = Math.max(0, drawnChipWidth - 10);
+                            if (textWidth > 0) {
+                                ctx.fillText(label, labelX, my, textWidth);
+                            }
                         }
                     }
                     ctx.globalAlpha = 1.0;
@@ -266,6 +304,17 @@ Rectangle {
                     required property real tx
                     required property real ty
                     readonly property string nodeStatus: root.statusMap[card.operationId] || ""
+                    readonly property color statusHue: ({
+                            "running": DesignTokens.statusRunning,
+                            "success": DesignTokens.statusSuccess,
+                            "warning": DesignTokens.statusWarning,
+                            "error": DesignTokens.statusError,
+                            "cancelled": DesignTokens.statusCancelled,
+                            "blocked": DesignTokens.statusBlocked,
+                            "skipped": DesignTokens.statusSkipped,
+                            "idle": DesignTokens.statusIdle,
+                            "neutral": DesignTokens.statusIdle
+                        })[nodeStatus] || DesignTokens.statusIdle
                     x: plane.offsetX + card.tx
                     y: card.ty
                     width: root.nodeW
@@ -303,9 +352,9 @@ Rectangle {
                         edgeCanvas.requestPaint();
                     }
                     radius: DesignTokens.radiusSm
-                    color: card.isTarget ? DesignTokens.accentMuted : DesignTokens.surfaceRaised
+                    color: DesignTokens.surfaceRaised
                     border.width: card.nodeStatus.length > 0 ? 2 : 1
-                    border.color: card.nodeStatus.length > 0 ? DesignTokens.statusColor(card.nodeStatus) : (card.isTarget ? DesignTokens.accent : DesignTokens.borderSubtle)
+                    border.color: card.nodeStatus.length > 0 ? card.statusHue : (card.isTarget ? DesignTokens.accent : DesignTokens.borderSubtle)
 
                     RowLayout {
                         anchors.fill: parent
@@ -315,7 +364,6 @@ Rectangle {
 
                         MethodBadge {
                             method: card.method
-                            Layout.preferredWidth: 54
                         }
                         Label {
                             Layout.fillWidth: true
@@ -326,15 +374,14 @@ Rectangle {
                             font.weight: card.isTarget ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                             elide: Text.ElideMiddle
                         }
-                        // Live run-status glyph (colour + glyph, never colour
-                        //  once a run touches this node.
+                        // Live run status pairs semantic color with a glyph.
                         StatusBadge {
                             visible: card.nodeStatus.length > 0
                             token: card.nodeStatus
                             label: ""
                         }
                         Label {
-                            visible: card.isTarget && card.nodeStatus.length === 0
+                            visible: card.isTarget
                             text: qsTr("target")
                             color: DesignTokens.accent
                             font.pixelSize: DesignTokens.fontCaption
