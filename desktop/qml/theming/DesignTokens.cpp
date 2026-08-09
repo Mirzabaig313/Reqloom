@@ -112,47 +112,39 @@ bool DesignTokens::isDark() const {
 QColor DesignTokens::shadow() const {
     // Soft elevation shadow tinted toward the tidepool graphite identity.
     if (isDark()) {
-        return QColor::fromRgbF(0.0, 0.02, 0.03, 0.55);
+        return QColor::fromRgbF(0.0F, 0.02F, 0.03F, 0.55F);
     }
-    return QColor::fromRgbF(0.04, 0.09, 0.10, 0.16);
+    return QColor::fromRgbF(0.04F, 0.09F, 0.10F, 0.16F);
 }
 
 QColor DesignTokens::glassFill() const {
-    // Translucent panel fill so the blurred iridescent backdrop reads through
-    // the glass. Lower alpha in dark (deeper frost), higher in light (cleaner).
-    QColor c = p().surfaceRaised;
-    c.setAlphaF(isDark() ? 0.58F : 0.66F);
-    return c;
+    // Keep the legacy QML property while using a solid instrument surface.
+    return p().surfaceRaised;
 }
 
 QColor DesignTokens::glassBorder() const {
-    // A faint light highlight along the glass edge (the wet-shell rim).
-    return isDark() ? QColor::fromRgbF(1.0, 1.0, 1.0, 0.10) : QColor::fromRgbF(1.0, 1.0, 1.0, 0.55);
+    return p().borderSubtle;
 }
 
 QColor DesignTokens::canvasTop() const {
-    return isDark() ? QColor::fromRgbF(0.07, 0.16, 0.18, 1.0)
-                    : QColor::fromRgbF(0.90, 0.95, 0.96, 1.0);
+    return p().surfaceBase;
 }
 
 QColor DesignTokens::canvasBottom() const {
-    return isDark() ? QColor::fromRgbF(0.05, 0.10, 0.12, 1.0)
-                    : QColor::fromRgbF(0.95, 0.93, 0.95, 1.0);
+    return p().surfaceBase;
 }
 
 QColor DesignTokens::glowTeal() const {
-    return isDark() ? QColor::fromRgbF(0.05, 0.65, 0.62, 0.55)
-                    : QColor::fromRgbF(0.05, 0.65, 0.62, 0.40);
+    // Legacy glow properties stay source-compatible but no longer decorate the workspace.
+    return QColor{0, 0, 0, 0};
 }
 
 QColor DesignTokens::glowSeafoam() const {
-    return isDark() ? QColor::fromRgbF(0.43, 0.82, 0.77, 0.45)
-                    : QColor::fromRgbF(0.43, 0.82, 0.77, 0.40);
+    return QColor{0, 0, 0, 0};
 }
 
 QColor DesignTokens::glowBlush() const {
-    return isDark() ? QColor::fromRgbF(0.96, 0.72, 0.76, 0.32)
-                    : QColor::fromRgbF(0.96, 0.72, 0.76, 0.42);
+    return QColor{0, 0, 0, 0};
 }
 
 void DesignTokens::onModeChanged() {

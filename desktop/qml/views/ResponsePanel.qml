@@ -1,7 +1,7 @@
 // ResponsePanel — the run result surface (QML Migration Roadmap WS-C). A top
-// Response | Timeline tab bar: Response shows the status line (code coloured by
-// class), a Save-as-example action, an examples dropdown to re-show a saved
-// response, and Body (Tree) / Body (Raw) / Headers / Diff views; Timeline
+// Response | Timeline tab bar: Response shows the status line with a semantic
+// class-coloured rail, a Save-as-example action, and an examples dropdown to
+// re-show a saved response, plus Body (Tree) / Body (Raw) / Headers / Diff views; Timeline
 // embeds the live per-step stream. Presentation only; state comes from
 // AppController.
 //
@@ -294,14 +294,17 @@ Rectangle {
                     // as one unit instead of four loose labels (UI/UX review §5).
                     Rectangle {
                         id: statusSummary
+
+                        readonly property color statusHue: panel.statusColor(AppController.respStatus)
+
                         Layout.row: 0
                         Layout.column: 0
                         Layout.columnSpan: panel.statusActionsReflow ? 3 : 1
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         implicitWidth: 220
-                        implicitHeight: Math.max(32, statusTray.implicitHeight + DesignTokens.spaceXs * 2)
-                        radius: DesignTokens.radiusPill
+                        implicitHeight: Math.max(DesignTokens.controlHeight, statusTray.implicitHeight + DesignTokens.spaceXs * 2)
+                        radius: DesignTokens.radiusSm
                         color: DesignTokens.surfaceSunken
                         border.width: 1
                         border.color: DesignTokens.borderSubtle
@@ -315,8 +318,9 @@ Rectangle {
                             spacing: DesignTokens.spaceSm
                             Label {
                                 text: AppController.respStatus > 0 ? ("HTTP " + AppController.respStatus) : AppController.runOutcome
-                                color: panel.statusColor(AppController.respStatus)
-                                font.pixelSize: DesignTokens.fontBody
+                                color: DesignTokens.textPrimary
+                                font.pointSize: DesignTokens.fontLabelPointSize
+                                font.family: DesignTokens.fontMono
                                 font.weight: DesignTokens.weightSemiBold
                             }
                             Rectangle {
@@ -330,7 +334,7 @@ Rectangle {
                                 width: Math.min(implicitWidth, 160)
                                 text: AppController.shownExample
                                 color: DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontLabel
+                                font.pointSize: DesignTokens.fontLabelPointSize
                                 elide: Text.ElideRight
                             }
                             Rectangle {
@@ -342,7 +346,8 @@ Rectangle {
                             Label {
                                 text: AppController.respElapsedMs + qsTr(" ms")
                                 color: DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontLabel
+                                font.pointSize: DesignTokens.fontLabelPointSize
+                                font.family: DesignTokens.fontMono
                                 // Tabular figures so the ms value doesn't shift
                                 // width as digits change between runs.
                                 font.features: ({
@@ -352,10 +357,24 @@ Rectangle {
                             Label {
                                 text: AppController.respBodySize + qsTr(" B")
                                 color: DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontLabel
+                                font.pointSize: DesignTokens.fontLabelPointSize
+                                font.family: DesignTokens.fontMono
                                 font.features: ({
                                         "tnum": 1
                                     })
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.bottom: parent.bottom
+                            width: Math.max(0, Math.min(12, parent.width - DesignTokens.spaceXs * 2))
+                            height: 2
+                            radius: 1
+                            color: statusSummary.statusHue
+                            Accessible.ignored: true
+                            Behavior on color {
+                                ColorMotion {}
                             }
                         }
                     }

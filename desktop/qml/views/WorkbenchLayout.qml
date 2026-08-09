@@ -354,18 +354,28 @@ Item {
         spacing: 0
         orientation: Qt.Horizontal
         handle: Rectangle {
+            id: mainHandle
             implicitWidth: root._handleSize
             implicitHeight: root._handleSize
-            color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
-            opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
+            color: DesignTokens.surfaceBase
+            readonly property bool active: SplitHandle.pressed
+            readonly property bool hovered: SplitHandle.hovered
+
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 1
+                height: parent.height
+                color: mainHandle.active ? DesignTokens.accent : (mainHandle.hovered ? DesignTokens.borderStrong : DesignTokens.borderSubtle)
+                Behavior on color {
+                    ColorMotion {}
+                }
+            }
+
             SplitHandle.onPressedChanged: {
                 if (!SplitHandle.pressed && root._restored && !root._restoring) {
                     root._captureMainIfExpanded();
                     root._saveMainPair();
                 }
-            }
-            Behavior on opacity {
-                FadeMotion {}
             }
         }
 
@@ -374,13 +384,15 @@ Item {
             SplitView.preferredWidth: 280
             SplitView.minimumWidth: root.explorerCollapsed ? root._railSize : root._explorerMinimum
             SplitView.maximumWidth: root.explorerCollapsed ? root._railSize : root._explorerMaximum
-            color: "transparent"
+            color: DesignTokens.surfaceRaised
             clip: true
 
             ExplorerPanel {
                 id: explorerPanel
                 anchors.fill: parent
                 visible: !root.explorerCollapsed
+                color: DesignTokens.surfaceRaised
+                border.width: 0
                 onCollapseRequested: root.explorerCollapsed = true
             }
 
@@ -389,9 +401,9 @@ Item {
                 anchors.fill: parent
                 visible: root.explorerCollapsed
                 radius: 0
-                color: explorerRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
+                color: explorerRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.surfaceRaised
                 border.width: 1
-                border.color: DesignTokens.glassBorder
+                border.color: DesignTokens.borderSubtle
                 Behavior on color {
                     ColorMotion {}
                 }
@@ -434,18 +446,28 @@ Item {
             orientation: root._responseStacked ? Qt.Vertical : Qt.Horizontal
             spacing: 0
             handle: Rectangle {
+                id: centerHandle
                 implicitWidth: root._handleSize
                 implicitHeight: root._handleSize
-                color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
-                opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
+                color: DesignTokens.surfaceBase
+                readonly property bool active: SplitHandle.pressed
+                readonly property bool hovered: SplitHandle.hovered
+
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: centerSplit.orientation === Qt.Horizontal ? 1 : parent.width
+                    height: centerSplit.orientation === Qt.Horizontal ? parent.height : 1
+                    color: centerHandle.active ? DesignTokens.accent : (centerHandle.hovered ? DesignTokens.borderStrong : DesignTokens.borderSubtle)
+                    Behavior on color {
+                        ColorMotion {}
+                    }
+                }
+
                 SplitHandle.onPressedChanged: {
                     if (!SplitHandle.pressed && root._restored && !root._restoring) {
                         root._captureCenterIfExpanded();
                         root._saveCenterPair(root._effectiveOrientation);
                     }
-                }
-                Behavior on opacity {
-                    FadeMotion {}
                 }
             }
 
@@ -457,9 +479,8 @@ Item {
                 SplitView.minimumHeight: root._editorMinimumHeight
                 radius: 0
                 clip: true
-                color: DesignTokens.glassFill
-                border.width: 1
-                border.color: DesignTokens.glassBorder
+                color: DesignTokens.surfaceBase
+                border.width: 0
 
                 EditorTabBar {
                     id: editorTabs
@@ -528,9 +549,12 @@ Item {
                             height: 56
                             background: Rectangle {
                                 radius: DesignTokens.radiusSm
-                                color: opRow.hovered ? Qt.rgba(1, 1, 1, 0.04) : DesignTokens.surfaceSunken
-                                border.width: 1
-                                border.color: opRow.hovered ? DesignTokens.borderStrong : DesignTokens.borderSubtle
+                                color: opRow.visualFocus ? DesignTokens.accentMuted : (opRow.hovered ? DesignTokens.surfaceSunken : "transparent")
+                                border.width: opRow.hovered || opRow.visualFocus ? 1 : 0
+                                border.color: opRow.visualFocus ? DesignTokens.accent : DesignTokens.borderStrong
+                                Behavior on color {
+                                    ColorMotion {}
+                                }
                             }
                             contentItem: RowLayout {
                                 anchors.fill: parent
@@ -560,7 +584,7 @@ Item {
                                     text: "›"
                                     color: DesignTokens.textSecondary
                                     font.pixelSize: DesignTokens.fontSubtitle
-                                    opacity: opRow.hovered ? 1.0 : 0.4
+                                    opacity: opRow.hovered || opRow.visualFocus ? 1.0 : 0.4
                                 }
                             }
                             onClicked: AppController.selectOperation(AppController.selectedModule, opRow.name)
@@ -602,7 +626,7 @@ Item {
                 SplitView.maximumWidth: root.responseCollapsed ? root._railSize : root._responseMaximumWidth
                 SplitView.preferredHeight: root._defaultResponseHeight
                 SplitView.minimumHeight: root.responseCollapsed ? root._railSize : root._responseMinimumHeight
-                color: "transparent"
+                color: DesignTokens.surfaceRaised
                 clip: true
                 visible: AppController.hasOperation || AppController.hasResponse || root.historyReplayActive
 
@@ -610,6 +634,8 @@ Item {
                     id: responsePanel
                     anchors.fill: parent
                     visible: !root.responseCollapsed
+                    color: DesignTokens.surfaceRaised
+                    border.width: 0
                     stacked: root._responseStacked
                     onCloseRequested: root.responseCollapsed = true
                     onToggleStackRequested: root.orientationMode = root._responseStacked ? "horizontal" : "vertical"
@@ -620,9 +646,9 @@ Item {
                     anchors.fill: parent
                     visible: root.responseCollapsed
                     radius: 0
-                    color: responseRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
+                    color: responseRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.surfaceRaised
                     border.width: 1
-                    border.color: DesignTokens.glassBorder
+                    border.color: DesignTokens.borderSubtle
                     Behavior on color {
                         ColorMotion {}
                     }

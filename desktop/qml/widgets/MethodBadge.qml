@@ -1,35 +1,48 @@
-// MethodBadge — a small color-coded HTTP method pill .
-// The hue comes from DesignTokens; the fill is a low-emphasis tint of it.
+// Compact HTTP method instrument label. Desktop design system.
 import QtQuick
 import Reqloom
 
 Rectangle {
     id: badge
+
     required property string method
-    // When > 0, the pill is at least this wide so a column of badges
-    // (e.g. the Explorer) keeps every following name on the same x-axis,
-    // regardless of method length (GET vs OPTIONS).
+    // When > 0, badges share a column width regardless of method length.
     property int minWidth: 0
+    readonly property color methodHue: ({
+            "GET": DesignTokens.methodGet,
+            "POST": DesignTokens.methodPost,
+            "PUT": DesignTokens.methodPut,
+            "PATCH": DesignTokens.methodPatch,
+            "DELETE": DesignTokens.methodDelete
+        })[method] || DesignTokens.textSecondary
 
-    function hue(m) {
-        return DesignTokens.methodColor(m);
-    }
-
-    implicitWidth: Math.max(label.implicitWidth + DesignTokens.spaceSm * 2, minWidth)
+    implicitWidth: Math.max(label.implicitWidth + DesignTokens.spaceXs * 2, minWidth)
     implicitHeight: Math.max(22, label.implicitHeight + DesignTokens.spaceXs * 2)
     radius: DesignTokens.radiusSm
-    color: Qt.rgba(hue(method).r, hue(method).g, hue(method).b, 0.16)
-    Behavior on color {
-        ColorMotion {}
-    }
+    color: DesignTokens.surfaceSunken
+    border.width: 1
+    border.color: DesignTokens.borderSubtle
 
     Text {
         id: label
+
         anchors.centerIn: parent
         text: badge.method
-        color: badge.hue(badge.method)
-        font.pixelSize: DesignTokens.fontCaption
-        font.weight: DesignTokens.weightBold
-        font.letterSpacing: 0.5
+        color: DesignTokens.textPrimary
+        font.pointSize: DesignTokens.fontCaptionPointSize
+        font.family: DesignTokens.fontMono
+        font.weight: DesignTokens.weightSemiBold
+    }
+
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        width: Math.max(0, Math.min(12, parent.width - DesignTokens.spaceXs * 2))
+        height: 2
+        radius: 1
+        color: badge.methodHue
+        Behavior on color {
+            ColorMotion {}
+        }
     }
 }
