@@ -1,7 +1,8 @@
 // LatencySparkline — a compact response-time chart for the current run. Two
 // views, toggled by the header control:
-//   • Bars  — one bar per response (coloured by HTTP-class status token), a
-//             dashed p95 marker, and a one-line summary (median · p95 · max).
+//   • Bars  — one bar per response (coloured by SLO severity when set,
+//             otherwise by HTTP-class status), a dashed p95 marker, and a
+//             one-line summary (median · p95 · max).
 //             Click a bar to scroll the timeline to that step; hover highlights.
 //   • Hist. — the Freedman–Diaconis histogram of the run's latencies
 //             (binning computed in C++ by the LatencyStats helper).
@@ -18,6 +19,7 @@ ColumnLayout {
     // { ms, token, op, stepIndex } per response, and the summary/histogram map.
     required property var bars
     required property var stats
+    property int selectedStepIndex: 0
 
     // Optional p95 latency budget (ms); 0 = no SLO. When the run's p95 exceeds
     // it, the p95 marker and summary turn red — latency as pass/fail.
@@ -39,6 +41,7 @@ ColumnLayout {
     readonly property var viewNames: [qsTr("Scatter"), qsTr("Bars"), qsTr("Histogram")]
     // Bar/dot index under the cursor (−1 = none).
     property int hoveredBar: -1
+    readonly property int selectedBarIndex: root.barIndexForStep(root.selectedStepIndex)
 
     // Threshold legend for the scatter view. With an SLO set, dots bucket
     // good / caution / slow against the budget; without one, by HTTP class.
@@ -99,8 +102,18 @@ ColumnLayout {
             implicitWidth: sloRow.implicitWidth + DesignTokens.spaceSm * 2
             implicitHeight: Math.max(18, sloRow.implicitHeight + DesignTokens.spaceXs * 2)
             radius: DesignTokens.radiusSm
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: qsTr("Edit latency SLO")
+            Accessible.description: root.sloBreached ? qsTr("Latency SLO breached. Edit the p95 budget.") : qsTr("Latency is within the SLO. Edit the p95 budget.")
+            Accessible.onPressAction: root.openSloEditor()
+            Keys.onReturnPressed: root.openSloEditor()
+            Keys.onEnterPressed: root.openSloEditor()
+            Keys.onSpacePressed: root.openSloEditor()
             readonly property color hue: root.sloBreached ? DesignTokens.statusError : DesignTokens.statusSuccess
             color: Qt.rgba(sloPill.hue.r, sloPill.hue.g, sloPill.hue.b, 0.16)
+            border.width: sloPill.activeFocus ? 2 : 0
+            border.color: DesignTokens.accent
             Behavior on color {
                 ColorMotion {}
             }
@@ -137,11 +150,29 @@ ColumnLayout {
         }
         // "+ SLO" affordance shown when no budget is set.
         Label {
+            id: setSloLabel
             visible: root.sloP95Ms === 0
             text: qsTr("+ SLO")
-            color: setSloHover.hovered ? DesignTokens.accent : DesignTokens.textSecondary
+            color: setSloHover.hovered || setSloLabel.activeFocus ? DesignTokens.accent : DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontCaption
             font.weight: DesignTokens.weightSemiBold
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: qsTr("Set latency SLO")
+            Accessible.description: qsTr("Set a p95 latency budget for this project")
+            Accessible.onPressAction: root.openSloEditor()
+            Keys.onReturnPressed: root.openSloEditor()
+            Keys.onEnterPressed: root.openSloEditor()
+            Keys.onSpacePressed: root.openSloEditor()
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -2
+                radius: DesignTokens.radiusSm
+                color: "transparent"
+                border.width: setSloLabel.activeFocus ? 1 : 0
+                border.color: DesignTokens.accent
+                z: -1
+            }
             Behavior on color {
                 ColorMotion {}
             }
@@ -178,10 +209,25 @@ ColumnLayout {
                         required property int index
                         required property string modelData
                         readonly property bool active: root.viewMode === seg.index
+                        function activate() {
+                            root.viewMode = seg.index;
+                            root.hoveredBar = -1;
+                        }
                         implicitHeight: Math.max(22, segText.implicitHeight + DesignTokens.spaceXs * 2)
                         implicitWidth: segText.implicitWidth + DesignTokens.spaceMd
                         radius: DesignTokens.radiusSm - 1
                         color: seg.active ? DesignTokens.accent : (segHover.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
+                        border.width: seg.activeFocus ? 2 : 0
+                        border.color: seg.active ? DesignTokens.textInverse : DesignTokens.accent
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.PageTab
+                        Accessible.name: seg.modelData
+                        Accessible.selectable: true
+                        Accessible.selected: seg.active
+                        Accessible.onPressAction: seg.activate()
+                        Keys.onReturnPressed: seg.activate()
+                        Keys.onEnterPressed: seg.activate()
+                        Keys.onSpacePressed: seg.activate()
                         Behavior on color {
                             ColorMotion {}
                         }
@@ -198,10 +244,7 @@ ColumnLayout {
                             cursorShape: Qt.PointingHandCursor
                         }
                         TapHandler {
-                            onTapped: {
-                                root.viewMode = seg.index;
-                                root.hoveredBar = -1;
-                            }
+                            onTapped: seg.activate()
                         }
                     }
                 }
@@ -273,14 +316,64 @@ ColumnLayout {
         id: plot
         Layout.fillWidth: true
         Layout.preferredHeight: root.isScatter ? 200 : 72
+        activeFocusOnTab: !root.isHistogram && root.bars.length > 0
+        Accessible.role: Accessible.Chart
+        Accessible.focusable: activeFocusOnTab
+        Accessible.focused: activeFocus
+        Accessible.name: {
+            const i = root.selectedBarIndex;
+            if (i < 0) {
+                return qsTr("Latency chart, %1 requests").arg(root.bars.length);
+            }
+            const bar = root.bars[i];
+            const responseCount = root.responseCountForStep(bar.stepIndex);
+            return responseCount === 1 ? qsTr("Latency chart, step %1, %2 milliseconds").arg(bar.stepIndex).arg(Math.round(bar.ms)) : qsTr("Latency chart, step %1, %2 responses selected").arg(bar.stepIndex).arg(responseCount);
+        }
+        Accessible.description: root.isHistogram ? qsTr("Latency histogram") : qsTr("Left and Right select a step and reveal it in the timeline. Enter or Space reveals the selected step.")
+        Accessible.onPressAction: {
+            if (!root.isHistogram) {
+                root.activateBar(root.selectedBarIndex >= 0 ? root.selectedBarIndex : 0);
+            }
+        }
+        Accessible.onIncreaseAction: {
+            if (!root.isHistogram) {
+                root.moveSelection(1);
+            }
+        }
+        Accessible.onDecreaseAction: {
+            if (!root.isHistogram) {
+                root.moveSelection(-1);
+            }
+        }
+        Keys.onPressed: function (event) {
+            if (root.isHistogram || root.bars.length === 0) {
+                event.accepted = false;
+                return;
+            }
+            if (event.key === Qt.Key_Left) {
+                root.moveSelection(-1);
+            } else if (event.key === Qt.Key_Right) {
+                root.moveSelection(1);
+            } else if (event.key === Qt.Key_Home) {
+                root.activateBar(0);
+            } else if (event.key === Qt.Key_End) {
+                root.activateBar(root.bars.length - 1);
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                root.activateBar(root.selectedBarIndex >= 0 ? root.selectedBarIndex : 0);
+            } else {
+                event.accepted = false;
+                return;
+            }
+            event.accepted = true;
+        }
 
         // Framed plot area for all chart views.
         Rectangle {
             anchors.fill: parent
             radius: DesignTokens.radiusSm
             color: "transparent"
-            border.width: 1
-            border.color: DesignTokens.borderSubtle
+            border.width: plot.activeFocus ? 2 : 1
+            border.color: plot.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
         }
 
         Canvas {
@@ -314,12 +407,7 @@ ColumnLayout {
         }
         TapHandler {
             enabled: !root.isHistogram
-            onTapped: eventPoint => {
-                const i = root.barAt(eventPoint.position.x, plot.width);
-                if (i >= 0 && i < root.bars.length) {
-                    root.stepActivated(root.bars[i].stepIndex);
-                }
-            }
+            onTapped: eventPoint => root.activateBar(root.barAt(eventPoint.position.x, plot.width))
         }
         MouseArea {
             anchors.fill: parent
@@ -343,12 +431,18 @@ ColumnLayout {
                 canvas.requestPaint();
             }
             function onViewModeChanged() {
+                if (root.isHistogram && plot.activeFocus) {
+                    plot.focus = false;
+                }
                 canvas.requestPaint();
             }
             function onHoveredBarChanged() {
                 canvas.requestPaint();
             }
             function onSloP95MsChanged() {
+                canvas.requestPaint();
+            }
+            function onSelectedStepIndexChanged() {
                 canvas.requestPaint();
             }
         }
@@ -549,6 +643,44 @@ ColumnLayout {
         return (i >= 0 && i < n) ? i : -1;
     }
 
+    function barIndexForStep(stepIndex) {
+        for (let i = 0; i < root.bars.length; ++i) {
+            if (root.bars[i].stepIndex === stepIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    function responseCountForStep(stepIndex) {
+        let count = 0;
+        for (let i = 0; i < root.bars.length; ++i) {
+            if (root.bars[i].stepIndex === stepIndex) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    function activateBar(index) {
+        if (index >= 0 && index < root.bars.length) {
+            root.stepActivated(root.bars[index].stepIndex);
+        }
+    }
+
+    function moveSelection(direction) {
+        let index = root.selectedBarIndex;
+        if (index < 0) {
+            index = direction > 0 ? -1 : root.bars.length;
+        }
+        const currentStep = index >= 0 && index < root.bars.length ? root.bars[index].stepIndex : -1;
+        let next = index + direction;
+        while (next >= 0 && next < root.bars.length && root.bars[next].stepIndex === currentStep) {
+            next += direction;
+        }
+        root.activateBar(next);
+    }
+
     // Round a max latency up to a "nice" axis ceiling for readable gridlines.
     function niceTop(v) {
         if (v <= 0) {
@@ -563,7 +695,7 @@ ColumnLayout {
         return Math.ceil(v / 1000) * 1000;
     }
 
-    // Dot colour for the scatter view: against the SLO budget when set
+    // Response colour for scatter and bars: against the SLO budget when set
     // (good / caution / slow), otherwise by the response's HTTP-class token.
     function dotColor(bar) {
         if (root.sloP95Ms > 0) {
@@ -628,15 +760,24 @@ ColumnLayout {
 
         // One dot per response, spread evenly in request order.
         for (let i = 0; i < n; ++i) {
-            const ms = root.bars[i].ms;
+            const bar = root.bars[i];
+            const selected = bar.stepIndex === root.selectedStepIndex;
             const x = padL + (n === 1 ? plotW / 2 : ((i + 0.5) / n) * plotW);
-            const y = padTop + plotH - Math.min(1, ms / top) * plotH;
+            const y = padTop + plotH - Math.min(1, bar.ms / top) * plotH;
             const r = (root.hoveredBar === i) ? 5 : 3.5;
-            ctx.fillStyle = root.dotColor(root.bars[i]);
-            ctx.globalAlpha = (root.hoveredBar < 0 || root.hoveredBar === i) ? 1.0 : 0.4;
+            ctx.fillStyle = root.dotColor(bar);
+            ctx.globalAlpha = (selected || root.hoveredBar < 0 || root.hoveredBar === i) ? 1.0 : 0.4;
             ctx.beginPath();
             ctx.arc(x, y, r, 0, Math.PI * 2);
             ctx.fill();
+            if (selected) {
+                ctx.strokeStyle = DesignTokens.accent;
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 1.0;
+                ctx.beginPath();
+                ctx.arc(x, y, r + 3, 0, Math.PI * 2);
+                ctx.stroke();
+            }
         }
         ctx.globalAlpha = 1.0;
     }
@@ -654,14 +795,21 @@ ColumnLayout {
         const groupW = barW * n + gap * (n - 1);
         const offsetX = Math.max(0, (w - groupW) / 2);
         for (let i = 0; i < n; ++i) {
-            const ms = root.bars[i].ms;
-            const bh = Math.max(2, (ms / root.maxMs) * h);
+            const bar = root.bars[i];
+            const selected = bar.stepIndex === root.selectedStepIndex;
+            const bh = Math.max(2, (bar.ms / root.maxMs) * h);
             const x = offsetX + i * (barW + gap);
             const y = h - bh;
-            ctx.fillStyle = DesignTokens.statusColor(root.bars[i].token);
+            ctx.fillStyle = root.dotColor(bar);
             // Dim the non-hovered bars when one is hovered, for a clear target.
-            ctx.globalAlpha = (root.hoveredBar < 0 || root.hoveredBar === i) ? 0.9 : 0.4;
+            ctx.globalAlpha = (selected || root.hoveredBar < 0 || root.hoveredBar === i) ? 0.9 : 0.4;
             ctx.fillRect(x, y, barW, bh);
+            if (selected) {
+                ctx.strokeStyle = DesignTokens.accent;
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 1.0;
+                ctx.strokeRect(x, y, barW, bh);
+            }
         }
         ctx.globalAlpha = 1.0;
 
