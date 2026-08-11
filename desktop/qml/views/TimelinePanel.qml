@@ -16,7 +16,13 @@ Rectangle {
     color: DesignTokens.surfaceRaised
     border.width: 1
     border.color: DesignTokens.borderSubtle
-    property int selectedStepIndex: 0
+    // Selection lives in TimelineModel, so it rides along in that model's
+    // per-tab snapshot and can be read by the chain graph and the explorer.
+    // Read-only here on purpose: this view WRITES selection only from a user
+    // gesture (tap, arrow keys, sparkline click) and otherwise only READS it.
+    // Binding a write back from a render-time change handler is what creates a
+    // loop, so the two directions must not share a path.
+    readonly property int selectedStepIndex: AppController.timeline.selectedStep
 
     function activateStep(stepIndex, rowIndex, reveal) {
         if (rowIndex >= 0) {
@@ -28,7 +34,7 @@ Rectangle {
             }
         }
         if (stepIndex > 0) {
-            panel.selectedStepIndex = stepIndex;
+            AppController.timeline.selectedStep = stepIndex;
         }
     }
 
@@ -140,9 +146,12 @@ Rectangle {
                 }
             }
             onCurrentIndexChanged: {
+                // Keyboard-cursor bookkeeping only. This must NOT clear the
+                // model's pinned step: a model reset parks currentIndex at -1,
+                // so clearing here would wipe the selection a tab switch just
+                // restored. TimelineModel::reset() owns clearing instead.
                 if (currentIndex < 0) {
                     currentStepIndex = 0;
-                    panel.selectedStepIndex = 0;
                 }
             }
             onActiveFocusChanged: {
@@ -170,6 +179,20 @@ Rectangle {
                 required property string clock
                 required property string duration
                 required property string subLabel
+                required property string op
+                required property string variableName
+
+                // Steps that needed this value. Only computed for a *missed*
+                // extraction — that is the case where "what did this break?"
+                // is the question, and it keeps the plan resolution off the
+                // happy path.
+                readonly property bool missedExtraction: row.kind === "extraction" && row.statusToken === "warning"
+                property var consumers: []
+                Component.onCompleted: {
+                    if (row.missedExtraction) {
+                        row.consumers = AppController.extractionConsumers(row.op, row.variableName);
+                    }
+                }
 
                 // ponytail: duration is an internal "<integer> ms" contract.
                 // Add a numeric model role before localizing or changing it.
@@ -241,7 +264,8 @@ Rectangle {
                     if (ListView.isCurrentItem) {
                         timelineList.currentStepIndex = row.stepIndex;
                         if (row.stepIndex > 0) {
-                            panel.selectedStepIndex = row.stepIndex;
+                            // Arrow-key navigation is a gesture, so it may write.
+                            AppController.timeline.selectedStep = row.stepIndex;
                         }
                         if (timelineList.activeFocus) {
                             timelineList.followTail = row.index >= timelineList.count - 1;
@@ -564,15 +588,75 @@ Rectangle {
                                     horizontalAlignment: Text.AlignRight
                                     text: row.duration
                                     color: row.kind === "response" ? latencyChart.dotColor({
-                                            "ms": row.responseDurationMs,
-                                            "token": row.statusToken
-                                        }) : DesignTokens.textSecondary
+                                        "ms": row.responseDurationMs,
+                                        "token": row.statusToken
+                                    }) : DesignTokens.textSecondary
                                     font.pixelSize: DesignTokens.fontCaption
                                     font.family: DesignTokens.fontMono
                                     font.weight: DesignTokens.weightSemiBold
                                     font.features: ({
                                             "tnum": 1
                                         })
+                                }
+                            }
+                        }
+                    }
+
+                    // A missed extraction on its own says little; what matters is
+                    // which later steps needed the value. Naming them turns two
+                    // seemingly separate failures into one cause.
+                    Flow {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: DesignTokens.spaceXs
+                        visible: row.consumers.length > 0
+                        spacing: DesignTokens.spaceXs
+
+                        Label {
+                            text: qsTr("needed by")
+                            color: DesignTokens.statusWarning
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.weight: DesignTokens.weightSemiBold
+                        }
+
+                        Repeater {
+                            model: row.consumers
+                            delegate: Rectangle {
+                                id: consumerChip
+                                required property string modelData
+                                readonly property int targetStep: AppController.timeline.stepForOperation(consumerChip.modelData)
+                                implicitWidth: chipLabel.implicitWidth + DesignTokens.spaceSm * 2
+                                implicitHeight: Math.max(18, chipLabel.implicitHeight + DesignTokens.spaceXs)
+                                radius: DesignTokens.radiusSm
+                                color: chipArea.containsMouse && consumerChip.targetStep > 0 ? DesignTokens.accentMuted : DesignTokens.surfaceBase
+                                border.width: 1
+                                border.color: chipArea.containsMouse && consumerChip.targetStep > 0 ? DesignTokens.accent : DesignTokens.borderSubtle
+
+                                Label {
+                                    id: chipLabel
+                                    anchors.centerIn: parent
+                                    text: consumerChip.modelData
+                                    color: DesignTokens.textPrimary
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.family: DesignTokens.fontMono
+                                }
+                                MouseArea {
+                                    id: chipArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    // Only offer the jump when that step actually
+                                    // ran; a consumer can be blocked and absent.
+                                    cursorShape: consumerChip.targetStep > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: {
+                                        const step = consumerChip.targetStep;
+                                        if (step > 0) {
+                                            const at = AppController.timeline.rowForStep(step);
+                                            panel.activateStep(step, at, true);
+                                        }
+                                    }
+                                }
+                                GlassToolTip {
+                                    active: chipArea.containsMouse
+                                    text: consumerChip.targetStep > 0 ? qsTr("Go to this step") : qsTr("This step did not run")
                                 }
                             }
                         }
@@ -668,7 +752,10 @@ Rectangle {
             Connections {
                 target: AppController.timeline
                 function onModelReset() {
-                    panel.selectedStepIndex = 0;
+                    // Selection is deliberately not touched here. This fires for
+                    // both a fresh run and a tab-snapshot restore; the model
+                    // clears its own selection in the former and restores it in
+                    // the latter, so writing 0 here would break tab switching.
                     timelineList.currentIndex = -1;
                     timelineList.currentStepIndex = 0;
                     timelineList.followTail = true;

@@ -856,15 +856,172 @@ Rectangle {
                     }
                 }
 
-                // Empty state (no response yet).
+                // Pre-run state: the resolved execution path, so the pane answers
+                // "what happens when I press Send" instead of showing a bare icon.
+                // Falls back to the generic empty state when there is no chain to
+                // describe (no operation selected, or an unresolvable chain).
                 Item {
+                    id: preRun
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     visible: !AppController.hasResponse
+
+                    // Held in a property, not bound: executionPreview() resolves the
+                    // plan on every call, so it is refreshed on the events that can
+                    // change it rather than on every binding re-evaluation.
+                    property var steps: []
+
+                    function refresh() {
+                        preRun.steps = preRun.visible ? AppController.executionPreview() : [];
+                    }
+
+                    onVisibleChanged: preRun.refresh()
+                    Component.onCompleted: preRun.refresh()
+
+                    Connections {
+                        target: AppController
+                        function onChainChanged() {
+                            preRun.refresh();
+                        }
+                        function onOperationChanged() {
+                            preRun.refresh();
+                        }
+                    }
+
                     EmptyState {
+                        anchors.centerIn: parent
+                        visible: preRun.steps.length === 0
                         iconName: "zap"
                         heading: qsTr("No response yet")
                         body: qsTr("Press Send to run this endpoint's chain and the response will appear here.")
+                    }
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        visible: preRun.steps.length > 0
+                        spacing: DesignTokens.spaceSm
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: DesignTokens.spaceSm
+                            SectionLabel {
+                                text: qsTr("EXECUTION PATH")
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: preRun.steps.length === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(preRun.steps.length)
+                                color: DesignTokens.textSecondary
+                                font.pointSize: DesignTokens.fontCaptionPointSize
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Values shown as {{name}} are resolved while the chain runs.")
+                            color: DesignTokens.textSecondary
+                            font.pointSize: DesignTokens.fontCaptionPointSize
+                            wrapMode: Text.WordWrap
+                        }
+
+                        ListView {
+                            id: pathList
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            spacing: DesignTokens.spaceXs
+                            model: preRun.steps
+
+                            delegate: Rectangle {
+                                id: stepRow
+                                required property var modelData
+                                width: ListView.view.width
+                                implicitHeight: stepCol.implicitHeight + DesignTokens.spaceSm * 2
+                                radius: DesignTokens.radiusSm
+                                color: stepRow.modelData.isTarget ? DesignTokens.accentMuted : DesignTokens.surfaceSunken
+                                border.width: 1
+                                border.color: stepRow.modelData.isTarget ? DesignTokens.accent : DesignTokens.borderSubtle
+
+                                ColumnLayout {
+                                    id: stepCol
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.leftMargin: DesignTokens.spaceSm
+                                    anchors.rightMargin: DesignTokens.spaceSm
+                                    spacing: 2
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: DesignTokens.spaceSm
+
+                                        Label {
+                                            text: stepRow.modelData.number
+                                            color: DesignTokens.textSecondary
+                                            font.pointSize: DesignTokens.fontCaptionPointSize
+                                            font.family: DesignTokens.fontMono
+                                            font.features: ({
+                                                    "tnum": 1
+                                                })
+                                        }
+                                        MethodBadge {
+                                            visible: stepRow.modelData.method.length > 0
+                                            method: stepRow.modelData.method.length > 0 ? stepRow.modelData.method : "GET"
+                                            minWidth: 54
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: stepRow.modelData.path.length > 0 ? stepRow.modelData.path : qsTr("operation not found in this project")
+                                            color: stepRow.modelData.path.length > 0 ? DesignTokens.textPrimary : DesignTokens.statusError
+                                            font.pointSize: DesignTokens.fontLabelPointSize
+                                            font.family: DesignTokens.fontMono
+                                            elide: Text.ElideMiddle
+                                        }
+                                        Label {
+                                            visible: stepRow.modelData.isTarget
+                                            text: qsTr("target")
+                                            color: DesignTokens.accent
+                                            font.pointSize: DesignTokens.fontCaptionPointSize
+                                            font.weight: DesignTokens.weightSemiBold
+                                        }
+                                    }
+
+                                    // The values this step hands downstream — the
+                                    // knots that make the chain a chain.
+                                    Label {
+                                        Layout.fillWidth: true
+                                        visible: stepRow.modelData.produces.length > 0
+                                        text: {
+                                            const names = [];
+                                            for (let i = 0; i < stepRow.modelData.produces.length; ++i) {
+                                                names.push(stepRow.modelData.produces[i].variable);
+                                            }
+                                            return qsTr("produces %1").arg(names.join(", "));
+                                        }
+                                        color: DesignTokens.textSecondary
+                                        font.pointSize: DesignTokens.fontCaptionPointSize
+                                        font.family: DesignTokens.fontMono
+                                        elide: Text.ElideRight
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        visible: stepRow.modelData.actor.length > 0 || stepRow.modelData.expectStatus.length > 0
+                                        text: {
+                                            const parts = [];
+                                            if (stepRow.modelData.actor.length > 0) {
+                                                parts.push(qsTr("as %1").arg(stepRow.modelData.actor));
+                                            }
+                                            if (stepRow.modelData.expectStatus.length > 0) {
+                                                parts.push(qsTr("expects %1").arg(stepRow.modelData.expectStatus.join(", ")));
+                                            }
+                                            return parts.join("  ·  ");
+                                        }
+                                        color: DesignTokens.textSecondary
+                                        font.pointSize: DesignTokens.fontCaptionPointSize
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

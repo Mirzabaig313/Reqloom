@@ -18,6 +18,11 @@ Rectangle {
     property string emptyText: ""
     // operationId → live run status token (running/success/error/…), for colour.
     property var statusMap: ({})
+    // Operation being inspected elsewhere (the timeline's selected step), rung
+    // so the same request is identifiable across surfaces. Deliberately a plain
+    // string: this view never learns that a timeline exists, so nothing couples
+    // the graph to run state beyond the status map it already takes.
+    property string highlightedOp: ""
     // Emitted when a node is activated ("Open endpoint" in its detail popover).
     signal nodeActivated(string operationId)
     // Emitted to open a node's endpoint directly in Edit mode ("Edit chain").
@@ -304,6 +309,7 @@ Rectangle {
                     required property real tx
                     required property real ty
                     readonly property string nodeStatus: root.statusMap[card.operationId] || ""
+                    readonly property bool inspected: root.highlightedOp.length > 0 && root.highlightedOp === card.operationId
                     readonly property color statusHue: ({
                             "running": DesignTokens.statusRunning,
                             "success": DesignTokens.statusSuccess,
@@ -355,6 +361,22 @@ Rectangle {
                     color: DesignTokens.surfaceRaised
                     border.width: card.nodeStatus.length > 0 ? 2 : 1
                     border.color: card.nodeStatus.length > 0 ? card.statusHue : (card.isTarget ? DesignTokens.accent : DesignTokens.borderSubtle)
+
+                    // Inspection ring, drawn OUTSIDE the card (larger, behind)
+                    // rather than by recolouring the border: the border already
+                    // carries run status, and a step is most worth inspecting
+                    // exactly when that status says it failed.
+                    Rectangle {
+                        visible: card.inspected
+                        anchors.centerIn: parent
+                        width: parent.width + 6
+                        height: parent.height + 6
+                        radius: parent.radius + 3
+                        z: -1
+                        color: "transparent"
+                        border.width: 2
+                        border.color: DesignTokens.accent
+                    }
 
                     RowLayout {
                         anchors.fill: parent

@@ -300,6 +300,10 @@ Rectangle {
                 // Live run-status token for this operation (running/success/error/…),
                 // for the trailing status dot. Empty when the op hasn't run.
                 readonly property string opRunToken: del.isOperation ? (AppController.chainStatus[del.operationId] || "") : ""
+                // True when this endpoint owns the timeline step being inspected,
+                // so the same request is identifiable in the tree, the chain
+                // graph, and the inspector at once.
+                readonly property bool inspectedStep: del.isOperation && AppController.timeline.selectedOperationId.length > 0 && del.operationId === AppController.timeline.selectedOperationId
 
                 onCurrentChanged: {
                     if (del.current) {
@@ -313,7 +317,11 @@ Rectangle {
                     anchors.topMargin: 1
                     anchors.bottomMargin: 1
                     radius: DesignTokens.radiusSm
-                    color: del.current ? DesignTokens.accentMuted : del.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
+                    // Inspected-but-not-current reads as a faint accent wash: a
+                    // full-row tint rather than a leading stripe, since coloured
+                    // side stripes are a banned pattern (DESIGN §15). Weaker than
+                    // `current` so keyboard focus stays the louder signal.
+                    color: del.current ? DesignTokens.accentMuted : del.inspectedStep ? Qt.rgba(DesignTokens.accent.r, DesignTokens.accent.g, DesignTokens.accent.b, 0.10) : del.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
                     border.width: del.current ? 1 : 0
                     border.color: del.current ? DesignTokens.accent : "transparent"
                     Behavior on color {

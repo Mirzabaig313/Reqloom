@@ -62,6 +62,8 @@ qt_add_executable(reqloom-desktop
     src/application/OAuth2AuthCodeFlow.h
     src/application/RunController.cpp
     src/application/RunController.h
+    src/application/ExecutionPreview.cpp
+    src/application/ExecutionPreview.h
     src/application/SavedResponseStore.cpp
     src/application/SavedResponseStore.h
     src/application/EnvironmentSettings.cpp

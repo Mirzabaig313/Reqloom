@@ -4,6 +4,7 @@
 
 #include "ThemeController.h"
 #include "application/EnvironmentSettings.h"
+#include "application/ExecutionPreview.h"
 #include "application/ProjectModel.h"
 #include "application/WorkspaceModel.h"
 #include "views/Formatting.h"
@@ -709,6 +710,79 @@ QVariantMap AppController::chainGraph() const {
     graph.insert(QStringLiteral("nodeWidth"), options.nodeWidth);
     graph.insert(QStringLiteral("nodeHeight"), options.nodeHeight);
     return graph;
+}
+
+QVariantList AppController::executionPreview() const {
+    QVariantList preview;
+    if (!activeProject().hasProject() || !hasOperation_ || bootstrapper_ == nullptr) {
+        return preview;
+    }
+    const engine::OperationId targetOpId{currentOperationId().toStdString()};
+    const engine::Project& project = activeProject().project();
+    if (project.resources.empty() || activeProject().findOperation(targetOpId) == nullptr) {
+        return preview;
+    }
+
+    // Resolved against the persisted project, not the edit-mode patched copy the
+    // chain graph builds: this previews what a run would do now. An unresolvable
+    // chain (cycle) yields an empty list, and the caller keeps its empty state.
+    const auto plan = bootstrapper_->engine().resolvePlan(project, targetOpId);
+    if (!plan) {
+        return preview;
+    }
+
+    const std::vector<PreviewStep> steps = buildExecutionPreview(*plan, project);
+    preview.reserve(static_cast<qsizetype>(steps.size()));
+    for (const PreviewStep& step : steps) {
+        QVariantList produces;
+        produces.reserve(static_cast<qsizetype>(step.produces.size()));
+        for (const PreviewOutput& output : step.produces) {
+            produces.append(QVariantMap{{QStringLiteral("variable"), output.variable},
+                                        {QStringLiteral("sourcePath"), output.sourcePath}});
+        }
+        QVariantList expectStatus;
+        expectStatus.reserve(step.expectStatus.size());
+        for (const int status : step.expectStatus) {
+            expectStatus.append(status);
+        }
+
+        preview.append(QVariantMap{{QStringLiteral("number"), step.number},
+                                   {QStringLiteral("operationId"), step.operationId},
+                                   {QStringLiteral("method"), step.method},
+                                   {QStringLiteral("path"), step.pathTemplate},
+                                   {QStringLiteral("actor"), step.actor},
+                                   {QStringLiteral("isTarget"), step.isTarget},
+                                   {QStringLiteral("dependsOn"), step.dependsOn},
+                                   {QStringLiteral("produces"), produces},
+                                   {QStringLiteral("expectStatus"), expectStatus}});
+    }
+    return preview;
+}
+
+QStringList AppController::extractionConsumers(const QString& producerOperationId,
+                                               const QString& variable) const {
+    if (!activeProject().hasProject() || !hasOperation_ || bootstrapper_ == nullptr) {
+        return {};
+    }
+    if (producerOperationId.isEmpty() || variable.isEmpty()) {
+        return {};
+    }
+    const engine::OperationId targetOpId{currentOperationId().toStdString()};
+    const engine::Project& project = activeProject().project();
+    if (activeProject().findOperation(targetOpId) == nullptr) {
+        return {};
+    }
+
+    // ponytail: resolves the plan per call, so a run with many missed extractions
+    // re-resolves once per row. Measured cheap on real projects (the whole
+    // marketplace sample resolves in well under a second). If a large project
+    // ever makes this show up, cache the plan per (target, chainChanged) instead
+    // of widening the API.
+    const auto plan = bootstrapper_->engine().resolvePlan(project, targetOpId);
+    if (!plan) {
+        return {};
+    }
+    return consumersOfVariable(*plan, producerOperationId, variable);
 }
 
 QVariantMap AppController::chainStatus() const {

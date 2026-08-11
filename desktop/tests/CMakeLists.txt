@@ -90,6 +90,16 @@ add_executable(reqloom-desktop-secret-tests
     unit/ProjectTreeModelTest.cpp
     unit/PathEvalTest.cpp
     unit/AuthStepListModelTest.cpp
+    unit/TimelineModelTest.cpp
+    unit/ExecutionPreviewTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ExecutionPreview.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ExecutionPreview.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/Formatting.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/Formatting.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TimelineModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TimelineModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp
@@ -108,6 +118,13 @@ target_include_directories(reqloom-desktop-secret-tests
         ${CMAKE_CURRENT_SOURCE_DIR}/../src
         ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge
         ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models
+)
+# Lets ExecutionPreviewTest resolve the real sample project, so the preview is
+# checked against a project a user could actually open rather than only against
+# hand-built structs. Mirrors the engine integration tests' definition.
+target_compile_definitions(reqloom-desktop-secret-tests
+    PRIVATE
+        REQLOOM_SAMPLES_DIR="${CMAKE_SOURCE_DIR}/samples"
 )
 target_link_libraries(reqloom-desktop-secret-tests
     PRIVATE

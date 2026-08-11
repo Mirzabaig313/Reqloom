@@ -530,6 +530,7 @@ ColumnLayout {
             visible: chainSection.expanded
             graph: AppController.chainGraph
             statusMap: AppController.chainStatus
+            highlightedOp: AppController.timeline.selectedOperationId
             emptyText: qsTr("No declared dependencies — run Dry Run for the full resolved chain.")
             onNodeActivated: opId => AppController.selectOperationById(opId)
             onNodeEditRequested: opId => AppController.editOperationById(opId)

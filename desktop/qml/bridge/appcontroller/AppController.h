@@ -598,6 +598,9 @@ public:
     [[nodiscard]] int editAssertionsCount() const;
     [[nodiscard]] QVariantList chainNodes() const;
     [[nodiscard]] QVariantMap chainGraph() const;
+    [[nodiscard]] Q_INVOKABLE QVariantList executionPreview() const;
+    [[nodiscard]] Q_INVOKABLE QStringList extractionConsumers(const QString& producerOperationId,
+                                                              const QString& variable) const;
     [[nodiscard]] QVariantMap chainStatus() const;
     [[nodiscard]] ChainEditorModel* chainEditor() { return &chainEditor_; }
 
