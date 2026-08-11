@@ -65,9 +65,12 @@ Rectangle {
 
     readonly property real availableContentWidth: Math.max(0, width - DesignTokens.spaceLg * 2)
     readonly property bool topControlsReflow: availableContentWidth < topTabs.implicitWidth + stackBtn.implicitWidth + closeBtn.implicitWidth + DesignTokens.spaceSm * 2
-    // 220 DIP keeps status, elapsed time, and body size useful before actions move.
-    readonly property bool statusActionsReflow: availableContentWidth < 220 + copyBodyBtn.implicitWidth + saveExampleBtn.implicitWidth + DesignTokens.spaceMd * 2
-    readonly property bool statusButtonsStack: availableContentWidth < copyBodyBtn.implicitWidth + saveExampleBtn.implicitWidth + DesignTokens.spaceMd
+    // Measured against the tray's real content width rather than a guessed
+    // minimum, so the actions only drop to a second row when they genuinely
+    // cannot sit beside it.
+    // Budget matches the real layout: one grid gap between the tray and the
+    // action cell, plus one gap between the two buttons.
+    readonly property bool statusActionsReflow: availableContentWidth < statusSummary.implicitWidth + copyBodyBtn.implicitWidth + saveExampleBtn.implicitWidth + DesignTokens.spaceSm * 2
     readonly property bool examplesReflow: availableContentWidth < examplesLabel.implicitWidth + 260 + DesignTokens.spaceSm
     readonly property bool responseTabsReflow: prettyBtn.visible && availableContentWidth < respTabs.implicitWidth + prettyBtn.implicitWidth + DesignTokens.spaceSm
     readonly property bool rawControlsReflow: availableContentWidth < 150 + Math.max(previewBtn.implicitWidth, rawPrettyBtn.implicitWidth) + DesignTokens.spaceSm
@@ -286,9 +289,9 @@ Rectangle {
                 GridLayout {
                     Layout.fillWidth: true
                     visible: AppController.hasResponse
-                    columns: 3
+                    columns: 2
                     rowSpacing: DesignTokens.spaceXs
-                    columnSpacing: DesignTokens.spaceMd
+                    columnSpacing: DesignTokens.spaceSm
 
                     // Grouped status tray: code + example + timing + size read
                     // as one unit instead of four loose labels (UI/UX review §5).
@@ -299,22 +302,26 @@ Rectangle {
 
                         Layout.row: 0
                         Layout.column: 0
-                        Layout.columnSpan: panel.statusActionsReflow ? 3 : 1
-                        Layout.fillWidth: true
+                        Layout.columnSpan: panel.statusActionsReflow ? 2 : 1
+                        // Hug the content: a stretched tray left "HTTP 200 …"
+                        // floating in a wide empty pill and starved the actions
+                        // of the room they needed to stay on this row.
                         Layout.minimumWidth: 0
-                        implicitWidth: 220
+                        implicitWidth: statusTray.implicitWidth + DesignTokens.spaceMd * 2
                         implicitHeight: Math.max(DesignTokens.controlHeight, statusTray.implicitHeight + DesignTokens.spaceXs * 2)
                         radius: DesignTokens.radiusSm
                         color: DesignTokens.surfaceSunken
                         border.width: 1
                         border.color: DesignTokens.borderSubtle
-                        Flow {
+                        // Row, not Flow: its implicit width is pure content, so
+                        // the pill can size to it without the width feeding back
+                        // through wrapping. Narrowness is handled by the whole
+                        // row reflowing plus the example name eliding.
+                        Row {
                             id: statusTray
                             anchors.left: parent.left
-                            anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.leftMargin: DesignTokens.spaceMd
-                            anchors.rightMargin: DesignTokens.spaceMd
                             spacing: DesignTokens.spaceSm
                             Label {
                                 text: AppController.respStatus > 0 ? ("HTTP " + AppController.respStatus) : AppController.runOutcome
@@ -324,7 +331,7 @@ Rectangle {
                                 font.weight: DesignTokens.weightSemiBold
                             }
                             Rectangle {
-                                visible: AppController.shownExample.length > 0 && !panel.statusActionsReflow
+                                visible: AppController.shownExample.length > 0
                                 implicitWidth: 1
                                 implicitHeight: 14
                                 color: DesignTokens.borderSubtle
@@ -338,7 +345,6 @@ Rectangle {
                                 elide: Text.ElideRight
                             }
                             Rectangle {
-                                visible: !panel.statusActionsReflow
                                 implicitWidth: 1
                                 implicitHeight: 14
                                 color: DesignTokens.borderSubtle
@@ -379,59 +385,76 @@ Rectangle {
                         }
                     }
 
-                    Button {
-                        id: copyBodyBtn
-                        Layout.row: panel.statusButtonsStack ? 1 : (panel.statusActionsReflow ? 1 : 0)
-                        Layout.column: panel.statusButtonsStack ? 0 : 1
-                        Layout.columnSpan: panel.statusButtonsStack ? 3 : 1
-                        Layout.fillWidth: panel.statusButtonsStack
-                        text: qsTr("Copy")
-                        implicitHeight: Math.max(28, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
-                        leftPadding: DesignTokens.spaceSm
-                        rightPadding: DesignTokens.spaceSm
-                        enabled: AppController.respBody.length > 0
-                        GlassToolTip {
-                            active: copyBodyBtn.hovered
-                            text: qsTr("Copy the full response body")
+                    // Both actions live in one cell, so the row costs one grid gap
+                    // plus one gap between them instead of three separate grid
+                    // gaps. The leading spacer keeps them against the trailing
+                    // edge without the tray having to stretch.
+                    RowLayout {
+                        Layout.row: panel.statusActionsReflow ? 1 : 0
+                        Layout.column: panel.statusActionsReflow ? 0 : 1
+                        Layout.columnSpan: panel.statusActionsReflow ? 2 : 1
+                        Layout.fillWidth: true
+                        spacing: DesignTokens.spaceSm
+
+                        Item {
+                            Layout.fillWidth: true
                         }
-                        onClicked: AppController.copyToClipboard(AppController.respBody, qsTr("response body"))
-                        contentItem: Text {
-                            text: copyBodyBtn.text
-                            color: copyBodyBtn.enabled ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontLabel
-                            font.weight: DesignTokens.weightSemiBold
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
+
+                        Button {
+                            id: copyBodyBtn
+                            text: qsTr("Copy")
+                            implicitHeight: Math.max(28, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
+                            leftPadding: DesignTokens.spaceSm
+                            rightPadding: DesignTokens.spaceSm
+                            enabled: AppController.respBody.length > 0
+                            GlassToolTip {
+                                active: copyBodyBtn.hovered
+                                text: qsTr("Copy the full response body")
+                            }
+                            onClicked: AppController.copyToClipboard(AppController.respBody, qsTr("response body"))
+                            contentItem: Text {
+                                text: copyBodyBtn.text
+                                color: copyBodyBtn.enabled ? DesignTokens.accent : DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.weight: DesignTokens.weightSemiBold
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                radius: DesignTokens.radiusSm
+                                color: copyBodyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                                border.width: 1
+                                border.color: DesignTokens.borderSubtle
+                            }
                         }
-                        background: Rectangle {
-                            radius: DesignTokens.radiusSm
-                            color: copyBodyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
-                            border.width: 1
-                            border.color: DesignTokens.borderSubtle
-                        }
-                    }
-                    Button {
-                        id: saveExampleBtn
-                        Layout.row: panel.statusButtonsStack ? 2 : (panel.statusActionsReflow ? 1 : 0)
-                        Layout.column: panel.statusButtonsStack ? 0 : 2
-                        Layout.columnSpan: panel.statusButtonsStack ? 3 : 1
-                        Layout.fillWidth: panel.statusButtonsStack
-                        text: qsTr("Save as example")
-                        implicitHeight: Math.max(28, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
-                        onClicked: saveExampleDialog.open()
-                        contentItem: Text {
-                            text: saveExampleBtn.text
-                            color: DesignTokens.accent
-                            font.pixelSize: DesignTokens.fontLabel
-                            font.weight: DesignTokens.weightSemiBold
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: DesignTokens.radiusSm
-                            color: saveExampleBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
-                            border.width: 1
-                            border.color: DesignTokens.borderSubtle
+                        Button {
+                            id: saveExampleBtn
+                            // Shortened from "Save as example": the full phrase cost
+                            // ~25 DIP that pushed this pair onto its own row. The
+                            // meaning lives in the tooltip and the dialog title.
+                            text: qsTr("Save example")
+                            implicitHeight: Math.max(28, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
+                            leftPadding: DesignTokens.spaceSm
+                            rightPadding: DesignTokens.spaceSm
+                            GlassToolTip {
+                                active: saveExampleBtn.hovered
+                                text: qsTr("Save this response as a named example")
+                            }
+                            onClicked: saveExampleDialog.open()
+                            contentItem: Text {
+                                text: saveExampleBtn.text
+                                color: DesignTokens.accent
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.weight: DesignTokens.weightSemiBold
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                radius: DesignTokens.radiusSm
+                                color: saveExampleBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                                border.width: 1
+                                border.color: DesignTokens.borderSubtle
+                            }
                         }
                     }
                 }
