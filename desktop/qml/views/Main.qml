@@ -23,8 +23,28 @@ ApplicationWindow {
     }
     color: DesignTokens.canvasBottom
 
-    // Persist splitter geometry / collapse / orientation on an orderly close.
-    onClosing: workbench.saveLayout()
+    property bool quitAfterDraftDiscard: false
+    property bool closingAfterDraftDiscard: false
+    property bool discardAfterSaveConfirmationCloses: false
+    property bool discardConfirmationActive: false
+    readonly property bool endpointConfirmationActive: discardConfirmationActive || workbench.endpointSaveConfirmationActive
+    readonly property bool globalShortcutBlocked: endpointConfirmationActive || workbench.editConfirmationActive
+
+    // Persist layout on every close attempt. A transient endpoint is never
+    // persisted, so close only resumes after the shared discard confirmation.
+    onClosing: event => {
+        workbench.saveLayout();
+        if (AppController.newOperationDraftOpen && !window.closingAfterDraftDiscard) {
+            event.accepted = false;
+            window.quitAfterDraftDiscard = true;
+            if (workbench.endpointSaveConfirmationActive) {
+                window.discardAfterSaveConfirmationCloses = true;
+                workbench.closeEndpointSaveConfirmation();
+            } else if (!window.discardConfirmationActive) {
+                AppController.requestDiscardNewOperation();
+            }
+        }
+    }
 
     // ── Frosted backdrop ─────────────────────────────────────────────────────
     // An iridescent gradient with soft nacre glow-blobs, blurred so the
@@ -128,7 +148,7 @@ ApplicationWindow {
             MenuSeparator {}
             MenuItem {
                 text: qsTr("Quit")
-                onTriggered: Qt.quit()
+                onTriggered: window.close()
             }
         }
         Menu {
@@ -139,6 +159,7 @@ ApplicationWindow {
             }
             MenuItem {
                 text: workbench.responseCollapsed ? qsTr("Show Response") : qsTr("Hide Response")
+                enabled: !workbench.creatingEndpoint
                 onTriggered: workbench.responseCollapsed = !workbench.responseCollapsed
             }
             MenuSeparator {}
@@ -188,18 +209,22 @@ ApplicationWindow {
     // ── Global shortcuts ───────────────────────────────────────────────────
     Shortcut {
         sequence: "Ctrl+B"
+        enabled: !window.globalShortcutBlocked
         onActivated: workbench.explorerCollapsed = !workbench.explorerCollapsed
     }
     Shortcut {
         sequence: "Ctrl+J"
+        enabled: !workbench.creatingEndpoint && !window.globalShortcutBlocked
         onActivated: workbench.responseCollapsed = !workbench.responseCollapsed
     }
     Shortcut {
         sequence: "Ctrl+P"
+        enabled: !window.globalShortcutBlocked
         onActivated: commandPalette.open()
     }
     Shortcut {
         sequence: "Ctrl+W"
+        enabled: !window.globalShortcutBlocked
         onActivated: {
             if (AppController.activeTabIndex >= 0) {
                 AppController.closeTab(AppController.activeTabIndex);
@@ -208,8 +233,11 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+Return"
+        enabled: !commandPalette.opened && !window.globalShortcutBlocked
         onActivated: {
-            if (AppController.hasOperation) {
+            if (workbench.creatingEndpoint) {
+                workbench.submitEndpointCreation();
+            } else if (AppController.hasOperation) {
                 AppController.runSelected(false, false);
             }
         }
@@ -226,6 +254,19 @@ ApplicationWindow {
         }
         function onImportReviewNotes(notes) {
             importNotesDialog.showNotes(notes);
+        }
+        function onNewOperationDiscardRequested() {
+            if (!window.discardConfirmationActive) {
+                window.discardConfirmationActive = true;
+                discardNewEndpointDialog.open();
+            }
+        }
+        function onNewOperationDraftDiscarded() {
+            if (window.quitAfterDraftDiscard) {
+                window.quitAfterDraftDiscard = false;
+                window.closingAfterDraftDiscard = true;
+                Qt.callLater(window.close);
+            }
         }
     }
     Connections {
@@ -609,6 +650,16 @@ ApplicationWindow {
     WorkbenchLayout {
         id: workbench
         anchors.fill: parent
+        onEndpointSaveConfirmationClosed: {
+            if (window.discardAfterSaveConfirmationCloses) {
+                window.discardAfterSaveConfirmationCloses = false;
+                if (AppController.newOperationDraftOpen && !window.discardConfirmationActive) {
+                    AppController.requestDiscardNewOperation();
+                }
+            } else if (!window.discardConfirmationActive) {
+                workbench.restoreFocusAfterDraftDiscard();
+            }
+        }
         onNewProjectRequested: newProjectDialog.openDialog()
         onOpenProjectRequested: folderDialog.open()
         onImportRequested: importSpecDialog.open()
@@ -774,6 +825,59 @@ ApplicationWindow {
         }
 
         onAccepted: AppController.createProject(folderUrl, npNameField.text)
+    }
+
+    Dialog {
+        id: discardNewEndpointDialog
+        title: qsTr("Discard new endpoint?")
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(440, Overlay.overlay ? Overlay.overlay.width - 64 : 440)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
+        padding: DesignTokens.spaceLg
+        focus: true
+
+        header: DialogHeader {
+            title: qsTr("Discard new endpoint?")
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: qsTr("This closes the “New endpoint” tab and discards all unsaved changes.")
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontLabel
+            wrapMode: Text.WordWrap
+        }
+
+        footer: DialogButtons {
+            cancelText: qsTr("Keep editing")
+            okText: qsTr("Discard draft")
+            okDestructive: true
+            onAccepted: discardNewEndpointDialog.accept()
+            onRejected: discardNewEndpointDialog.reject()
+        }
+
+        onAccepted: AppController.confirmDiscardNewOperation()
+        onRejected: {
+            window.quitAfterDraftDiscard = false;
+            AppController.keepEditingNewOperation();
+        }
+        onClosed: {
+            window.discardConfirmationActive = false;
+            if (window.quitAfterDraftDiscard && AppController.newOperationDraftOpen && !window.discardAfterSaveConfirmationCloses) {
+                AppController.requestDiscardNewOperation();
+            } else if (!window.closingAfterDraftDiscard) {
+                workbench.restoreFocusAfterDraftDiscard();
+            }
+        }
     }
 
     // ── Import flow: pick a spec/collection; the project is created in a
@@ -1211,6 +1315,7 @@ ApplicationWindow {
                     required property string itemAction
                     width: ListView.view.width
                     height: 36
+                    enabled: !workbench.creatingEndpoint || (itemAction !== "newEndpoint" && itemAction !== "run" && itemAction !== "dryRun")
                     background: Rectangle {
                         radius: DesignTokens.radiusSm
                         color: paletteItem.hovered ? DesignTokens.accentMuted : "transparent"
@@ -1220,7 +1325,7 @@ ApplicationWindow {
                         // Long localized command names ellipsize rather than
                         // being hard-clipped by the list's clip rectangle.
                         elide: Text.ElideRight
-                        color: DesignTokens.textPrimary
+                        color: paletteItem.enabled ? DesignTokens.textPrimary : DesignTokens.borderStrong
                         font.pixelSize: DesignTokens.fontBody
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -1252,10 +1357,14 @@ ApplicationWindow {
                             workbench.openNewEndpoint("");
                             break;
                         case "run":
-                            AppController.runSelected(false, false);
+                            if (!workbench.creatingEndpoint) {
+                                AppController.runSelected(false, false);
+                            }
                             break;
                         case "dryRun":
-                            AppController.runSelected(false, true);
+                            if (!workbench.creatingEndpoint) {
+                                AppController.runSelected(false, true);
+                            }
                             break;
                         case "light":
                             ThemeController.mode = "light";

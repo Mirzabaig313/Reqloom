@@ -1,9 +1,6 @@
-// RequestEditor — request view + editor for the selected endpoint . Read mode previews the request (method pill,
-// {{var}}-highlighted path, execution chain, Headers / Params / Body / Chain).
-// Edit mode reveals editable controls (method combo, path field, Params /
-// Headers / Body raw↔form / Options / Chain) with live per-tab count badges.
-// Send applies edits to a one-shot run; Save persists them to the project.
-// C++ (AppController) owns all state + logic; this file is presentation only.
+// RequestEditor — request view and edit mode, including transient endpoint drafts. Desktop Requirement §6.2.
+// AppController owns both persisted edits and unsaved creation state so the
+// same controls render every request without a second creation surface.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -15,6 +12,127 @@ ColumnLayout {
     spacing: DesignTokens.spaceMd
 
     readonly property bool editing: AppController.editing
+    readonly property bool creating: AppController.creatingOperation
+    readonly property bool inputMode: editing
+    property bool saveConfirmationActive: false
+    property bool persistedEditConfirmationActive: false
+    property string pendingPersistedEditAction: ""
+    property Item persistedEditConfirmationInvoker: null
+    readonly property string primaryShortcutText: Qt.platform.os === "osx" ? "⌘↵" : qsTr("Ctrl+Enter")
+
+    signal saveConfirmationClosed
+
+    property bool nameTouched: false
+    property bool attemptedSubmit: false
+
+    readonly property string draftOperationId: AppController.newOperationModule.length > 0 && AppController.newOperationName.trim().length > 0 ? AppController.newOperationModule + "." + AppController.newOperationName.trim() : ""
+    readonly property bool draftExists: draftOperationId.length > 0 && AppController.operationIds.indexOf(draftOperationId) >= 0
+    readonly property string creationValidationMessage: {
+        const name = AppController.newOperationName.trim();
+        if (AppController.newOperationModule.length === 0) {
+            return qsTr("Create a module first.");
+        }
+        if (name.length === 0) {
+            return qsTr("Name cannot be empty.");
+        }
+        if (!AppController.isValidName(name)) {
+            return qsTr("Name can't contain '.', '/', or '\\'.");
+        }
+        if (draftExists) {
+            return qsTr("An endpoint with this name already exists in the selected module.");
+        }
+        return "";
+    }
+    readonly property bool canCreate: creating && creationValidationMessage.length === 0 && !AppController.running
+    readonly property string shownCreationError: attemptedSubmit || nameTouched ? creationValidationMessage : ""
+
+    function beginCreation(preselectedModule) {
+        nameTouched = false;
+        attemptedSubmit = false;
+        AppController.prepareNewEndpoint(preselectedModule);
+        if (AppController.creatingOperation) {
+            Qt.callLater(function () {
+                creationNameField.forceActiveFocus();
+            });
+        }
+    }
+
+    function restoreFocus() {
+        if (!visible) {
+            return;
+        }
+        if (creating) {
+            creationNameField.forceActiveFocus();
+        } else if (editing) {
+            pathField.forceActiveFocus();
+        } else {
+            editButton.forceActiveFocus();
+        }
+    }
+
+    function cancelCreation() {
+        AppController.cancelEdit();
+    }
+
+    function resetCreationUi() {
+        nameTouched = false;
+        attemptedSubmit = false;
+    }
+
+    function closeSaveConfirmation() {
+        saveEndpointDialog.close();
+    }
+
+    function requestPersistedEditAction(action, invoker) {
+        if (persistedEditConfirmationActive) {
+            return;
+        }
+        pendingPersistedEditAction = action;
+        persistedEditConfirmationInvoker = invoker;
+        persistedEditConfirmationActive = true;
+        persistedEndpointEditDialog.open();
+    }
+
+    function applyPersistedEditAction() {
+        if (pendingPersistedEditAction === "save") {
+            AppController.saveOperation();
+        } else if (pendingPersistedEditAction === "cancel") {
+            AppController.cancelEdit();
+        }
+    }
+
+    function submitCreation() {
+        attemptedSubmit = true;
+        if (!canCreate) {
+            creationNameField.forceActiveFocus();
+            return;
+        }
+        editor.saveConfirmationActive = true;
+        saveEndpointDialog.open();
+    }
+
+    function commitCreation() {
+        AppController.saveOperation();
+        if (!AppController.creatingOperation) {
+            resetCreationUi();
+        }
+    }
+
+    Connections {
+        target: AppController
+        function onNewOperationDraftDiscarded() {
+            saveEndpointDialog.close();
+            editor.resetCreationUi();
+        }
+    }
+
+    focus: creating
+    Keys.onEscapePressed: event => {
+        if (creating) {
+            cancelCreation();
+            event.accepted = true;
+        }
+    }
 
     // Pick a syntax-highlight language for a request body by sniffing its first
     // non-space char (JSON object/array, or XML/HTML tag); defaults to JSON.
@@ -40,6 +158,7 @@ ColumnLayout {
             text: "←"
             implicitWidth: 32
             implicitHeight: 32
+            Accessible.name: editor.creating ? qsTr("Cancel endpoint creation") : qsTr("Back to module")
             background: Rectangle {
                 radius: DesignTokens.radiusSm
                 color: backBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
@@ -53,11 +172,11 @@ ColumnLayout {
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
-            onClicked: AppController.closeOperation()
+            onClicked: editor.creating ? editor.cancelCreation() : AppController.closeOperation()
         }
         Label {
             id: moduleCrumb
-            text: AppController.selectedModule
+            text: editor.creating ? AppController.newOperationModule : AppController.selectedModule
             color: moduleCrumbHover.hovered ? DesignTokens.accent : DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontBody
             font.underline: moduleCrumbHover.hovered
@@ -68,9 +187,11 @@ ColumnLayout {
             // list (same as the back arrow), so the trail is navigable, not decor.
             HoverHandler {
                 id: moduleCrumbHover
+                enabled: !editor.creating
                 cursorShape: Qt.PointingHandCursor
             }
             TapHandler {
+                enabled: !editor.creating
                 onTapped: AppController.closeOperation()
             }
             GlassToolTip {
@@ -83,7 +204,22 @@ ColumnLayout {
             color: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontBody
         }
+        GlassTextField {
+            id: creationNameField
+            visible: editor.creating
+            Layout.preferredWidth: 220
+            Accessible.name: qsTr("Endpoint name")
+            text: AppController.newOperationName
+            placeholderText: qsTr("New endpoint name")
+            error: editor.shownCreationError.length > 0
+            onTextEdited: {
+                AppController.newOperationName = text;
+                editor.nameTouched = true;
+            }
+            onAccepted: editor.submitCreation()
+        }
         Label {
+            visible: !editor.creating
             text: AppController.opName
             color: DesignTokens.textPrimary
             font.pixelSize: DesignTokens.fontBody
@@ -106,10 +242,10 @@ ColumnLayout {
                 AppIcon {
                     name: "user"
                     size: 14
-                    opacity: AppController.opActor.length > 0 ? 1.0 : 0.5
+                    opacity: (editor.inputMode ? AppController.editActor : AppController.opActor).length > 0 ? 1.0 : 0.5
                 }
                 Label {
-                    text: AppController.opActor.length > 0 ? AppController.opActor : qsTr("No actor")
+                    text: (editor.inputMode ? AppController.editActor : AppController.opActor).length > 0 ? (editor.inputMode ? AppController.editActor : AppController.opActor) : qsTr("No actor")
                     color: DesignTokens.textSecondary
                     font.pixelSize: DesignTokens.fontLabel
                 }
@@ -117,7 +253,7 @@ ColumnLayout {
         }
     }
 
-    // ── Address bar: method + path + Send ──
+    // ── Address bar: method + path + primary action ──
     // Constraint-solved row (LayoutSolver) instead of magic pixel widths: the
     // method slot sizes to its widest item, Send to its widest label, and the
     // path fills the remainder. .
@@ -133,7 +269,7 @@ ColumnLayout {
         // solver descriptor so the two can't drift apart.
         readonly property real pathMin: 140
         readonly property real oneRowMin: addressBar.methodSlot + addressBar.pathMin + addressBar.sendSlot + 2 * DesignTokens.spaceSm
-        readonly property bool twoRow: width < addressBar.oneRowMin
+        readonly property bool twoRow: !editor.creating && width < addressBar.oneRowMin
         implicitHeight: addressBar.twoRow ? addressBar.rowH * 2 + DesignTokens.spaceSm : addressBar.rowH
 
         FontMetrics {
@@ -166,7 +302,7 @@ ColumnLayout {
                 "stretch": 0
             })
         // Row 1 solves method + path (+ Send only when it fits on one row).
-        readonly property var solved: LayoutSolver.solveLinear(addressBar.twoRow ? [addressBar.methodDesc, addressBar.pathDesc] : [addressBar.methodDesc, addressBar.pathDesc, addressBar.sendDesc], addressBar.width, DesignTokens.spaceSm)
+        readonly property var solved: LayoutSolver.solveLinear(editor.creating ? [addressBar.methodDesc, addressBar.pathDesc] : (addressBar.twoRow ? [addressBar.methodDesc, addressBar.pathDesc] : [addressBar.methodDesc, addressBar.pathDesc, addressBar.sendDesc]), addressBar.width, DesignTokens.spaceSm)
 
         readonly property var methodGeom: addressBar.solved[0] || ({
                 "offset": 0,
@@ -186,7 +322,7 @@ ColumnLayout {
                 }))
 
         MethodBadge {
-            visible: !editor.editing
+            visible: !editor.inputMode
             x: addressBar.methodGeom.offset
             width: addressBar.methodGeom.size
             height: addressBar.rowH
@@ -194,7 +330,8 @@ ColumnLayout {
         }
         GlassComboBox {
             id: methodCombo
-            visible: editor.editing
+            visible: editor.inputMode
+            Accessible.name: qsTr("HTTP method")
             x: addressBar.methodGeom.offset
             width: addressBar.methodGeom.size
             height: addressBar.rowH
@@ -205,7 +342,7 @@ ColumnLayout {
 
         // Path: highlighted preview (read) ↔ editable field (edit).
         Rectangle {
-            visible: !editor.editing
+            visible: !editor.inputMode
             x: addressBar.pathGeom.offset
             width: addressBar.pathGeom.size
             height: addressBar.rowH
@@ -222,7 +359,8 @@ ColumnLayout {
         }
         TextField {
             id: pathField
-            visible: editor.editing
+            visible: editor.inputMode
+            Accessible.name: qsTr("Request path")
             x: addressBar.pathGeom.offset
             width: addressBar.pathGeom.size
             height: addressBar.rowH
@@ -247,7 +385,7 @@ ColumnLayout {
             VariableAutocomplete {
                 id: pathAutocomplete
                 field: pathField
-                operationId: AppController.selectedModule + "." + AppController.opName
+                operationId: editor.creating ? AppController.newOperationDraftId : AppController.selectedModule + "." + AppController.opName
             }
             ValuePicker {
                 id: pathValuePicker
@@ -262,11 +400,12 @@ ColumnLayout {
             height: addressBar.rowH
             // Full-width second row when the address bar can't fit it inline.
             y: addressBar.twoRow ? addressBar.rowH + DesignTokens.spaceSm : 0
+            visible: !editor.creating
             text: AppController.running ? qsTr("Running…") : qsTr("Send")
-            enabled: !AppController.running
+            enabled: visible && !AppController.running
             GlassToolTip {
                 active: sendButton.hovered
-                text: editor.editing ? qsTr("Apply your edits and send, resolving the dependency chain  (⌘↵)") : qsTr("Send this request, resolving its dependency chain first  (⌘↵)")
+                text: editor.editing ? qsTr("Apply your edits and send, resolving the dependency chain  (%1)").arg(editor.primaryShortcutText) : qsTr("Send this request, resolving its dependency chain first  (%1)").arg(editor.primaryShortcutText)
             }
             background: Rectangle {
                 radius: DesignTokens.radiusSm
@@ -280,7 +419,13 @@ ColumnLayout {
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
-            onClicked: editor.editing ? AppController.applyAndRun(false, false) : AppController.runSelected(false, false)
+            onClicked: {
+                if (editor.editing) {
+                    AppController.applyAndRun(false, false);
+                } else {
+                    AppController.runSelected(false, false);
+                }
+            }
         }
     }
 
@@ -322,7 +467,7 @@ ColumnLayout {
         Button {
             id: saveButton
             visible: editor.editing
-            enabled: !AppController.running
+            enabled: visible && !AppController.running
             text: qsTr("✓  Save")
             implicitHeight: 32
             leftPadding: DesignTokens.spaceMd
@@ -353,14 +498,15 @@ ColumnLayout {
             }
             GlassToolTip {
                 active: saveButton.hovered
-                text: qsTr("Write these edits to the project. Until you save, Send only applies them to the next run.")
+                text: editor.creating ? qsTr("Save this new endpoint to the project.") : qsTr("Write these edits to the project. Until you save, Send only applies them to the next run.")
             }
-            onClicked: AppController.saveOperation()
+            onClicked: editor.creating ? editor.submitCreation() : editor.requestPersistedEditAction("save", saveButton)
         }
         // Edit mode: Cancel discards the edits.
         Button {
             id: cancelButton
             visible: editor.editing
+            enabled: visible
             text: qsTr("Cancel")
             implicitHeight: 32
             leftPadding: DesignTokens.spaceMd
@@ -378,7 +524,7 @@ ColumnLayout {
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
-            onClicked: AppController.cancelEdit()
+            onClicked: editor.creating ? editor.cancelCreation() : editor.requestPersistedEditAction("cancel", cancelButton)
         }
 
         // Slim inline cue (edit mode): replaces the persistent amber banner.
@@ -388,8 +534,22 @@ ColumnLayout {
             visible: editor.editing
             Layout.alignment: Qt.AlignVCenter
             verticalAlignment: Text.AlignVCenter
-            text: qsTr("Unsaved edits — Send runs them once; Save commits to the project.")
+            text: editor.creating ? qsTr("Unsaved endpoint. Save publishes it; Cancel restores your previous work.") : qsTr("Unsaved edits — Send runs them once; Save commits to the project.")
             color: DesignTokens.statusWarning
+            font.pixelSize: DesignTokens.fontLabel
+            elide: Text.ElideRight
+        }
+
+        FieldError {
+            visible: editor.creating && editor.shownCreationError.length > 0
+            Layout.fillWidth: true
+            text: editor.shownCreationError
+        }
+        Label {
+            visible: editor.creating && editor.shownCreationError.length === 0
+            Layout.fillWidth: true
+            text: qsTr("Nothing is saved until you press Save.")
+            color: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontLabel
             elide: Text.ElideRight
         }
@@ -403,13 +563,16 @@ ColumnLayout {
         // run-variants live in the overflow menu so the row reads primary +
         // secondary, not four equal buttons.
         SecondaryButton {
+            visible: !editor.creating
             text: qsTr("Hooks…")
             tip: qsTr("Edit the pre-request and post-response scripts for this endpoint")
-            enabled: true
+            enabled: visible && !AppController.running
             onClicked: AppController.openHookEditor()
         }
         SecondaryButton {
             id: moreButton
+            visible: !editor.creating
+            enabled: visible && !AppController.running
             text: qsTr("More  ▾")
             tip: qsTr("Other ways to run this request")
             onClicked: overflowMenu.popup(moreButton, 0, moreButton.height + DesignTokens.spaceXs)
@@ -486,6 +649,8 @@ ColumnLayout {
     ColumnLayout {
         id: chainSection
         Layout.fillWidth: true
+        visible: true
+        enabled: visible
         spacing: DesignTokens.spaceXs
 
         // Collapsed by default — the chain is reference, not the primary task,
@@ -495,31 +660,46 @@ ColumnLayout {
         property int chainHeight: 240
         readonly property int nodeCount: (AppController.chainGraph.nodes || []).length
 
-        // Clickable header: chevron + caption + a count summary when collapsed.
-        RowLayout {
+        // Keyboard- and screen-reader-accessible disclosure for the chain graph.
+        Button {
+            id: chainToggle
             Layout.fillWidth: true
-            spacing: DesignTokens.spaceXs
+            leftPadding: 0
+            rightPadding: 0
+            topPadding: DesignTokens.spaceXs
+            bottomPadding: DesignTokens.spaceXs
+            checkable: true
+            checked: chainSection.expanded
+            Accessible.role: Accessible.Button
+            Accessible.name: chainSection.expanded ? qsTr("Collapse execution chain") : qsTr("Expand execution chain")
+            onClicked: chainSection.expanded = !chainSection.expanded
 
-            AppIcon {
-                name: chainSection.expanded ? "chevron-down" : "chevron-right"
-                size: 14
-                color: DesignTokens.textSecondary
+            background: Rectangle {
+                radius: DesignTokens.radiusSm
+                color: chainToggle.hovered ? DesignTokens.accentMuted : "transparent"
+                border.width: chainToggle.activeFocus ? 1 : 0
+                border.color: DesignTokens.accent
             }
-            SectionLabel {
-                text: qsTr("EXECUTION CHAIN")
-            }
-            Label {
-                visible: chainSection.nodeCount > 0
-                text: chainSection.nodeCount === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(chainSection.nodeCount)
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontCaption
-            }
-            Item {
-                Layout.fillWidth: true
-            }
+            contentItem: RowLayout {
+                spacing: DesignTokens.spaceXs
 
-            TapHandler {
-                onTapped: chainSection.expanded = !chainSection.expanded
+                AppIcon {
+                    name: chainSection.expanded ? "chevron-down" : "chevron-right"
+                    size: 14
+                    color: DesignTokens.textSecondary
+                }
+                SectionLabel {
+                    text: qsTr("EXECUTION CHAIN")
+                }
+                Label {
+                    visible: chainSection.nodeCount > 0
+                    text: chainSection.nodeCount === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(chainSection.nodeCount)
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontCaption
+                }
+                Item {
+                    Layout.fillWidth: true
+                }
             }
         }
 
@@ -532,8 +712,16 @@ ColumnLayout {
             statusMap: AppController.chainStatus
             highlightedOp: AppController.timeline.selectedOperationId
             emptyText: qsTr("No declared dependencies — run Dry Run for the full resolved chain.")
-            onNodeActivated: opId => AppController.selectOperationById(opId)
-            onNodeEditRequested: opId => AppController.editOperationById(opId)
+            onNodeActivated: opId => {
+                if (!editor.creating) {
+                    AppController.selectOperationById(opId);
+                }
+            }
+            onNodeEditRequested: opId => {
+                if (!editor.creating) {
+                    AppController.editOperationById(opId);
+                }
+            }
         }
 
         // Drag grip to resize the graph height.
@@ -582,7 +770,8 @@ ColumnLayout {
     ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
-        visible: !editor.editing
+        visible: !editor.editing && !editor.creating
+        enabled: visible
         spacing: DesignTokens.spaceSm
 
         LineTabBar {
@@ -688,6 +877,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         visible: editor.editing
+        enabled: visible
         spacing: DesignTokens.spaceSm
 
         LineTabBar {
@@ -1096,7 +1286,7 @@ ColumnLayout {
                                     VariableAutocomplete {
                                         id: bodyAutocomplete
                                         field: rawBody
-                                        operationId: AppController.selectedModule + "." + AppController.opName
+                                        operationId: editor.creating ? AppController.newOperationDraftId : AppController.selectedModule + "." + AppController.opName
                                     }
                                     ValuePicker {
                                         id: bodyValuePicker
@@ -1711,7 +1901,7 @@ ColumnLayout {
                     // Promote the current concrete auth to the project default,
                     // which "Inherit from parent" endpoints then resolve to.
                     GlassButton {
-                        visible: AppController.editAuthType !== "none" && AppController.editAuthType !== "inherit"
+                        visible: !editor.creating && AppController.editAuthType !== "none" && AppController.editAuthType !== "inherit"
                         text: qsTr("Save as project default")
                         onClicked: AppController.saveProjectDefaultAuth()
                     }
@@ -1880,13 +2070,14 @@ ColumnLayout {
                         spacing: DesignTokens.spaceSm
                         Label {
                             Layout.fillWidth: true
-                            text: qsTr("Every step in the chain. Edit any step's dependencies or extractions, then save the whole chain.")
+                            text: editor.creating ? qsTr("Configure the new endpoint's dependencies and extractions. Save the endpoint once when the draft is complete.") : qsTr("Every step in the chain. Edit any step's dependencies or extractions, then save the whole chain.")
                             color: DesignTokens.textSecondary
                             font.pixelSize: DesignTokens.fontCaption
                             wrapMode: Text.WordWrap
                         }
                         Button {
                             id: saveChainBtn
+                            visible: !editor.creating
                             implicitHeight: 30
                             leftPadding: DesignTokens.spaceMd
                             rightPadding: DesignTokens.spaceMd
@@ -1937,6 +2128,106 @@ ColumnLayout {
                     assertModel: AppController.editAssertions
                 }
             }
+        }
+    }
+
+    Dialog {
+        id: persistedEndpointEditDialog
+        readonly property bool saving: editor.pendingPersistedEditAction === "save"
+        title: saving ? qsTr("Save endpoint changes?") : qsTr("Discard endpoint changes?")
+        modal: true
+        parent: Overlay.overlay
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(440, Overlay.overlay ? Overlay.overlay.width - 64 : 440)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
+        padding: DesignTokens.spaceLg
+        focus: true
+
+        header: DialogHeader {
+            title: persistedEndpointEditDialog.title
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: persistedEndpointEditDialog.saving ? qsTr("Save your changes to “%1.%2”?").arg(AppController.selectedModule).arg(AppController.opName) : qsTr("Discard your unsaved changes to “%1.%2”?").arg(AppController.selectedModule).arg(AppController.opName)
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontLabel
+            wrapMode: Text.WordWrap
+        }
+
+        footer: DialogButtons {
+            cancelText: qsTr("Keep editing")
+            okText: persistedEndpointEditDialog.saving ? qsTr("Save changes") : qsTr("Discard changes")
+            okDestructive: !persistedEndpointEditDialog.saving
+            onAccepted: persistedEndpointEditDialog.accept()
+            onRejected: persistedEndpointEditDialog.reject()
+        }
+
+        onAccepted: editor.applyPersistedEditAction()
+        onClosed: {
+            const invoker = editor.persistedEditConfirmationInvoker;
+            editor.persistedEditConfirmationActive = false;
+            editor.pendingPersistedEditAction = "";
+            editor.persistedEditConfirmationInvoker = null;
+            Qt.callLater(function () {
+                if (invoker && invoker.visible && invoker.enabled) {
+                    invoker.forceActiveFocus();
+                } else {
+                    editor.restoreFocus();
+                }
+            });
+        }
+    }
+
+    Dialog {
+        id: saveEndpointDialog
+        title: qsTr("Save new endpoint?")
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(440, Overlay.overlay ? Overlay.overlay.width - 64 : 440)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
+        padding: DesignTokens.spaceLg
+        focus: true
+
+        header: DialogHeader {
+            title: qsTr("Save new endpoint?")
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: qsTr("Create “%1.%2” in this project and keep it open in this tab?").arg(AppController.newOperationModule).arg(AppController.newOperationName.trim())
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontLabel
+            wrapMode: Text.WordWrap
+        }
+
+        footer: DialogButtons {
+            cancelText: qsTr("Keep editing")
+            okText: qsTr("Save endpoint")
+            onAccepted: saveEndpointDialog.accept()
+            onRejected: saveEndpointDialog.reject()
+        }
+
+        onAccepted: editor.commitCreation()
+        onClosed: {
+            editor.saveConfirmationActive = false;
+            editor.saveConfirmationClosed();
         }
     }
 

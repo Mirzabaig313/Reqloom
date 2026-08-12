@@ -15,9 +15,9 @@ namespace {
 /// Add an operation to `project`, creating its resource on first use. `id` is
 /// "<resource>.<name>".
 engine::Operation& addOperation(engine::Project& project,
-                               const std::string& id,
-                               engine::HttpMethod method,
-                               const std::string& pathTemplate) {
+                                const std::string& id,
+                                engine::HttpMethod method,
+                                const std::string& pathTemplate) {
     const std::size_t dot = id.rfind('.');
     const engine::ResourceId resourceId{id.substr(0, dot)};
     engine::Resource& resource = project.resources[resourceId];
@@ -43,8 +43,8 @@ engine::Project twoStepProject() {
     login.extractions.push_back(
         engine::Extraction{.variableName = "token", .sourcePath = "$.access_token"});
 
-    engine::Operation& create = addOperation(
-        project, "order.create", engine::HttpMethod::Post, "/orders/{{auth.token}}");
+    engine::Operation& create =
+        addOperation(project, "order.create", engine::HttpMethod::Post, "/orders/{{auth.token}}");
     create.actor = engine::ActorId{"buyer"};
     create.expectStatusList = {200, 202};
     return project;
@@ -122,8 +122,7 @@ TEST(ExecutionPreview, prefixes_a_dotted_extraction_key_because_refs_split_on_th
 
     ASSERT_EQ(steps.size(), 1u);
     ASSERT_EQ(steps[0].produces.size(), 1u);
-    EXPECT_EQ(steps[0].produces[0].variable,
-              QStringLiteral("admin_organization.employer.org_id"));
+    EXPECT_EQ(steps[0].produces[0].variable, QStringLiteral("admin_organization.employer.org_id"));
 }
 
 // The schema stores extraction names bare; templates and edges use the qualified
@@ -146,20 +145,17 @@ TEST(ExecutionPreview, qualifies_produced_names_so_they_match_how_templates_refe
 }
 
 TEST(ExecutionPreview, names_the_steps_that_consume_a_produced_variable) {
-    const auto consumers = consumersOfVariable(twoStepPlan(),
-                                               QStringLiteral("auth.login"),
-                                               QStringLiteral("token"));
+    const auto consumers =
+        consumersOfVariable(twoStepPlan(), QStringLiteral("auth.login"), QStringLiteral("token"));
 
     EXPECT_EQ(consumers, QStringList({QStringLiteral("order.create")}));
 }
 
 TEST(ExecutionPreview, accepts_a_variable_name_in_either_bare_or_qualified_form) {
-    const auto bare = consumersOfVariable(twoStepPlan(),
-                                          QStringLiteral("auth.login"),
-                                          QStringLiteral("token"));
-    const auto qualified = consumersOfVariable(twoStepPlan(),
-                                               QStringLiteral("auth.login"),
-                                               QStringLiteral("auth.token"));
+    const auto bare =
+        consumersOfVariable(twoStepPlan(), QStringLiteral("auth.login"), QStringLiteral("token"));
+    const auto qualified = consumersOfVariable(
+        twoStepPlan(), QStringLiteral("auth.login"), QStringLiteral("auth.token"));
 
     // Extraction events report the bare form, the preview the qualified one.
     // Both must resolve, or a caller silently gets no consumers.
@@ -180,17 +176,15 @@ TEST(ExecutionPreview, finds_consumers_of_a_dotted_extraction_key) {
                                .variable = "admin_organization.employer.org_id"});
 
     // The extraction event reports the stored key, dots and all.
-    const auto consumers = consumersOfVariable(plan,
-                                               QStringLiteral("admin_organization.list"),
-                                               QStringLiteral("employer.org_id"));
+    const auto consumers = consumersOfVariable(
+        plan, QStringLiteral("admin_organization.list"), QStringLiteral("employer.org_id"));
 
     EXPECT_EQ(consumers, QStringList({QStringLiteral("admin_organization.get")}));
 }
 
 TEST(ExecutionPreview, reports_no_consumers_for_a_variable_nobody_uses) {
-    const auto consumers = consumersOfVariable(twoStepPlan(),
-                                               QStringLiteral("auth.login"),
-                                               QStringLiteral("unused_value"));
+    const auto consumers = consumersOfVariable(
+        twoStepPlan(), QStringLiteral("auth.login"), QStringLiteral("unused_value"));
 
     EXPECT_TRUE(consumers.isEmpty());
 }
@@ -204,9 +198,8 @@ TEST(ExecutionPreview, does_not_credit_an_explicit_dependency_as_a_variable_cons
                                                 .implicit = false,
                                                 .variable = {}});
 
-    const auto consumers = consumersOfVariable(plan,
-                                               QStringLiteral("auth.login"),
-                                               QStringLiteral("token"));
+    const auto consumers =
+        consumersOfVariable(plan, QStringLiteral("auth.login"), QStringLiteral("token"));
 
     // order.create runs after auth.login but never reads the token, so a missing
     // token is not evidence that order.create broke because of it.
@@ -217,16 +210,14 @@ TEST(ExecutionPreview, lists_every_consumer_of_a_shared_variable_once_and_sorted
     engine::ResolvedPlan plan = twoStepPlan();
     plan.order.push_back(engine::OperationId{"audit.record"});
     for (const char* consumer : {"audit.record", "order.create"}) {
-        plan.edges.push_back(
-            engine::DependencyEdge{.consumer = engine::OperationId{consumer},
-                                   .producer = engine::OperationId{"auth.login"},
-                                   .implicit = true,
-                                   .variable = "auth.token"});
+        plan.edges.push_back(engine::DependencyEdge{.consumer = engine::OperationId{consumer},
+                                                    .producer = engine::OperationId{"auth.login"},
+                                                    .implicit = true,
+                                                    .variable = "auth.token"});
     }
 
-    const auto consumers = consumersOfVariable(plan,
-                                               QStringLiteral("auth.login"),
-                                               QStringLiteral("token"));
+    const auto consumers =
+        consumersOfVariable(plan, QStringLiteral("auth.login"), QStringLiteral("token"));
 
     EXPECT_EQ(consumers,
               QStringList({QStringLiteral("audit.record"), QStringLiteral("order.create")}));
@@ -291,9 +282,8 @@ TEST(ExecutionPreview, returns_no_steps_for_an_empty_plan) {
 // drift between what the engine's plan actually contains and what the preview
 // assumes about it, which unit structs cannot.
 TEST(ExecutionPreview, previews_every_operation_in_the_marketplace_sample) {
-    const auto project =
-        engine::parseProject(std::filesystem::path{REQLOOM_SAMPLES_DIR} / "marketplace" /
-                             "reqloom.yaml");
+    const auto project = engine::parseProject(std::filesystem::path{REQLOOM_SAMPLES_DIR} /
+                                              "marketplace" / "reqloom.yaml");
     ASSERT_TRUE(project.has_value());
 
     auto engineInstance = engine::ExecutionEngine{engine::makeDefaultDependencies()};

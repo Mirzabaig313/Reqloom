@@ -111,7 +111,6 @@ qt_add_qml_module(reqloom-desktop
         qml/views/ResponsePanel.qml
         qml/views/TimelinePanel.qml
         qml/views/NewModuleDialog.qml
-        qml/views/NewEndpointDialog.qml
         qml/views/ActorDetail.qml
         qml/views/EditorTabBar.qml
         qml/views/ManageEnvironmentDialog.qml

@@ -86,6 +86,7 @@ gtest_discover_tests(reqloom-desktop-ui-tests
 add_executable(reqloom-desktop-secret-tests
     unit/SecretManagerTest.cpp
     unit/ProjectModelTest.cpp
+    unit/TabModelTest.cpp
     unit/WorkspaceModelTest.cpp
     unit/ProjectTreeModelTest.cpp
     unit/PathEvalTest.cpp
@@ -98,6 +99,8 @@ add_executable(reqloom-desktop-secret-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/Formatting.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TimelineModel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TimelineModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabModel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp

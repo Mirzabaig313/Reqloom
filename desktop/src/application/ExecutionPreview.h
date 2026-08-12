@@ -42,7 +42,7 @@ struct PreviewStep {
     QString method;        ///< Uppercase verb, empty when the operation is missing.
     QString pathTemplate;  ///< `{{...}}` left unresolved on purpose (see header note).
     QString actor;
-    bool isTarget{false};  ///< The operation the user asked to run: the last step.
+    bool isTarget{false};   ///< The operation the user asked to run: the last step.
     QStringList dependsOn;  ///< Producer operation ids, sorted for stable display.
     std::vector<PreviewOutput> produces;
     QList<int> expectStatus;  ///< Declared expected status codes; empty when unset.

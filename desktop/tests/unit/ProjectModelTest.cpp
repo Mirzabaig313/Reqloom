@@ -11,7 +11,9 @@
 
 #include <QtCore/QTemporaryDir>
 
+#include <chrono>
 #include <filesystem>
+#include <optional>
 
 namespace reqloom::desktop::tests {
 
@@ -262,6 +264,55 @@ TEST(ProjectModel, create_operation_returns_id_and_reloads_clean) {
     reloaded.loadFromDirectory(dir.path());
     ASSERT_TRUE(reloaded.hasProject());
     EXPECT_NE(reloaded.findOperation(ce::OperationId{"payment.refund_all"}), nullptr);
+}
+
+TEST(ProjectModel, create_complete_operation_round_trips_all_request_fields) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(loadFixture(dir, model));
+
+    ce::Operation operation;
+    operation.actor = ce::ActorId{"user"};
+    operation.method = ce::HttpMethod::Post;
+    operation.pathTemplate = "/charges";
+    operation.headers = {{"X-Trace", "{{trace_id}}"}};
+    operation.queryParams = {{"expand", "receipt"}};
+    operation.bodyTemplate = R"({"amount": 42})";
+    operation.expectStatusList = {200, 201};
+    operation.extractions = {{"charge_id", "$.id", ce::Extraction::Source::JsonPath}};
+    operation.assertions = {{"$.status_code == 201", std::string{"created"}}};
+    operation.explicitDependencies = {ce::OperationId{"payment.pay"}};
+    operation.timeout = std::chrono::milliseconds{2'500};
+    operation.force = true;
+
+    QString error;
+    const auto id = model.createOperation(
+        ce::ResourceId{"payment"}, QStringLiteral("charge"), operation, error);
+    ASSERT_TRUE(id.has_value()) << error.toStdString();
+
+    ProjectModel reloaded;
+    reloaded.loadFromDirectory(dir.path());
+    const auto* created = reloaded.findOperation(*id);
+    ASSERT_NE(created, nullptr);
+    EXPECT_EQ(created->id, *id);
+    EXPECT_EQ(created->resource, ce::ResourceId{"payment"});
+    EXPECT_EQ(created->actor, operation.actor);
+    EXPECT_EQ(created->method, operation.method);
+    EXPECT_EQ(created->pathTemplate, operation.pathTemplate);
+    EXPECT_EQ(created->headers, operation.headers);
+    EXPECT_EQ(created->queryParams, operation.queryParams);
+    EXPECT_EQ(created->bodyTemplate, operation.bodyTemplate);
+    EXPECT_EQ(created->expectStatusList, operation.expectStatusList);
+    ASSERT_EQ(created->extractions.size(), 1u);
+    EXPECT_EQ(created->extractions.front().variableName, "charge_id");
+    EXPECT_EQ(created->extractions.front().sourcePath, "$.id");
+    ASSERT_EQ(created->explicitDependencies.size(), 1u);
+    EXPECT_EQ(created->explicitDependencies.front(), ce::OperationId{"payment.pay"});
+    ASSERT_EQ(created->assertions.size(), 1u);
+    EXPECT_EQ(created->assertions.front().expr, "$.status_code == 201");
+    EXPECT_EQ(created->assertions.front().name, std::optional<std::string>{"created"});
+    EXPECT_EQ(created->timeout, operation.timeout);
+    EXPECT_TRUE(created->force);
 }
 
 TEST(ProjectModel, create_operation_rejects_duplicate_id_breaking_and_unknown_resource) {

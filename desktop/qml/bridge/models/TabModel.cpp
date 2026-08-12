@@ -55,12 +55,18 @@ int TabModel::indexOf(TabState::Kind kind, const QString& id) const {
     return -1;
 }
 
-int TabModel::append(TabState state) {
-    const int row = static_cast<int>(tabs_.size());
-    beginInsertRows({}, row, row);
-    tabs_.push_back(std::move(state));
+int TabModel::insert(int index, TabState state) {
+    if (index < 0 || index > count()) {
+        return -1;
+    }
+    beginInsertRows({}, index, index);
+    tabs_.insert(tabs_.begin() + static_cast<std::ptrdiff_t>(index), std::move(state));
     endInsertRows();
-    return row;
+    return index;
+}
+
+int TabModel::append(TabState state) {
+    return insert(count(), std::move(state));
 }
 
 void TabModel::move(int from, int to) {

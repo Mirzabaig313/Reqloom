@@ -12,10 +12,14 @@ Item {
     property bool responseCollapsed: false
     property string orientationMode: "auto"
     property bool historyReplayActive: false
+    readonly property bool creatingEndpoint: requestEditor.creating
+    readonly property bool endpointSaveConfirmationActive: requestEditor.saveConfirmationActive
+    readonly property bool editConfirmationActive: requestEditor.persistedEditConfirmationActive || actorDetail.editConfirmationActive
 
     signal newProjectRequested
     signal openProjectRequested
     signal importRequested
+    signal endpointSaveConfirmationClosed
 
     readonly property int _railSize: 32
     readonly property int _handleSize: 6
@@ -48,7 +52,32 @@ Item {
     }
 
     function openNewEndpoint(moduleName) {
-        explorerPanel.openNewEndpoint(moduleName);
+        if (requestEditor.creating) {
+            return;
+        }
+        requestEditor.beginCreation(moduleName);
+    }
+
+    function submitEndpointCreation() {
+        requestEditor.submitCreation();
+    }
+
+    function closeEndpointSaveConfirmation() {
+        requestEditor.closeSaveConfirmation();
+    }
+
+    function restoreFocusAfterDraftDiscard() {
+        Qt.callLater(function () {
+            if (requestEditor.visible) {
+                requestEditor.restoreFocus();
+            } else if (AppController.hasActor) {
+                actorDetail.restoreFocus();
+            } else if (!root.explorerCollapsed) {
+                explorerPanel.restoreFocus();
+            } else {
+                root.forceActiveFocus();
+            }
+        });
     }
 
     function _normalizedOrientation(value) {
@@ -394,6 +423,7 @@ Item {
                 color: DesignTokens.surfaceRaised
                 border.width: 0
                 onCollapseRequested: root.explorerCollapsed = true
+                onNewEndpointRequested: resourceId => root.openNewEndpoint(resourceId)
             }
 
             Rectangle {
@@ -488,10 +518,12 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     visible: AppController.tabCount > 0
+                    enabled: visible
                 }
 
                 EmptyState {
-                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount === 0
+                    visible: !requestEditor.creating && !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount === 0
+                    enabled: visible
                     anchors.centerIn: parent
                     useBrandLogo: true
                     heading: qsTr("Welcome to Reqloom")
@@ -514,7 +546,8 @@ Item {
                     anchors.bottom: parent.bottom
                     anchors.margins: DesignTokens.spaceXl
                     spacing: DesignTokens.spaceLg
-                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount > 0
+                    visible: !requestEditor.creating && !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount > 0
+                    enabled: visible
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -595,27 +628,32 @@ Item {
                             heading: qsTr("No endpoints yet")
                             body: qsTr("Add an endpoint to this module to start sending requests.")
                             actionText: qsTr("New Endpoint")
-                            onActionTriggered: explorerPanel.openNewEndpoint(AppController.selectedModule)
+                            onActionTriggered: root.openNewEndpoint(AppController.selectedModule)
                         }
                     }
                 }
 
                 RequestEditor {
-                    anchors.top: editorTabs.bottom
+                    id: requestEditor
+                    anchors.top: editorTabs.visible ? editorTabs.bottom : parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.margins: DesignTokens.spaceLg
-                    visible: AppController.hasOperation
+                    visible: requestEditor.creating || AppController.hasOperation
+                    enabled: visible
+                    onSaveConfirmationClosed: root.endpointSaveConfirmationClosed()
                 }
 
                 ActorDetail {
+                    id: actorDetail
                     anchors.top: editorTabs.bottom
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.margins: DesignTokens.spaceLg
-                    visible: AppController.hasActor
+                    visible: !requestEditor.creating && AppController.hasActor
+                    enabled: visible
                 }
             }
 
@@ -628,7 +666,8 @@ Item {
                 SplitView.minimumHeight: root.responseCollapsed ? root._railSize : root._responseMinimumHeight
                 color: DesignTokens.surfaceRaised
                 clip: true
-                visible: AppController.hasOperation || AppController.hasResponse || root.historyReplayActive
+                visible: !requestEditor.creating && (AppController.hasOperation || AppController.hasResponse || root.historyReplayActive)
+                enabled: visible
 
                 ResponsePanel {
                     id: responsePanel

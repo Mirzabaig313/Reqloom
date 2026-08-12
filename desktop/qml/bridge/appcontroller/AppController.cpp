@@ -236,6 +236,7 @@ AppController::AppController(QObject* parent)
     // bound, function-pointer form (auto-disconnect on destruction).
     const auto onEditModelChanged = [this]() {
         emit editChanged();
+        emit chainChanged();
     };
     for (QAbstractItemModel* model : {static_cast<QAbstractItemModel*>(&editHeaders_),
                                       static_cast<QAbstractItemModel*>(&editQuery_),
@@ -254,17 +255,9 @@ AppController::AppController(QObject* parent)
     connect(&editDependencies_, &QAbstractItemModel::dataChanged, this, onDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::rowsInserted, this, onDepsChanged);
 
-    // Keep the New Endpoint dialog's per-dependency extraction editors in sync
-    // with its chosen dependencies.
-    const auto onNewDepsChanged = [this]() {
-        rebuildNewEndpointDepExtracts();
-    };
-    connect(&newEndpointDeps_, &QAbstractItemModel::dataChanged, this, onNewDepsChanged);
-    connect(&newEndpointDeps_, &QAbstractItemModel::rowsInserted, this, onNewDepsChanged);
-    connect(&newEndpointDeps_, &QAbstractItemModel::rowsRemoved, this, onNewDepsChanged);
-    connect(&newEndpointDeps_, &QAbstractItemModel::modelReset, this, onNewDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::rowsRemoved, this, onDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::modelReset, this, onDepsChanged);
+    connect(&chainEditor_, &ChainEditorModel::editorChanged, this, onDepsChanged);
 
     // Toggle the active tab's dirty dot as its edit mode opens/closes.
     connect(this, &AppController::editingChanged, this, &AppController::updateActiveTabDirty);
@@ -348,15 +341,20 @@ void AppController::bindProject(ProjectModel* project) {
             Qt::UniqueConnection);
 }
 
+bool AppController::canLeaveActiveProject() {
+    const int draftIndex = operationDraftIndex();
+    if (draftIndex < 0) {
+        return true;
+    }
+    activateTab(draftIndex);
+    emit notify(tr("Save or discard the new endpoint before changing projects."), true);
+    return false;
+}
+
 void AppController::openProjectPath(const QString& path) {
     if (path.isEmpty()) {
         return;
     }
-    if (runController_->isRunning()) {
-        emit notify(tr("Finish the current run before opening another project."), true);
-        return;
-    }
-
     // Canonicalize so dedup + persistence use a stable key that matches
     // ProjectModel::rootPath() after the load.
     std::error_code ec;
@@ -364,9 +362,17 @@ void AppController::openProjectPath(const QString& path) {
         std::filesystem::weakly_canonical(std::filesystem::path{path.toStdString()}, ec);
     const QString canonical = ec ? path : QString::fromStdString(canon.string());
 
-    // Already open? Just activate it — no duplicate collections.
+    // Already open? Just activate it — no duplicate collections. Activation is
+    // a no-op for the current project, so an open draft does not block it.
     if (const int existing = workspace_->indexOfRoot(canonical); existing >= 0) {
         activateProject(existing);
+        return;
+    }
+    if (runController_->isRunning()) {
+        emit notify(tr("Finish the current run before opening another project."), true);
+        return;
+    }
+    if (!canLeaveActiveProject()) {
         return;
     }
 
@@ -401,8 +407,14 @@ void AppController::activateProject(int index) {
     if (index < 0 || index >= workspace_->count()) {
         return;
     }
+    if (index == workspace_->activeIndex()) {
+        return;
+    }
     if (runController_->isRunning()) {
         emit notify(tr("Finish the current run before switching projects."), true);
+        return;
+    }
+    if (!canLeaveActiveProject()) {
         return;
     }
     workspace_->setActiveIndex(index);
@@ -420,6 +432,9 @@ void AppController::closeProject(int index) {
     const bool wasActive = index == workspace_->activeIndex();
     if (runController_->isRunning() && wasActive) {
         emit notify(tr("Finish the current run before closing this project."), true);
+        return;
+    }
+    if (wasActive && !canLeaveActiveProject()) {
         return;
     }
     workspace_->removeProject(index);
@@ -583,6 +598,9 @@ bool AppController::activateForRow(const QString& projectRoot) {
     if (runController_->isRunning()) {
         emit notify(tr("Finish the current run before switching projects."), true);
         return false;  // can't switch mid-run
+    }
+    if (!canLeaveActiveProject()) {
+        return false;
     }
     workspace_->setActiveIndex(idx);
     persistActiveProject();
@@ -924,7 +942,7 @@ void AppController::onSaved() {
 
     // Refresh the open operation's read fields from the saved project, but only
     // when not editing (re-selecting would discard an in-progress edit).
-    if (!editing_ && !openModule.isEmpty() && !openOp.isEmpty()) {
+    if (!creatingOperation_ && !editing_ && !openModule.isEmpty() && !openOp.isEmpty()) {
         const auto& resources = activeProject().project().resources;
         const auto it = resources.find(engine::ResourceId{openModule.toStdString()});
         if (it != resources.end() && it->second.operations.contains(openOp.toStdString())) {
@@ -1034,12 +1052,31 @@ void AppController::runSelected(bool clean, bool dryRun) {
     runController_->run(target, environment_, clean, dryRun);
 }
 
+void AppController::setNewOperationName(const QString& name) {
+    if (newOperationName_ == name) {
+        return;
+    }
+    newOperationName_ = name;
+    if (tabs_.valid(activeTabIndex_)) {
+        TabState& tab = tabs_.stateAt(activeTabIndex_);
+        if (tab.operationDraft) {
+            tab.opName = name;
+            const QString trimmed = name.trimmed();
+            tab.title = trimmed.isEmpty() ? tr("New endpoint") : trimmed;
+            tabs_.refreshRow(activeTabIndex_);
+        }
+    }
+    emit editChanged();
+    emit chainChanged();
+}
+
 void AppController::setEditMethod(const QString& method) {
     if (method == editMethod_) {
         return;
     }
     editMethod_ = method;
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditPath(const QString& path) {
@@ -1048,6 +1085,7 @@ void AppController::setEditPath(const QString& path) {
     }
     editPath_ = path;
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditActor(const QString& actor) {
@@ -1061,6 +1099,7 @@ void AppController::setEditActor(const QString& actor) {
         editAuthType_ = QStringLiteral("none");
     }
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditExpectStatus(const QString& expectStatus) {
@@ -1069,6 +1108,7 @@ void AppController::setEditExpectStatus(const QString& expectStatus) {
     }
     editExpectStatus_ = expectStatus;
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditTimeout(int timeoutMs) {
@@ -1093,6 +1133,7 @@ void AppController::setEditBody(const QString& body) {
     }
     editBody_ = body;
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditBodyIsForm(bool isForm) {
@@ -1101,6 +1142,7 @@ void AppController::setEditBodyIsForm(bool isForm) {
     }
     editBodyIsForm_ = isForm;
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditBodyType(const QString& type) {
@@ -1127,6 +1169,7 @@ void AppController::setEditBodyType(const QString& type) {
         setManagedContentType(desired);
     }
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setManagedContentType(const QString& desired) {
@@ -1527,7 +1570,7 @@ QString AppController::pickFile(const QString& title, const QString& nameFilter)
 }
 
 void AppController::beginEdit() {
-    if (!hasOperation_ || !activeProject().hasProject()) {
+    if (creatingOperation_ || !hasOperation_ || !activeProject().hasProject()) {
         return;
     }
     const auto* op =
@@ -1733,6 +1776,10 @@ void AppController::cancelEdit() {
     if (!editing_) {
         return;
     }
+    if (creatingOperation_) {
+        closeTab(activeTabIndex_);
+        return;
+    }
     editing_ = false;
     emit editingChanged();
     emit chainChanged();
@@ -1782,6 +1829,11 @@ std::optional<engine::InlineAuth> AppController::buildInlineAuthFromEdit() const
 }
 
 void AppController::saveProjectDefaultAuth() {
+    if (creatingOperation_) {
+        emit notify(QStringLiteral("Save the endpoint before changing the project default auth."),
+                    true);
+        return;
+    }
     if (!activeProject().hasProject()) {
         emit notify(QStringLiteral("Open a project first"), true);
         return;
@@ -1864,11 +1916,36 @@ RequestOverride AppController::buildOverride() const {
         }
         ov.assertions.push_back(std::move(assertion));
     }
+
+    // A transient operation has no persisted target to re-seed from. Its Chain
+    // tab is therefore the source of truth for depends_on and extract until the
+    // single endpoint Save publishes the complete operation.
+    if (creatingOperation_) {
+        const QString targetId = currentOperationId();
+        for (int i = 0; i < chainEditor_.count(); ++i) {
+            if (chainEditor_.operationIdAt(i) != targetId) {
+                continue;
+            }
+            ov.dependencies = chainEditor_.depModelAt(i)->dependencies();
+            ov.extractions.clear();
+            for (const auto& [variable, sourcePath] : chainEditor_.extractModelAt(i)->pairs()) {
+                if (sourcePath.isEmpty()) {
+                    continue;
+                }
+                engine::Extraction extraction;
+                extraction.variableName = variable.toStdString();
+                extraction.sourcePath = sourcePath.toStdString();
+                extraction.source = sourceForPath(extraction.sourcePath);
+                ov.extractions.push_back(std::move(extraction));
+            }
+            break;
+        }
+    }
     return ov;
 }
 
 void AppController::applyAndRun(bool clean, bool dryRun) {
-    if (!hasOperation_ || running_) {
+    if (creatingOperation_ || !hasOperation_ || running_) {
         return;
     }
     const QString target = selectedModule_ + '.' + opName_;
@@ -1876,6 +1953,10 @@ void AppController::applyAndRun(bool clean, bool dryRun) {
 }
 
 void AppController::saveOperation() {
+    if (creatingOperation_) {
+        saveNewOperation();
+        return;
+    }
     if (!hasOperation_ || !activeProject().hasProject()) {
         return;
     }
@@ -2056,6 +2137,9 @@ void AppController::resetCaches() {
 }
 
 QString AppController::currentOperationId() const {
+    if (creatingOperation_) {
+        return newOperationDraftId_;
+    }
     if (!hasOperation_ || selectedModule_.isEmpty() || opName_.isEmpty()) {
         return {};
     }

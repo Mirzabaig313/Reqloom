@@ -62,16 +62,16 @@ public:
         IndexRole,                    ///< int: 1-based step number (0 for run-level rows)
         TitleRole,                    ///< QString: leading label (step name, "→ request", …)
         DetailRole,                   ///< QString: trailing descriptive text
-        StatusTokenRole,  ///< QString: status vocabulary token (→ DesignTokens colour)
-        StatusLabelRole,  ///< QString: short badge label ("running", "HTTP 200", …)
-        ValueRole,        ///< QString: tooltip payload (masked headers / full value)
-        MethodRole,       ///< QString: HTTP method for request rows ("GET"/"POST"); else empty
-        PathRole,         ///< QString: request URL path for request rows; else empty
-        SizeRole,         ///< QString: pre-formatted payload size ("66 B", "3.9 KB")
-        ClockRole,        ///< QString: wall-clock time the row was recorded ("10:24:10")
-        DurationRole,     ///< QString: pre-formatted duration (response rows + step totals)
-        SubLabelRole,     ///< QString: sub-step badge for child rows ("1.1", "1.2")
-        OpRole,           ///< QString: owning operation id on step + extraction rows
+        StatusTokenRole,   ///< QString: status vocabulary token (→ DesignTokens colour)
+        StatusLabelRole,   ///< QString: short badge label ("running", "HTTP 200", …)
+        ValueRole,         ///< QString: tooltip payload (masked headers / full value)
+        MethodRole,        ///< QString: HTTP method for request rows ("GET"/"POST"); else empty
+        PathRole,          ///< QString: request URL path for request rows; else empty
+        SizeRole,          ///< QString: pre-formatted payload size ("66 B", "3.9 KB")
+        ClockRole,         ///< QString: wall-clock time the row was recorded ("10:24:10")
+        DurationRole,      ///< QString: pre-formatted duration (response rows + step totals)
+        SubLabelRole,      ///< QString: sub-step badge for child rows ("1.1", "1.2")
+        OpRole,            ///< QString: owning operation id on step + extraction rows
         VariableNameRole,  ///< QString: bare extracted variable on extraction rows; else empty
     };
 

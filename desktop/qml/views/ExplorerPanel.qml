@@ -15,6 +15,7 @@ Rectangle {
     id: panel
 
     signal collapseRequested
+    signal newEndpointRequested(string resourceId)
 
     radius: 0
     color: DesignTokens.glassFill
@@ -94,16 +95,19 @@ Rectangle {
         }
     }
 
-    // Open the New Endpoint dialog (optionally pre-selecting a module). Lets
-    // other views (e.g. the centre endpoint-list empty state) trigger the same
-    // flow without owning a second dialog.
+    // Route endpoint creation to the workbench so the draft opens in the
+    // editor pane instead of covering the workspace with a modal.
     function openNewEndpoint(resourceId) {
-        newEndpointDialog.openFor(resourceId);
+        panel.newEndpointRequested(resourceId);
     }
     // Open the New Module dialog. Exposed so the command palette (Main) can
     // trigger it without reaching into this component's internal ids.
     function openNewModule() {
         newModuleDialog.openDialog();
+    }
+
+    function restoreFocus() {
+        searchField.forceActiveFocus();
     }
 
     // Human-readable label for the trailing operation status dot, so the colour
@@ -521,7 +525,7 @@ Rectangle {
         id: addMenu
         GlassMenuItem {
             text: qsTr("New Endpoint…")
-            onTriggered: newEndpointDialog.openFor("")
+            onTriggered: panel.openNewEndpoint("")
         }
         GlassMenuItem {
             text: qsTr("New Module…")
@@ -554,7 +558,7 @@ Rectangle {
         id: resourceMenu
         GlassMenuItem {
             text: qsTr("New Endpoint…")
-            onTriggered: newEndpointDialog.openFor(panel.ctxResourceId)
+            onTriggered: panel.openNewEndpoint(panel.ctxResourceId)
         }
         MenuSeparator {}
         GlassMenuItem {
@@ -575,7 +579,7 @@ Rectangle {
         }
         GlassMenuItem {
             text: qsTr("New Endpoint…")
-            onTriggered: newEndpointDialog.openFor("")
+            onTriggered: panel.openNewEndpoint("")
         }
     }
     // Per-collection menu (right-click a Project node). The row's project was
@@ -584,7 +588,7 @@ Rectangle {
         id: projectMenu
         GlassMenuItem {
             text: qsTr("New Endpoint…")
-            onTriggered: newEndpointDialog.openFor("")
+            onTriggered: panel.openNewEndpoint("")
         }
         GlassMenuItem {
             text: qsTr("New Module…")
@@ -639,9 +643,6 @@ Rectangle {
     // ── Dialogs ──────────────────────────────────────────────────────────────
     NewModuleDialog {
         id: newModuleDialog
-    }
-    NewEndpointDialog {
-        id: newEndpointDialog
     }
 
     Dialog {

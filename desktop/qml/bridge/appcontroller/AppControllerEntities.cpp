@@ -690,6 +690,13 @@ void AppController::createProject(const QUrl& directory, const QString& name) {
         emit notify(tr("Choose a folder for the new project."), true);
         return;
     }
+    if (runController_->isRunning()) {
+        emit notify(tr("Finish the current run before creating another project."), true);
+        return;
+    }
+    if (!canLeaveActiveProject()) {
+        return;
+    }
     QString error;
     if (activeProject().createProject(path, name, error)) {
         const QString shown = name.trimmed().isEmpty() ? tr("project") : name.trimmed();
@@ -699,135 +706,159 @@ void AppController::createProject(const QUrl& directory, const QString& name) {
     }
 }
 
-void AppController::prepareNewEndpoint(const QString& /*preselectedResource*/) {
-    // Dependency candidates are every existing operation; the dialog filters
-    // out self-reference by construction (the new op isn't created yet).
-    newEndpointDeps_.setCandidates(operationIds());
-    newEndpointExtractions_.clearRows();
-    rebuildNewEndpointDepExtracts();
-}
-
-void AppController::rebuildNewEndpointDepExtracts() {
-    std::vector<ChainEditorModel::OpSeed> seeds;
-    if (activeProject().hasProject()) {
-        for (const auto& depStd : newEndpointDeps_.dependencies()) {
-            const QString id = QString::fromStdString(depStd);
-            const auto* op = activeProject().findOperation(engine::OperationId{depStd});
-            ChainEditorModel::OpSeed seed;
-            seed.operationId = id;
-            seed.method = op != nullptr ? methodLabel(op->method) : QString{};
-            seed.isTarget = false;
-            if (op != nullptr) {
-                for (const auto& ext : op->extractions) {
-                    seed.extractions.emplace_back(QString::fromStdString(ext.variableName),
-                                                  QString::fromStdString(ext.sourcePath));
-                }
-            }
-            seeds.push_back(std::move(seed));
-        }
-    }
-    newEndpointDepExtracts_.rebuild(seeds);
-}
-
-void AppController::addNewEndpointDependency(const QString& operationId) {
-    if (operationId.isEmpty()) {
+void AppController::prepareNewEndpoint(const QString& preselectedResource) {
+    if (!activeProject().hasProject()) {
         return;
     }
-    // Setting the trailing blank (ghost) row appends and grows a new ghost.
-    const int ghost = newEndpointDeps_.rowCount() - 1;
-    newEndpointDeps_.setSelection(ghost >= 0 ? ghost : 0, operationId);
+    if (const int draftIndex = operationDraftIndex(); draftIndex >= 0) {
+        activateTab(draftIndex);
+        return;
+    }
+    QString module = preselectedResource.trimmed();
+    const auto& projectResources = activeProject().project().resources;
+    if (module.isEmpty() &&
+        projectResources.contains(engine::ResourceId{selectedModule_.toStdString()})) {
+        module = selectedModule_;
+    }
+    if (module.isEmpty() && projectResources.size() == 1) {
+        module = QString::fromStdString(projectResources.begin()->first.value);
+    }
+    if (!projectResources.contains(engine::ResourceId{module.toStdString()})) {
+        emit notify(tr("Select a module in the Explorer before creating an endpoint."), true);
+        return;
+    }
+
+    captureActiveTab();
+    creatingOperation_ = true;
+    newOperationModule_ = module;
+    newOperationDraftId_ = module + QStringLiteral(".__new_endpoint__");
+    for (int suffix = 2; operationIds().contains(newOperationDraftId_); ++suffix) {
+        newOperationDraftId_ = module + QStringLiteral(".__new_endpoint__%1").arg(suffix);
+    }
+    newOperationName_.clear();
+
+    // A default TabState is the canonical empty edit buffer. Reusing its
+    // restore path resets every request/auth/body/option/assertion field.
+    restoreOperationEditFrom(TabState{});
+    editMethod_ = QStringLiteral("GET");
+    editing_ = true;
+    chainFieldsLoaded_ = true;
+    hasActor_ = false;
+    hasOperation_ = true;
+    selectedModule_ = module;
+    opName_.clear();
+    opMethod_ = editMethod_;
+    opPath_.clear();
+    opActor_.clear();
+    opBody_.clear();
+    opDependencies_.clear();
+    opHeaders_.reset();
+    opQuery_.reset();
+    opExtractions_.reset();
+    opAssertions_.reset();
+    exampleList_.clear();
+    timeline_.reset();
+
+    ChainEditorModel::OpSeed target;
+    target.operationId = newOperationDraftId_;
+    target.method = editMethod_;
+    target.isTarget = true;
+    target.candidates = operationIds();
+    chainEditor_.rebuild({std::move(target)});
+
+    TabState tab;
+    tab.kind = TabState::Kind::Operation;
+    tab.id = newOperationDraftId_;
+    tab.module = module;
+    tab.projectRoot = activeProject().rootPath();
+    tab.title = tr("New endpoint");
+    tab.method = editMethod_;
+    tab.dirty = true;
+    tab.operationDraft = true;
+    const int insertAt = activeTabIndex_ >= 0 ? activeTabIndex_ + 1 : tabs_.count();
+    activeTabIndex_ = tabs_.insert(insertAt, std::move(tab));
+    captureActiveTab();
+
+    emit operationChanged();
+    emit actorSelectionChanged();
+    emit editingChanged();
+    emit editChanged();
+    emit responseChanged();
+    emit chainChanged();
+    emit selectionChanged();
+    emit activeTabChanged();
+    persistOpenTabs();
 }
 
-void AppController::removeNewEndpointDependency(const QString& operationId) {
-    for (int row = 0; row < newEndpointDeps_.rowCount(); ++row) {
-        const QString value =
-            newEndpointDeps_.data(newEndpointDeps_.index(row, 0), DependencyEditModel::ValueRole)
-                .toString();
-        if (value == operationId) {
-            newEndpointDeps_.removeRow(row);
-            return;
-        }
+void AppController::saveNewOperation() {
+    if (!creatingOperation_ || !activeProject().hasProject()) {
+        return;
     }
-}
 
-void AppController::createOperation(const QString& module,
-                                    const QString& name,
-                                    const QString& method,
-                                    const QString& path,
-                                    const QString& actor) {
-    std::vector<engine::OperationId> dependencies;
-    for (const auto& dep : newEndpointDeps_.dependencies()) {
-        dependencies.push_back(engine::OperationId{dep});
-    }
-    std::vector<engine::Extraction> extractions;
-    for (const auto& [variable, sourcePath] : newEndpointExtractions_.pairs()) {
-        if (sourcePath.isEmpty()) {
+    engine::Operation operation;
+    applyOverrideToOperation(operation, buildOverride());
+    const QString targetId = currentOperationId();
+    for (int i = 0; i < chainEditor_.count(); ++i) {
+        if (chainEditor_.operationIdAt(i) != targetId) {
             continue;
         }
-        engine::Extraction ext;
-        ext.variableName = variable.toStdString();
-        ext.sourcePath = sourcePath.toStdString();
-        ext.source = sourceForPath(ext.sourcePath);
-        extractions.push_back(std::move(ext));
+        const QString overResource = chainEditor_.forEachOverAt(i).trimmed();
+        if (!overResource.isEmpty()) {
+            engine::ForEach forEach{engine::ResourceId{overResource.toStdString()}};
+            forEach.continueOnError = chainEditor_.forEachContinueOnErrorAt(i);
+            operation.forEach = std::move(forEach);
+        }
+        break;
     }
 
+    const QString targetModule = newOperationModule_;
+    const QString targetName = newOperationName_;
     QString error;
-    const auto created = activeProject().createOperation(engine::ResourceId{module.toStdString()},
-                                                         name,
-                                                         methodFromLabel(method),
-                                                         path,
-                                                         engine::ActorId{actor.toStdString()},
-                                                         dependencies,
-                                                         extractions,
-                                                         error);
+    const auto created = activeProject().createOperation(
+        engine::ResourceId{targetModule.toStdString()}, targetName, operation, error);
     if (!created) {
         emit notify(error, true);
         return;
     }
 
-    // Persist any edits to the dependencies' own extract blocks (the "pull
-    // X from this prerequisite" rows), so a value declared here is saved on
-    // the producing endpoint where the engine reads it.
-    std::map<std::string, engine::Operation> depUpdates;
-    for (int i = 0; i < newEndpointDepExtracts_.count(); ++i) {
-        const QString id = newEndpointDepExtracts_.operationIdAt(i);
-        const auto* op = activeProject().findOperation(engine::OperationId{id.toStdString()});
-        if (op == nullptr) {
-            continue;
-        }
-        engine::Operation updated = *op;
-        std::map<std::string, engine::Extraction::Source> sourceByVar;
-        for (const auto& ext : op->extractions) {
-            sourceByVar[ext.variableName] = ext.source;
-        }
-        updated.extractions.clear();
-        for (const auto& [variable, sourcePath] :
-             newEndpointDepExtracts_.extractModelAt(i)->pairs()) {
-            const QString var = variable.trimmed();
-            const QString p = sourcePath.trimmed();
-            if (var.isEmpty() && p.isEmpty()) {
-                continue;
-            }
-            engine::Extraction extraction;
-            extraction.variableName = var.toStdString();
-            extraction.sourcePath = p.toStdString();
-            const auto found = sourceByVar.find(extraction.variableName);
-            extraction.source =
-                found != sourceByVar.end() ? found->second : sourceForPath(extraction.sourcePath);
-            updated.extractions.push_back(std::move(extraction));
-        }
-        depUpdates.emplace(id.toStdString(), std::move(updated));
-    }
-    if (!depUpdates.empty()) {
-        QString depError;
-        if (!activeProject().saveOperations(depUpdates, depError)) {
-            emit notify(depError, true);
-        }
+    const QString createdId = QString::fromStdString(created->value);
+    const QString createdName = targetName.trimmed();
+    captureActiveTab();
+    const int draftIndex = operationDraftIndex();
+    if (draftIndex < 0) {
+        clearNewOperationDraftIdentity();
+        keepEditingNewOperation();
+        openOperationTab(activeProject().rootPath(), targetModule, createdName);
+        emit notify(QStringLiteral("Created endpoint “%1”").arg(createdId), false);
+        return;
     }
 
-    emit notify(QStringLiteral("Created endpoint “%1”").arg(QString::fromStdString(created->value)),
-                false);
-    selectOperationById(QString::fromStdString(created->value));
+    const bool draftIsActive = draftIndex == activeTabIndex_;
+    TabState& tab = tabs_.stateAt(draftIndex);
+    tab.id = createdId;
+    tab.opName = createdName;
+    tab.title = createdName;
+    tab.operationDraft = false;
+    tab.editing = false;
+    tab.chainFieldsLoaded = false;
+    tab.chainSnapshotValid = false;
+    tab.dirty = false;
+    clearNewOperationDraftIdentity();
+    keepEditingNewOperation();
+    if (draftIsActive) {
+        restoreActiveTab();
+    }
+    tabs_.refreshRow(draftIndex);
+    emit activeTabChanged();
+    persistOpenTabs();
+    emit notify(QStringLiteral("Created endpoint “%1”").arg(createdId), false);
+}
+
+void AppController::clearNewOperationDraftIdentity() {
+    creatingOperation_ = false;
+    newOperationModule_.clear();
+    newOperationDraftId_.clear();
+    newOperationName_.clear();
 }
 
 void AppController::renameOperation(const QString& operationId, const QString& newName) {

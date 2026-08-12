@@ -21,9 +21,8 @@ namespace {
 class SelectionCounter {
 public:
     explicit SelectionCounter(TimelineModel& model) {
-        QObject::connect(&model, &TimelineModel::selectionChanged, &context_, [this]() {
-            ++count_;
-        });
+        QObject::connect(
+            &model, &TimelineModel::selectionChanged, &context_, [this]() { ++count_; });
     }
 
     [[nodiscard]] int count() const { return count_; }

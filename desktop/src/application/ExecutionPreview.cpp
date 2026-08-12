@@ -14,7 +14,7 @@ namespace {
 /// Locate an operation by its "<resource>.<op_name>" id. Returns nullptr when
 /// either half is unknown, which callers render as a missing step.
 [[nodiscard]] const engine::Operation* findOperation(const engine::Project& project,
-                                                    const std::string& id) {
+                                                     const std::string& id) {
     const std::size_t dot = id.rfind('.');
     if (dot == std::string::npos || dot == 0 || dot + 1 >= id.size()) {
         return nullptr;
@@ -118,10 +118,10 @@ std::vector<PreviewStep> buildExecutionPreview(const engine::ResolvedPlan& plan,
             const QString resource = resourceOf(step.operationId);
             step.produces.reserve(op->extractions.size());
             for (const auto& extraction : op->extractions) {
-                step.produces.push_back(
-                    PreviewOutput{.variable = qualifyVariable(
-                                      resource, QString::fromStdString(extraction.variableName)),
-                                  .sourcePath = QString::fromStdString(extraction.sourcePath)});
+                step.produces.push_back(PreviewOutput{
+                    .variable =
+                        qualifyVariable(resource, QString::fromStdString(extraction.variableName)),
+                    .sourcePath = QString::fromStdString(extraction.sourcePath)});
             }
         }
 
@@ -148,9 +148,10 @@ QStringList consumersOfVariable(const engine::ResolvedPlan& plan,
     // "<own resource>.<x>", which is vanishingly rare and unresolvable from the
     // name alone.
     const QString resource = resourceOf(producerOperationId);
-    const QString qualified = (resource.isEmpty() || variable.startsWith(resource + QLatin1Char('.')))
-                                  ? variable
-                                  : resource + QLatin1Char('.') + variable;
+    const QString qualified =
+        (resource.isEmpty() || variable.startsWith(resource + QLatin1Char('.')))
+            ? variable
+            : resource + QLatin1Char('.') + variable;
 
     const std::string producer = producerOperationId.toStdString();
     const std::string wanted = qualified.toStdString();
