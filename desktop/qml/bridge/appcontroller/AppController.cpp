@@ -26,6 +26,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QScopedValueRollback>
 #include <QtCore/QSet>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QStringList>
@@ -35,6 +36,7 @@
 #include <QtWidgets/QFileDialog>
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -239,7 +241,6 @@ AppController::AppController(QObject* parent)
         emit chainChanged();
     };
     for (QAbstractItemModel* model : {static_cast<QAbstractItemModel*>(&editHeaders_),
-                                      static_cast<QAbstractItemModel*>(&editQuery_),
                                       static_cast<QAbstractItemModel*>(&editForm_),
                                       static_cast<QAbstractItemModel*>(&editExtractions_),
                                       static_cast<QAbstractItemModel*>(&editAssertions_)}) {
@@ -248,6 +249,40 @@ AppController::AppController(QObject* parent)
         connect(model, &QAbstractItemModel::rowsRemoved, this, onEditModelChanged);
         connect(model, &QAbstractItemModel::modelReset, this, onEditModelChanged);
     }
+    const auto applyQueryPath = [this](QString path) {
+        if (path == editPath_) {
+            return;
+        }
+        QScopedValueRollback<int> querySync{querySyncDepth_, querySyncDepth_ + 1};
+        editPath_ = std::move(path);
+        emit editChanged();
+        emit chainChanged();
+    };
+    connect(&editQuery_,
+            &QAbstractItemModel::dataChanged,
+            this,
+            [this, applyQueryPath](const QModelIndex& topLeft) {
+                if (querySyncDepth_ > 0 || !topLeft.isValid()) {
+                    return;
+                }
+                const std::pair<QString, QString> pair{
+                    editQuery_.data(topLeft, EditableKeyValueModel::KeyRole).toString(),
+                    editQuery_.data(topLeft, EditableKeyValueModel::ValueRole).toString()};
+                applyQueryPath(visiblePathWithUpdatedQueryPair(
+                    editPath_, static_cast<std::size_t>(topLeft.row()), pair));
+            });
+    connect(&editQuery_,
+            &QAbstractItemModel::rowsRemoved,
+            this,
+            [this, applyQueryPath](const QModelIndex&, int first, int last) {
+                if (querySyncDepth_ > 0) {
+                    return;
+                }
+                applyQueryPath(
+                    visiblePathWithoutQueryPairs(editPath_,
+                                                 static_cast<std::size_t>(first),
+                                                 static_cast<std::size_t>(last - first + 1)));
+            });
     const auto onDepsChanged = [this]() {
         emit editChanged();
         emit chainChanged();
@@ -920,6 +955,9 @@ void AppController::onSaved() {
             selectedActorDescription_ = actorDescription(selectedActorId_);
             selectedActorStrategy_ = actorAuthLabel(selectedActorId_);
             emit actorSelectionChanged();
+        } else if (tabs_.valid(activeTabIndex_) &&
+                   tabs_.stateAt(activeTabIndex_).kind == TabState::Kind::Actor) {
+            closeTabImmediately(activeTabIndex_);
         } else {
             clearActorSelection();
         }
@@ -968,16 +1006,25 @@ void AppController::selectActor(const QString& projectRoot, const QString& actor
 }
 
 void AppController::clearActorSelection() {
-    if (!hasActor_) {
+    const bool deactivatingActorTab{tabs_.valid(activeTabIndex_) &&
+                                    tabs_.stateAt(activeTabIndex_).kind == TabState::Kind::Actor};
+    if (!deactivatingActorTab && !hasActor_) {
         return;
+    }
+    if (deactivatingActorTab) {
+        captureActiveTab();
+        activeTabIndex_ = -1;
     }
     hasActor_ = false;
     selectedActorId_.clear();
     emit actorSelectionChanged();
+    if (deactivatingActorTab) {
+        persistOpenTabs();
+        emit activeTabChanged();
+    }
 }
 
 void AppController::selectModule(const QString& moduleName) {
-    clearActorSelection();
     if (!activeProject().hasProject()) {
         return;
     }
@@ -986,6 +1033,7 @@ void AppController::selectModule(const QString& moduleName) {
     if (it == resources.end()) {
         return;
     }
+    clearActorSelection();
     selectedModule_ = moduleName;
     operations_.reload(it->second);
     closeOperation();
@@ -999,8 +1047,20 @@ void AppController::selectOperation(const QString& moduleName, const QString& op
 }
 
 void AppController::closeOperation() {
-    if (!hasOperation_ && opName_.isEmpty()) {
+    const bool deactivatingOperationTab{tabs_.valid(activeTabIndex_) &&
+                                        tabs_.stateAt(activeTabIndex_).kind ==
+                                            TabState::Kind::Operation};
+    const bool parkingOperationDraft{deactivatingOperationTab &&
+                                     tabs_.stateAt(activeTabIndex_).operationDraft};
+    if (!deactivatingOperationTab && !hasOperation_ && opName_.isEmpty()) {
         return;
+    }
+    if (deactivatingOperationTab) {
+        captureActiveTab();
+        activeTabIndex_ = -1;
+        if (parkingOperationDraft) {
+            clearNewOperationDraftIdentity();
+        }
     }
     hasOperation_ = false;
     opName_.clear();
@@ -1020,6 +1080,10 @@ void AppController::closeOperation() {
     chainFieldsLoaded_ = false;
     emit operationChanged();
     emit chainChanged();
+    if (deactivatingOperationTab) {
+        persistOpenTabs();
+        emit activeTabChanged();
+    }
 }
 
 void AppController::setEnvironment(const QString& env) {
@@ -1083,7 +1147,9 @@ void AppController::setEditPath(const QString& path) {
     if (path == editPath_) {
         return;
     }
+    QScopedValueRollback<int> querySync{querySyncDepth_, querySyncDepth_ + 1};
     editPath_ = path;
+    editQuery_.setPairs(queryPairsFromVisiblePath(editPath_));
     emit editChanged();
     emit chainChanged();
 }
@@ -1582,7 +1648,13 @@ void AppController::beginEdit() {
     // Seed every editable control from the operation so a fresh edit starts as
     // a faithful copy the user then tweaks.
     editMethod_ = methodLabel(op->method);
-    editPath_ = QString::fromStdString(op->pathTemplate);
+    const auto persistedQuery{toEditPairs(op->queryParams)};
+    {
+        QScopedValueRollback<int> querySync{querySyncDepth_, querySyncDepth_ + 1};
+        editPath_ = visiblePathWithAppendedQueryPairs(QString::fromStdString(op->pathTemplate),
+                                                      persistedQuery);
+        editQuery_.setPairs(queryPairsFromVisiblePath(editPath_));
+    }
     editActor_ = QString::fromStdString(op->actor.value);
 
     // Inline (actor-less) auth: seed from the op, or reset to "none".
@@ -1694,7 +1766,6 @@ void AppController::beginEdit() {
     editForce_ = op->force;
 
     editHeaders_.setPairs(toEditPairs(op->headers));
-    editQuery_.setPairs(toEditPairs(op->queryParams));
 
     // Infer the body kind so the selector lands on the right tab. The
     // Content-Type header disambiguates raw kinds (json/xml/text) and multipart
@@ -1868,9 +1939,6 @@ RequestOverride AppController::buildOverride() const {
     for (const auto& [key, value] : editHeaders_.pairs()) {
         ov.headers.insert_or_assign(key.toStdString(), value.toStdString());
     }
-    for (const auto& [key, value] : editQuery_.pairs()) {
-        ov.queryParams.insert_or_assign(key.toStdString(), value.toStdString());
-    }
     ov.actor = editActor_;
     ov.expectStatus = editExpectStatus_;
     ov.timeoutMs = editTimeout_;
@@ -1941,6 +2009,7 @@ RequestOverride AppController::buildOverride() const {
             break;
         }
     }
+    ov.normalizePathQuery();
     return ov;
 }
 

@@ -91,7 +91,7 @@ public:
         session.state = ActorSession::State::Authenticating;
 
         for (const auto& step : actor.authSteps) {
-            auto resolvedPath = deps_.varResolver->resolve(step.pathTemplate, ctx, rctx);
+            auto resolvedPath = deps_.varResolver->resolveUrlPath(step.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
                 return std::unexpected(ReqloomError{
                     ErrorCode::SessionRefreshFailed,
@@ -1005,7 +1005,7 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     }
 
     const auto& refresh = *actor.refresh;
-    auto resolvedPath = deps.varResolver->resolve(refresh.pathTemplate, ctx, rctx);
+    auto resolvedPath = deps.varResolver->resolveUrlPath(refresh.pathTemplate, ctx, rctx);
     if (!resolvedPath.unresolved.empty()) {
         return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,

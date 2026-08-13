@@ -86,6 +86,7 @@ gtest_discover_tests(reqloom-desktop-ui-tests
 add_executable(reqloom-desktop-secret-tests
     unit/SecretManagerTest.cpp
     unit/ProjectModelTest.cpp
+    unit/RequestOverrideTest.cpp
     unit/TabModelTest.cpp
     unit/WorkspaceModelTest.cpp
     unit/ProjectTreeModelTest.cpp

@@ -7,10 +7,13 @@
 
 #include <support/TimeUtil.h>
 
+#include <array>
 #include <chrono>
 #include <iomanip>
 #include <regex>
 #include <sstream>
+#include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 
@@ -281,6 +284,45 @@ TEST(VariableResolver, url_encodes_reserved_chars) {
     EXPECT_EQ(r.output, "hello%20world%20%2F%20%3F%26%3D");
 }
 
+TEST(VariableResolver, url_encodes_template_delimiters_inside_quoted_arguments) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const auto oneBrace = resolver.resolve(R"tmpl({{$.url.encode("left}right")}})tmpl", ctx, rctx);
+    const auto twoBraces =
+        resolver.resolve(R"tmpl({{$.url.encode("left}}right")}})tmpl", ctx, rctx);
+    const auto escapedQuote =
+        resolver.resolve(R"tmpl({{$.url.encode("left\"}}right")}})tmpl", ctx, rctx);
+
+    EXPECT_TRUE(oneBrace.unresolved.empty());
+    EXPECT_TRUE(twoBraces.unresolved.empty());
+    EXPECT_TRUE(escapedQuote.unresolved.empty());
+    EXPECT_EQ(oneBrace.output, "left%7Dright");
+    EXPECT_EQ(twoBraces.output, "left%7D%7Dright");
+    EXPECT_EQ(escapedQuote.output, "left%22%7D%7Dright");
+}
+
+TEST(VariableResolver, rejects_malformed_template_references_without_rewriting_them) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+    const std::array<std::string_view, 4> malformedReferences{
+        "prefix {{env.baseUrl} suffix",
+        "prefix {{env.baseUrl",
+        "prefix {{}} suffix",
+        "prefix {{   }} suffix",
+    };
+
+    for (const auto input : malformedReferences) {
+        SCOPED_TRACE(std::string{input});
+        const auto result = resolver.resolve(input, ctx, rctx);
+
+        EXPECT_EQ(result.output, std::string{input});
+        EXPECT_FALSE(result.unresolved.empty());
+    }
+}
+
 TEST(VariableResolver, url_decodes_plus_and_percent) {
     ce::VariableResolver resolver;
     ce::RunContext ctx;
@@ -319,4 +361,96 @@ TEST(VariableResolver, rejects_overflowing_duration_without_ub) {
     // ISO timestamp.
     ASSERT_EQ(huge.unresolved.size(), 1u);
     EXPECT_EQ(huge.unresolved.front(), "$.now+999999999999999999d");
+}
+
+TEST(VariableResolver, rejects_max_seconds_duration_without_ub) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const auto result = resolver.resolve("{{$.now+9223372036854775807s}}", ctx, rctx);
+
+    ASSERT_EQ(result.unresolved.size(), 1u);
+    EXPECT_EQ(result.unresolved.front(), "$.now+9223372036854775807s");
+    EXPECT_EQ(result.output, "{{$.now+9223372036854775807s}}");
+}
+
+TEST(VariableResolver, url_path_encodes_only_query_template_outputs) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+    ctx.appendInstance(ce::ResourceId{"resource"},
+                       ce::ResourceInstance{{{"value", "ok&admin=true#"}}});
+
+    const auto result =
+        resolver.resolveUrlPath("/search?x={{resource.value}}&x=fixed%20value#results", ctx, rctx);
+
+    ASSERT_TRUE(result.unresolved.empty());
+    EXPECT_EQ(result.output, "/search?x=ok%26admin%3Dtrue%23&x=fixed%20value#results");
+}
+
+TEST(VariableResolver, url_path_does_not_double_encode_explicit_url_encoding) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    auto rctx = makeResolveCtx();
+    rctx.envVars["term"] = "a&b";
+    rctx.envVars["encoded"] = "{{$.url.encode(env.term)}}";
+
+    const auto direct = resolver.resolveUrlPath("/search?q={{$.url.encode (env.term)}}", ctx, rctx);
+    const auto nested = resolver.resolveUrlPath("/search?q={{env.encoded}}", ctx, rctx);
+
+    ASSERT_TRUE(direct.unresolved.empty());
+    ASSERT_TRUE(nested.unresolved.empty());
+    EXPECT_EQ(direct.output, "/search?q=a%26b");
+    EXPECT_EQ(nested.output, "/search?q=a%26b");
+}
+
+TEST(VariableResolver, url_path_encodes_embedded_path_segment_substitutions) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+    ctx.appendInstance(ce::ResourceId{"resource"},
+                       ce::ResourceInstance{{{"id", "ok?admin=true#/child"}}});
+
+    const auto result = resolver.resolveUrlPath("/items/{{resource.id}}?scope=user", ctx, rctx);
+
+    ASSERT_TRUE(result.unresolved.empty());
+    EXPECT_EQ(result.output, "/items/ok%3Fadmin%3Dtrue%23%2Fchild?scope=user");
+}
+
+TEST(VariableResolver, url_path_preserves_a_whole_path_template) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    auto rctx = makeResolveCtx();
+    rctx.envVars["location"] = "/jobs/42?token=a%26b";
+
+    const auto result = resolver.resolveUrlPath("{{env.location}}", ctx, rctx);
+
+    ASSERT_TRUE(result.unresolved.empty());
+    EXPECT_EQ(result.output, "/jobs/42?token=a%26b");
+}
+
+TEST(VariableResolver, url_path_rejects_unsafe_whole_path_template_outputs) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    auto rctx = makeResolveCtx();
+    const std::array<std::string_view, 9> unsafePaths{
+        "jobs/42",
+        "@evil.test/collect",
+        "//evil.test/path",
+        "https://evil.test",
+        R"(\\evil.test\path)",
+        R"(/\evil.test/path)",
+        R"(\/evil.test/path)",
+        "/jobs/42\r\nHost: evil.test",
+        "/jobs/42\tcollect",
+    };
+
+    for (const auto unsafePath : unsafePaths) {
+        SCOPED_TRACE(std::string{unsafePath});
+        rctx.envVars["location"] = std::string{unsafePath};
+        const auto result = resolver.resolveUrlPath("{{env.location}}", ctx, rctx);
+
+        EXPECT_FALSE(result.unresolved.empty());
+    }
 }

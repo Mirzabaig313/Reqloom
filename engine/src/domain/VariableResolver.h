@@ -30,6 +30,21 @@ public:
         std::vector<std::string> unresolved;  ///< {{X.y}} that could not resolve.
     };
 
+    /// Resolve a URL path template without letting values add URL syntax.
+    ///
+    /// Literal URL bytes and separators remain unchanged. Resolved references
+    /// embedded in path segments or the raw query are percent-encoded while
+    /// existing `%HH` escapes stay intact. A reference that occupies the whole
+    /// path remains raw so response `Location` templates keep working.
+    ///
+    /// @param templateStr  Path, optional raw query, and optional fragment.
+    /// @param ctx          Current run state used for extracted values.
+    /// @param resolveCtx   Environment variables and secrets.
+    /// @return Resolved URL path and any unresolved references.
+    [[nodiscard]] Result resolveUrlPath(std::string_view templateStr,
+                                        const RunContext& ctx,
+                                        const ResolveContext& resolveCtx) const;
+
     /// Substitute every `{{X.y}}` reference. Unresolved references are
     /// listed; the caller decides whether to fail (live run) or surface
     /// `<UNRESOLVED: X.y>` markers (dry run).

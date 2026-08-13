@@ -1180,6 +1180,9 @@ private:
     // beginEdit; the trailing ghost-row models grow as the user types.
     EditableKeyValueModel editHeaders_;
     EditableKeyValueModel editQuery_;
+    // Prevent URL-origin model resets and Params-origin path writes from
+    // recursively synchronizing each other.
+    int querySyncDepth_{};
     EditableKeyValueModel editForm_;
     EditableKeyValueModel editExtractions_;
     EditableKeyValueModel editAssertions_;

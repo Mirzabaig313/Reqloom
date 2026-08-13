@@ -29,6 +29,7 @@
 #include <ctime>
 #include <mutex>
 #include <sstream>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -127,6 +128,18 @@ void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
         return total;
     }
     return req.body ? req.body->size() : 0U;
+}
+
+void appendQueryString(std::string& url, std::string_view query) {
+    if (query.empty()) {
+        return;
+    }
+    const auto fragmentStart = url.find('#');
+    const auto queryStart = url.find('?');
+    const bool hasQuery = queryStart != std::string::npos &&
+                          (fragmentStart == std::string::npos || queryStart < fragmentStart);
+    const std::string addition = std::string{hasQuery ? "&" : "?"} + std::string{query};
+    url.insert(fragmentStart == std::string::npos ? url.size() : fragmentStart, addition);
 }
 
 }  // namespace
@@ -364,7 +377,7 @@ struct ExecutionEngine::Impl {
             req.method = poll.method;
             req.transport = rctx.transport;
             applyInlineMtls(req, effAuth, ctx, rctx);
-            auto resolvedPath = varResolver.resolve(poll.pathTemplate, ctx, rctx);
+            auto resolvedPath = varResolver.resolveUrlPath(poll.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
                 return std::unexpected(ReqloomError{
                     ErrorCode::VarUnresolved,
@@ -391,7 +404,7 @@ struct ExecutionEngine::Impl {
                             }
                             qs += urlEncode(k) + "=" + urlEncode(v);
                         }
-                        req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
+                        appendQueryString(req.url, qs);
                     }
                 }
 
@@ -599,7 +612,7 @@ struct ExecutionEngine::Impl {
                     // acceptable for a single auth param.
                     const auto segment = urlEncode(key) + "=" + urlEncode(value);
                     if (req.url.find(segment) == std::string::npos) {
-                        req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + segment;
+                        appendQueryString(req.url, segment);
                     }
                 } else {
                     req.headers[key] = value;
@@ -868,7 +881,7 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        auto resolvedPath = varResolver.resolve(op.pathTemplate, ctx, rctx);
+        auto resolvedPath = varResolver.resolveUrlPath(op.pathTemplate, ctx, rctx);
         if (!resolvedPath.unresolved.empty()) {
             result.status = StepResult::Status::Failed;
             result.error = ErrorCode::VarUnresolved;
@@ -944,7 +957,7 @@ struct ExecutionEngine::Impl {
                 }
                 qs += urlEncode(k) + "=" + urlEncode(v);
             }
-            req.url += (req.url.find('?') == std::string::npos ? "?" : "&") + qs;
+            appendQueryString(req.url, qs);
         }
 
         // Inline (actor-less) auth: applied after actor/session injects and

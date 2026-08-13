@@ -8,6 +8,7 @@
 #include <reqloom/engine/Operation.h>
 
 #include <QtCore/QLatin1Char>
+#include <QtCore/QScopedValueRollback>
 #include <QtCore/QSettings>
 #include <QtCore/QString>
 
@@ -71,6 +72,7 @@ bool AppController::loadOperationReadState(const QString& moduleName, const QStr
     const engine::Operation op = opIt->second;
 
     selectedModule_ = moduleName;
+    operations_.reload(resIt->second);
     opName_ = opName;
     opMethod_ = methodLabel(op.method);
     opPath_ = QString::fromStdString(op.pathTemplate);
@@ -231,7 +233,10 @@ void AppController::restoreOperationEditFrom(const TabState& tab) {
     editAuthMtlsCaCertPath_ = tab.editAuthMtlsCaCertPath;
 
     editHeaders_.setPairs(tab.editHeaders);
-    editQuery_.setPairs(tab.editQuery);
+    {
+        QScopedValueRollback<int> querySync{querySyncDepth_, querySyncDepth_ + 1};
+        editQuery_.setPairs(queryPairsFromVisiblePath(editPath_));
+    }
     editForm_.setPairs(tab.editForm);
     editExtractions_.setPairs(tab.editExtractions);
     editAssertions_.setPairs(tab.editAssertions);
@@ -283,6 +288,19 @@ void AppController::captureActorInto(TabState& tab) const {
 }
 
 void AppController::restoreActorFrom(const TabState& tab) {
+    // The tab id is authoritative. Older saved sessions can contain a renamed
+    // actor id alongside the pre-rename snapshot; reload instead of reopening
+    // the wrong actor under the new tab title.
+    const bool staleSnapshot = !tab.id.isEmpty() && tab.actorId != tab.id;
+    if (staleSnapshot) {
+        prepareEditActor(tab.id);
+        selectedActorId_ = tab.id;
+        selectedActorName_ = tab.id;
+        selectedActorDescription_ = actorDescription(tab.id);
+        selectedActorStrategy_ = actorAuthLabel(tab.id);
+        return;
+    }
+
     selectedActorId_ = tab.actorId;
     selectedActorName_ = tab.actorName;
     selectedActorDescription_ = tab.actorDescription;
@@ -371,6 +389,13 @@ void AppController::restoreActiveTab() {
             newOperationDraftId_ = tab.id;
             newOperationName_ = tab.opName;
             selectedModule_ = tab.module;
+            const auto& resources = activeProject().project().resources;
+            if (const auto resource = resources.find(engine::ResourceId{tab.module.toStdString()});
+                resource != resources.end()) {
+                operations_.reload(resource->second);
+            } else {
+                operations_.reset();
+            }
             opName_ = tab.opName;
             opMethod_ = tab.editMethod;
             opPath_ = tab.editPath;
@@ -386,8 +411,12 @@ void AppController::restoreActiveTab() {
         } else {
             clearNewOperationDraftIdentity();
             // Read fields come from the project (they only change on save); the
-            // edit/response snapshot is overlaid on top.
-            loadOperationReadState(tab.module, tab.opName);
+            // edit/response snapshot is overlaid on top. A deleted or renamed
+            // operation cannot remain the active tab with no matching editor.
+            if (!loadOperationReadState(tab.module, tab.opName)) {
+                closeTabImmediately(activeTabIndex_);
+                return;
+            }
         }
         restoreOperationEditFrom(tab);
         if (editing_) {
@@ -402,6 +431,8 @@ void AppController::restoreActiveTab() {
     } else {
         clearNewOperationDraftIdentity();
         hasOperation_ = false;
+        hasActor_ = true;
+        hasResponse_ = false;
         editing_ = false;
         chainFieldsLoaded_ = false;
         chainEditor_.rebuild({});
@@ -520,6 +551,7 @@ void AppController::openActorTab(const QString& projectRoot,
     }
     hasActor_ = true;
     hasOperation_ = false;
+    hasResponse_ = false;
     // A new actor tab has no run timeline of its own yet.
     timeline_.reset();
 
@@ -537,6 +569,7 @@ void AppController::openActorTab(const QString& projectRoot,
     emit editChanged();
     emit actorSelectionChanged();
     emit actorEditChanged();
+    emit responseChanged();
     emit chainChanged();
     emit activeTabChanged();
     persistOpenTabs();
@@ -562,7 +595,16 @@ void AppController::moveTab(int from, int to) {
 }
 
 void AppController::activateTab(int index) {
-    if (index == activeTabIndex_ || !tabs_.valid(index)) {
+    if (!tabs_.valid(index)) {
+        return;
+    }
+    if (index == activeTabIndex_) {
+        const bool isOperation = tabs_.stateAt(index).kind == TabState::Kind::Operation;
+        if (hasOperation_ == isOperation && hasActor_ != isOperation) {
+            return;
+        }
+        restoreActiveTab();
+        emit activeTabChanged();
         return;
     }
     captureActiveTab();
@@ -601,6 +643,7 @@ void AppController::closeTabImmediately(int index) {
 
     if (tabs_.count() == 0) {
         activeTabIndex_ = -1;
+        hasResponse_ = false;
         if (closingDraft) {
             clearNewOperationDraftIdentity();
             restoreOperationEditFrom(TabState{});
@@ -616,10 +659,10 @@ void AppController::closeTabImmediately(int index) {
             }
             emit editingChanged();
             emit editChanged();
-            emit responseChanged();
             emit chainChanged();
             emit selectionChanged();
         }
+        emit responseChanged();
         syncActiveKindFlags();
         persistOpenTabs();
         emit activeTabChanged();
@@ -792,6 +835,7 @@ void AppController::restoreOpenTabs(const QString& projectRoot) {
     std::vector<Entry> entries;
     int activeKind = -1;
     QString activeId;
+    bool activeStatePersisted = false;
     {
         QSettings settings;
         settings.beginGroup(QString::fromUtf8(kTabsGroup));
@@ -807,6 +851,7 @@ void AppController::restoreOpenTabs(const QString& projectRoot) {
             }
         }
         settings.endArray();
+        activeStatePersisted = settings.contains(key + QStringLiteral("|activeKind"));
         activeKind = settings.value(key + QStringLiteral("|activeKind"), -1).toInt();
         activeId = settings.value(key + QStringLiteral("|activeId")).toString();
         settings.endGroup();
@@ -839,7 +884,10 @@ void AppController::restoreOpenTabs(const QString& projectRoot) {
     // Activate the saved tab by its identity (kind + id), so a tab deleted
     // between sessions can't shift which one reactivates. Fall back to the last
     // opened tab when the saved active tab is gone.
-    if (tabs_.count() > 0) {
+    if (activeStatePersisted && activeKind < 0) {
+        activeTabIndex_ = -1;
+        syncActiveKindFlags();
+    } else if (tabs_.count() > 0) {
         int target = -1;
         if (activeKind >= 0 && !activeId.isEmpty()) {
             target = tabs_.indexOf(static_cast<TabState::Kind>(activeKind), activeId);

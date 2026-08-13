@@ -137,7 +137,60 @@ std::string substituteRefs(std::string_view input,
                            const RunContext& ctx,
                            const ResolveContext& rctx,
                            std::vector<std::string>& unresolved,
-                           int depth);
+                           int depth,
+                           bool encodeResolvedRefs);
+
+[[nodiscard]] std::size_t findUrlDelimiter(std::string_view input, char delimiter) noexcept {
+    bool inReference{false};
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        if (i + 1 < input.size()) {
+            const auto pair = input.substr(i, 2);
+            if (!inReference && pair == "{{") {
+                inReference = true;
+                ++i;
+                continue;
+            }
+            if (inReference && pair == "}}") {
+                inReference = false;
+                ++i;
+                continue;
+            }
+        }
+        if (!inReference && input[i] == delimiter) {
+            return i;
+        }
+    }
+    return std::string_view::npos;
+}
+
+[[nodiscard]] bool isHexDigit(char character) noexcept {
+    return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') ||
+           (character >= 'A' && character <= 'F');
+}
+
+/// Encode resolved URL components without encoding an existing `%HH` escape again.
+[[nodiscard]] std::string urlEncodePreservingEscapes(std::string_view input) {
+    std::string output;
+    output.reserve(input.size());
+    std::size_t chunkStart{};
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        if (input[index] != '%' || index + 2 >= input.size() || !isHexDigit(input[index + 1]) ||
+            !isHexDigit(input[index + 2])) {
+            continue;
+        }
+        output += urlEncode(input.substr(chunkStart, index - chunkStart));
+        output.append(input.substr(index, 3));
+        index += 2;
+        chunkStart = index + 1;
+    }
+    output += urlEncode(input.substr(chunkStart));
+    return output;
+}
+
+[[nodiscard]] bool isWholeReference(std::string_view input) noexcept {
+    return input.size() > 4 && input.starts_with("{{") && input.ends_with("}}") &&
+           input.substr(2, input.size() - 4).find_first_of("{}") == std::string_view::npos;
+}
 
 // Re-expansion of an env value into one further level (env → secret) is
 // the only nesting we rely on; a small cap leaves margin without cycles.
@@ -350,7 +403,7 @@ ResolvedRef resolveDotted(std::string_view ref,
         // records it, matching how every other unresolved ref behaves.
         if (it->second.find("{{") != std::string::npos) {
             std::vector<std::string> nested;
-            auto expanded = substituteRefs(it->second, ctx, rctx, nested, depth + 1);
+            auto expanded = substituteRefs(it->second, ctx, rctx, nested, depth + 1, false);
             if (!nested.empty()) {
                 return std::nullopt;
             }
@@ -431,7 +484,8 @@ std::string substituteRefs(std::string_view input,
                            const RunContext& ctx,
                            const ResolveContext& rctx,
                            std::vector<std::string>& unresolved,
-                           int depth) {
+                           int depth,
+                           bool encodeResolvedRefs) {
     static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
     // Depth guard: a self-referential env value (e.g. one whose value
     // references itself) would otherwise loop. At the cap, return the
@@ -461,7 +515,7 @@ std::string substituteRefs(std::string_view input,
         }
 
         if (resolved) {
-            output += *resolved;
+            output += encodeResolvedRefs ? urlEncodePreservingEscapes(*resolved) : *resolved;
         } else {
             unresolved.push_back(trimmed);
             output += "{{" + trimmed + "}}";
@@ -482,7 +536,45 @@ VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
                                                    const RunContext& ctx,
                                                    const ResolveContext& resolveCtx) const {
     std::vector<std::string> unresolved;
-    std::string output = substituteRefs(templateStr, ctx, resolveCtx, unresolved, 0);
+    std::string output = substituteRefs(templateStr, ctx, resolveCtx, unresolved, 0, false);
+    return Result{std::move(output), std::move(unresolved)};
+}
+
+VariableResolver::Result VariableResolver::resolveUrlPath(std::string_view templateStr,
+                                                          const RunContext& ctx,
+                                                          const ResolveContext& resolveCtx) const {
+    const auto candidateQueryStart = findUrlDelimiter(templateStr, '?');
+    const auto fragmentStart = findUrlDelimiter(templateStr, '#');
+    const bool hasQuery =
+        candidateQueryStart != std::string_view::npos &&
+        (fragmentStart == std::string_view::npos || candidateQueryStart < fragmentStart);
+    const auto queryStart = hasQuery ? candidateQueryStart : std::string_view::npos;
+    const auto pathEnd =
+        hasQuery ? queryStart
+                 : (fragmentStart == std::string_view::npos ? templateStr.size() : fragmentStart);
+
+    std::vector<std::string> unresolved;
+    std::string output;
+    output.reserve(templateStr.size());
+    const auto pathTemplate = templateStr.substr(0, pathEnd);
+    output += substituteRefs(
+        pathTemplate, ctx, resolveCtx, unresolved, 0, !isWholeReference(pathTemplate));
+
+    if (hasQuery) {
+        const auto queryEnd =
+            fragmentStart == std::string_view::npos ? templateStr.size() : fragmentStart;
+        output.push_back('?');
+        output += substituteRefs(templateStr.substr(queryStart + 1, queryEnd - queryStart - 1),
+                                 ctx,
+                                 resolveCtx,
+                                 unresolved,
+                                 0,
+                                 true);
+    }
+    if (fragmentStart != std::string_view::npos) {
+        output += substituteRefs(
+            templateStr.substr(fragmentStart), ctx, resolveCtx, unresolved, 0, false);
+    }
     return Result{std::move(output), std::move(unresolved)};
 }
 

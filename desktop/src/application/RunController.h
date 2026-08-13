@@ -8,11 +8,14 @@
 // engine — which is the marshalling discipline requires.
 #pragma once
 
+#include "application/UrlTemplate.h"
+
 #include <reqloom/engine/PublicApi.h>
 
 #include <QtCore/QFutureWatcher>
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtCore/QUrl>
 
 #include <memory>
 #include <optional>
@@ -39,6 +42,61 @@ struct RequestOverride {
     QString path;                                    ///< path template (empty → unchanged)
     std::map<std::string, std::string> headers;      ///< replaces op headers
     std::map<std::string, std::string> queryParams;  ///< replaces op query params
+
+    /// Move a map-representable query suffix from `path` into `queryParams`.
+    /// Embedded items win existing keys; lossy query shapes stay in `path`.
+    void normalizePathQuery() {
+        const qsizetype queryStart = url_template::findDelimiter(path, QLatin1Char('?'));
+        const qsizetype fragmentStart = url_template::findDelimiter(path, QLatin1Char('#'));
+        if (queryStart < 0 || (fragmentStart >= 0 && fragmentStart < queryStart)) {
+            return;
+        }
+
+        const qsizetype queryLength = fragmentStart < 0 ? -1 : fragmentStart - queryStart - 1;
+        const QString rawQuery = path.mid(queryStart + 1, queryLength);
+        const auto rawItems = url_template::splitOutsideTemplates(rawQuery, QLatin1Char('&'));
+        if (rawQuery.contains(QLatin1Char('+')) ||
+            rawQuery.contains(QStringLiteral("%7B"), Qt::CaseInsensitive) ||
+            rawQuery.contains(QStringLiteral("%7D"), Qt::CaseInsensitive)) {
+            return;
+        }
+
+        std::vector<std::pair<QString, QString>> items{};
+        items.reserve(static_cast<std::size_t>(rawItems.size()));
+        for (const QString& rawItem : rawItems) {
+            const qsizetype equalsIndex{url_template::findDelimiter(rawItem, QLatin1Char('='))};
+            if (equalsIndex <= 0) {
+                return;
+            }
+            const QString key{QUrl::fromPercentEncoding(rawItem.left(equalsIndex).toUtf8())};
+            const QString value{
+                QUrl::fromPercentEncoding(rawItem.sliced(equalsIndex + 1).toUtf8())};
+            if (key.contains(QStringLiteral("{{")) ||
+                url_template::containsExplicitUrlEncode(value)) {
+                return;
+            }
+            items.emplace_back(key, value);
+        }
+
+        // ponytail: Keep shapes a map cannot preserve in the raw path until
+        // Operation supports ordered, multi-value query parameters.
+        std::string previousKey;
+        bool first{true};
+        for (const auto& item : items) {
+            const std::string decodedKey = item.first.toStdString();
+            if (!first && decodedKey <= previousKey) {
+                return;
+            }
+            previousKey = decodedKey;
+            first = false;
+        }
+
+        const QString fragment{fragmentStart >= 0 ? path.sliced(fragmentStart) : QString{}};
+        path = path.left(queryStart) + fragment;
+        for (const auto& [key, value] : items) {
+            queryParams.insert_or_assign(key.toStdString(), value.toStdString());
+        }
+    }
 
     /// Body. When `bodyIsForm` is false, `body` is a raw template (empty →
     /// no body). When true, `formFields` is sent as form-data/multipart and
