@@ -75,7 +75,17 @@ bool AppController::loadOperationReadState(const QString& moduleName, const QStr
     operations_.reload(resIt->second);
     opName_ = opName;
     opMethod_ = methodLabel(op.method);
-    opPath_ = QString::fromStdString(op.pathTemplate);
+    const QString persistedPath{QString::fromStdString(op.pathTemplate)};
+    auto persistedQuery{toEditPairs(op.queryParams)};
+    const auto visibleQuery{queryPairsFromVisiblePath(persistedPath)};
+    // Legacy files may contain a key in both fields. The visible path wins so
+    // read mode never displays or sends that parameter twice.
+    std::erase_if(persistedQuery, [&visibleQuery](const auto& pair) {
+        return std::ranges::any_of(visibleQuery, [&pair](const auto& visiblePair) {
+            return visiblePair.first == pair.first;
+        });
+    });
+    opPath_ = visiblePathWithAppendedQueryPairs(persistedPath, persistedQuery);
     opActor_ = QString::fromStdString(op.actor.value);
 
     if (op.bodyTemplate) {
@@ -91,7 +101,7 @@ bool AppController::loadOperationReadState(const QString& moduleName, const QStr
     }
 
     opHeaders_.reload(op.headers);
-    opQuery_.reload(op.queryParams);
+    opQuery_.reloadPairs(queryPairsFromVisiblePath(opPath_));
 
     std::vector<std::pair<QString, QString>> extractRows;
     extractRows.reserve(op.extractions.size());

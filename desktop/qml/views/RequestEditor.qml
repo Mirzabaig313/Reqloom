@@ -148,6 +148,31 @@ ColumnLayout {
         return "json";
     }
 
+    // Format JSON for display or editing, unwrapping one common encoded-JSON
+    // layer while leaving empty and invalid bodies byte-for-byte unchanged.
+    function beautifiedJson(body) {
+        const original = "" + body;
+        const trimmed = original.trim();
+        if (trimmed.length === 0)
+            return original;
+        try {
+            let value = JSON.parse(trimmed);
+            if (typeof value === "string") {
+                const inner = value.trim();
+                if (inner.startsWith("{") || inner.startsWith("[")) {
+                    try {
+                        value = JSON.parse(inner);
+                    } catch (innerError) {
+                        // The quoted value resembles JSON but is incomplete.
+                    }
+                }
+            }
+            return JSON.stringify(value, null, 2);
+        } catch (error) {
+            return original;
+        }
+    }
+
     // ── Breadcrumb + actor chip ──
     RowLayout {
         Layout.fillWidth: true
@@ -803,10 +828,54 @@ ColumnLayout {
                     editTabs.currentIndex = 1;
                 }
             }
-            CodeView {
-                text: AppController.opBody
-                language: editor.bodyLanguage(AppController.opBody)
-                placeholder: qsTr("No request body.")
+            ColumnLayout {
+                id: readBody
+                spacing: DesignTokens.spaceXs
+                readonly property string beautifiedBody: editor.beautifiedJson(AppController.opBody)
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    Button {
+                        id: readBeautifyBtn
+                        visible: AppController.opBody.trim().length > 0 && readBody.beautifiedBody !== AppController.opBody
+                        Layout.alignment: Qt.AlignRight
+                        implicitHeight: Math.max(30, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
+                        leftPadding: DesignTokens.spaceMd
+                        rightPadding: DesignTokens.spaceMd
+                        checkable: true
+                        Accessible.name: qsTr("Beautify request body")
+                        Accessible.description: qsTr("Formats JSON for display only. The saved request body is unchanged.")
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: readBeautifyBtn.checked ? DesignTokens.accentMuted : (readBeautifyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
+                            border.width: 1
+                            border.color: readBeautifyBtn.checked || readBeautifyBtn.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                        }
+                        contentItem: Text {
+                            text: qsTr("Beautify")
+                            color: readBeautifyBtn.checked || readBeautifyBtn.activeFocus ? DesignTokens.accent : DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            font.weight: DesignTokens.weightSemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        GlassToolTip {
+                            active: readBeautifyBtn.hovered || readBeautifyBtn.activeFocus
+                            text: qsTr("Format JSON for display only. The saved request body is unchanged.")
+                        }
+                    }
+                }
+
+                CodeView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    text: readBeautifyBtn.checked ? readBody.beautifiedBody : AppController.opBody
+                    language: editor.bodyLanguage(AppController.opBody)
+                    placeholder: qsTr("No request body.")
+                }
             }
             // Auth (read): the actor carries the auth strategy.
             Rectangle {
@@ -1015,27 +1084,9 @@ ColumnLayout {
                         return qsTr("plain text body");
                     return "{ }";
                 }
-                // Pretty-print the JSON body. Handles the common import artefact
-                // where the body is a JSON *string* that itself contains JSON
-                // (e.g. "{\"a\":1}") by unwrapping one extra layer before
-                // re-indenting. Leaves invalid JSON untouched.
+                // Keep edit-mode behavior aligned with the read-only preview.
                 function beautify() {
-                    const t = AppController.editBody.trim();
-                    if (t.length === 0)
-                        return;
-                    try {
-                        let v = JSON.parse(t);
-                        if (typeof v === "string") {
-                            try {
-                                v = JSON.parse(v);
-                            } catch (inner) {
-                                // It was a plain string, not double-encoded JSON.
-                            }
-                        }
-                        AppController.editBody = JSON.stringify(v, null, 2);
-                    } catch (e) {
-                        // Not valid JSON — leave the user's text as-is.
-                    }
+                    AppController.editBody = editor.beautifiedJson(AppController.editBody);
                 }
                 function loadGraphql() {
                     try {
