@@ -55,9 +55,19 @@ struct RequestOverride {
         const qsizetype queryLength = fragmentStart < 0 ? -1 : fragmentStart - queryStart - 1;
         const QString rawQuery = path.mid(queryStart + 1, queryLength);
         const auto rawItems = url_template::splitOutsideTemplates(rawQuery, QLatin1Char('&'));
-        if (rawQuery.contains(QLatin1Char('+')) ||
-            rawQuery.contains(QStringLiteral("%7B"), Qt::CaseInsensitive) ||
-            rawQuery.contains(QStringLiteral("%7D"), Qt::CaseInsensitive)) {
+        for (const QString& rawItem : rawItems) {
+            const qsizetype equalsIndex{url_template::findDelimiter(rawItem, QLatin1Char('='))};
+            const QString rawKey{equalsIndex >= 0 ? rawItem.left(equalsIndex) : rawItem};
+            if (rawKey.isEmpty()) {
+                continue;
+            }
+            const QString key{QUrl::fromPercentEncoding(rawKey.toUtf8())};
+            if (!key.contains(QStringLiteral("{{"))) {
+                queryParams.erase(key.toStdString());
+            }
+        }
+        if (rawQuery.contains(QLatin1Char('%')) || rawQuery.contains(QLatin1Char('{')) ||
+            rawQuery.contains(QLatin1Char('}')) || rawQuery.contains(QLatin1Char('+'))) {
             return;
         }
 

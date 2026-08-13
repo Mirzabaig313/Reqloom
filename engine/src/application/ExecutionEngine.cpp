@@ -26,6 +26,7 @@
 #include <cctype>
 #include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <mutex>
 #include <sstream>
@@ -940,6 +941,11 @@ struct ExecutionEngine::Impl {
         std::map<std::string, std::string> queryParams;
         for (const auto& [k, v] : op.queryParams) {
             auto resolved = varResolver.resolve(v, ctx, rctx);
+            if (!resolved.unresolved.empty()) {
+                result.status = StepResult::Status::Failed;
+                result.error = ErrorCode::VarUnresolved;
+                return result;
+            }
             queryParams[k] = resolved.output;
         }
         if (!op.actor.value.empty()) {

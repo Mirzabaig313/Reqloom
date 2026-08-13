@@ -10,6 +10,7 @@
 #include <reqloom/engine/FormBody.h>
 #include <reqloom/engine/Predicate.h>
 
+#include <QtCore/QChar>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
@@ -117,8 +118,37 @@ namespace reqloom::desktop::qml {
     return QUrl::fromPercentEncoding(component.toUtf8());
 }
 
-[[nodiscard]] inline bool isPreservableQueryTemplateBody(const QString& body) {
-    return !body.isEmpty() && !body.contains(QLatin1Char('{')) && !body.contains(QLatin1Char('}'));
+[[nodiscard]] inline bool isPreservableQueryTemplateBody(const QString& body,
+                                                         bool allowEmpty = false,
+                                                         bool allowSingleClosingBrace = false) {
+    QChar quote{};
+    bool escaped{};
+    bool hasContent{};
+    for (const QChar character : body) {
+        if (!quote.isNull()) {
+            if (escaped) {
+                escaped = false;
+            } else if (character == QLatin1Char('\\')) {
+                escaped = true;
+            } else if (character == quote) {
+                quote = QChar{};
+            }
+            hasContent = true;
+            continue;
+        }
+        if (character == QLatin1Char('"') || character == QLatin1Char('\'')) {
+            quote = character;
+            hasContent = true;
+        } else if (character == QLatin1Char('}') && allowSingleClosingBrace) {
+            allowSingleClosingBrace = false;
+            hasContent = true;
+        } else if (character == QLatin1Char('{') || character == QLatin1Char('}')) {
+            return false;
+        } else if (!character.isSpace()) {
+            hasContent = true;
+        }
+    }
+    return allowEmpty || hasContent;
 }
 
 [[nodiscard]] inline QString encodeQueryComponent(const QString& component,
@@ -131,11 +161,33 @@ namespace reqloom::desktop::qml {
     qsizetype offset{};
     while (offset < component.size()) {
         const qsizetype templateStart{component.indexOf(QStringLiteral("{{"), offset)};
-        const qsizetype templateEnd{
-            templateStart >= 0 ? component.indexOf(QStringLiteral("}}"), templateStart + 2) : -1};
-        if (templateStart < 0 || templateEnd < 0) {
-            encoded += QString::fromLatin1(QUrl::toPercentEncoding(component.sliced(offset)));
-            break;
+        if (templateStart < 0) {
+            const qsizetype partialStart{component.indexOf(QLatin1Char('{'), offset)};
+            if (partialStart < 0) {
+                encoded += QString::fromLatin1(QUrl::toPercentEncoding(component.sliced(offset)));
+                break;
+            }
+            encoded += QString::fromLatin1(
+                QUrl::toPercentEncoding(component.sliced(offset, partialStart - offset)));
+            encoded += QLatin1Char('{');
+            offset = partialStart + 1;
+            continue;
+        }
+
+        const qsizetype templateEnd{url_template::findTemplateEnd(component, templateStart)};
+        if (templateEnd < 0) {
+            const QString body{component.sliced(templateStart + 2)};
+            if (isPreservableQueryTemplateBody(body, true, true)) {
+                encoded += QString::fromLatin1(
+                    QUrl::toPercentEncoding(component.sliced(offset, templateStart - offset)));
+                encoded += component.sliced(templateStart);
+                break;
+            }
+            const qsizetype encodedLength{templateStart + 2 - offset};
+            encoded += QString::fromLatin1(
+                QUrl::toPercentEncoding(component.sliced(offset, encodedLength)));
+            offset = templateStart + 2;
+            continue;
         }
         if (!isPreservableQueryTemplateBody(
                 component.sliced(templateStart + 2, templateEnd - templateStart - 2))) {

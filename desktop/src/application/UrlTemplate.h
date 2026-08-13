@@ -7,26 +7,77 @@
 
 namespace reqloom::desktop::url_template {
 
+/// Find the closing delimiter of a `{{...}}` reference, ignoring quoted content.
+[[nodiscard]] inline qsizetype findTemplateEnd(const QString& text,
+                                               qsizetype templateStart) noexcept {
+    if (templateStart < 0 || templateStart >= text.size() || text.size() - templateStart < 2 ||
+        text.at(templateStart) != QLatin1Char('{') ||
+        text.at(templateStart + 1) != QLatin1Char('{')) {
+        return -1;
+    }
+
+    QChar quote{};
+    bool escaped{};
+    for (qsizetype index = templateStart + 2; index < text.size(); ++index) {
+        const QChar character{text.at(index)};
+        if (!quote.isNull()) {
+            if (escaped) {
+                escaped = false;
+            } else if (character == QLatin1Char('\\')) {
+                escaped = true;
+            } else if (character == quote) {
+                quote = QChar{};
+            }
+            continue;
+        }
+        if (character == QLatin1Char('"') || character == QLatin1Char('\'')) {
+            quote = character;
+            continue;
+        }
+        if (character == QLatin1Char('}') && index + 1 < text.size() &&
+            text.at(index + 1) == QLatin1Char('}')) {
+            return index;
+        }
+    }
+    return -1;
+}
+
 /// Find a URL delimiter outside complete or in-progress `{{...}}` references.
 [[nodiscard]] inline qsizetype findDelimiter(const QString& text,
                                              QChar delimiter,
                                              qsizetype from = 0) noexcept {
-    bool inReference{};
+    if (from < 0) {
+        return -1;
+    }
     for (qsizetype index = from; index < text.size(); ++index) {
-        if (index + 1 < text.size()) {
-            const QStringView pair{text.constData() + index, 2};
-            if (!inReference && pair == QStringView{u"{{"}) {
-                inReference = true;
-                ++index;
-                continue;
+        if (index + 1 < text.size() && text.at(index) == QLatin1Char('{') &&
+            text.at(index + 1) == QLatin1Char('{')) {
+            const qsizetype templateEnd{findTemplateEnd(text, index)};
+            if (templateEnd < 0) {
+                QChar quote{};
+                bool escaped{};
+                for (qsizetype bodyIndex = index + 2; bodyIndex < text.size(); ++bodyIndex) {
+                    const QChar character{text.at(bodyIndex)};
+                    if (!quote.isNull()) {
+                        if (escaped) {
+                            escaped = false;
+                        } else if (character == QLatin1Char('\\')) {
+                            escaped = true;
+                        } else if (character == quote) {
+                            quote = QChar{};
+                        }
+                    } else if (character == QLatin1Char('"') || character == QLatin1Char('\'')) {
+                        quote = character;
+                    } else if (character == delimiter) {
+                        return bodyIndex;
+                    }
+                }
+                return -1;
             }
-            if (inReference && pair == QStringView{u"}}"}) {
-                inReference = false;
-                ++index;
-                continue;
-            }
+            index = templateEnd + 1;
+            continue;
         }
-        if (!inReference && text.at(index) == delimiter) {
+        if (text.at(index) == delimiter) {
             return index;
         }
     }
@@ -57,7 +108,7 @@ namespace reqloom::desktop::url_template {
         if (start < 0) {
             return false;
         }
-        const qsizetype end{text.indexOf(QStringLiteral("}}"), start + 2)};
+        const qsizetype end{findTemplateEnd(text, start)};
         if (end < 0) {
             return false;
         }
