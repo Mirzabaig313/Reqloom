@@ -17,6 +17,7 @@
 
 class QQmlEngine;
 class QJSEngine;
+class QSettings;
 
 namespace reqloom::desktop::qml {
 
@@ -38,6 +39,9 @@ public:
     ThemeController& operator=(ThemeController&&) = delete;
 
     static ThemeController* create(QQmlEngine*, QJSEngine*);
+
+    /// Migrates and validates the legacy layout density setting.
+    static void migrateLegacyDensity(QSettings& settings);
 
     [[nodiscard]] QString mode() const { return mode_; }
     [[nodiscard]] QString density() const { return density_; }

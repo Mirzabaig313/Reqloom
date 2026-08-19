@@ -1,4 +1,4 @@
-// ProjectTreeModel — the explorer tree (QML Migration Roadmap WS-A). Mirrors
+// ProjectTreeModel — the explorer tree . Mirrors
 // the old ProjectExplorerWidget structure: an "Actors" group and a "Resources"
 // group, the latter holding resource folders → operation leaves → saved-example
 // child rows. C++ owns the tree; QML (TreeView) renders it. Populated from the

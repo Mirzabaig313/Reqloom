@@ -29,7 +29,11 @@ ColumnLayout {
         color: DesignTokens.textPrimary
         placeholderTextColor: DesignTokens.textSecondary
         font.pixelSize: DesignTokens.fontLabel
-        implicitHeight: 32
+        // Content-driven so the field grows with OS text; floored at the density
+        // control height instead of a fixed 32 that clips.
+        topPadding: DesignTokens.spaceXs
+        bottomPadding: DesignTokens.spaceXs
+        implicitHeight: Math.max(DesignTokens.controlHeight, contentHeight + topPadding + bottomPadding)
         background: Rectangle {
             radius: DesignTokens.radiusSm
             color: DesignTokens.surfaceSunken

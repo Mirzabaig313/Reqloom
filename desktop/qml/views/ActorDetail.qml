@@ -18,6 +18,13 @@ ScrollView {
     contentWidth: availableWidth
 
     property bool editing: false
+    property bool editConfirmationActive: false
+    property bool applyingEditAction: false
+    property string pendingEditAction: ""
+    property string pendingActorId: ""
+    property string pendingActorName: ""
+    property bool pendingActorCreating: false
+    property Item editConfirmationInvoker: null
 
     // Editable working copies for the scalar fields (seeded on beginEdit). The
     // login steps live in AppController.actorAuthSteps and the refresh/config
@@ -45,11 +52,14 @@ ScrollView {
 
     // Switching to a different actor (or a post-save re-seed) discards any
     // in-progress inline edit — the panel always reflects the current actor.
-    // ponytail: no "unsaved changes" prompt; a mis-click loses edits. Upgrade
+    //: no "unsaved changes" prompt; a mis-click loses edits. Upgrade
     // path: guard with a confirm dialog if users report lost work.
     Connections {
         target: AppController
         function onActorSelectionChanged() {
+            if (root.editConfirmationActive && !root.applyingEditAction && AppController.selectedActorName !== root.pendingActorId) {
+                actorEditConfirmationDialog.reject();
+            }
             // A brand-new actor (no name yet) opens straight in edit mode; any
             // existing selection returns to the read view.
             if (AppController.hasActor && AppController.selectedActorName.length === 0) {
@@ -60,6 +70,17 @@ ScrollView {
         }
         function onActorEditRequested() {
             root.beginEdit();
+        }
+    }
+
+    function restoreFocus() {
+        if (!visible) {
+            return;
+        }
+        if (editing) {
+            actorNameField.forceActiveFocus();
+        } else {
+            actorEditButton.forceActiveFocus();
         }
     }
 
@@ -75,6 +96,32 @@ ScrollView {
             strategyCombo.currentIndex = idx;
         }
         editing = true;
+    }
+
+    function requestEditAction(action, invoker) {
+        if (editConfirmationActive) {
+            return;
+        }
+        pendingEditAction = action;
+        pendingActorId = AppController.selectedActorName;
+        pendingActorName = fName.trim();
+        pendingActorCreating = pendingActorId.length === 0;
+        editConfirmationInvoker = invoker;
+        editConfirmationActive = true;
+        actorEditConfirmationDialog.open();
+    }
+
+    function applyEditAction() {
+        if (AppController.selectedActorName !== pendingActorId) {
+            return;
+        }
+        applyingEditAction = true;
+        if (pendingEditAction === "save") {
+            saveEdits();
+        } else if (pendingEditAction === "cancel") {
+            cancelEdit();
+        }
+        applyingEditAction = false;
     }
 
     function cancelEdit() {
@@ -129,6 +176,7 @@ ScrollView {
                     Layout.fillWidth: true
                 }
                 GlassTextField {
+                    id: actorNameField
                     visible: root.editing
                     Layout.fillWidth: true
                     text: root.fName
@@ -143,6 +191,7 @@ ScrollView {
                 }
             }
             GlassButton {
+                id: actorEditButton
                 Layout.alignment: Qt.AlignTop
                 visible: !root.editing
                 text: qsTr("Edit")
@@ -150,18 +199,20 @@ ScrollView {
                 onClicked: root.beginEdit()
             }
             GlassButton {
+                id: actorCancelButton
                 Layout.alignment: Qt.AlignTop
                 visible: root.editing
                 text: qsTr("Cancel")
-                onClicked: root.cancelEdit()
+                onClicked: root.requestEditAction("cancel", actorCancelButton)
             }
             GlassButton {
+                id: actorSaveButton
                 Layout.alignment: Qt.AlignTop
                 visible: root.editing
                 text: AppController.selectedActorName.length === 0 ? qsTr("Create actor") : qsTr("Save")
                 primary: true
                 enabled: root.nameValid
-                onClicked: root.saveEdits()
+                onClicked: root.requestEditAction("save", actorSaveButton)
             }
         }
 
@@ -675,6 +726,83 @@ ScrollView {
                     valuePlaceholder: qsTr("data.accessToken")
                 }
             }
+        }
+    }
+
+    Dialog {
+        id: actorEditConfirmationDialog
+        readonly property bool saving: root.pendingEditAction === "save"
+        readonly property bool creating: root.pendingActorCreating
+        title: {
+            if (saving) {
+                return creating ? qsTr("Create actor?") : qsTr("Save actor changes?");
+            }
+            return creating ? qsTr("Discard new actor?") : qsTr("Discard actor changes?");
+        }
+        modal: true
+        parent: Overlay.overlay
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(440, Overlay.overlay ? Overlay.overlay.width - 64 : 440)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
+        padding: DesignTokens.spaceLg
+        focus: true
+
+        header: DialogHeader {
+            title: actorEditConfirmationDialog.title
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: {
+                if (actorEditConfirmationDialog.saving) {
+                    return actorEditConfirmationDialog.creating ? qsTr("Create “%1” in this project?").arg(root.pendingActorName) : qsTr("Save these changes to “%1”?").arg(root.pendingActorName);
+                }
+                return actorEditConfirmationDialog.creating ? qsTr("Discard this new actor? Nothing has been saved.") : qsTr("Discard your unsaved changes to “%1”?").arg(root.pendingActorId);
+            }
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontLabel
+            wrapMode: Text.WordWrap
+        }
+
+        footer: DialogButtons {
+            cancelText: qsTr("Keep editing")
+            okText: {
+                if (!actorEditConfirmationDialog.saving) {
+                    return qsTr("Discard changes");
+                }
+                return actorEditConfirmationDialog.creating ? qsTr("Create actor") : qsTr("Save changes");
+            }
+            okDestructive: !actorEditConfirmationDialog.saving
+            onAccepted: actorEditConfirmationDialog.accept()
+            onRejected: actorEditConfirmationDialog.reject()
+        }
+
+        onAccepted: root.applyEditAction()
+        onClosed: {
+            const invoker = root.editConfirmationInvoker;
+            const actorId = root.pendingActorId;
+            root.editConfirmationActive = false;
+            root.applyingEditAction = false;
+            root.pendingEditAction = "";
+            root.pendingActorId = "";
+            root.pendingActorName = "";
+            root.pendingActorCreating = false;
+            root.editConfirmationInvoker = null;
+            Qt.callLater(function () {
+                if (AppController.selectedActorName === actorId && invoker && invoker.visible && invoker.enabled) {
+                    invoker.forceActiveFocus();
+                } else {
+                    root.restoreFocus();
+                }
+            });
         }
     }
 

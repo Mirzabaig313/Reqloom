@@ -1,5 +1,5 @@
 // EmptyState — a teaching zero-state screen (no project open or no operation
-// selected). Mirrors the old Widgets EmptyState (DESIGN.md §10).
+// selected). Mirrors the old Widgets EmptyState .
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -48,18 +48,19 @@ ColumnLayout {
         }
     }
     Text {
-        Layout.alignment: Qt.AlignHCenter
+        Layout.fillWidth: true
         text: root.heading
         color: DesignTokens.textPrimary
-        font.pixelSize: DesignTokens.fontSubtitle
+        font.pointSize: DesignTokens.fontSubtitlePointSize
         font.weight: DesignTokens.weightSemiBold
+        wrapMode: Text.WordWrap
         horizontalAlignment: Text.AlignHCenter
     }
     Text {
         Layout.fillWidth: true
         text: root.body
         color: DesignTokens.textSecondary
-        font.pixelSize: DesignTokens.fontBody
+        font.pointSize: DesignTokens.fontBodyPointSize
         wrapMode: Text.WordWrap
         horizontalAlignment: Text.AlignHCenter
     }
@@ -68,7 +69,8 @@ ColumnLayout {
         visible: root.actionText.length > 0
         Layout.alignment: Qt.AlignHCenter
         Layout.topMargin: DesignTokens.spaceSm
-        implicitHeight: 34
+        // Density-aware floor that still grows with the label at large OS text.
+        implicitHeight: Math.max(DesignTokens.controlHeight, actionLabel.implicitHeight + DesignTokens.spaceSm * 2)
         leftPadding: DesignTokens.spaceLg
         rightPadding: DesignTokens.spaceLg
         onClicked: root.actionTriggered()
@@ -77,17 +79,20 @@ ColumnLayout {
             color: actionBtn.down ? DesignTokens.accentHover : DesignTokens.accent
         }
         contentItem: Text {
+            id: actionLabel
             text: root.actionText
             color: DesignTokens.textInverse
-            font.pixelSize: DesignTokens.fontBody
+            font.pointSize: DesignTokens.fontBodyPointSize
             font.weight: DesignTokens.weightSemiBold
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
     }
     // Secondary / tertiary link-style actions (e.g. Open Project, Import).
-    RowLayout {
-        Layout.alignment: Qt.AlignHCenter
+    // Flow (not RowLayout) so the long "Import…" link wraps to its own line at
+    // narrow panel widths or large OS text instead of overflowing the panel.
+    Flow {
+        Layout.fillWidth: true
         spacing: DesignTokens.spaceMd
         visible: root.secondaryActionText.length > 0 || root.tertiaryActionText.length > 0
 
@@ -100,7 +105,7 @@ ColumnLayout {
             contentItem: Text {
                 text: root.secondaryActionText
                 color: secondaryBtn.hovered ? DesignTokens.accent : DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontBody
+                font.pointSize: DesignTokens.fontBodyPointSize
                 font.weight: DesignTokens.weightMedium
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -115,7 +120,7 @@ ColumnLayout {
             contentItem: Text {
                 text: root.tertiaryActionText
                 color: tertiaryBtn.hovered ? DesignTokens.accent : DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontBody
+                font.pointSize: DesignTokens.fontBodyPointSize
                 font.weight: DesignTokens.weightMedium
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter

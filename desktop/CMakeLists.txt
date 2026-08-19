@@ -1,16 +1,17 @@
 qt_standard_project_setup(REQUIRES 6.8)
 
-# ─── Desktop app (ADR-007, QML/Qt Quick) ──────────────────────────────────────
+# ─── Desktop app ──────────────────────────────────────
 # The QML/Qt Quick front-end is the desktop app. Logic (engine, ProjectModel,
 # RunController, settings, …) is shared C++ under src/ and reused unchanged;
-# presentation is QML under qml/. The old Qt Widgets app was retired in Phase 5
-# of the QML Migration Roadmap — this is now the sole desktop target.
+
 qt_add_executable(reqloom-desktop
     qml/main.cpp
     qml/theming/DesignTokens.h
     qml/theming/DesignTokens.cpp
     qml/bridge/controllers/ThemeController.h
     qml/bridge/controllers/ThemeController.cpp
+    qml/bridge/controllers/LayoutSettingsController.h
+    qml/bridge/controllers/LayoutSettingsController.cpp
     qml/bridge/controllers/SecretsController.h
     qml/bridge/controllers/SecretsController.cpp
     qml/bridge/models/ResourceListModel.cpp
@@ -61,10 +62,14 @@ qt_add_executable(reqloom-desktop
     src/application/OAuth2AuthCodeFlow.h
     src/application/RunController.cpp
     src/application/RunController.h
+    src/application/ExecutionPreview.cpp
+    src/application/ExecutionPreview.h
     src/application/SavedResponseStore.cpp
     src/application/SavedResponseStore.h
     src/application/EnvironmentSettings.cpp
     src/application/EnvironmentSettings.h
+    src/application/LayoutSettings.cpp
+    src/application/LayoutSettings.h
     src/application/SecretManager.cpp
     src/application/SecretManager.h
     src/views/Formatting.cpp
@@ -100,12 +105,12 @@ qt_add_qml_module(reqloom-desktop
     OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qml_modules/Reqloom
     QML_FILES
         qml/views/Main.qml
+        qml/views/WorkbenchLayout.qml
         qml/views/ExplorerPanel.qml
         qml/views/RequestEditor.qml
         qml/views/ResponsePanel.qml
         qml/views/TimelinePanel.qml
         qml/views/NewModuleDialog.qml
-        qml/views/NewEndpointDialog.qml
         qml/views/ActorDetail.qml
         qml/views/EditorTabBar.qml
         qml/views/ManageEnvironmentDialog.qml
@@ -191,7 +196,7 @@ target_link_libraries(reqloom-desktop
         Qt6::QuickControls2
         # Widgets is linked so a non-replaceable Widgets-only control (e.g. a
         # QScintilla code editor) can be shown as a standalone dialog window.
-        # QML-first; Widgets only as a fallback (ADR-007 / Roadmap Phase 5 §7).
+        # QML-first; Widgets only as a fallback .
         Qt6::Widgets
 )
 
@@ -247,7 +252,7 @@ target_compile_definitions(reqloom-desktop
     PRIVATE REQLOOM_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts")
 
 # No boundary guard here — desktop is the one place Qt UI libraries are
-# allowed (PRD §8.6 / Project Layout §2.5). The engine boundary is enforced
+# allowed . The engine boundary is enforced
 # on the engine and CLI targets, not here.
 
 if(REQLOOM_BUILD_TESTS)

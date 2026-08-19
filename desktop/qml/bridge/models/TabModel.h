@@ -35,12 +35,13 @@ struct TabState {
     /// Operation tabs: fully-qualified "module.op". Actor tabs: actor id.
     /// A never-saved new-actor draft has an empty id.
     QString id;
-    QString module;       ///< Operation tabs: owning module.
-    QString projectRoot;  ///< Owning collection (for multi-project activation).
-    QString title;        ///< Tab label (op name or actor name; "New actor" when blank).
-    QString method;       ///< Operation tabs: HTTP method for the badge.
-    QString subtitle;     ///< Operation: path. Actor: strategy label.
-    bool dirty{false};    ///< Has unsaved edits.
+    QString module;              ///< Operation tabs: owning module.
+    QString projectRoot;         ///< Owning collection (for multi-project activation).
+    QString title;               ///< Tab label (op name or actor name; "New actor" when blank).
+    QString method;              ///< Operation tabs: HTTP method for the badge.
+    QString subtitle;            ///< Operation: path. Actor: strategy label.
+    bool dirty{false};           ///< Has unsaved edits.
+    bool operationDraft{false};  ///< Transient endpoint creation row; never persisted.
 
     // ── Operation identity ──
     // Read fields (method/path/headers/…) are re-derived from the project on
@@ -182,6 +183,8 @@ public:
     /// never matched (each "New actor" opens its own tab).
     [[nodiscard]] int indexOf(TabState::Kind kind, const QString& id) const;
 
+    /// Insert `state` at `index`; returns the inserted index, or -1 when invalid.
+    int insert(int index, TabState state);
     /// Append `state` as a new tab; returns its index.
     int append(TabState state);
     /// Move the tab at `from` to `to` (drag-to-reorder). No-op if out of range.

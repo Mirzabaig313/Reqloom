@@ -1,5 +1,5 @@
 // ExampleListModel — saved example responses for the currently-open operation
-// (QML Migration Roadmap WS-C). A thin list view over SavedResponseStore::list
+//  A thin list view over SavedResponseStore::list
 // for one operation id; AppController refills it on selection + after any
 // example mutation. C++ owns the data; QML renders the rows.
 #pragma once

@@ -1,7 +1,7 @@
 
 // Theme — resolved design tokens for one appearance (light or dark).
-// DESIGN.md is the source of truth: §2.4 semantic colors, §2.5 status palette,
-// §2.9 tint tokens, §4.2 type scale, §5.1 spacing scale. Widgets and the QSS
+// is the source of truth:  semantic colors, status palette,
+// tint tokens,  type scale, spacing scale. Widgets and the QSS
 // reference these resolved values, never raw OKLCH/hex literals (§13).
 #pragma once
 
@@ -14,7 +14,7 @@ namespace reqloom::desktop::theming {
 
 enum class Appearance : std::uint8_t { Light, Dark };
 
-/// Status vocabulary (DESIGN.md §2.5). Maps 1:1 to engine state enums so the
+/// Status vocabulary . Maps 1:1 to engine state enums so the
 /// same hue means the same thing in every panel.
 enum class StatusToken : std::uint8_t {
     Idle,
@@ -27,7 +27,7 @@ enum class StatusToken : std::uint8_t {
     Skipped,
 };
 
-/// Resolved semantic colors for the active appearance (DESIGN.md §2.4).
+/// Resolved semantic colors for the active appearance  .
 struct Palette {
     QColor surfaceBase;
     QColor surfaceRaised;
@@ -58,7 +58,7 @@ struct Palette {
     QColor tintDiffAdd;
     QColor tintDiffRemove;
 
-    // HTTP method vocabulary (§6.2a) — a mnemonic hue per verb, distinct from
+    // HTTP method vocabulary  — a mnemonic hue per verb, distinct from
     // the status palette so a method chip never reads as a run state.
     QColor methodGet;
     QColor methodPost;
@@ -67,17 +67,17 @@ struct Palette {
     QColor methodDelete;
 };
 
-/// Spacing scale step (DESIGN.md §5.1).
+/// Spacing scale step  .
 enum class Space : std::uint8_t { Xs, Sm, Md, Lg, Xl, Xxl };
 
-/// HTTP method colour vocabulary (DESIGN.md §6.2a). A dedicated, mnemonic
+/// HTTP method colour vocabulary  §6.2a). A dedicated, mnemonic
 /// hue per verb — distinct from both the accent (285) and the status palette
 /// — so developers recognise request types at a glance (GET blue, POST green,
 /// PUT orange, PATCH yellow, DELETE red, others neutral). Kept separate from
 /// StatusToken so a method chip's colour never collides with run-state meaning.
 enum class MethodColor : std::uint8_t { Get, Post, Put, Patch, Delete, Neutral };
 
-/// Type-scale role (DESIGN.md §4.2).
+/// Type-scale role .
 enum class TextStyle : std::uint8_t { Title, Subtitle, Body, Label, Caption, Mono };
 
 /// The full token set for one appearance. Construct via `Theme::resolve`.
@@ -91,12 +91,12 @@ public:
     /// Status hue resolved to a QColor for the active appearance.
     [[nodiscard]] QColor status(StatusToken token) const noexcept;
 
-    /// An opaque, low-emphasis background tint for a status (DESIGN.md §2.9:
+    /// An opaque, low-emphasis background tint for a status  §2.9:
     /// precomputed opaque values, never alpha composites). Used as the fill
     /// behind status pills and chips so they stay legible on any surface.
     [[nodiscard]] QColor statusTint(StatusToken token) const noexcept;
 
-    /// HTTP method hue resolved for the active appearance (DESIGN.md §6.2a).
+    /// HTTP method hue resolved for the active appearance  §6.2a).
     [[nodiscard]] QColor method(MethodColor token) const noexcept;
 
     /// An opaque, low-emphasis background tint for a method colour, mixed

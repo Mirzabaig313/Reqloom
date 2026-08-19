@@ -2,7 +2,7 @@
 // one row per step (method badge + endpoint id in the Endpoint column, that
 // step's own extracted variables stacked in the Variable/Path columns), rows
 // separated by dividers, and a single "+ Add dependency" + path hint at the
-// bottom. Mirrors the New Endpoint dialog's single-table layout.
+// bottom. The same table serves persisted endpoints and transient creation.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -17,7 +17,11 @@ ColumnLayout {
         color: DesignTokens.textPrimary
         placeholderTextColor: DesignTokens.textSecondary
         font.pixelSize: DesignTokens.fontLabel
-        implicitHeight: 32
+        // Content-driven so the cell grows with OS text; floored at the density
+        // control height instead of a fixed 32 that clips.
+        topPadding: DesignTokens.spaceXs
+        bottomPadding: DesignTokens.spaceXs
+        implicitHeight: Math.max(DesignTokens.controlHeight, contentHeight + topPadding + bottomPadding)
         background: Rectangle {
             radius: DesignTokens.radiusSm
             color: DesignTokens.surfaceSunken
@@ -109,7 +113,9 @@ ColumnLayout {
                     }
                     Label {
                         Layout.fillWidth: true
-                        text: step.operationId
+                        text: step.isTarget && AppController.creatingOperation
+                              ? AppController.newOperationModule + "." + (AppController.newOperationName.trim().length > 0 ? AppController.newOperationName.trim() : qsTr("New endpoint"))
+                              : step.operationId
                         color: DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontLabel
                         font.family: DesignTokens.fontMono
@@ -158,6 +164,7 @@ ColumnLayout {
                                     Layout.fillWidth: true
                                     Layout.preferredWidth: 1
                                     text: exRow.key
+                                    readOnly: AppController.creatingOperation && !step.isTarget
                                     placeholderText: qsTr("variable_name")
                                     onTextEdited: step.extractModel.setKey(exRow.index, text)
                                 }
@@ -166,6 +173,7 @@ ColumnLayout {
                                     Layout.fillWidth: true
                                     Layout.preferredWidth: 1
                                     text: exRow.value
+                                    readOnly: AppController.creatingOperation && !step.isTarget
                                     placeholderText: qsTr("data.id")
                                     rightPadding: 22
                                     onTextEdited: {
@@ -175,6 +183,7 @@ ColumnLayout {
                                     // Path autocomplete from the step's response.
                                     PathAutocomplete {
                                         field: pathField
+                                        enabled: !AppController.creatingOperation || step.isTarget
                                         operationId: step.operationId
                                         onPicked: function (p) {
                                             step.extractModel.setValue(exRow.index, p);
@@ -254,6 +263,7 @@ ColumnLayout {
                 }
                 GlassComboBox {
                     id: forEachCombo
+                    enabled: !AppController.creatingOperation || step.isTarget
                     // Dynamic width: fit the current selection's text (+ chevron)
                     // so it never truncates and never sprawls.
                     Layout.preferredWidth: Math.ceil(forEachMetrics.width) + 56
@@ -292,6 +302,7 @@ ColumnLayout {
             CheckBox {
                 id: continueOnErrorCheck
                 visible: step.forEachOver.length > 0
+                enabled: !AppController.creatingOperation || step.isTarget
                 Layout.leftMargin: DesignTokens.spaceLg
                 Layout.bottomMargin: DesignTokens.spaceMd
                 leftPadding: 0
@@ -344,6 +355,11 @@ ColumnLayout {
         readonly property var options: [qsTr("+ Add dependency")].concat(AppController.operationIds)
         model: addCombo.options
         currentIndex: 0
+        // Badge each candidate with its verb: picking a dependency shouldn't
+        // require remembering whether an endpoint is a GET or a POST.
+        methodResolver: function (id) {
+            return AppController.operationMethod(id);
+        }
         onActivated: function (i) {
             if (i > 0) {
                 AppController.chainAddDependency(addCombo.options[i]);

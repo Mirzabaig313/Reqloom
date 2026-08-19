@@ -4,16 +4,21 @@
 // them. Inline (not anonymous) so unused helpers in a given unit don't warn.
 #pragma once
 
+#include "application/UrlTemplate.h"
+
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/FormBody.h>
 #include <reqloom/engine/Predicate.h>
 
+#include <QtCore/QChar>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QLatin1String>
 #include <QtCore/QString>
+#include <QtCore/QUrl>
 
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -107,6 +112,304 @@ namespace reqloom::desktop::qml {
         }
     }
     return out.empty() ? std::string{"imported-project"} : out;
+}
+
+[[nodiscard]] inline QString decodeQueryComponent(const QString& component) {
+    return QUrl::fromPercentEncoding(component.toUtf8());
+}
+
+[[nodiscard]] inline bool isPreservableQueryTemplateBody(const QString& body,
+                                                         bool allowEmpty = false,
+                                                         bool allowSingleClosingBrace = false) {
+    QChar quote{};
+    bool escaped{};
+    bool hasContent{};
+    for (const QChar character : body) {
+        if (!quote.isNull()) {
+            if (escaped) {
+                escaped = false;
+            } else if (character == QLatin1Char('\\')) {
+                escaped = true;
+            } else if (character == quote) {
+                quote = QChar{};
+            }
+            hasContent = true;
+            continue;
+        }
+        if (character == QLatin1Char('"') || character == QLatin1Char('\'')) {
+            quote = character;
+            hasContent = true;
+        } else if (character == QLatin1Char('}') && allowSingleClosingBrace) {
+            allowSingleClosingBrace = false;
+            hasContent = true;
+        } else if (character == QLatin1Char('{') || character == QLatin1Char('}')) {
+            return false;
+        } else if (!character.isSpace()) {
+            hasContent = true;
+        }
+    }
+    return allowEmpty || hasContent;
+}
+
+[[nodiscard]] inline QString encodeQueryComponent(const QString& component,
+                                                  bool preserveTemplates = true) {
+    if (!preserveTemplates) {
+        return QString::fromLatin1(QUrl::toPercentEncoding(component));
+    }
+
+    QString encoded{};
+    qsizetype offset{};
+    while (offset < component.size()) {
+        const qsizetype templateStart{component.indexOf(QStringLiteral("{{"), offset)};
+        if (templateStart < 0) {
+            const qsizetype partialStart{component.indexOf(QLatin1Char('{'), offset)};
+            if (partialStart < 0) {
+                encoded += QString::fromLatin1(QUrl::toPercentEncoding(component.sliced(offset)));
+                break;
+            }
+            encoded += QString::fromLatin1(
+                QUrl::toPercentEncoding(component.sliced(offset, partialStart - offset)));
+            encoded += QLatin1Char('{');
+            offset = partialStart + 1;
+            continue;
+        }
+
+        const qsizetype templateEnd{url_template::findTemplateEnd(component, templateStart)};
+        if (templateEnd < 0) {
+            const QString body{component.sliced(templateStart + 2)};
+            if (isPreservableQueryTemplateBody(body, true, true)) {
+                encoded += QString::fromLatin1(
+                    QUrl::toPercentEncoding(component.sliced(offset, templateStart - offset)));
+                encoded += component.sliced(templateStart);
+                break;
+            }
+            const qsizetype encodedLength{templateStart + 2 - offset};
+            encoded += QString::fromLatin1(
+                QUrl::toPercentEncoding(component.sliced(offset, encodedLength)));
+            offset = templateStart + 2;
+            continue;
+        }
+        if (!isPreservableQueryTemplateBody(
+                component.sliced(templateStart + 2, templateEnd - templateStart - 2))) {
+            const qsizetype encodedLength{templateStart + 2 - offset};
+            encoded += QString::fromLatin1(
+                QUrl::toPercentEncoding(component.sliced(offset, encodedLength)));
+            offset = templateStart + 2;
+            continue;
+        }
+
+        encoded += QString::fromLatin1(
+            QUrl::toPercentEncoding(component.sliced(offset, templateStart - offset)));
+        const qsizetype templateLength{templateEnd + 2 - templateStart};
+        encoded += component.sliced(templateStart, templateLength);
+        offset = templateEnd + 2;
+    }
+    return encoded;
+}
+
+struct VisibleQuerySegment {
+    QString rawKey{};
+    QString rawValue{};
+    QString key{};
+    QString value{};
+    bool hasEquals{};
+    bool empty{};
+};
+
+[[nodiscard]] inline std::vector<VisibleQuerySegment> querySegmentsFromVisiblePath(
+    const QString& visiblePath) {
+    const qsizetype fragmentIndex{url_template::findDelimiter(visiblePath, QLatin1Char('#'))};
+    const qsizetype queryIndex{url_template::findDelimiter(visiblePath, QLatin1Char('?'))};
+    if (queryIndex < 0 || (fragmentIndex >= 0 && queryIndex > fragmentIndex)) {
+        return {};
+    }
+
+    const qsizetype queryEnd{fragmentIndex >= 0 ? fragmentIndex : visiblePath.size()};
+    const QString query{visiblePath.sliced(queryIndex + 1, queryEnd - queryIndex - 1)};
+    if (query.isEmpty()) {
+        return {};
+    }
+    std::vector<VisibleQuerySegment> segments{};
+    for (const QString& rawSegment : url_template::splitOutsideTemplates(query, QLatin1Char('&'))) {
+        VisibleQuerySegment segment{};
+        segment.empty = rawSegment.isEmpty();
+        const qsizetype equalsIndex{url_template::findDelimiter(rawSegment, QLatin1Char('='))};
+        segment.hasEquals = equalsIndex >= 0;
+        segment.rawKey = segment.hasEquals ? rawSegment.left(equalsIndex) : rawSegment;
+        segment.rawValue = segment.hasEquals ? rawSegment.sliced(equalsIndex + 1) : QString{};
+        segment.key = decodeQueryComponent(segment.rawKey);
+        segment.value = decodeQueryComponent(segment.rawValue);
+        segments.push_back(std::move(segment));
+    }
+    return segments;
+}
+
+[[nodiscard]] inline bool canPreserveTemplatesFromRaw(const QString& raw, const QString& decoded) {
+    if (raw.contains(QStringLiteral("%7B"), Qt::CaseInsensitive) ||
+        raw.contains(QStringLiteral("%7D"), Qt::CaseInsensitive)) {
+        return false;
+    }
+    return raw.contains(QStringLiteral("{{")) || !decoded.contains(QStringLiteral("{{"));
+}
+
+[[nodiscard]] inline QString rawQuerySegment(const VisibleQuerySegment& segment) {
+    return segment.hasEquals ? segment.rawKey + QLatin1Char('=') + segment.rawValue
+                             : segment.rawKey;
+}
+
+[[nodiscard]] inline QString serializeQueryPair(const std::pair<QString, QString>& pair,
+                                                const VisibleQuerySegment* original = nullptr) {
+    const bool sameKey{original != nullptr && pair.first == original->key};
+    const bool sameValue{original != nullptr && pair.second == original->value};
+    const QString key{sameKey ? original->rawKey
+                              : encodeQueryComponent(
+                                    pair.first,
+                                    original == nullptr || canPreserveTemplatesFromRaw(
+                                                               original->rawKey, original->key))};
+    const QString value{sameValue
+                            ? original->rawValue
+                            : encodeQueryComponent(
+                                  pair.second,
+                                  original == nullptr || canPreserveTemplatesFromRaw(
+                                                             original->rawValue, original->value))};
+    if (original != nullptr && !original->hasEquals && sameValue) {
+        return key;
+    }
+    return key + QLatin1Char('=') + value;
+}
+
+[[nodiscard]] inline QString serializeQueryPairs(
+    const std::vector<std::pair<QString, QString>>& pairs) {
+    QString query{};
+    for (const auto& pair : pairs) {
+        if (!query.isEmpty()) {
+            query += QLatin1Char('&');
+        }
+        query += serializeQueryPair(pair);
+    }
+    return query;
+}
+
+[[nodiscard]] inline std::vector<std::pair<QString, QString>> queryPairsFromVisiblePath(
+    const QString& visiblePath) {
+    std::vector<std::pair<QString, QString>> pairs{};
+    for (const auto& segment : querySegmentsFromVisiblePath(visiblePath)) {
+        if (!segment.empty) {
+            pairs.emplace_back(segment.key, segment.value);
+        }
+    }
+    return pairs;
+}
+
+inline void appendRawQuerySegment(QString& query, bool& hasOutputSegment, const QString& segment) {
+    if (hasOutputSegment) {
+        query += QLatin1Char('&');
+    }
+    query += segment;
+    hasOutputSegment = true;
+}
+
+[[nodiscard]] inline QString visiblePathWithQueryPairs(
+    const QString& visiblePath, const std::vector<std::pair<QString, QString>>& pairs) {
+    const qsizetype fragmentIndex{url_template::findDelimiter(visiblePath, QLatin1Char('#'))};
+    const qsizetype queryIndex{url_template::findDelimiter(visiblePath, QLatin1Char('?'))};
+    const bool hasQuery{queryIndex >= 0 && (fragmentIndex < 0 || queryIndex < fragmentIndex)};
+    const qsizetype baseEnd{hasQuery ? queryIndex
+                                     : (fragmentIndex >= 0 ? fragmentIndex : visiblePath.size())};
+    const QString base{visiblePath.left(baseEnd)};
+    const QString fragment{fragmentIndex >= 0 ? visiblePath.sliced(fragmentIndex) : QString{}};
+    const QString query{serializeQueryPairs(pairs)};
+    return query.isEmpty() ? base + fragment : base + QLatin1Char('?') + query + fragment;
+}
+
+[[nodiscard]] inline QString visiblePathWithUpdatedQueryPair(
+    const QString& visiblePath, std::size_t pairIndex, const std::pair<QString, QString>& pair) {
+    const qsizetype fragmentIndex{url_template::findDelimiter(visiblePath, QLatin1Char('#'))};
+    const qsizetype queryIndex{url_template::findDelimiter(visiblePath, QLatin1Char('?'))};
+    const bool hasQuery{queryIndex >= 0 && (fragmentIndex < 0 || queryIndex < fragmentIndex)};
+    const qsizetype baseEnd{hasQuery ? queryIndex
+                                     : (fragmentIndex >= 0 ? fragmentIndex : visiblePath.size())};
+    const QString base{visiblePath.left(baseEnd)};
+    const QString fragment{fragmentIndex >= 0 ? visiblePath.sliced(fragmentIndex) : QString{}};
+
+    QString query{};
+    bool hasOutputSegment{};
+    bool updated{};
+    std::size_t currentPair{};
+    for (const auto& segment : querySegmentsFromVisiblePath(visiblePath)) {
+        if (segment.empty) {
+            appendRawQuerySegment(query, hasOutputSegment, {});
+        } else if (currentPair == pairIndex) {
+            appendRawQuerySegment(query, hasOutputSegment, serializeQueryPair(pair, &segment));
+            updated = true;
+            ++currentPair;
+        } else {
+            appendRawQuerySegment(query, hasOutputSegment, rawQuerySegment(segment));
+            ++currentPair;
+        }
+    }
+    if (!updated) {
+        appendRawQuerySegment(query, hasOutputSegment, serializeQueryPair(pair));
+    }
+    return base + QLatin1Char('?') + query + fragment;
+}
+
+[[nodiscard]] inline QString visiblePathWithoutQueryPairs(const QString& visiblePath,
+                                                          std::size_t firstPair,
+                                                          std::size_t count) {
+    if (count == 0) {
+        return visiblePath;
+    }
+    const qsizetype fragmentIndex{url_template::findDelimiter(visiblePath, QLatin1Char('#'))};
+    const qsizetype queryIndex{url_template::findDelimiter(visiblePath, QLatin1Char('?'))};
+    if (queryIndex < 0 || (fragmentIndex >= 0 && queryIndex > fragmentIndex)) {
+        return visiblePath;
+    }
+    const QString base{visiblePath.left(queryIndex)};
+    const QString fragment{fragmentIndex >= 0 ? visiblePath.sliced(fragmentIndex) : QString{}};
+
+    QString query{};
+    bool hasOutputSegment{};
+    bool removed{};
+    std::size_t currentPair{};
+    for (const auto& segment : querySegmentsFromVisiblePath(visiblePath)) {
+        const bool remove{!segment.empty && currentPair >= firstPair &&
+                          currentPair - firstPair < count};
+        if (!remove) {
+            appendRawQuerySegment(query, hasOutputSegment, rawQuerySegment(segment));
+        } else {
+            removed = true;
+        }
+        if (!segment.empty) {
+            ++currentPair;
+        }
+    }
+    if (!removed) {
+        return visiblePath;
+    }
+    return hasOutputSegment ? base + QLatin1Char('?') + query + fragment : base + fragment;
+}
+
+[[nodiscard]] inline QString visiblePathWithAppendedQueryPairs(
+    const QString& visiblePath, const std::vector<std::pair<QString, QString>>& pairs) {
+    const QString appendedQuery{serializeQueryPairs(pairs)};
+    if (appendedQuery.isEmpty()) {
+        return visiblePath;
+    }
+
+    const qsizetype fragmentIndex{url_template::findDelimiter(visiblePath, QLatin1Char('#'))};
+    const QString prefix{fragmentIndex >= 0 ? visiblePath.left(fragmentIndex) : visiblePath};
+    const QString fragment{fragmentIndex >= 0 ? visiblePath.sliced(fragmentIndex) : QString{}};
+    if (url_template::findDelimiter(prefix, QLatin1Char('?')) < 0) {
+        return prefix + QLatin1Char('?') + appendedQuery + fragment;
+    }
+    if (prefix.endsWith(QLatin1Char('?'))) {
+        return prefix + appendedQuery + fragment;
+    }
+    if (prefix.endsWith(QLatin1Char('&'))) {
+        return prefix + QLatin1Char('&') + appendedQuery + fragment;
+    }
+    return prefix + QLatin1Char('&') + appendedQuery + fragment;
 }
 
 [[nodiscard]] inline QString methodLabel(engine::HttpMethod method) {

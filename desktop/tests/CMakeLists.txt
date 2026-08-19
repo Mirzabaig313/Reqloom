@@ -4,13 +4,20 @@ include(GoogleTest)
 # Logic + reused-component tests. These compile only the survivable C++ logic
 # (settings, Color/Theme, FuzzyMatch, LineDiff, SavedResponseStore) straight
 # into the test binary. The Widgets-bound UI tests (StatusBadge, KeyValueEditor,
-# ResponseViewerPanel) were retired with the Widgets app in Phase 5.
+
 add_executable(reqloom-desktop-ui-tests
     TestMain.cpp
     ui/EnvironmentSettingsTest.cpp
     unit/ColorTest.cpp
     unit/ContrastTest.cpp
+    unit/DesignTokensTest.cpp
     unit/LayoutSettingsTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/theming/DesignTokens.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/theming/DesignTokens.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/ThemeController.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/ThemeController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/LayoutSettingsController.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/LayoutSettingsController.h
     unit/FuzzyMatchTest.cpp
     unit/LineDiffTest.cpp
     unit/GraphLayoutTest.cpp
@@ -39,12 +46,17 @@ add_executable(reqloom-desktop-ui-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.h
 )
 target_include_directories(reqloom-desktop-ui-tests
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers
+        ${CMAKE_CURRENT_SOURCE_DIR}/../qml/theming
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
 target_link_libraries(reqloom-desktop-ui-tests
     PRIVATE
         Qt6::Core
         Qt6::Gui
+        Qt6::Qml
         Qt6::Widgets
         GTest::gtest
 )
@@ -74,10 +86,24 @@ gtest_discover_tests(reqloom-desktop-ui-tests
 add_executable(reqloom-desktop-secret-tests
     unit/SecretManagerTest.cpp
     unit/ProjectModelTest.cpp
+    unit/RequestOverrideTest.cpp
+    unit/TabModelTest.cpp
     unit/WorkspaceModelTest.cpp
     unit/ProjectTreeModelTest.cpp
     unit/PathEvalTest.cpp
     unit/AuthStepListModelTest.cpp
+    unit/TimelineModelTest.cpp
+    unit/ExecutionPreviewTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ExecutionPreview.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ExecutionPreview.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/Formatting.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/Formatting.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TimelineModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TimelineModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp
@@ -96,6 +122,13 @@ target_include_directories(reqloom-desktop-secret-tests
         ${CMAKE_CURRENT_SOURCE_DIR}/../src
         ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge
         ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models
+)
+# Lets ExecutionPreviewTest resolve the real sample project, so the preview is
+# checked against a project a user could actually open rather than only against
+# hand-built structs. Mirrors the engine integration tests' definition.
+target_compile_definitions(reqloom-desktop-secret-tests
+    PRIVATE
+        REQLOOM_SAMPLES_DIR="${CMAKE_SOURCE_DIR}/samples"
 )
 target_link_libraries(reqloom-desktop-secret-tests
     PRIVATE

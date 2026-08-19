@@ -6,5 +6,5 @@ import Reqloom
 
 Label {
     color: DesignTokens.textSecondary
-    font.pixelSize: DesignTokens.fontLabel
+    font.pointSize: DesignTokens.fontLabelPointSize
 }

@@ -13,13 +13,15 @@ TextField {
     // with a FieldError for the inline explanation.
     property bool error: false
 
-    implicitHeight: DesignTokens.controlHeight
+    implicitHeight: Math.max(DesignTokens.controlHeight, control.contentHeight + control.topPadding + control.bottomPadding)
     color: DesignTokens.textPrimary
     placeholderTextColor: DesignTokens.textSecondary
-    font.pixelSize: DesignTokens.fontLabel
+    font.pointSize: DesignTokens.fontLabelPointSize
     font.family: control.mono ? DesignTokens.fontMono : DesignTokens.fontSans
     leftPadding: DesignTokens.spaceMd
     rightPadding: DesignTokens.spaceMd
+    topPadding: DesignTokens.spaceSm
+    bottomPadding: DesignTokens.spaceSm
 
     background: Rectangle {
         radius: DesignTokens.radiusSm

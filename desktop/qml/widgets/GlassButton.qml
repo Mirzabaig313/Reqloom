@@ -13,10 +13,13 @@ Button {
     // never look the same. Takes precedence over `primary`.
     property bool destructive: false
     readonly property bool filled: control.primary || control.destructive
-    implicitHeight: DesignTokens.controlHeightLg
+    implicitHeight: Math.max(DesignTokens.controlHeightLg,
+                             contentItem.implicitHeight + topPadding + bottomPadding)
     leftPadding: DesignTokens.spaceLg
     rightPadding: DesignTokens.spaceLg
-    font.pixelSize: DesignTokens.fontBody
+    topPadding: DesignTokens.spaceSm
+    bottomPadding: DesignTokens.spaceSm
+    font.pointSize: DesignTokens.fontBodyPointSize
     font.weight: DesignTokens.weightSemiBold
     font.family: DesignTokens.fontSans
 

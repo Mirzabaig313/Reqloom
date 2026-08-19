@@ -1,6 +1,7 @@
 // LayoutSettings — see header. QSettings group accessors for window layout.
 #include "LayoutSettings.h"
 
+#include <QtCore/QMetaType>
 #include <QtCore/QSettings>
 #include <QtCore/QVariant>
 
@@ -9,7 +10,6 @@ namespace reqloom::desktop {
 namespace {
 
 constexpr const char* kSplitterGroup = "splitterSizes";
-constexpr const char* kDensityKey = "layout/density";
 
 }  // namespace
 
@@ -39,28 +39,13 @@ QList<int> LayoutSettings::loadSplitter(QSettings& settings, const QString& key)
 
     QList<int> sizes;
     sizes.reserve(encoded.size());
-    for (const QVariant& v : encoded) {
-        bool ok = false;
-        const int size = v.toInt(&ok);
-        // A corrupt or non-integer entry invalidates the whole record: fall
-        // back to defaults rather than restore a half-broken layout.
-        if (!ok) {
+    for (const QVariant& value : encoded) {
+        if (value.metaType().id() != QMetaType::Int) {
             return {};
         }
-        sizes.append(size);
+        sizes.append(value.toInt());
     }
     return sizes;
-}
-
-void LayoutSettings::saveDensity(QSettings& settings, Density density) {
-    settings.setValue(
-        QString::fromUtf8(kDensityKey),
-        density == Density::Compact ? QStringLiteral("compact") : QStringLiteral("comfortable"));
-}
-
-Density LayoutSettings::loadDensity(QSettings& settings) {
-    const QString value = settings.value(QString::fromUtf8(kDensityKey)).toString();
-    return value == QStringLiteral("compact") ? Density::Compact : Density::Comfortable;
 }
 
 }  // namespace reqloom::desktop

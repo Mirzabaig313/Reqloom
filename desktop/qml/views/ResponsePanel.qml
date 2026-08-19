@@ -1,7 +1,7 @@
 // ResponsePanel — the run result surface (QML Migration Roadmap WS-C). A top
-// Response | Timeline tab bar: Response shows the status line (code coloured by
-// class), a Save-as-example action, an examples dropdown to re-show a saved
-// response, and Body (Tree) / Body (Raw) / Headers / Diff views; Timeline
+// Response | Timeline tab bar: Response shows the status line with a semantic
+// class-coloured rail, a Save-as-example action, and an examples dropdown to
+// re-show a saved response, plus Body (Tree) / Body (Raw) / Headers / Diff views; Timeline
 // embeds the live per-step stream. Presentation only; state comes from
 // AppController.
 //
@@ -63,6 +63,19 @@ Rectangle {
     // Preview rendered HTML / Markdown instead of the coloured source.
     property bool previewMode: false
 
+    readonly property real availableContentWidth: Math.max(0, width - DesignTokens.spaceLg * 2)
+    readonly property bool topControlsReflow: availableContentWidth < topTabs.implicitWidth + stackBtn.implicitWidth + closeBtn.implicitWidth + DesignTokens.spaceSm * 2
+    // Measured against the tray's real content width rather than a guessed
+    // minimum, so the actions only drop to a second row when they genuinely
+    // cannot sit beside it.
+    // Budget matches the real layout: one grid gap between the tray and the
+    // action cell, plus one gap between the two buttons.
+    readonly property bool statusActionsReflow: availableContentWidth < statusSummary.implicitWidth + copyBodyBtn.implicitWidth + saveExampleBtn.implicitWidth + DesignTokens.spaceSm * 2
+    readonly property bool examplesReflow: availableContentWidth < examplesLabel.implicitWidth + 260 + DesignTokens.spaceSm
+    readonly property bool responseTabsReflow: prettyBtn.visible && availableContentWidth < respTabs.implicitWidth + prettyBtn.implicitWidth + DesignTokens.spaceSm
+    readonly property bool rawControlsReflow: availableContentWidth < 150 + Math.max(previewBtn.implicitWidth, rawPrettyBtn.implicitWidth) + DesignTokens.spaceSm
+    readonly property bool diffPickerReflow: availableContentWidth < compareLabel.implicitWidth + 180 + DesignTokens.spaceSm
+
     // Map a response's Content-Type to a display-format token. Defaults to JSON
     // (the overwhelmingly common API shape) when there's no usable hint.
     function detectFormat(headers) {
@@ -120,12 +133,18 @@ Rectangle {
         }
 
         // ── Response | Timeline switch + close button ───────────────────────
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
-            spacing: DesignTokens.spaceSm
+            columns: 3
+            rowSpacing: DesignTokens.spaceXs
+            columnSpacing: DesignTokens.spaceSm
             TabBar {
                 id: topTabs
+                Layout.row: 0
+                Layout.column: 0
+                Layout.columnSpan: panel.topControlsReflow ? 3 : 1
                 Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 background: Rectangle {
                     color: "transparent"
                 }
@@ -157,6 +176,8 @@ Rectangle {
             }
             Button {
                 id: stackBtn
+                Layout.row: panel.topControlsReflow ? 1 : 0
+                Layout.column: 1
                 implicitWidth: 28
                 implicitHeight: 28
                 GlassToolTip {
@@ -234,6 +255,8 @@ Rectangle {
             }
             Button {
                 id: closeBtn
+                Layout.row: panel.topControlsReflow ? 1 : 0
+                Layout.column: 2
                 implicitWidth: 28
                 implicitHeight: 28
                 GlassToolTip {
@@ -263,48 +286,65 @@ Rectangle {
                 spacing: DesignTokens.spaceMd
 
                 // Status tray + Copy + Save-as-example.
-                RowLayout {
+                GridLayout {
                     Layout.fillWidth: true
                     visible: AppController.hasResponse
-                    spacing: DesignTokens.spaceMd
+                    columns: 2
+                    rowSpacing: DesignTokens.spaceXs
+                    columnSpacing: DesignTokens.spaceSm
 
                     // Grouped status tray: code + example + timing + size read
                     // as one unit instead of four loose labels (UI/UX review §5).
                     Rectangle {
-                        Layout.alignment: Qt.AlignVCenter
-                        implicitHeight: 32
+                        id: statusSummary
+
+                        readonly property color statusHue: panel.statusColor(AppController.respStatus)
+
+                        Layout.row: 0
+                        Layout.column: 0
+                        Layout.columnSpan: panel.statusActionsReflow ? 2 : 1
+                        // Hug the content: a stretched tray left "HTTP 200 …"
+                        // floating in a wide empty pill and starved the actions
+                        // of the room they needed to stay on this row.
+                        Layout.minimumWidth: 0
                         implicitWidth: statusTray.implicitWidth + DesignTokens.spaceMd * 2
-                        radius: DesignTokens.radiusPill
+                        implicitHeight: Math.max(DesignTokens.controlHeight, statusTray.implicitHeight + DesignTokens.spaceXs * 2)
+                        radius: DesignTokens.radiusSm
                         color: DesignTokens.surfaceSunken
                         border.width: 1
                         border.color: DesignTokens.borderSubtle
-                        RowLayout {
+                        // Row, not Flow: its implicit width is pure content, so
+                        // the pill can size to it without the width feeding back
+                        // through wrapping. Narrowness is handled by the whole
+                        // row reflowing plus the example name eliding.
+                        Row {
                             id: statusTray
-                            anchors.centerIn: parent
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: DesignTokens.spaceMd
                             spacing: DesignTokens.spaceSm
                             Label {
                                 text: AppController.respStatus > 0 ? ("HTTP " + AppController.respStatus) : AppController.runOutcome
-                                color: panel.statusColor(AppController.respStatus)
-                                font.pixelSize: DesignTokens.fontBody
+                                color: DesignTokens.textPrimary
+                                font.pointSize: DesignTokens.fontLabelPointSize
+                                font.family: DesignTokens.fontMono
                                 font.weight: DesignTokens.weightSemiBold
                             }
                             Rectangle {
                                 visible: AppController.shownExample.length > 0
-                                Layout.alignment: Qt.AlignVCenter
                                 implicitWidth: 1
                                 implicitHeight: 14
                                 color: DesignTokens.borderSubtle
                             }
                             Label {
                                 visible: AppController.shownExample.length > 0
+                                width: Math.min(implicitWidth, 160)
                                 text: AppController.shownExample
                                 color: DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontLabel
+                                font.pointSize: DesignTokens.fontLabelPointSize
                                 elide: Text.ElideRight
-                                Layout.maximumWidth: 160
                             }
                             Rectangle {
-                                Layout.alignment: Qt.AlignVCenter
                                 implicitWidth: 1
                                 implicitHeight: 14
                                 color: DesignTokens.borderSubtle
@@ -312,7 +352,8 @@ Rectangle {
                             Label {
                                 text: AppController.respElapsedMs + qsTr(" ms")
                                 color: DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontLabel
+                                font.pointSize: DesignTokens.fontLabelPointSize
+                                font.family: DesignTokens.fontMono
                                 // Tabular figures so the ms value doesn't shift
                                 // width as digits change between runs.
                                 font.features: ({
@@ -322,98 +363,148 @@ Rectangle {
                             Label {
                                 text: AppController.respBodySize + qsTr(" B")
                                 color: DesignTokens.textSecondary
-                                font.pixelSize: DesignTokens.fontLabel
+                                font.pointSize: DesignTokens.fontLabelPointSize
+                                font.family: DesignTokens.fontMono
                                 font.features: ({
                                         "tnum": 1
                                     })
                             }
                         }
+
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.bottom: parent.bottom
+                            width: Math.max(0, Math.min(12, parent.width - DesignTokens.spaceXs * 2))
+                            height: 2
+                            radius: 1
+                            color: statusSummary.statusHue
+                            Accessible.ignored: true
+                            Behavior on color {
+                                ColorMotion {}
+                            }
+                        }
                     }
 
-                    Item {
+                    // Both actions live in one cell, so the row costs one grid gap
+                    // plus one gap between them instead of three separate grid
+                    // gaps. The leading spacer keeps them against the trailing
+                    // edge without the tray having to stretch.
+                    RowLayout {
+                        Layout.row: panel.statusActionsReflow ? 1 : 0
+                        Layout.column: panel.statusActionsReflow ? 0 : 1
+                        Layout.columnSpan: panel.statusActionsReflow ? 2 : 1
                         Layout.fillWidth: true
-                    }
-                    Button {
-                        id: copyBodyBtn
-                        text: qsTr("Copy")
-                        implicitHeight: 28
-                        leftPadding: DesignTokens.spaceSm
-                        rightPadding: DesignTokens.spaceSm
-                        enabled: AppController.respBody.length > 0
-                        GlassToolTip {
-                            active: copyBodyBtn.hovered
-                            text: qsTr("Copy the full response body")
+                        spacing: DesignTokens.spaceSm
+
+                        Item {
+                            Layout.fillWidth: true
                         }
-                        onClicked: AppController.copyToClipboard(AppController.respBody, qsTr("response body"))
-                        contentItem: Text {
-                            text: copyBodyBtn.text
-                            color: copyBodyBtn.enabled ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontLabel
-                            font.weight: DesignTokens.weightSemiBold
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
+
+                        Button {
+                            id: copyBodyBtn
+                            text: qsTr("Copy")
+                            implicitHeight: Math.max(28, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
+                            leftPadding: DesignTokens.spaceSm
+                            rightPadding: DesignTokens.spaceSm
+                            enabled: AppController.respBody.length > 0
+                            GlassToolTip {
+                                active: copyBodyBtn.hovered
+                                text: qsTr("Copy the full response body")
+                            }
+                            onClicked: AppController.copyToClipboard(AppController.respBody, qsTr("response body"))
+                            contentItem: Text {
+                                text: copyBodyBtn.text
+                                color: copyBodyBtn.enabled ? DesignTokens.accent : DesignTokens.textSecondary
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.weight: DesignTokens.weightSemiBold
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                radius: DesignTokens.radiusSm
+                                color: copyBodyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                                border.width: 1
+                                border.color: DesignTokens.borderSubtle
+                            }
                         }
-                        background: Rectangle {
-                            radius: DesignTokens.radiusSm
-                            color: copyBodyBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
-                            border.width: 1
-                            border.color: DesignTokens.borderSubtle
-                        }
-                    }
-                    Button {
-                        id: saveExampleBtn
-                        text: qsTr("Save as example")
-                        onClicked: saveExampleDialog.open()
-                        contentItem: Text {
-                            text: saveExampleBtn.text
-                            color: DesignTokens.accent
-                            font.pixelSize: DesignTokens.fontLabel
-                            font.weight: DesignTokens.weightSemiBold
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: DesignTokens.radiusSm
-                            color: saveExampleBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
-                            border.width: 1
-                            border.color: DesignTokens.borderSubtle
+                        Button {
+                            id: saveExampleBtn
+                            // Shortened from "Save as example": the full phrase cost
+                            // ~25 DIP that pushed this pair onto its own row. The
+                            // meaning lives in the tooltip and the dialog title.
+                            text: qsTr("Save example")
+                            implicitHeight: Math.max(28, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
+                            leftPadding: DesignTokens.spaceSm
+                            rightPadding: DesignTokens.spaceSm
+                            GlassToolTip {
+                                active: saveExampleBtn.hovered
+                                text: qsTr("Save this response as a named example")
+                            }
+                            onClicked: saveExampleDialog.open()
+                            contentItem: Text {
+                                text: saveExampleBtn.text
+                                color: DesignTokens.accent
+                                font.pixelSize: DesignTokens.fontLabel
+                                font.weight: DesignTokens.weightSemiBold
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                radius: DesignTokens.radiusSm
+                                color: saveExampleBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+                                border.width: 1
+                                border.color: DesignTokens.borderSubtle
+                            }
                         }
                     }
                 }
 
                 // Examples dropdown — re-show a saved example for this op.
-                RowLayout {
+                GridLayout {
                     Layout.fillWidth: true
                     visible: examplesCombo.count > 0
-                    spacing: DesignTokens.spaceSm
+                    columns: 2
+                    rowSpacing: DesignTokens.spaceXs
+                    columnSpacing: DesignTokens.spaceSm
                     Label {
+                        id: examplesLabel
+                        Layout.row: 0
+                        Layout.column: 0
                         text: qsTr("Examples")
                         color: DesignTokens.textSecondary
                         font.pixelSize: DesignTokens.fontLabel
                     }
                     GlassComboBox {
                         id: examplesCombo
+                        Layout.row: panel.examplesReflow ? 1 : 0
+                        Layout.column: panel.examplesReflow ? 0 : 1
+                        Layout.columnSpan: panel.examplesReflow ? 2 : 1
+                        Layout.fillWidth: panel.examplesReflow
+                        Layout.minimumWidth: 0
                         // A compact dropdown reads as a picker; full-width it
                         // looked like an empty input field (UI/UX review §5).
-                        Layout.preferredWidth: 260
-                        Layout.maximumWidth: 320
+                        Layout.preferredWidth: Math.min(260, panel.availableContentWidth)
+                        Layout.maximumWidth: Math.min(320, panel.availableContentWidth)
                         model: AppController.examples
                         textRole: "name"
                         onActivated: AppController.showExample(currentText)
                     }
-                    Item {
-                        Layout.fillWidth: true
-                    }
                 }
 
                 // Inner Body(Tree) | Body(Raw) | Headers | Diff tabs + Pretty.
-                RowLayout {
+                GridLayout {
                     Layout.fillWidth: true
                     visible: AppController.hasResponse
-                    spacing: DesignTokens.spaceSm
+                    columns: 2
+                    rowSpacing: DesignTokens.spaceXs
+                    columnSpacing: DesignTokens.spaceSm
                     TabBar {
                         id: respTabs
+                        Layout.row: 0
+                        Layout.column: 0
+                        Layout.columnSpan: panel.responseTabsReflow ? 2 : 1
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         visible: AppController.hasResponse
                         background: Rectangle {
                             color: "transparent"
@@ -444,13 +535,13 @@ Rectangle {
                             }
                         }
                     }
-                    Item {
-                        Layout.fillWidth: true
-                    }
                     Button {
                         id: prettyBtn
                         visible: respTabs.currentIndex === 3
-                        implicitHeight: 26
+                        Layout.row: panel.responseTabsReflow ? 1 : 0
+                        Layout.column: 1
+                        Layout.alignment: Qt.AlignRight
+                        implicitHeight: Math.max(26, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                         leftPadding: DesignTokens.spaceSm
                         rightPadding: DesignTokens.spaceSm
                         checkable: true
@@ -606,12 +697,20 @@ Rectangle {
                     ColumnLayout {
                         spacing: DesignTokens.spaceSm
 
-                        RowLayout {
+                        GridLayout {
                             Layout.fillWidth: true
-                            spacing: DesignTokens.spaceSm
+                            columns: 2
+                            rowSpacing: DesignTokens.spaceXs
+                            columnSpacing: DesignTokens.spaceSm
                             GlassComboBox {
                                 id: formatCombo
-                                Layout.preferredWidth: 150
+                                Layout.row: 0
+                                Layout.column: 0
+                                Layout.columnSpan: panel.rawControlsReflow ? 2 : 1
+                                Layout.fillWidth: panel.rawControlsReflow
+                                Layout.minimumWidth: 0
+                                Layout.preferredWidth: Math.min(150, panel.availableContentWidth)
+                                Layout.maximumWidth: Math.min(150, panel.availableContentWidth)
                                 model: panel.formatLabels
                                 Component.onCompleted: currentIndex = panel.formatValues.indexOf(panel.respFormat)
                                 onActivated: panel.respFormat = panel.formatValues[currentIndex]
@@ -625,7 +724,10 @@ Rectangle {
                             Button {
                                 id: previewBtn
                                 visible: panel.respFormat === "html" || panel.respFormat === "markdown"
-                                implicitHeight: 30
+                                Layout.row: panel.rawControlsReflow ? 1 : 0
+                                Layout.column: 1
+                                Layout.alignment: Qt.AlignRight
+                                implicitHeight: Math.max(30, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                                 leftPadding: DesignTokens.spaceMd
                                 rightPadding: DesignTokens.spaceMd
                                 checkable: true
@@ -651,7 +753,10 @@ Rectangle {
                             Button {
                                 id: rawPrettyBtn
                                 visible: panel.respFormat === "json"
-                                implicitHeight: 30
+                                Layout.row: panel.rawControlsReflow ? 1 : 0
+                                Layout.column: 1
+                                Layout.alignment: Qt.AlignRight
+                                implicitHeight: Math.max(30, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                                 leftPadding: DesignTokens.spaceMd
                                 rightPadding: DesignTokens.spaceMd
                                 checkable: true
@@ -671,9 +776,6 @@ Rectangle {
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                 }
-                            }
-                            Item {
-                                Layout.fillWidth: true
                             }
                         }
 
@@ -724,17 +826,26 @@ Rectangle {
                     // Diff — compare the live body against a saved example.
                     ColumnLayout {
                         spacing: DesignTokens.spaceSm
-                        RowLayout {
+                        GridLayout {
                             Layout.fillWidth: true
-                            spacing: DesignTokens.spaceSm
+                            columns: 2
+                            rowSpacing: DesignTokens.spaceXs
+                            columnSpacing: DesignTokens.spaceSm
                             Label {
+                                id: compareLabel
+                                Layout.row: 0
+                                Layout.column: 0
                                 text: qsTr("Compare with")
                                 color: DesignTokens.textSecondary
                                 font.pixelSize: DesignTokens.fontLabel
                             }
                             GlassComboBox {
                                 id: diffCombo
+                                Layout.row: panel.diffPickerReflow ? 1 : 0
+                                Layout.column: panel.diffPickerReflow ? 0 : 1
+                                Layout.columnSpan: panel.diffPickerReflow ? 2 : 1
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 model: AppController.examples
                                 textRole: "name"
                             }
@@ -768,15 +879,172 @@ Rectangle {
                     }
                 }
 
-                // Empty state (no response yet).
+                // Pre-run state: the resolved execution path, so the pane answers
+                // "what happens when I press Send" instead of showing a bare icon.
+                // Falls back to the generic empty state when there is no chain to
+                // describe (no operation selected, or an unresolvable chain).
                 Item {
+                    id: preRun
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     visible: !AppController.hasResponse
+
+                    // Held in a property, not bound: executionPreview() resolves the
+                    // plan on every call, so it is refreshed on the events that can
+                    // change it rather than on every binding re-evaluation.
+                    property var steps: []
+
+                    function refresh() {
+                        preRun.steps = preRun.visible ? AppController.executionPreview() : [];
+                    }
+
+                    onVisibleChanged: preRun.refresh()
+                    Component.onCompleted: preRun.refresh()
+
+                    Connections {
+                        target: AppController
+                        function onChainChanged() {
+                            preRun.refresh();
+                        }
+                        function onOperationChanged() {
+                            preRun.refresh();
+                        }
+                    }
+
                     EmptyState {
+                        anchors.centerIn: parent
+                        visible: preRun.steps.length === 0
                         iconName: "zap"
                         heading: qsTr("No response yet")
                         body: qsTr("Press Send to run this endpoint's chain and the response will appear here.")
+                    }
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        visible: preRun.steps.length > 0
+                        spacing: DesignTokens.spaceSm
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: DesignTokens.spaceSm
+                            SectionLabel {
+                                text: qsTr("EXECUTION PATH")
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: preRun.steps.length === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(preRun.steps.length)
+                                color: DesignTokens.textSecondary
+                                font.pointSize: DesignTokens.fontCaptionPointSize
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Values shown as {{name}} are resolved while the chain runs.")
+                            color: DesignTokens.textSecondary
+                            font.pointSize: DesignTokens.fontCaptionPointSize
+                            wrapMode: Text.WordWrap
+                        }
+
+                        ListView {
+                            id: pathList
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            spacing: DesignTokens.spaceXs
+                            model: preRun.steps
+
+                            delegate: Rectangle {
+                                id: stepRow
+                                required property var modelData
+                                width: ListView.view.width
+                                implicitHeight: stepCol.implicitHeight + DesignTokens.spaceSm * 2
+                                radius: DesignTokens.radiusSm
+                                color: stepRow.modelData.isTarget ? DesignTokens.accentMuted : DesignTokens.surfaceSunken
+                                border.width: 1
+                                border.color: stepRow.modelData.isTarget ? DesignTokens.accent : DesignTokens.borderSubtle
+
+                                ColumnLayout {
+                                    id: stepCol
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.leftMargin: DesignTokens.spaceSm
+                                    anchors.rightMargin: DesignTokens.spaceSm
+                                    spacing: 2
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: DesignTokens.spaceSm
+
+                                        Label {
+                                            text: stepRow.modelData.number
+                                            color: DesignTokens.textSecondary
+                                            font.pointSize: DesignTokens.fontCaptionPointSize
+                                            font.family: DesignTokens.fontMono
+                                            font.features: ({
+                                                    "tnum": 1
+                                                })
+                                        }
+                                        MethodBadge {
+                                            visible: stepRow.modelData.method.length > 0
+                                            method: stepRow.modelData.method.length > 0 ? stepRow.modelData.method : "GET"
+                                            minWidth: 54
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: stepRow.modelData.path.length > 0 ? stepRow.modelData.path : qsTr("operation not found in this project")
+                                            color: stepRow.modelData.path.length > 0 ? DesignTokens.textPrimary : DesignTokens.statusError
+                                            font.pointSize: DesignTokens.fontLabelPointSize
+                                            font.family: DesignTokens.fontMono
+                                            elide: Text.ElideMiddle
+                                        }
+                                        Label {
+                                            visible: stepRow.modelData.isTarget
+                                            text: qsTr("target")
+                                            color: DesignTokens.accent
+                                            font.pointSize: DesignTokens.fontCaptionPointSize
+                                            font.weight: DesignTokens.weightSemiBold
+                                        }
+                                    }
+
+                                    // The values this step hands downstream — the
+                                    // knots that make the chain a chain.
+                                    Label {
+                                        Layout.fillWidth: true
+                                        visible: stepRow.modelData.produces.length > 0
+                                        text: {
+                                            const names = [];
+                                            for (let i = 0; i < stepRow.modelData.produces.length; ++i) {
+                                                names.push(stepRow.modelData.produces[i].variable);
+                                            }
+                                            return qsTr("produces %1").arg(names.join(", "));
+                                        }
+                                        color: DesignTokens.textSecondary
+                                        font.pointSize: DesignTokens.fontCaptionPointSize
+                                        font.family: DesignTokens.fontMono
+                                        elide: Text.ElideRight
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        visible: stepRow.modelData.actor.length > 0 || stepRow.modelData.expectStatus.length > 0
+                                        text: {
+                                            const parts = [];
+                                            if (stepRow.modelData.actor.length > 0) {
+                                                parts.push(qsTr("as %1").arg(stepRow.modelData.actor));
+                                            }
+                                            if (stepRow.modelData.expectStatus.length > 0) {
+                                                parts.push(qsTr("expects %1").arg(stepRow.modelData.expectStatus.join(", ")));
+                                            }
+                                            return parts.join("  ·  ");
+                                        }
+                                        color: DesignTokens.textSecondary
+                                        font.pointSize: DesignTokens.fontCaptionPointSize
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

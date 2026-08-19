@@ -1,7 +1,7 @@
-// Main — the Reqloom application shell (ADR-007 WS-D). A 3-pane SplitView
-// (explorer | editor | response/timeline), collapsible left+right rails,
-// a native MenuBar, top toolbar, keyboard shortcuts, toasts, and an empty
-// state. Logic lives in AppController/SecretsController/ThemeController.
+// Main — the Reqloom application shell: a native MenuBar, top toolbar,
+// keyboard shortcuts, dialogs, command palette, and toasts. The three-pane
+// body (explorer | editor | response/timeline) is delegated to WorkbenchLayout.
+// Logic lives in AppController/SecretsController/ThemeController.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -22,6 +22,29 @@ ApplicationWindow {
         return p.length > 0 ? (p + " — Reqloom") : qsTr("Reqloom");
     }
     color: DesignTokens.canvasBottom
+
+    property bool quitAfterDraftDiscard: false
+    property bool closingAfterDraftDiscard: false
+    property bool discardAfterSaveConfirmationCloses: false
+    property bool discardConfirmationActive: false
+    readonly property bool endpointConfirmationActive: discardConfirmationActive || workbench.endpointSaveConfirmationActive
+    readonly property bool globalShortcutBlocked: endpointConfirmationActive || workbench.editConfirmationActive
+
+    // Persist layout on every close attempt. A transient endpoint is never
+    // persisted, so close only resumes after the shared discard confirmation.
+    onClosing: event => {
+        workbench.saveLayout();
+        if (AppController.newOperationDraftOpen && !window.closingAfterDraftDiscard) {
+            event.accepted = false;
+            window.quitAfterDraftDiscard = true;
+            if (workbench.endpointSaveConfirmationActive) {
+                window.discardAfterSaveConfirmationCloses = true;
+                workbench.closeEndpointSaveConfirmation();
+            } else if (!window.discardConfirmationActive) {
+                AppController.requestDiscardNewOperation();
+            }
+        }
+    }
 
     // ── Frosted backdrop ─────────────────────────────────────────────────────
     // An iridescent gradient with soft nacre glow-blobs, blurred so the
@@ -125,18 +148,26 @@ ApplicationWindow {
             MenuSeparator {}
             MenuItem {
                 text: qsTr("Quit")
-                onTriggered: Qt.quit()
+                onTriggered: window.close()
             }
         }
         Menu {
             title: qsTr("View")
             MenuItem {
-                text: window.explorerCollapsed ? qsTr("Show Explorer") : qsTr("Hide Explorer")
-                onTriggered: window.explorerCollapsed = !window.explorerCollapsed
+                text: workbench.explorerCollapsed ? qsTr("Show Explorer") : qsTr("Hide Explorer")
+                onTriggered: workbench.explorerCollapsed = !workbench.explorerCollapsed
             }
             MenuItem {
-                text: window.responseCollapsed ? qsTr("Show Response") : qsTr("Hide Response")
-                onTriggered: window.responseCollapsed = !window.responseCollapsed
+                text: workbench.responseCollapsed ? qsTr("Show Response") : qsTr("Hide Response")
+                enabled: !workbench.creatingEndpoint
+                onTriggered: workbench.responseCollapsed = !workbench.responseCollapsed
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: qsTr("Automatic Response Layout")
+                checkable: true
+                checked: workbench.orientationMode === "auto"
+                onTriggered: workbench.orientationMode = "auto"
             }
         }
         Menu {
@@ -175,53 +206,25 @@ ApplicationWindow {
         }
     }
 
-    // ── Rail / collapse state ──────────────────────────────────────────────
-    property bool explorerCollapsed: false
-    property bool responseCollapsed: false
-    /// Editor + response stacked vertically (true) vs side-by-side (false).
-    property bool responseStacked: false
-    /// Once the user picks a split orientation we stop auto-managing it, so
-    /// resizing never fights their choice. Until then the layout responds to
-    /// width: side-by-side when wide, stacked when too narrow for two columns.
-    property bool userChoseStack: false
-    readonly property int autoStackBelow: 1040
-
-    onWidthChanged: if (!userChoseStack) {
-        responseStacked = width < autoStackBelow;
-    }
-    Component.onCompleted: if (!userChoseStack) {
-        responseStacked = width < autoStackBelow;
-    }
-    /// Keeps the response/timeline pane visible while viewing a replayed run
-    /// from history, even when no operation is open.
-    property bool historyReplayActive: false
-
-    // When a past run is replayed from history, reveal the pane and switch to
-    // the Timeline tab so the replayed steps are actually visible.
-    Connections {
-        target: AppController
-        function onRunReplayed() {
-            window.historyReplayActive = true;
-            window.responseCollapsed = false;
-            responsePanel.showTimeline();
-        }
-    }
-
     // ── Global shortcuts ───────────────────────────────────────────────────
     Shortcut {
         sequence: "Ctrl+B"
-        onActivated: window.explorerCollapsed = !window.explorerCollapsed
+        enabled: !window.globalShortcutBlocked
+        onActivated: workbench.explorerCollapsed = !workbench.explorerCollapsed
     }
     Shortcut {
         sequence: "Ctrl+J"
-        onActivated: window.responseCollapsed = !window.responseCollapsed
+        enabled: !workbench.creatingEndpoint && !window.globalShortcutBlocked
+        onActivated: workbench.responseCollapsed = !workbench.responseCollapsed
     }
     Shortcut {
         sequence: "Ctrl+P"
+        enabled: !window.globalShortcutBlocked
         onActivated: commandPalette.open()
     }
     Shortcut {
         sequence: "Ctrl+W"
+        enabled: !window.globalShortcutBlocked
         onActivated: {
             if (AppController.activeTabIndex >= 0) {
                 AppController.closeTab(AppController.activeTabIndex);
@@ -230,8 +233,11 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+Return"
+        enabled: !commandPalette.opened && !window.globalShortcutBlocked
         onActivated: {
-            if (AppController.hasOperation) {
+            if (workbench.creatingEndpoint) {
+                workbench.submitEndpointCreation();
+            } else if (AppController.hasOperation) {
                 AppController.runSelected(false, false);
             }
         }
@@ -249,6 +255,19 @@ ApplicationWindow {
         function onImportReviewNotes(notes) {
             importNotesDialog.showNotes(notes);
         }
+        function onNewOperationDiscardRequested() {
+            if (!window.discardConfirmationActive) {
+                window.discardConfirmationActive = true;
+                discardNewEndpointDialog.open();
+            }
+        }
+        function onNewOperationDraftDiscarded() {
+            if (window.quitAfterDraftDiscard) {
+                window.quitAfterDraftDiscard = false;
+                window.closingAfterDraftDiscard = true;
+                Qt.callLater(window.close);
+            }
+        }
     }
     Connections {
         target: SecretsController
@@ -259,7 +278,30 @@ ApplicationWindow {
 
     // ── Top toolbar ────────────────────────────────────────────────────────
     header: Rectangle {
-        implicitHeight: 60
+        id: toolbar
+        // Single-row toolbar. The project switcher elides its name to keep every
+        // control on one line as the window narrows (see projectSwitcher). When
+        // even that isn't enough, the captions drop — capture first, then the
+        // "Environment" caption — keeping the controls themselves visible.
+        implicitHeight: row1.height
+
+        // Caption-drop thresholds from real control metrics (not fixed pixels).
+        // baseToolbarNeed = the always-present controls + gaps + side margins,
+        // excluding the two optional captions so toggling them can't feed back.
+        // The two literals below are the switcher's 72 DIP elide floor and ~24 DIP
+        // for the collapsed capture box (indicator + padding, no caption).
+        FontMetrics {
+            id: toolbarMetrics
+            font.family: DesignTokens.fontSans
+            font.pointSize: DesignTokens.fontLabelPointSize
+        }
+        readonly property real baseToolbarNeed: 72 + manageSecretsBtn.implicitWidth + historyBtn.implicitWidth + environmentSelector.implicitWidth + themeRow.implicitWidth + 24 + DesignTokens.spaceMd * 6 + DesignTokens.spaceLg * 2
+        readonly property real envLabelNeed: toolbarMetrics.advanceWidth(qsTr("Environment")) + DesignTokens.spaceMd
+        readonly property real captureTextNeed: toolbarMetrics.advanceWidth(qsTr("Capture bodies")) + DesignTokens.spaceSm
+        // Capture caption needs room for both, so it drops first; the Environment
+        // caption survives down to a narrower width.
+        readonly property bool showEnvLabel: width >= baseToolbarNeed + envLabelNeed
+        readonly property bool showCaptureText: width >= baseToolbarNeed + envLabelNeed + captureTextNeed
         color: DesignTokens.glassFill
         Rectangle {
             anchors.bottom: parent.bottom
@@ -267,17 +309,30 @@ ApplicationWindow {
             height: 1
             color: DesignTokens.borderSubtle
         }
+
         RowLayout {
-            anchors.fill: parent
+            id: row1
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
             anchors.leftMargin: DesignTokens.spaceLg
             anchors.rightMargin: DesignTokens.spaceLg
+            // Primary band = one control plus symmetric vertical padding, so it
+            // follows comfortable/compact density instead of a fixed 60 DIP.
+            height: DesignTokens.controlHeight + DesignTokens.spaceMd * 2
             spacing: DesignTokens.spaceMd
 
             // Workspace switcher — every opened/imported collection lives here,
             // so many projects share one window (click to switch).
             Button {
                 id: projectSwitcher
-                implicitHeight: 32
+                implicitHeight: DesignTokens.controlHeight
+                // Flexible + elidable: capped at its natural width so spare space
+                // goes to the spacer (Environment and theme stay put), and shrinks
+                // — eliding the name — so the toolbar keeps one line as it narrows.
+                Layout.fillWidth: true
+                Layout.minimumWidth: 72
+                Layout.maximumWidth: implicitWidth
                 leftPadding: DesignTokens.spaceSm
                 rightPadding: DesignTokens.spaceSm
                 background: Rectangle {
@@ -295,16 +350,17 @@ ApplicationWindow {
                     Text {
                         text: AppController.projectName.length > 0 ? AppController.projectName : qsTr("No project")
                         color: DesignTokens.textPrimary
-                        font.pixelSize: DesignTokens.fontLabel
+                        font.pointSize: DesignTokens.fontLabelPointSize
                         font.weight: DesignTokens.weightMedium
                         elide: Text.ElideRight
+                        Layout.fillWidth: true
                         Layout.maximumWidth: 180
                         verticalAlignment: Text.AlignVCenter
                     }
                     Text {
                         text: "▾"
                         color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
+                        font.pointSize: DesignTokens.fontLabelPointSize
                     }
                 }
                 onClicked: {
@@ -382,7 +438,7 @@ ApplicationWindow {
                                 Label {
                                     text: swItem.modelData.label.toUpperCase()
                                     color: DesignTokens.textSecondary
-                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.pointSize: DesignTokens.fontCaptionPointSize
                                     font.weight: DesignTokens.weightSemiBold
                                 }
                                 Rectangle {
@@ -400,7 +456,7 @@ ApplicationWindow {
                                 visible: !swItem.isHeader
                                 text: swItem.modelData.kind === "open" ? ((swItem.modelData.active ? "●  " : "") + swItem.modelData.label) : swItem.modelData.label
                                 color: DesignTokens.textPrimary
-                                font.pixelSize: DesignTokens.fontBody
+                                font.pointSize: DesignTokens.fontBodyPointSize
                                 font.family: DesignTokens.fontSans
                                 elide: Text.ElideRight
                             }
@@ -447,7 +503,7 @@ ApplicationWindow {
                 id: manageSecretsBtn
                 text: qsTr("Manage Secrets")
                 enabled: AppController.resourceCount > 0
-                implicitHeight: 32
+                implicitHeight: DesignTokens.controlHeight
                 leftPadding: DesignTokens.spaceSm
                 rightPadding: DesignTokens.spaceSm
                 background: Rectangle {
@@ -459,7 +515,7 @@ ApplicationWindow {
                 contentItem: Text {
                     text: manageSecretsBtn.text
                     color: manageSecretsBtn.enabled ? DesignTokens.textSecondary : DesignTokens.borderStrong
-                    font.pixelSize: DesignTokens.fontLabel
+                    font.pointSize: DesignTokens.fontLabelPointSize
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -470,7 +526,7 @@ ApplicationWindow {
             Button {
                 id: historyBtn
                 text: qsTr("History")
-                implicitHeight: 32
+                implicitHeight: DesignTokens.controlHeight
                 leftPadding: DesignTokens.spaceSm
                 rightPadding: DesignTokens.spaceSm
                 background: Rectangle {
@@ -482,11 +538,61 @@ ApplicationWindow {
                 contentItem: Text {
                     text: historyBtn.text
                     color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
+                    font.pointSize: DesignTokens.fontLabelPointSize
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
                 onClicked: historyDialog.openDialog()
+            }
+
+            // Environment + capture, right after History. The captions drop
+            // (capture first, then environment) when the toolbar gets too narrow.
+            Label {
+                text: qsTr("Environment")
+                visible: toolbar.showEnvLabel
+                color: DesignTokens.textSecondary
+                font.pointSize: DesignTokens.fontLabelPointSize
+            }
+            EnvironmentSelector {
+                id: environmentSelector
+                onNewRequested: manageEnvironmentDialog.openManager("")
+                onManageRequested: manageEnvironmentDialog.openManager(AppController.environment)
+            }
+            CheckBox {
+                id: captureCheck
+                // Caption drops first when narrow; the box stays, with a tooltip
+                // and accessible name so the control is never unlabeled.
+                text: toolbar.showCaptureText ? qsTr("Capture bodies") : ""
+                checked: AppController.captureBodies
+                onToggled: AppController.captureBodies = checked
+                Accessible.name: qsTr("Capture bodies")
+                ToolTip.text: qsTr("Capture bodies")
+                ToolTip.visible: !toolbar.showCaptureText && captureCheck.hovered
+                contentItem: Text {
+                    text: captureCheck.text
+                    visible: captureCheck.text.length > 0
+                    color: DesignTokens.textSecondary
+                    font.pointSize: DesignTokens.fontLabelPointSize
+                    leftPadding: captureCheck.text.length > 0 ? (captureCheck.indicator.width + DesignTokens.spaceSm) : 0
+                    verticalAlignment: Text.AlignVCenter
+                }
+                indicator: Rectangle {
+                    implicitWidth: 16
+                    implicitHeight: 16
+                    radius: 4
+                    y: (captureCheck.height - height) / 2
+                    color: captureCheck.checked ? DesignTokens.accent : DesignTokens.surfaceRaised
+                    border.width: 1
+                    border.color: captureCheck.checked ? DesignTokens.accent : DesignTokens.borderStrong
+                    Text {
+                        anchors.centerIn: parent
+                        visible: captureCheck.checked
+                        text: "✓"
+                        color: DesignTokens.textInverse
+                        font.pointSize: DesignTokens.fontCaptionPointSize
+                        font.weight: DesignTokens.weightBold
+                    }
+                }
             }
 
             Item {
@@ -497,6 +603,7 @@ ApplicationWindow {
             // ExplorerPanel's search field. Ctrl+P still opens the command
             // palette for a global keyboard jump.)
             Row {
+                id: themeRow
                 spacing: 0
                 Repeater {
                     model: [
@@ -516,8 +623,8 @@ ApplicationWindow {
                     delegate: Button {
                         id: apBtn
                         required property var modelData
-                        implicitWidth: 32
-                        implicitHeight: 30
+                        implicitWidth: DesignTokens.controlHeight
+                        implicitHeight: DesignTokens.controlHeight
                         background: Rectangle {
                             color: ThemeController.mode === apBtn.modelData.m ? DesignTokens.accentMuted : (apBtn.hovered ? Qt.rgba(1, 1, 1, 0.05) : "transparent")
                             border.width: 1
@@ -534,397 +641,28 @@ ApplicationWindow {
                 }
             }
 
-            // Split-orientation toggle for the editor/response arrangement now
-            // lives in the Response panel header (more contextual).
-
-            Label {
-                text: qsTr("Environment")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontLabel
-            }
-            EnvironmentSelector {
-                onNewRequested: manageEnvironmentDialog.openManager("")
-                onManageRequested: manageEnvironmentDialog.openManager(AppController.environment)
-            }
-
-            CheckBox {
-                id: captureCheck
-                text: qsTr("Capture bodies")
-                checked: AppController.captureBodies
-                onToggled: AppController.captureBodies = checked
-                contentItem: Text {
-                    text: captureCheck.text
-                    color: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    leftPadding: captureCheck.indicator.width + DesignTokens.spaceSm
-                    verticalAlignment: Text.AlignVCenter
-                }
-                indicator: Rectangle {
-                    implicitWidth: 16
-                    implicitHeight: 16
-                    radius: 4
-                    y: (captureCheck.height - height) / 2
-                    color: captureCheck.checked ? DesignTokens.accent : DesignTokens.surfaceRaised
-                    border.width: 1
-                    border.color: captureCheck.checked ? DesignTokens.accent : DesignTokens.borderStrong
-                    Text {
-                        anchors.centerIn: parent
-                        visible: captureCheck.checked
-                        text: "✓"
-                        color: DesignTokens.textInverse
-                        font.pixelSize: DesignTokens.fontCaption
-                        font.weight: DesignTokens.weightBold
-                    }
-                }
-            }
+            // The editor/response split toggle lives in the Response panel
+            // header now (more contextual).
         }
     }
 
-    // ── Main body: 3-pane SplitView ────────────────────────────────────────
-    SplitView {
-        id: mainSplit
+    // ── Main body: concrete three-pane workbench with durable fluid layout ──
+    WorkbenchLayout {
+        id: workbench
         anchors.fill: parent
-        anchors.margins: 0
-        spacing: 0
-        orientation: Qt.Horizontal
-        handle: Rectangle {
-            implicitWidth: 6
-            implicitHeight: 6
-            color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
-            opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
-            Behavior on opacity {
-                FadeMotion {}
+        onEndpointSaveConfirmationClosed: {
+            if (window.discardAfterSaveConfirmationCloses) {
+                window.discardAfterSaveConfirmationCloses = false;
+                if (AppController.newOperationDraftOpen && !window.discardConfirmationActive) {
+                    AppController.requestDiscardNewOperation();
+                }
+            } else if (!window.discardConfirmationActive) {
+                workbench.restoreFocusAfterDraftDiscard();
             }
         }
-
-        // Left: Explorer panel or collapsed rail.
-        Rectangle {
-            id: explorerPane
-            SplitView.preferredWidth: window.explorerCollapsed ? 32 : 280
-            SplitView.minimumWidth: window.explorerCollapsed ? 32 : 180
-            SplitView.maximumWidth: window.explorerCollapsed ? 32 : 400
-            color: "transparent"
-            clip: true
-
-            ExplorerPanel {
-                id: explorerPanel
-                anchors.fill: parent
-                visible: !window.explorerCollapsed
-                onCollapseRequested: window.explorerCollapsed = true
-            }
-
-            // Collapsed rail: single expand chevron.
-            Rectangle {
-                id: explorerRail
-                anchors.fill: parent
-                visible: window.explorerCollapsed
-                radius: 0
-                color: explorerRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
-                border.width: 1
-                border.color: DesignTokens.glassBorder
-                Behavior on color {
-                    ColorMotion {}
-                }
-
-                AppIcon {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: parent.top
-                    anchors.topMargin: DesignTokens.spaceLg
-                    name: "chevron-right"
-                    size: 18
-                    color: explorerRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                }
-                Label {
-                    anchors.centerIn: parent
-                    text: qsTr("Explorer")
-                    rotation: -90
-                    color: explorerRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    font.weight: DesignTokens.weightMedium
-                }
-                MouseArea {
-                    id: explorerRailArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: window.explorerCollapsed = false
-                }
-                GlassToolTip {
-                    active: explorerRailArea.containsMouse
-                    text: qsTr("Show Explorer")
-                    x: parent.width + 6
-                    y: DesignTokens.spaceLg
-                }
-            }
-        }
-
-        // Centre + Response live in a nested SplitView so they can be arranged
-        // side-by-side (horizontal) or stacked (vertical) via the toolbar.
-        SplitView {
-            id: centerSplit
-            SplitView.fillWidth: true
-            orientation: window.responseStacked ? Qt.Vertical : Qt.Horizontal
-            spacing: 0
-            handle: Rectangle {
-                implicitWidth: 6
-                implicitHeight: 6
-                color: SplitHandle.pressed ? DesignTokens.accent : DesignTokens.accentMuted
-                opacity: SplitHandle.pressed ? 0.7 : (SplitHandle.hovered ? 0.5 : 0)
-                Behavior on opacity {
-                    FadeMotion {}
-                }
-            }
-
-            // Centre: endpoint list or request editor (or empty state).
-            Rectangle {
-                id: centerPane
-                SplitView.fillWidth: true
-                SplitView.fillHeight: true
-                SplitView.minimumWidth: 320
-                SplitView.minimumHeight: 200
-                radius: 0
-                // Clip so the editor's fixed-width content (action toolbar,
-                // 200px graph cards) can't bleed over the response pane when
-                // the pane is narrower than its content.
-                clip: true
-                color: DesignTokens.glassFill
-                border.width: 1
-                border.color: DesignTokens.glassBorder
-
-                // Open-tabs strip (endpoints + actors). Hidden when nothing is
-                // open; the empty state / endpoint list show in that case.
-                EditorTabBar {
-                    id: editorTabs
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    visible: AppController.tabCount > 0
-                }
-
-                // Empty state when no project loaded.
-                EmptyState {
-                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount === 0
-                    anchors.centerIn: parent
-                    useBrandLogo: true
-                    heading: qsTr("Welcome to Reqloom")
-                    body: qsTr("Create a new project to start building requests, open an existing one, or import an OpenAPI spec or Postman collection.")
-                    actionText: qsTr("New Project")
-                    onActionTriggered: newProjectDialog.openDialog()
-                    secondaryActionText: qsTr("Open Project")
-                    onSecondaryActionTriggered: folderDialog.open()
-                    tertiaryActionText: qsTr("Import (OpenAPI, Postman, Insomnia, …)…")
-                    onTertiaryActionTriggered: importSpecDialog.open()
-                }
-
-                // Endpoint list for the selected module.
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: DesignTokens.spaceXl
-                    spacing: DesignTokens.spaceLg
-                    visible: !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount > 0
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 2
-                        Label {
-                            text: AppController.selectedModule.length > 0 ? AppController.selectedModule : qsTr("Select a module")
-                            color: DesignTokens.textPrimary
-                            font.pixelSize: DesignTokens.fontTitle
-                            font.weight: DesignTokens.weightSemiBold
-                        }
-                        Label {
-                            id: epCountLabel
-                            color: DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontBody
-                        }
-                    }
-                    ListView {
-                        id: endpointList
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        spacing: DesignTokens.spaceXs
-                        model: AppController.operations
-                        onCountChanged: epCountLabel.text = (count === 1 ? qsTr("1 endpoint") : qsTr("%1 endpoints").arg(count))
-
-                        delegate: ItemDelegate {
-                            id: opRow
-                            required property string method
-                            required property string name
-                            required property string path
-                            width: ListView.view.width
-                            height: 56
-                            background: Rectangle {
-                                radius: DesignTokens.radiusSm
-                                color: opRow.hovered ? Qt.rgba(1, 1, 1, 0.04) : DesignTokens.surfaceSunken
-                                border.width: 1
-                                border.color: opRow.hovered ? DesignTokens.borderStrong : DesignTokens.borderSubtle
-                            }
-                            contentItem: RowLayout {
-                                anchors.fill: parent
-                                spacing: DesignTokens.spaceMd
-                                MethodBadge {
-                                    method: opRow.method
-                                }
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 1
-                                    Label {
-                                        text: opRow.name
-                                        color: DesignTokens.textPrimary
-                                        font.pixelSize: DesignTokens.fontBody
-                                        font.weight: DesignTokens.weightMedium
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: opRow.path
-                                        color: DesignTokens.textSecondary
-                                        font.pixelSize: DesignTokens.fontLabel
-                                        font.family: DesignTokens.fontMono
-                                        elide: Text.ElideRight
-                                    }
-                                }
-                                Label {
-                                    text: "›"
-                                    color: DesignTokens.textSecondary
-                                    font.pixelSize: DesignTokens.fontSubtitle
-                                    opacity: opRow.hovered ? 1.0 : 0.4
-                                }
-                            }
-                            onClicked: AppController.selectOperation(AppController.selectedModule, opRow.name)
-                        }
-                        EmptyState {
-                            visible: endpointList.count === 0 && AppController.resourceCount > 0
-                            iconName: "plus"
-                            heading: qsTr("No endpoints yet")
-                            body: qsTr("Add an endpoint to this module to start sending requests.")
-                            actionText: qsTr("New Endpoint")
-                            onActionTriggered: explorerPanel.openNewEndpoint(AppController.selectedModule)
-                        }
-                    }
-                }
-
-                // Request editor (active tab is an operation). Sits below the
-                // tab strip.
-                RequestEditor {
-                    anchors.top: editorTabs.bottom
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.margins: DesignTokens.spaceLg
-                    visible: AppController.hasOperation
-                }
-
-                // Actor detail (active tab is an actor). Sits below the tab
-                // strip; the request editor and this are driven by the active
-                // tab's kind, so only one is visible at a time.
-                ActorDetail {
-                    anchors.top: editorTabs.bottom
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.margins: DesignTokens.spaceLg
-                    visible: AppController.hasActor
-                }
-            }
-
-            // Right: Response + Timeline (or collapsed rail).
-            Rectangle {
-                id: responsePane
-                // Golden split: at the default 1280 window the centre area
-                // (window − explorer) divides editor:response = φ:1, so
-                // response ≈ (1280−280)/(φ+1). A constant, not a live binding,
-                // so manual drags and window resizes don't re-snap it.
-                SplitView.preferredWidth: window.responseCollapsed ? 32 : Math.round((1280 - 280) / (DesignTokens.phi + 1))
-                SplitView.minimumWidth: window.responseCollapsed ? 32 : 200
-                SplitView.maximumWidth: window.responseCollapsed ? 32 : 700
-                SplitView.preferredHeight: window.responseCollapsed ? 32 : 320
-                SplitView.minimumHeight: window.responseCollapsed ? 32 : 160
-                color: "transparent"
-                clip: true
-                visible: AppController.hasOperation || AppController.hasResponse || window.historyReplayActive
-
-                ResponsePanel {
-                    id: responsePanel
-                    anchors.fill: parent
-                    visible: !window.responseCollapsed
-                    stacked: window.responseStacked
-                    onCloseRequested: window.responseCollapsed = true
-                    onToggleStackRequested: {
-                        window.userChoseStack = true;
-                        window.responseStacked = !window.responseStacked;
-                    }
-                    onSetStackedRequested: value => {
-                        window.userChoseStack = true;
-                        window.responseStacked = value;
-                    }
-                }
-
-                Rectangle {
-                    anchors.fill: parent
-                    visible: window.responseCollapsed
-                    radius: 0
-                    color: responseRailArea.containsMouse ? DesignTokens.accentMuted : DesignTokens.glassFill
-                    border.width: 1
-                    border.color: DesignTokens.glassBorder
-                    Behavior on color {
-                        ColorMotion {}
-                    }
-
-                    // Side-by-side: vertical strip — chevron on top, rotated label.
-                    Item {
-                        anchors.fill: parent
-                        visible: !window.responseStacked
-                        AppIcon {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.top: parent.top
-                            anchors.topMargin: DesignTokens.spaceLg
-                            name: "chevron-left"
-                            size: 18
-                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                        }
-                        Label {
-                            anchors.centerIn: parent
-                            text: qsTr("Response")
-                            rotation: -90
-                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontLabel
-                            font.weight: DesignTokens.weightMedium
-                        }
-                    }
-                    // Stacked: horizontal bar — chevron + label in a row.
-                    RowLayout {
-                        anchors.centerIn: parent
-                        visible: window.responseStacked
-                        spacing: DesignTokens.spaceSm
-                        AppIcon {
-                            name: "chevron-up"
-                            size: 18
-                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                        }
-                        Label {
-                            text: qsTr("Response")
-                            color: responseRailArea.containsMouse ? DesignTokens.accent : DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontLabel
-                            font.weight: DesignTokens.weightMedium
-                        }
-                    }
-                    MouseArea {
-                        id: responseRailArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: window.responseCollapsed = false
-                    }
-                    GlassToolTip {
-                        active: responseRailArea.containsMouse
-                        text: qsTr("Show Response")
-                        x: -width - 6
-                        y: DesignTokens.spaceLg
-                    }
-                }
-            }
-        }
+        onNewProjectRequested: newProjectDialog.openDialog()
+        onOpenProjectRequested: folderDialog.open()
+        onImportRequested: importSpecDialog.open()
     }
 
     // ── Toast overlay (bottom centre) ──────────────────────────────────────
@@ -958,8 +696,12 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 460
+        // Fit the window rather than a fixed 460 so the name, location and
+        // Create action stay reachable in a small window at large text sizes.
+        width: Math.min(460, Overlay.overlay ? Overlay.overlay.width - 64 : 460)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("New Project")
 
         property url folderUrl
@@ -984,87 +726,94 @@ ApplicationWindow {
             border.color: DesignTokens.glassBorder
         }
 
-        contentItem: ColumnLayout {
-            spacing: DesignTokens.spaceSm
+        contentItem: ScrollView {
+            id: npBodyScroll
+            contentWidth: availableWidth
+            clip: true
 
-            Label {
-                text: qsTr("Project name")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontLabel
-            }
-            TextField {
-                id: npNameField
-                Layout.fillWidth: true
-                placeholderText: qsTr("My API project")
-                color: DesignTokens.textPrimary
-                placeholderTextColor: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontBody
-                background: Rectangle {
-                    radius: DesignTokens.radiusSm
-                    color: DesignTokens.surfaceSunken
-                    border.width: 1
-                    border.color: npNameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                }
-                onAccepted: if (newProjectDialog.canCreate) {
-                    newProjectDialog.accept();
-                }
-            }
-
-            Label {
-                text: qsTr("Location")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontLabel
-                Layout.topMargin: DesignTokens.spaceXs
-            }
-            RowLayout {
-                Layout.fillWidth: true
+            ColumnLayout {
+                width: npBodyScroll.availableWidth
                 spacing: DesignTokens.spaceSm
+
+                Label {
+                    text: qsTr("Project name")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                }
                 TextField {
-                    id: npLocationField
+                    id: npNameField
                     Layout.fillWidth: true
-                    readOnly: true
-                    text: newProjectDialog.folderDisplay
-                    placeholderText: qsTr("Choose a folder…")
+                    placeholderText: qsTr("My API project")
                     color: DesignTokens.textPrimary
                     placeholderTextColor: DesignTokens.textSecondary
-                    font.pixelSize: DesignTokens.fontLabel
-                    font.family: DesignTokens.fontMono
+                    font.pixelSize: DesignTokens.fontBody
                     background: Rectangle {
                         radius: DesignTokens.radiusSm
                         color: DesignTokens.surfaceSunken
                         border.width: 1
-                        border.color: DesignTokens.borderSubtle
+                        border.color: npNameField.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                    }
+                    onAccepted: if (newProjectDialog.canCreate) {
+                        newProjectDialog.accept();
                     }
                 }
-                Button {
-                    id: npBrowseBtn
-                    text: qsTr("Browse…")
-                    implicitHeight: 34
-                    leftPadding: DesignTokens.spaceMd
-                    rightPadding: DesignTokens.spaceMd
-                    onClicked: newProjectFolderDialog.open()
-                    background: Rectangle {
-                        radius: DesignTokens.radiusSm
-                        color: "transparent"
-                        border.width: 1
-                        border.color: DesignTokens.borderSubtle
-                    }
-                    contentItem: Text {
-                        text: npBrowseBtn.text
-                        color: DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-            }
 
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("A reqloom.yaml is created in the chosen folder.")
-                color: DesignTokens.textSecondary
-                font.pixelSize: DesignTokens.fontLabel
-                wrapMode: Text.WordWrap
+                Label {
+                    text: qsTr("Location")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    Layout.topMargin: DesignTokens.spaceXs
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: DesignTokens.spaceSm
+                    TextField {
+                        id: npLocationField
+                        Layout.fillWidth: true
+                        readOnly: true
+                        text: newProjectDialog.folderDisplay
+                        placeholderText: qsTr("Choose a folder…")
+                        color: DesignTokens.textPrimary
+                        placeholderTextColor: DesignTokens.textSecondary
+                        font.pixelSize: DesignTokens.fontLabel
+                        font.family: DesignTokens.fontMono
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.surfaceSunken
+                            border.width: 1
+                            border.color: DesignTokens.borderSubtle
+                        }
+                    }
+                    Button {
+                        id: npBrowseBtn
+                        text: qsTr("Browse…")
+                        implicitHeight: 34
+                        leftPadding: DesignTokens.spaceMd
+                        rightPadding: DesignTokens.spaceMd
+                        onClicked: newProjectFolderDialog.open()
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: "transparent"
+                            border.width: 1
+                            border.color: DesignTokens.borderSubtle
+                        }
+                        contentItem: Text {
+                            text: npBrowseBtn.text
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("A reqloom.yaml is created in the chosen folder.")
+                    color: DesignTokens.textSecondary
+                    font.pixelSize: DesignTokens.fontLabel
+                    wrapMode: Text.WordWrap
+                }
             }
         }
 
@@ -1076,6 +825,59 @@ ApplicationWindow {
         }
 
         onAccepted: AppController.createProject(folderUrl, npNameField.text)
+    }
+
+    Dialog {
+        id: discardNewEndpointDialog
+        title: qsTr("Discard new endpoint?")
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(440, Overlay.overlay ? Overlay.overlay.width - 64 : 440)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
+        padding: DesignTokens.spaceLg
+        focus: true
+
+        header: DialogHeader {
+            title: qsTr("Discard new endpoint?")
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: qsTr("This closes the “New endpoint” tab and discards all unsaved changes.")
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontLabel
+            wrapMode: Text.WordWrap
+        }
+
+        footer: DialogButtons {
+            cancelText: qsTr("Keep editing")
+            okText: qsTr("Discard draft")
+            okDestructive: true
+            onAccepted: discardNewEndpointDialog.accept()
+            onRejected: discardNewEndpointDialog.reject()
+        }
+
+        onAccepted: AppController.confirmDiscardNewOperation()
+        onRejected: {
+            window.quitAfterDraftDiscard = false;
+            AppController.keepEditingNewOperation();
+        }
+        onClosed: {
+            window.discardConfirmationActive = false;
+            if (window.quitAfterDraftDiscard && AppController.newOperationDraftOpen && !window.discardAfterSaveConfirmationCloses) {
+                AppController.requestDiscardNewOperation();
+            } else if (!window.closingAfterDraftDiscard) {
+                workbench.restoreFocusAfterDraftDiscard();
+            }
+        }
     }
 
     // ── Import flow: pick a spec/collection; the project is created in a
@@ -1096,8 +898,10 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 420
+        width: Math.min(420, Overlay.overlay ? Overlay.overlay.width - 64 : 420)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("Overwrite project")
 
         property url specUrl
@@ -1144,8 +948,10 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 560
+        width: Math.min(560, Overlay.overlay ? Overlay.overlay.width - 64 : 560)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("Import review notes")
 
         property string notes: ""
@@ -1195,8 +1001,10 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 560
+        width: Math.min(560, Overlay.overlay ? Overlay.overlay.width - 64 : 560)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("Cookies")
 
         property var jars: []
@@ -1240,13 +1048,18 @@ ApplicationWindow {
             }
 
             ScrollView {
+                id: cookieScroll
                 Layout.fillWidth: true
                 Layout.preferredHeight: 320
                 visible: cookieDialog.jars.length > 0
                 clip: true
+                contentWidth: availableWidth
 
                 ColumnLayout {
-                    width: parent.width
+                    // availableWidth, not parent.width: the Flickable's width is
+                    // its own content width, so parent.width would keep the rows
+                    // at their implicit size and defeat the dialog's clamp.
+                    width: cookieScroll.availableWidth
                     spacing: DesignTokens.spaceMd
 
                     Repeater {
@@ -1329,8 +1142,10 @@ ApplicationWindow {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 400
+        width: Math.min(400, Overlay.overlay ? Overlay.overlay.width - 64 : 400)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("Delete environment")
         header: DialogHeader {
             title: qsTr("Delete environment")
@@ -1381,7 +1196,7 @@ ApplicationWindow {
     // ── Command palette (Ctrl+P) ────────────────────────────────────────────
     Popup {
         id: commandPalette
-        width: 480
+        width: Math.min(480, Overlay.overlay ? Overlay.overlay.width - 64 : 480)
         implicitHeight: Math.min(paletteList.contentHeight + palInput.implicitHeight + DesignTokens.spaceLg * 3, 440)
         anchors.centerIn: Overlay.overlay
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -1500,13 +1315,17 @@ ApplicationWindow {
                     required property string itemAction
                     width: ListView.view.width
                     height: 36
+                    enabled: !workbench.creatingEndpoint || (itemAction !== "newEndpoint" && itemAction !== "run" && itemAction !== "dryRun")
                     background: Rectangle {
                         radius: DesignTokens.radiusSm
                         color: paletteItem.hovered ? DesignTokens.accentMuted : "transparent"
                     }
                     contentItem: Text {
                         text: paletteItem.itemLabel
-                        color: DesignTokens.textPrimary
+                        // Long localized command names ellipsize rather than
+                        // being hard-clipped by the list's clip rectangle.
+                        elide: Text.ElideRight
+                        color: paletteItem.enabled ? DesignTokens.textPrimary : DesignTokens.borderStrong
                         font.pixelSize: DesignTokens.fontBody
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -1532,16 +1351,20 @@ ApplicationWindow {
                             cookieDialog.openDialog();
                             break;
                         case "newModule":
-                            explorerPanel.openNewModule();
+                            workbench.openNewModule();
                             break;
                         case "newEndpoint":
-                            explorerPanel.openNewEndpoint("");
+                            workbench.openNewEndpoint("");
                             break;
                         case "run":
-                            AppController.runSelected(false, false);
+                            if (!workbench.creatingEndpoint) {
+                                AppController.runSelected(false, false);
+                            }
                             break;
                         case "dryRun":
-                            AppController.runSelected(false, true);
+                            if (!workbench.creatingEndpoint) {
+                                AppController.runSelected(false, true);
+                            }
                             break;
                         case "light":
                             ThemeController.mode = "light";

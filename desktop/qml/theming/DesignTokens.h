@@ -1,4 +1,4 @@
-// DesignTokens — appearance-aware QML design-system singleton (ADR-007, WS-D).
+// DesignTokens — appearance-aware QML design-system singleton .
 // Replaces the old QSS Theme.cpp for QML. All properties are NOTIFY-driven —
 // when ThemeController changes mode the whole QML tree repaints via bindings.
 // Token values are sourced from Theme.cpp's two OKLCH palettes (reusing the
@@ -13,6 +13,7 @@
 #include <QtCore/QString>
 #include <QtGui/QColor>
 
+class QEvent;
 class QQmlEngine;
 class QJSEngine;
 
@@ -40,13 +41,13 @@ class DesignTokens : public QObject {
     Q_PROPERTY(QColor accent READ accent NOTIFY tokensChanged)
     Q_PROPERTY(QColor accentHover READ accentHover NOTIFY tokensChanged)
     Q_PROPERTY(QColor accentMuted READ accentMuted NOTIFY tokensChanged)
-    // HTTP method hues (DESIGN.md §6.2a)
+    // HTTP method hues
     Q_PROPERTY(QColor methodGet READ methodGet NOTIFY tokensChanged)
     Q_PROPERTY(QColor methodPost READ methodPost NOTIFY tokensChanged)
     Q_PROPERTY(QColor methodPut READ methodPut NOTIFY tokensChanged)
     Q_PROPERTY(QColor methodPatch READ methodPatch NOTIFY tokensChanged)
     Q_PROPERTY(QColor methodDelete READ methodDelete NOTIFY tokensChanged)
-    // Status palette (DESIGN.md §2.5)
+    // Status palette
     Q_PROPERTY(QColor statusIdle READ statusIdle NOTIFY tokensChanged)
     Q_PROPERTY(QColor statusRunning READ statusRunning NOTIFY tokensChanged)
     Q_PROPERTY(QColor statusSuccess READ statusSuccess NOTIFY tokensChanged)
@@ -55,35 +56,43 @@ class DesignTokens : public QObject {
     Q_PROPERTY(QColor statusCancelled READ statusCancelled NOTIFY tokensChanged)
     Q_PROPERTY(QColor statusBlocked READ statusBlocked NOTIFY tokensChanged)
     Q_PROPERTY(QColor statusSkipped READ statusSkipped NOTIFY tokensChanged)
-    // Spacing scale matching Theme::space (DESIGN.md §5.1).
+    // Spacing scale matching Theme::space
     // T-D1 decision: use Theme.cpp's scale (Lg=16/Xl=24) not the old QML
     // scale (Lg=20/Xl=32) so tokens stay consistent with the Widgets app.
     Q_PROPERTY(int spaceXs READ spaceXs CONSTANT)
-    Q_PROPERTY(int spaceSm READ spaceSm CONSTANT)
-    Q_PROPERTY(int spaceMd READ spaceMd CONSTANT)
-    Q_PROPERTY(int spaceLg READ spaceLg CONSTANT)
-    Q_PROPERTY(int spaceXl READ spaceXl CONSTANT)
-    Q_PROPERTY(int spaceXxl READ spaceXxl CONSTANT)
+    Q_PROPERTY(int spaceSm READ spaceSm NOTIFY metricsChanged)
+    Q_PROPERTY(int spaceMd READ spaceMd NOTIFY metricsChanged)
+    Q_PROPERTY(int spaceLg READ spaceLg NOTIFY metricsChanged)
+    Q_PROPERTY(int spaceXl READ spaceXl NOTIFY metricsChanged)
+    Q_PROPERTY(int spaceXxl READ spaceXxl NOTIFY metricsChanged)
     Q_PROPERTY(int radius READ radius CONSTANT)
     Q_PROPERTY(int radiusSm READ radiusSm CONSTANT)
     Q_PROPERTY(int radiusLg READ radiusLg CONSTANT)
     Q_PROPERTY(int radiusPill READ radiusPill CONSTANT)
-    // Typography — one type scale + the two font families. Change here to
-    // re-skin every label/field/button across the app.
-    Q_PROPERTY(QString fontSans READ fontSans CONSTANT)
+    // Typography — application-derived point roles for QML.
+    Q_PROPERTY(QString fontSans READ fontSans NOTIFY typographyChanged)
     Q_PROPERTY(QString fontMono READ fontMono CONSTANT)
-    Q_PROPERTY(int fontTitle READ fontTitle CONSTANT)
-    Q_PROPERTY(int fontSubtitle READ fontSubtitle CONSTANT)
-    Q_PROPERTY(int fontBody READ fontBody CONSTANT)
-    Q_PROPERTY(int fontLabel READ fontLabel CONSTANT)
-    Q_PROPERTY(int fontCaption READ fontCaption CONSTANT)
+    Q_PROPERTY(qreal fontTitlePointSize READ fontTitlePointSize NOTIFY typographyChanged)
+    Q_PROPERTY(qreal fontSubtitlePointSize READ fontSubtitlePointSize NOTIFY typographyChanged)
+    Q_PROPERTY(qreal fontBodyPointSize READ fontBodyPointSize NOTIFY typographyChanged)
+    Q_PROPERTY(qreal fontLabelPointSize READ fontLabelPointSize NOTIFY typographyChanged)
+    Q_PROPERTY(qreal fontCaptionPointSize READ fontCaptionPointSize NOTIFY typographyChanged)
+    Q_PROPERTY(qreal fontMonoPointSize READ fontMonoPointSize NOTIFY typographyChanged)
+    // Pixel font roles (px), derived from the point roles above via screen DPI
+    // so they render identically to *PointSize. Kept for surfaces not yet
+    // migrated to *PointSize; prefer *PointSize in new code.
+    Q_PROPERTY(int fontTitle READ fontTitle NOTIFY typographyChanged)
+    Q_PROPERTY(int fontSubtitle READ fontSubtitle NOTIFY typographyChanged)
+    Q_PROPERTY(int fontBody READ fontBody NOTIFY typographyChanged)
+    Q_PROPERTY(int fontLabel READ fontLabel NOTIFY typographyChanged)
+    Q_PROPERTY(int fontCaption READ fontCaption NOTIFY typographyChanged)
     Q_PROPERTY(int weightRegular READ weightRegular CONSTANT)
     Q_PROPERTY(int weightMedium READ weightMedium CONSTANT)
     Q_PROPERTY(int weightSemiBold READ weightSemiBold CONSTANT)
     Q_PROPERTY(int weightBold READ weightBold CONSTANT)
     // Control sizing.
-    Q_PROPERTY(int controlHeight READ controlHeight CONSTANT)
-    Q_PROPERTY(int controlHeightLg READ controlHeightLg CONSTANT)
+    Q_PROPERTY(int controlHeight READ controlHeight NOTIFY metricsChanged)
+    Q_PROPERTY(int controlHeightLg READ controlHeightLg NOTIFY metricsChanged)
     Q_PROPERTY(int iconSize READ iconSize CONSTANT)
     // Motion — one canonical spring tuning (critically-ish damped harmonic
     // oscillator) so position/size settling reads as physical and coherent
@@ -150,30 +159,36 @@ public:
     [[nodiscard]] QColor statusSkipped() const { return p().statusIdle; }
     // Spacing (Theme::space scale, T-D1 resolved)
     [[nodiscard]] int spaceXs() const { return 4; }
-    [[nodiscard]] int spaceSm() const { return 8; }
-    [[nodiscard]] int spaceMd() const { return 12; }
-    [[nodiscard]] int spaceLg() const { return 16; }
-    [[nodiscard]] int spaceXl() const { return 24; }
-    [[nodiscard]] int spaceXxl() const { return 32; }
+    [[nodiscard]] int spaceSm() const { return compactDensity_ ? 6 : 8; }
+    [[nodiscard]] int spaceMd() const { return compactDensity_ ? 8 : 12; }
+    [[nodiscard]] int spaceLg() const { return compactDensity_ ? 12 : 16; }
+    [[nodiscard]] int spaceXl() const { return compactDensity_ ? 16 : 24; }
+    [[nodiscard]] int spaceXxl() const { return compactDensity_ ? 24 : 32; }
     [[nodiscard]] int radius() const { return 8; }
     [[nodiscard]] int radiusSm() const { return 6; }
     [[nodiscard]] int radiusLg() const { return 12; }
     [[nodiscard]] int radiusPill() const { return 999; }
-    // Typography (theme.json: Geist UI, mono for code). Families fall back via
-    // Qt font substitution when not installed.
-    [[nodiscard]] QString fontSans() const { return QStringLiteral("Geist"); }
+    // Typography. Point-size roles follow the application font so OS scale
+    // changes propagate without coupling type to density or window width.
+    [[nodiscard]] QString fontSans() const;
     [[nodiscard]] QString fontMono() const { return QStringLiteral("Geist Mono"); }
-    [[nodiscard]] int fontTitle() const { return 22; }
-    [[nodiscard]] int fontSubtitle() const { return 16; }
-    [[nodiscard]] int fontBody() const { return 13; }
-    [[nodiscard]] int fontLabel() const { return 12; }
-    [[nodiscard]] int fontCaption() const { return 11; }
+    [[nodiscard]] qreal fontTitlePointSize() const { return fontBasePointSize() * 1.30; }
+    [[nodiscard]] qreal fontSubtitlePointSize() const { return fontBasePointSize() * 1.15; }
+    [[nodiscard]] qreal fontBodyPointSize() const { return fontBasePointSize(); }
+    [[nodiscard]] qreal fontLabelPointSize() const { return fontBasePointSize() * 0.92; }
+    [[nodiscard]] qreal fontCaptionPointSize() const { return fontBasePointSize() * 0.85; }
+    [[nodiscard]] qreal fontMonoPointSize() const { return fontBasePointSize(); }
+    [[nodiscard]] int fontTitle() const;
+    [[nodiscard]] int fontSubtitle() const;
+    [[nodiscard]] int fontBody() const;
+    [[nodiscard]] int fontLabel() const;
+    [[nodiscard]] int fontCaption() const;
     [[nodiscard]] int weightRegular() const { return 400; }
     [[nodiscard]] int weightMedium() const { return 500; }
     [[nodiscard]] int weightSemiBold() const { return 600; }
     [[nodiscard]] int weightBold() const { return 700; }
-    [[nodiscard]] int controlHeight() const { return 34; }
-    [[nodiscard]] int controlHeightLg() const { return 36; }
+    [[nodiscard]] int controlHeight() const { return compactDensity_ ? 30 : 34; }
+    [[nodiscard]] int controlHeightLg() const { return compactDensity_ ? 32 : 36; }
     [[nodiscard]] int iconSize() const { return 16; }
     // Motion tuning — see the Q_PROPERTY block. Qt's SpringAnimation `damping`
     // is normalised 0..1 (1 ≈ critically damped); 0.32 leaves a small, organic
@@ -202,19 +217,26 @@ public:
     Q_INVOKABLE [[nodiscard]] QColor methodColor(const QString& method) const;
     /// Status token → resolved colour (matches TimelineModel token strings).
     Q_INVOKABLE [[nodiscard]] QColor statusColor(const QString& token) const;
-    /// Status token → glyph (colour+glyph pair per DESIGN.md §6.1 / a11y).
+    /// Status token → glyph (colour+glyph pair per .
     Q_INVOKABLE [[nodiscard]] QString statusGlyph(const QString& token) const;
 
 signals:
     void tokensChanged();
+    void metricsChanged();
+    void typographyChanged();
 
 private:
     /// Returns the resolved palette for the current appearance.
     [[nodiscard]] const theming::Palette& p() const noexcept { return theme_.palette(); }
+    [[nodiscard]] qreal fontBasePointSize() const;
+    [[nodiscard]] int pointToPixel(qreal points) const;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
     void onModeChanged();
+    void onDensityChanged();
 
     theming::Theme theme_{theming::Theme::resolve(theming::Appearance::Dark)};
+    bool compactDensity_{};
 };
 
 }  // namespace reqloom::desktop::qml

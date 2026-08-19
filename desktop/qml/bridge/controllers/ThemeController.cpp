@@ -10,6 +10,12 @@ namespace {
 
 constexpr auto kModeKey = "appearance/mode";
 constexpr auto kDensityKey = "appearance/density";
+constexpr auto kLegacyDensityKey = "layout/density";
+
+[[nodiscard]] QString normalizedDensity(const QString& density) {
+    return density.toLower().trimmed() == QLatin1String("compact") ? QStringLiteral("compact")
+                                                                   : QStringLiteral("comfortable");
+}
 
 }  // namespace
 
@@ -42,6 +48,20 @@ ThemeController* ThemeController::create(QQmlEngine*, QJSEngine*) {
     return &instance;
 }
 
+void ThemeController::migrateLegacyDensity(QSettings& settings) {
+    const QString canonicalKey{QString::fromUtf8(kDensityKey)};
+    const QString legacyKey{QString::fromUtf8(kLegacyDensityKey)};
+    if (settings.contains(canonicalKey)) {
+        settings.setValue(canonicalKey, normalizedDensity(settings.value(canonicalKey).toString()));
+        settings.remove(legacyKey);
+        return;
+    }
+    if (settings.contains(legacyKey)) {
+        settings.setValue(canonicalKey, normalizedDensity(settings.value(legacyKey).toString()));
+        settings.remove(legacyKey);
+    }
+}
+
 bool ThemeController::isDark() const {
     return resolvedAppearance() == theming::Appearance::Dark;
 }
@@ -70,7 +90,7 @@ void ThemeController::setMode(const QString& mode) {
 }
 
 void ThemeController::setDensity(const QString& density) {
-    const QString normalized = density.toLower().trimmed();
+    const QString normalized{normalizedDensity(density)};
     if (normalized == density_) {
         return;
     }
@@ -81,14 +101,12 @@ void ThemeController::setDensity(const QString& density) {
 
 void ThemeController::loadSettings() {
     QSettings settings;
+    migrateLegacyDensity(settings);
     const QString savedMode = settings.value(QString::fromUtf8(kModeKey)).toString();
     if (!savedMode.isEmpty()) {
         mode_ = savedMode;
     }
-    const QString savedDensity = settings.value(QString::fromUtf8(kDensityKey)).toString();
-    if (!savedDensity.isEmpty()) {
-        density_ = savedDensity;
-    }
+    density_ = normalizedDensity(settings.value(QString::fromUtf8(kDensityKey)).toString());
 }
 
 void ThemeController::saveSettings() const {

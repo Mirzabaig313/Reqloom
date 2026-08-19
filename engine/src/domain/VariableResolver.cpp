@@ -13,11 +13,13 @@
 #include <format>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <random>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace reqloom::engine {
 
@@ -44,43 +46,50 @@ std::string generateUuid() {
 }
 
 /// ISO 8601 timestamp for a given system_clock time point (UTC, second precision).
-std::string formatIso(std::chrono::system_clock::time_point tp) {
-    auto time = std::chrono::system_clock::to_time_t(tp);
+[[nodiscard]] std::optional<std::string> formatIso(std::chrono::system_clock::time_point tp) {
+    const auto time = std::chrono::system_clock::to_time_t(tp);
     std::tm buf{};
 #ifdef _WIN32
-    gmtime_s(&buf, &time);
+    if (gmtime_s(&buf, &time) != 0) {
+        return std::nullopt;
+    }
 #else
-    gmtime_r(&time, &buf);
+    if (gmtime_r(&time, &buf) == nullptr) {
+        return std::nullopt;
+    }
 #endif
     std::ostringstream ss;
     ss << std::put_time(&buf, "%FT%TZ");
+    if (!ss) {
+        return std::nullopt;
+    }
     return ss.str();
 }
 
-std::string nowIso() {
+[[nodiscard]] std::optional<std::string> nowIso() {
     return formatIso(std::chrono::system_clock::now());
 }
 
 /// Parse a duration literal like "5m", "1h", "30s", "7d". Returns nullopt
 /// for malformed input. Overflow-safe: absurdly large values return nullopt
 /// rather than triggering signed overflow UB.
-std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
+[[nodiscard]] std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
     if (literal.size() < 2) {
         return std::nullopt;
     }
 
-    const char unit = literal.back();
-    auto digits = literal.substr(0, literal.size() - 1);
+    const char unit{literal.back()};
+    const auto digits{literal.substr(0, literal.size() - 1)};
 
-    long long value = 0;
-    const auto* first = digits.data();
-    const auto* last = first + digits.size();
-    auto fc = std::from_chars(first, last, value);
+    long long value{};
+    const auto* first{digits.data()};
+    const auto* last{first + digits.size()};
+    const auto fc{std::from_chars(first, last, value)};
     if (fc.ec != std::errc{} || fc.ptr != last || value < 0) {
         return std::nullopt;
     }
 
-    auto safeMul = [](long long v, long long factor) -> std::optional<long long> {
+    const auto safeMul = [](long long v, long long factor) -> std::optional<long long> {
         if (factor == 0) {
             return 0;
         }
@@ -137,7 +146,97 @@ std::string substituteRefs(std::string_view input,
                            const RunContext& ctx,
                            const ResolveContext& rctx,
                            std::vector<std::string>& unresolved,
-                           int depth);
+                           int depth,
+                           bool encodeResolvedRefs);
+
+[[nodiscard]] std::optional<std::size_t> findReferenceEnd(std::string_view input,
+                                                          std::size_t referenceStart) noexcept {
+    char quote{};
+    bool escaped{};
+    for (std::size_t index = referenceStart + 2; index < input.size(); ++index) {
+        const char character = input[index];
+        if (quote != '\0') {
+            if (escaped) {
+                escaped = false;
+            } else if (character == '\\') {
+                escaped = true;
+            } else if (character == quote) {
+                quote = '\0';
+            }
+            continue;
+        }
+        if (character == '"' || character == '\'') {
+            quote = character;
+            continue;
+        }
+        if (character == '}' && index + 1 < input.size() && input[index + 1] == '}') {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::size_t findUrlDelimiter(std::string_view input, char delimiter) noexcept {
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        if (index + 1 < input.size() && input.substr(index, 2) == "{{") {
+            const auto referenceEnd = findReferenceEnd(input, index);
+            if (!referenceEnd) {
+                return std::string_view::npos;
+            }
+            index = *referenceEnd + 1;
+            continue;
+        }
+        if (input[index] == delimiter) {
+            return index;
+        }
+    }
+    return std::string_view::npos;
+}
+
+[[nodiscard]] bool isHexDigit(char character) noexcept {
+    return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') ||
+           (character >= 'A' && character <= 'F');
+}
+
+/// Encode resolved URL components without encoding an existing `%HH` escape again.
+[[nodiscard]] std::string urlEncodePreservingEscapes(std::string_view input) {
+    std::string output;
+    output.reserve(input.size());
+    std::size_t chunkStart{};
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        if (input[index] != '%' || index + 2 >= input.size() || !isHexDigit(input[index + 1]) ||
+            !isHexDigit(input[index + 2])) {
+            continue;
+        }
+        output += urlEncode(input.substr(chunkStart, index - chunkStart));
+        output.append(input.substr(index, 3));
+        index += 2;
+        chunkStart = index + 1;
+    }
+    output += urlEncode(input.substr(chunkStart));
+    return output;
+}
+
+[[nodiscard]] bool isWholeReference(std::string_view input) noexcept {
+    if (input.size() <= 4 || !input.starts_with("{{")) {
+        return false;
+    }
+    const auto referenceEnd{findReferenceEnd(input, 0)};
+    return referenceEnd && *referenceEnd + 2 == input.size();
+}
+
+[[nodiscard]] bool isSafeWholePathOutput(std::string_view path) noexcept {
+    if (path.empty() || path.front() != '/' || path.starts_with("//")) {
+        return false;
+    }
+    for (const char character : path) {
+        const auto byte = static_cast<unsigned char>(character);
+        if (character == '\\' || byte <= 0x20U || byte == 0x7FU) {
+            return false;
+        }
+    }
+    return true;
+}
 
 // Re-expansion of an env value into one further level (env → secret) is
 // the only nesting we rely on; a small cap leaves margin without cycles.
@@ -175,11 +274,34 @@ ResolvedRef resolveCallArg(std::string_view arg,
         return std::nullopt;
     }
 
-    if ((arg.front() == '"' && arg.back() == '"') || (arg.front() == '\'' && arg.back() == '\'')) {
-        if (arg.size() < 2) {
+    if (arg.front() == '"' || arg.front() == '\'') {
+        const char quote = arg.front();
+        if (arg.size() < 2 || arg.back() != quote) {
             return std::nullopt;
         }
-        return std::string{arg.substr(1, arg.size() - 2)};
+
+        std::string value;
+        value.reserve(arg.size() - 2);
+        bool escaped{};
+        for (const char character : arg.substr(1, arg.size() - 2)) {
+            if (escaped) {
+                if (character != quote && character != '\\') {
+                    value.push_back('\\');
+                }
+                value.push_back(character);
+                escaped = false;
+            } else if (character == '\\') {
+                escaped = true;
+            } else if (character == quote) {
+                return std::nullopt;
+            } else {
+                value.push_back(character);
+            }
+        }
+        if (escaped) {
+            return std::nullopt;
+        }
+        return value;
     }
 
     return resolveDotted(arg, ctx, rctx, depth);
@@ -291,7 +413,24 @@ ResolvedRef resolveBuiltin(std::string_view ref,
         if (!hasOffset) {
             return nowIso();
         }
-        return formatIso(std::chrono::system_clock::now() + offset);
+
+        using Clock = std::chrono::system_clock;
+        using ClockDuration = Clock::duration;
+        const auto maxSeconds =
+            std::chrono::duration_cast<std::chrono::seconds>(ClockDuration::max()).count();
+        const auto minSeconds =
+            std::chrono::duration_cast<std::chrono::seconds>(ClockDuration::min()).count();
+        if (offset.count() > maxSeconds || offset.count() < minSeconds) {
+            return std::nullopt;
+        }
+
+        const ClockDuration delta = std::chrono::duration_cast<ClockDuration>(offset);
+        const ClockDuration current = Clock::now().time_since_epoch();
+        if ((delta > ClockDuration::zero() && current > ClockDuration::max() - delta) ||
+            (delta < ClockDuration::zero() && current < ClockDuration::min() - delta)) {
+            return std::nullopt;
+        }
+        return formatIso(Clock::time_point{current + delta});
     }
     if (ref.starts_with("$.env.")) {
         if (hasOffset) {
@@ -350,7 +489,7 @@ ResolvedRef resolveDotted(std::string_view ref,
         // records it, matching how every other unresolved ref behaves.
         if (it->second.find("{{") != std::string::npos) {
             std::vector<std::string> nested;
-            auto expanded = substituteRefs(it->second, ctx, rctx, nested, depth + 1);
+            auto expanded = substituteRefs(it->second, ctx, rctx, nested, depth + 1, false);
             if (!nested.empty()) {
                 return std::nullopt;
             }
@@ -431,46 +570,56 @@ std::string substituteRefs(std::string_view input,
                            const RunContext& ctx,
                            const ResolveContext& rctx,
                            std::vector<std::string>& unresolved,
-                           int depth) {
-    static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
+                           int depth,
+                           bool encodeResolvedRefs) {
     // Depth guard: a self-referential env value (e.g. one whose value
-    // references itself) would otherwise loop. At the cap, return the
-    // text unchanged rather than recursing further.
+    // references itself) would otherwise loop. Preserve the text but report
+    // the nested reference so callers fail closed at the cap.
     if (depth >= kMaxResolveDepth) {
+        const std::size_t referenceStart{input.find("{{")};
+        if (referenceStart != std::string_view::npos) {
+            unresolved.emplace_back(input.substr(referenceStart));
+        }
         return std::string{input};
     }
 
-    const std::string in{input};
     std::string output;
-    output.reserve(in.size());
+    output.reserve(input.size());
+    std::size_t offset{};
+    while (offset < input.size()) {
+        const std::size_t referenceStart = input.find("{{", offset);
+        if (referenceStart == std::string_view::npos) {
+            output.append(input.substr(offset));
+            break;
+        }
+        output.append(input.substr(offset, referenceStart - offset));
 
-    std::sregex_iterator const begin(in.begin(), in.end(), refPattern);
-    std::sregex_iterator const end;
-    std::size_t lastPos = 0;
+        const auto referenceEnd = findReferenceEnd(input, referenceStart);
+        if (!referenceEnd) {
+            unresolved.emplace_back(input.substr(referenceStart));
+            output.append(input.substr(referenceStart));
+            break;
+        }
 
-    for (auto it = begin; it != end; ++it) {
-        const auto matchPos = static_cast<std::size_t>(it->position());
-        output += in.substr(lastPos, matchPos - lastPos);
-
-        const auto rawRef = (*it)[1].str();
-        const auto trimmed = std::string{trim(rawRef)};
-
-        ResolvedRef resolved = resolveBuiltin(trimmed, ctx, rctx, depth);
-        if (!resolved) {
-            resolved = resolveDotted(trimmed, ctx, rctx, depth);
+        const std::string_view rawRef =
+            input.substr(referenceStart + 2, *referenceEnd - referenceStart - 2);
+        const std::string trimmedRef{trim(rawRef)};
+        ResolvedRef resolved;
+        if (!trimmedRef.empty()) {
+            resolved = resolveBuiltin(trimmedRef, ctx, rctx, depth);
+            if (!resolved) {
+                resolved = resolveDotted(trimmedRef, ctx, rctx, depth);
+            }
         }
 
         if (resolved) {
-            output += *resolved;
+            output += encodeResolvedRefs ? urlEncodePreservingEscapes(*resolved) : *resolved;
         } else {
-            unresolved.push_back(trimmed);
-            output += "{{" + trimmed + "}}";
+            unresolved.push_back(trimmedRef);
+            output.append(input.substr(referenceStart, *referenceEnd + 2 - referenceStart));
         }
-
-        lastPos = matchPos + static_cast<std::size_t>(it->length());
+        offset = *referenceEnd + 2;
     }
-
-    output += in.substr(lastPos);
     return output;
 }
 
@@ -482,7 +631,52 @@ VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
                                                    const RunContext& ctx,
                                                    const ResolveContext& resolveCtx) const {
     std::vector<std::string> unresolved;
-    std::string output = substituteRefs(templateStr, ctx, resolveCtx, unresolved, 0);
+    std::string output = substituteRefs(templateStr, ctx, resolveCtx, unresolved, 0, false);
+    return Result{std::move(output), std::move(unresolved)};
+}
+
+VariableResolver::Result VariableResolver::resolveUrlPath(std::string_view templateStr,
+                                                          const RunContext& ctx,
+                                                          const ResolveContext& resolveCtx) const {
+    const auto candidateQueryStart = findUrlDelimiter(templateStr, '?');
+    const auto fragmentStart = findUrlDelimiter(templateStr, '#');
+    const bool hasQuery =
+        candidateQueryStart != std::string_view::npos &&
+        (fragmentStart == std::string_view::npos || candidateQueryStart < fragmentStart);
+    const auto queryStart = hasQuery ? candidateQueryStart : std::string_view::npos;
+    const auto pathEnd =
+        hasQuery ? queryStart
+                 : (fragmentStart == std::string_view::npos ? templateStr.size() : fragmentStart);
+
+    std::vector<std::string> unresolved;
+    std::string output;
+    output.reserve(templateStr.size());
+    const auto pathTemplate = templateStr.substr(0, pathEnd);
+    const bool wholePathReference = isWholeReference(pathTemplate);
+    const std::string resolvedPath =
+        substituteRefs(pathTemplate, ctx, resolveCtx, unresolved, 0, !wholePathReference);
+    if (wholePathReference && unresolved.empty() && !isSafeWholePathOutput(resolvedPath)) {
+        unresolved.emplace_back(trim(pathTemplate.substr(2, pathTemplate.size() - 4)));
+        output.append(pathTemplate);
+    } else {
+        output += resolvedPath;
+    }
+
+    if (hasQuery) {
+        const auto queryEnd =
+            fragmentStart == std::string_view::npos ? templateStr.size() : fragmentStart;
+        output.push_back('?');
+        output += substituteRefs(templateStr.substr(queryStart + 1, queryEnd - queryStart - 1),
+                                 ctx,
+                                 resolveCtx,
+                                 unresolved,
+                                 0,
+                                 true);
+    }
+    if (fragmentStart != std::string_view::npos) {
+        output += substituteRefs(
+            templateStr.substr(fragmentStart), ctx, resolveCtx, unresolved, 0, false);
+    }
     return Result{std::move(output), std::move(unresolved)};
 }
 

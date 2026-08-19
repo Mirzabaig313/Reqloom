@@ -15,13 +15,13 @@ namespace reqloom::desktop::format {
 /// Uppercase HTTP verb, e.g. "POST".
 [[nodiscard]] QString method(engine::HttpMethod method);
 
-/// Status token a method verb is tinted with (DESIGN.md §6.2): GET/HEAD/OPTIONS
+/// Status token a method verb is tinted with : GET/HEAD/OPTIONS
 /// read as safe (success), POST as creation (running/cyan), DELETE as
 /// destructive (error), PUT/PATCH as mutation (warning). Shared by the explorer
 /// chips and the request address-bar pill so the vocabulary stays consistent.
 [[nodiscard]] theming::StatusToken methodStatusToken(const QString& method);
 
-/// HTTP method colour for a verb (DESIGN.md §6.2a) — a dedicated mnemonic hue
+/// HTTP method colour for a verb  — a dedicated mnemonic hue
 /// per method, distinct from the status palette. GET blue, POST green, PUT
 /// orange, PATCH yellow, DELETE red; HEAD/OPTIONS/unknown neutral. Shared by
 /// the explorer chips, the address-bar pill, and the execution-chain view.

@@ -154,7 +154,10 @@ Item {
     Popup {
         id: popup
         parent: root.field
-        width: 340
+        // Keep inside the window; cap width so the fixed 340 never overflows a
+        // narrow (e.g. 320-DIP) editor.
+        margins: DesignTokens.spaceSm
+        width: Math.min(340, (Overlay.overlay ? Overlay.overlay.width : 640) - 2 * DesignTokens.spaceSm)
         padding: DesignTokens.spaceXs
         closePolicy: Popup.NoAutoClose
         enter: PopupEnter {}

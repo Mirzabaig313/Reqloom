@@ -52,7 +52,9 @@ Item {
     Popup {
         id: popup
         parent: root.field
-        width: Math.max(240, root.field.width)
+        // Keep the popup inside the window and cap its width for narrow editors.
+        margins: DesignTokens.spaceSm
+        width: Math.min(Math.max(240, root.field.width), (Overlay.overlay ? Overlay.overlay.width : 640) - 2 * DesignTokens.spaceSm)
         padding: DesignTokens.spaceXs
         closePolicy: Popup.NoAutoClose
         enter: PopupEnter {}

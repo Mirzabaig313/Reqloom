@@ -5,14 +5,17 @@
 // Threading: engine::ExecutionEngine::run blocks (real HTTP, polling sleeps),
 // so it runs on a QtConcurrent worker. The engine's event callback fires on
 // that worker thread but only emits signals — it never calls back into the
-// engine — which is the marshalling discipline AGENTS.md requires.
+// engine — which is the marshalling discipline requires.
 #pragma once
+
+#include "application/UrlTemplate.h"
 
 #include <reqloom/engine/PublicApi.h>
 
 #include <QtCore/QFutureWatcher>
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtCore/QUrl>
 
 #include <memory>
 #include <optional>
@@ -28,7 +31,7 @@ namespace reqloom::desktop {
 
 class ProjectModel;
 
-/// One-shot request override for an Override-Mode run (DESIGN.md §6.3). When
+/// One-shot request override for an Override-Mode run. When
 /// `active`, the controller deep-copies the project, patches the target
 /// operation with these values, and runs against the copy — the loaded project
 /// is never mutated, so the override applies to this run only.
@@ -39,6 +42,71 @@ struct RequestOverride {
     QString path;                                    ///< path template (empty → unchanged)
     std::map<std::string, std::string> headers;      ///< replaces op headers
     std::map<std::string, std::string> queryParams;  ///< replaces op query params
+
+    /// Move a map-representable query suffix from `path` into `queryParams`.
+    /// Embedded items win existing keys; lossy query shapes stay in `path`.
+    void normalizePathQuery() {
+        const qsizetype queryStart = url_template::findDelimiter(path, QLatin1Char('?'));
+        const qsizetype fragmentStart = url_template::findDelimiter(path, QLatin1Char('#'));
+        if (queryStart < 0 || (fragmentStart >= 0 && fragmentStart < queryStart)) {
+            return;
+        }
+
+        const qsizetype queryLength = fragmentStart < 0 ? -1 : fragmentStart - queryStart - 1;
+        const QString rawQuery = path.mid(queryStart + 1, queryLength);
+        const auto rawItems = url_template::splitOutsideTemplates(rawQuery, QLatin1Char('&'));
+        for (const QString& rawItem : rawItems) {
+            const qsizetype equalsIndex{url_template::findDelimiter(rawItem, QLatin1Char('='))};
+            const QString rawKey{equalsIndex >= 0 ? rawItem.left(equalsIndex) : rawItem};
+            if (rawKey.isEmpty()) {
+                continue;
+            }
+            const QString key{QUrl::fromPercentEncoding(rawKey.toUtf8())};
+            if (!key.contains(QStringLiteral("{{"))) {
+                queryParams.erase(key.toStdString());
+            }
+        }
+        if (rawQuery.contains(QLatin1Char('%')) || rawQuery.contains(QLatin1Char('{')) ||
+            rawQuery.contains(QLatin1Char('}')) || rawQuery.contains(QLatin1Char('+'))) {
+            return;
+        }
+
+        std::vector<std::pair<QString, QString>> items{};
+        items.reserve(static_cast<std::size_t>(rawItems.size()));
+        for (const QString& rawItem : rawItems) {
+            const qsizetype equalsIndex{url_template::findDelimiter(rawItem, QLatin1Char('='))};
+            if (equalsIndex <= 0) {
+                return;
+            }
+            const QString key{QUrl::fromPercentEncoding(rawItem.left(equalsIndex).toUtf8())};
+            const QString value{
+                QUrl::fromPercentEncoding(rawItem.sliced(equalsIndex + 1).toUtf8())};
+            if (key.contains(QStringLiteral("{{")) ||
+                url_template::containsExplicitUrlEncode(value)) {
+                return;
+            }
+            items.emplace_back(key, value);
+        }
+
+        // ponytail: Keep shapes a map cannot preserve in the raw path until
+        // Operation supports ordered, multi-value query parameters.
+        std::string previousKey;
+        bool first{true};
+        for (const auto& item : items) {
+            const std::string decodedKey = item.first.toStdString();
+            if (!first && decodedKey <= previousKey) {
+                return;
+            }
+            previousKey = decodedKey;
+            first = false;
+        }
+
+        const QString fragment{fragmentStart >= 0 ? path.sliced(fragmentStart) : QString{}};
+        path = path.left(queryStart) + fragment;
+        for (const auto& [key, value] : items) {
+            queryParams.insert_or_assign(key.toStdString(), value.toStdString());
+        }
+    }
 
     /// Body. When `bodyIsForm` is false, `body` is a raw template (empty →
     /// no body). When true, `formFields` is sent as form-data/multipart and

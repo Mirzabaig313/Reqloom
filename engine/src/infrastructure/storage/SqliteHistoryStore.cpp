@@ -12,7 +12,7 @@
 // WAL mode + 5s busy timeout: the engine appends from the run thread
 // while the desktop reads on a separate connection without blocking.
 // Instances are not thread-safe — one store per ExecutionEngine, caller
-// serialises (AGENTS.md: engine entry points are single-threaded per run).
+// serialises
 
 #include "SqliteHistoryStore.h"
 

@@ -1,7 +1,7 @@
 // ImportFromApidog — Apidog native export (JSON) → Project parser.
 // Sibling of ImportFromPostman.
 //
-// ponytail: path/id/token helpers mirror the other importers rather than share
+// path/id/token helpers mirror the other importers rather than share
 // a header. Upgrade path: extract a shared ImportSupport.h once worth it.
 
 #include "ImportFromApidog.h"

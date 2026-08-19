@@ -8,7 +8,7 @@ Label {
     property string title: ""
     text: title
     color: DesignTokens.textPrimary
-    font.pixelSize: DesignTokens.fontSubtitle
+    font.pointSize: DesignTokens.fontSubtitlePointSize
     font.weight: DesignTokens.weightSemiBold
     padding: DesignTokens.spaceLg
     bottomPadding: 0

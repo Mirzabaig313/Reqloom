@@ -55,7 +55,15 @@ void EditableKeyValueModel::setKey(int row, const QString& key) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) {
         return;
     }
-    rows_[static_cast<std::size_t>(row)].first = key;
+    auto& item = rows_[static_cast<std::size_t>(row)];
+    if (item.first == key) {
+        return;
+    }
+    item.first = key;
+    if (row < static_cast<int>(rows_.size()) - 1 && rowIsBlank(static_cast<std::size_t>(row))) {
+        removeRow(row);
+        return;
+    }
     const QModelIndex idx = index(row, 0);
     emit dataChanged(idx, idx, {KeyRole, IsGhostRole});
     ensureTrailingGhost();
@@ -65,7 +73,15 @@ void EditableKeyValueModel::setValue(int row, const QString& value) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) {
         return;
     }
-    rows_[static_cast<std::size_t>(row)].second = value;
+    auto& item = rows_[static_cast<std::size_t>(row)];
+    if (item.second == value) {
+        return;
+    }
+    item.second = value;
+    if (row < static_cast<int>(rows_.size()) - 1 && rowIsBlank(static_cast<std::size_t>(row))) {
+        removeRow(row);
+        return;
+    }
     const QModelIndex idx = index(row, 0);
     emit dataChanged(idx, idx, {ValueRole, IsGhostRole});
     ensureTrailingGhost();

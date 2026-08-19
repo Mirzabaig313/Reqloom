@@ -75,6 +75,10 @@ public:
     [[nodiscard]] bool forEachContinueOnErrorAt(int row) const;
     void setForEachContinueOnError(int row, bool continueOnError);
 
+signals:
+    /// Fired when any row's dependencies, extractions, or for-each fields change.
+    void editorChanged();
+
 private:
     struct Row {
         QString operationId;

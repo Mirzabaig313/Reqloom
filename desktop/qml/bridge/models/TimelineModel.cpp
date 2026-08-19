@@ -115,6 +115,10 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
             return row.durationText;
         case SubLabelRole:
             return row.subLabel;
+        case OpRole:
+            return row.op;
+        case VariableNameRole:
+            return row.variableName;
         default:
             return {};
     }
@@ -135,6 +139,8 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
         {ClockRole, "clock"},
         {DurationRole, "duration"},
         {SubLabelRole, "subLabel"},
+        {OpRole, "op"},
+        {VariableNameRole, "variableName"},
     };
 }
 
@@ -154,6 +160,9 @@ int TimelineModel::stepRowFor(int index, const QString& op) {
     row.kind = Kind::Step;
     row.stepIndex = index + 1;
     row.title = QStringLiteral("%1. %2").arg(index + 1).arg(op);
+    // Kept as its own field rather than parsed back out of `title`: the title is
+    // a display string ("3. auth.login") and callers need the bare id.
+    row.op = op;
     const int at = static_cast<int>(rows_.size());
     beginInsertRows({}, at, at);
     rows_.push_back(std::move(row));
@@ -178,6 +187,44 @@ void TimelineModel::reset() {
         latencyBars_.clear();
         emit latenciesChanged();
     }
+    // A pinned step cannot outlive the rows it pointed at, so drop the pin and
+    // let the inspector follow the new run.
+    if (selectedStep_ != 0) {
+        selectedStep_ = 0;
+        emit selectionChanged();
+    }
+}
+
+int TimelineModel::stepForOperation(const QString& operationId) const {
+    if (operationId.isEmpty()) {
+        return 0;
+    }
+    for (const Row& row : rows_) {
+        if (row.kind == Kind::Step && row.op == operationId) {
+            return row.stepIndex;
+        }
+    }
+    return 0;
+}
+
+void TimelineModel::setSelectedStep(int stepNumber) {
+    // Only a step that actually has a row may be pinned: a stale click arriving
+    // after a reset, or a bar from a previous run, would otherwise pin the
+    // inspector to a step that no longer exists.
+    const int next = (stepNumber > 0 && rowForStep(stepNumber) >= 0) ? stepNumber : 0;
+    if (next == selectedStep_) {
+        return;
+    }
+    selectedStep_ = next;
+    emit selectionChanged();
+}
+
+QString TimelineModel::selectedOperationId() const {
+    const int at = rowForStep(selectedStep_);
+    if (at < 0 || at >= static_cast<int>(rows_.size())) {
+        return {};
+    }
+    return rows_[static_cast<std::size_t>(at)].op;
 }
 
 TimelineModel::Snapshot TimelineModel::takeSnapshot() const {
@@ -190,7 +237,8 @@ TimelineModel::Snapshot TimelineModel::takeSnapshot() const {
                     .runTotalMs = runTotalMs_,
                     .runChainSize = runChainSize_,
                     .runEnv = runEnv_,
-                    .runStartRow = runStartRow_};
+                    .runStartRow = runStartRow_,
+                    .selectedStep = selectedStep_};
 }
 
 void TimelineModel::restoreSnapshot(Snapshot snapshot) {
@@ -207,8 +255,12 @@ void TimelineModel::restoreSnapshot(Snapshot snapshot) {
     // never observes the previous tab's bars against the new tab's rows.
     latencyMs_ = std::move(snapshot.latencyMs);
     latencyBars_ = std::move(snapshot.latencyBars);
+    selectedStep_ = snapshot.selectedStep;
     endResetModel();
     emit latenciesChanged();
+    // Unconditional: the step number may be unchanged while the rows beneath it
+    // belong to a different tab, so selectedOperationId can differ regardless.
+    emit selectionChanged();
 }
 
 int TimelineModel::rowForStep(int stepNumber) const {
@@ -368,7 +420,7 @@ void TimelineModel::onResponseReceived(
 }
 
 void TimelineModel::onExtractionCompleted(int index,
-                                          QString /*op*/,
+                                          QString op,
                                           QString variableName,
                                           QString sourcePath,
                                           QString outcome,
@@ -377,6 +429,10 @@ void TimelineModel::onExtractionCompleted(int index,
     row.kind = Kind::Extraction;
     row.stepIndex = index + 1;
     row.title = variableName;
+    // Producing operation + bare variable name: together they identify which
+    // downstream steps consumed this value, so a miss can name what it broke.
+    row.op = op;
+    row.variableName = variableName;
     const bool resolved = (outcome == QLatin1String("resolved"));
     if (resolved) {
         // Resolved extractions read as success (green).
@@ -386,7 +442,7 @@ void TimelineModel::onExtractionCompleted(int index,
         row.value = value;
     } else {
         // null / missing / invalid is a non-error condition that still demands
-        // attention — DESIGN.md §2.5 reserves status.warning (AMBER) for it,
+        // attention  reserves status.warning (AMBER) for it,
         // never red. Mirrors the old TimelinePanel exactly.
         row.statusToken = QStringLiteral("warning");
         row.statusLabel = outcome;

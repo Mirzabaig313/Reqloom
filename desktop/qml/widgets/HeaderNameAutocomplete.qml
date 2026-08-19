@@ -124,7 +124,11 @@ Item {
         id: popup
         parent: root.field
         y: root.field ? root.field.height + 2 : 0
-        width: root.field ? Math.max(root.field.width, 240) : 240
+        // Keep the popup inside the window (Qt repositions within `margins`,
+        // sliding it up when it would overflow the bottom) and cap the width so
+        // it never runs off the edge in a narrow editor.
+        margins: DesignTokens.spaceSm
+        width: Math.min(root.field ? Math.max(root.field.width, 240) : 240, (Overlay.overlay ? Overlay.overlay.width : 640) - 2 * DesignTokens.spaceSm)
         padding: DesignTokens.spaceXs
         closePolicy: Popup.NoAutoClose
         enter: PopupEnter {}

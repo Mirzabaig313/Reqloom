@@ -11,8 +11,16 @@ import Reqloom
 
 Rectangle {
     id: bar
-    implicitHeight: 40
+    // Text-scale-safe: grows with the tab label at large OS font sizes, floored
+    // at the historical 40 DIP so it never shrinks below the current design.
+    implicitHeight: Math.max(40, Math.round(tabMetrics.height + DesignTokens.spaceMd * 2))
     color: DesignTokens.surfaceSunken
+
+    FontMetrics {
+        id: tabMetrics
+        font.family: DesignTokens.fontSans
+        font.pointSize: DesignTokens.fontLabelPointSize
+    }
 
     // Bottom hairline separating the strip from the editor.
     Rectangle {
@@ -58,7 +66,8 @@ Rectangle {
 
             TextMetrics {
                 id: titleMetrics
-                font.pixelSize: DesignTokens.fontLabel
+                font.family: DesignTokens.fontSans
+                font.pointSize: DesignTokens.fontLabelPointSize
                 text: tabRoot.title
             }
 
@@ -150,7 +159,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: tabRoot.title
                         color: tabRoot.active ? DesignTokens.textPrimary : DesignTokens.textSecondary
-                        font.pixelSize: DesignTokens.fontLabel
+                        font.pointSize: DesignTokens.fontLabelPointSize
                         font.weight: tabRoot.active ? DesignTokens.weightMedium : DesignTokens.weightRegular
                         elide: Text.ElideRight
                     }
@@ -177,7 +186,9 @@ Rectangle {
                         MouseArea {
                             id: closeArea
                             anchors.fill: parent
-                            anchors.margins: -3
+                            // Grow the 16 DIP glyph to a 28 DIP hit target
+                            // (accessibility minimum for a dense icon action).
+                            anchors.margins: -6
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: AppController.closeTab(tabRoot.index)
