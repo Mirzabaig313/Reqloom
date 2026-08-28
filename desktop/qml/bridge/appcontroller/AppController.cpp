@@ -180,6 +180,10 @@ AppController::AppController(QObject* parent)
             &TimelineModel::onAssertionCompleted);
     connect(
         runController_.get(), &RunController::stepFailed, &timeline_, &TimelineModel::onStepFailed);
+    connect(runController_.get(),
+            &RunController::stepBlocked,
+            &timeline_,
+            &TimelineModel::onStepBlocked);
     connect(runController_.get(), &RunController::runEnded, &timeline_, &TimelineModel::onRunEnded);
 
     // Live per-node status for the chain graph. Run events carry an operation
@@ -222,12 +226,21 @@ AppController::AppController(QObject* parent)
                     emit chainStatusChanged();
                 }
             });
+    connect(
+        runController_.get(),
+        &RunController::stepFailed,
+        this,
+        [this](int index, const QString& op, const QString&, const QString&, const QVariantList&) {
+            runStepOp_.insert(index, op);
+            chainStatus_.insert(op, QStringLiteral("error"));
+            emit chainStatusChanged();
+        });
     connect(runController_.get(),
-            &RunController::stepFailed,
+            &RunController::stepBlocked,
             this,
-            [this](int index, const QString& op, const QString&, const QString&) {
+            [this](int index, const QString& op, int) {
                 runStepOp_.insert(index, op);
-                chainStatus_.insert(op, QStringLiteral("error"));
+                chainStatus_.insert(op, QStringLiteral("blocked"));
                 emit chainStatusChanged();
             });
 

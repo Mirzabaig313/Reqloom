@@ -16,6 +16,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtCore/QUrl>
+#include <QtCore/QVariantList>
 
 #include <memory>
 #include <optional>
@@ -227,7 +228,8 @@ signals:
                              QString outcome,
                              QString value);
     void assertionCompleted(int index, QString op, QString name, QString expr, bool passed);
-    void stepFailed(int index, QString op, QString code, QString detail);
+    void stepFailed(int index, QString op, QString code, QString detail, QVariantList diagnostics);
+    void stepBlocked(int index, QString op, int blockedByIndex);
     void runEnded(QString outcome);
 
     /// Emitted on the GUI thread once the worker finishes. Carries the full

@@ -34,6 +34,7 @@ public:
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
+    Q_INVOKABLE [[nodiscard]] int rowForName(const QString& name) const;
 
     void reload(const QList<SecretEntry>& entries);
     void clear();

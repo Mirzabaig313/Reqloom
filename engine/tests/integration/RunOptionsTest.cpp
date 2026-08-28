@@ -12,6 +12,11 @@
 // flag is not wired through ExecutionEngine::run().
 #include "MockSutHarness.h"
 
+#include "infrastructure/hooks/HookRunner.h"
+#include "infrastructure/http/HttpClient.h"
+#include "infrastructure/schema/SchemaParser.h"
+#include "infrastructure/secrets/SecretStore.h"
+#include "infrastructure/storage/HistoryStore.h"
 #include "infrastructure/storage/SqliteHistoryStore.h"
 
 #include <reqloom/engine/Factories.h>
@@ -21,11 +26,18 @@
 
 #include <support/TempPath.h>
 
+#include <cstddef>
+#include <expected>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <optional>
 #include <string>
+#include <system_error>
 #include <type_traits>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace ce = reqloom::engine;
 namespace ct = reqloom::tests;
@@ -36,6 +48,94 @@ namespace {
 [[nodiscard]] fs::path fixturesDir() {
     return fs::path(REQLOOM_FIXTURES_DIR);
 }
+
+class CapturingHttpClient final : public ce::HttpClient {
+public:
+    void enqueue(const int status, std::string body) {
+        ce::HttpResponse response;
+        response.status = status;
+        response.body = std::move(body);
+        responses_.push_back(std::move(response));
+    }
+
+    std::expected<ce::HttpResponse, ce::ReqloomError> send(
+        const ce::HttpRequest& request) override {
+        requests_.push_back(request);
+        if (responseIndex_ >= responses_.size()) {
+            ce::HttpResponse response;
+            response.status = 500;
+            return response;
+        }
+        return responses_[responseIndex_++];
+    }
+
+    [[nodiscard]] const std::vector<ce::HttpRequest>& requests() const noexcept {
+        return requests_;
+    }
+
+private:
+    std::vector<ce::HttpRequest> requests_;
+    std::vector<ce::HttpResponse> responses_;
+    std::size_t responseIndex_{};
+};
+
+[[nodiscard]] ce::ExecutionEngine makeCapturingEngine(CapturingHttpClient*& captured) {
+    auto http = std::make_unique<CapturingHttpClient>();
+    captured = http.get();
+    ce::ExecutionEngine::Dependencies dependencies{
+        std::move(http), nullptr, nullptr, nullptr, nullptr};
+    return ce::ExecutionEngine{std::move(dependencies)};
+}
+
+class FixedSecretStore final : public ce::SecretStore {
+public:
+    explicit FixedSecretStore(std::string value) : value_(std::move(value)) {}
+
+    [[nodiscard]] std::expected<std::optional<std::string>, ce::ReqloomError> read(
+        const std::string& name) override {
+        if (name == "HOST") {
+            return std::optional<std::string>{value_};
+        }
+        return std::optional<std::string>{};
+    }
+
+    [[nodiscard]] std::expected<void, ce::ReqloomError> write(const std::string& name,
+                                                              const std::string& value) override {
+        if (name == "HOST") {
+            value_ = value;
+        }
+        return {};
+    }
+
+    [[nodiscard]] std::expected<void, ce::ReqloomError> remove(const std::string& name) override {
+        if (name == "HOST") {
+            value_.clear();
+        }
+        return {};
+    }
+
+private:
+    std::string value_;
+};
+
+class SecretHostnameHookRunner final : public ce::HookRunner {
+public:
+    std::expected<ce::HookOutcome, ce::ReqloomError> runPreRequest(
+        const std::string&, ce::HookContext context) override {
+        const auto secret = context.secrets.find("HOST");
+        if (secret == context.secrets.end()) {
+            return std::unexpected(ce::ReqloomError{
+                ce::ErrorCode::HookFailure, ce::ErrorClass::Hook, "HOST was not loaded"});
+        }
+        context.request.url = "https://" + secret->second + "/private-path";
+        return ce::HookOutcome{std::move(context.request), std::move(context.response)};
+    }
+
+    std::expected<ce::HookOutcome, ce::ReqloomError> runPostResponse(
+        const std::string&, ce::HookContext context) override {
+        return ce::HookOutcome{std::move(context.request), std::move(context.response)};
+    }
+};
 
 class RunOptionsScratchProject {
 public:
@@ -88,6 +188,46 @@ resources:
           ping_id: $.id
 )YAML";
 
+constexpr const char* kUnresolvedRequestFieldsYaml = R"YAML(
+version: 1
+name: UnresolvedRequestFields
+
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+resources:
+  order:
+    operations:
+      create:
+        method: POST
+        path: "/api/v1/{{env.PATH}}?raw={{env.RAW}}#{{env.FRAGMENT}}"
+        headers: { X-Diagnostic: "{{env.HEADER}}" }
+        query_params: { account: "{{env.NAMED}}" }
+        body: { value: "{{env.BODY}}" }
+        expect_status: 201
+)YAML";
+
+constexpr const char* kUnresolvedFormFieldYaml = R"YAML(
+version: 1
+name: UnresolvedFormField
+
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+resources:
+  order:
+    operations:
+      create:
+        method: POST
+        path: /api/v1/orders
+        body_form: { quantity: "{{env.FORM}}" }
+        expect_status: 201
+)YAML";
+
 }  // namespace
 
 class RunOptionsFixture : public ::testing::Test {
@@ -99,6 +239,36 @@ protected:
 
     std::unique_ptr<ct::MockSutHarness> harness_;
 };
+
+namespace {
+
+void expectEnvironmentDiagnostic(const ce::StepFailed& failure,
+                                 const ce::VariableUseKind useKind,
+                                 const std::string& useName,
+                                 const std::string& token,
+                                 const std::string& sourceField) {
+    SCOPED_TRACE(token);
+    const ce::UnresolvedVariableDiagnostic* match{};
+    std::size_t matchCount{};
+    for (const auto& diagnostic : failure.diagnostics) {
+        if (diagnostic.useKind == useKind && diagnostic.useName == useName &&
+            diagnostic.token == token && diagnostic.sourceField == sourceField) {
+            match = &diagnostic;
+            ++matchCount;
+        }
+    }
+
+    ASSERT_EQ(matchCount, 1u);
+    ASSERT_NE(match, nullptr);
+    EXPECT_EQ(match->cause, ce::UnresolvedVariableCause::EnvironmentValueMissing);
+    EXPECT_EQ(match->sourceKind, ce::VariableSourceKind::Environment);
+    EXPECT_EQ(match->sourceId, "local");
+    EXPECT_EQ(match->sourceField, sourceField);
+    EXPECT_FALSE(match->producerOp.has_value());
+    EXPECT_FALSE(match->producerStepIndex.has_value());
+}
+
+}  // namespace
 
 // ─── resetExtractions ────────────────────────────────────────────────────────
 
@@ -216,11 +386,21 @@ resources:
 
     auto loaded = ce::parseProject(project.yaml());
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
-    // /api/v1/orders/will-fail is not in the mock SUT routes, so it will
-    // return a connection error or 404 — either way the step fails.
+    // The in-memory transport returns a forced 500 for order.create after
+    // a successful login, so the downstream order.pay request must be blocked.
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    std::vector<ce::StepBlocked> blockedEvents;
+    CapturingHttpClient* http{};
+    auto engine = makeCapturingEngine(http);
+    http->enqueue(200, R"({"data":{"accessToken":"token"}})");
+    http->enqueue(500, R"({"error":"forced failure"})");
+    engine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* blocked = std::get_if<ce::StepBlocked>(&event)) {
+            blockedEvents.push_back(*blocked);
+        }
+    });
+
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"order.pay"}, ctx);
 
@@ -243,6 +423,22 @@ resources:
     }
     EXPECT_TRUE(sawCreateFailed) << "order.create should have failed";
     EXPECT_TRUE(sawPayBlocked) << "order.pay should be Blocked after upstream failure";
+
+    ASSERT_EQ(blockedEvents.size(), 1u);
+    const auto& blocked = blockedEvents.front();
+    ASSERT_LT(blocked.stepIndex, result->steps.size());
+    ASSERT_LT(blocked.blockedByStepIndex, result->steps.size());
+    EXPECT_EQ(result->steps[blocked.stepIndex].op.value, "order.pay");
+    EXPECT_EQ(result->steps[blocked.stepIndex].status, ce::StepResult::Status::Blocked);
+    EXPECT_EQ(result->steps[blocked.blockedByStepIndex].op.value, "order.create");
+    EXPECT_EQ(result->steps[blocked.blockedByStepIndex].status, ce::StepResult::Status::Failed);
+
+    ASSERT_EQ(http->requests().size(), 2u);
+    EXPECT_NE(http->requests()[0].url.find("/api/v1/auth/login"), std::string::npos);
+    EXPECT_NE(http->requests()[1].url.find("/api/v1/orders/will-fail"), std::string::npos);
+    for (const auto& request : http->requests()) {
+        EXPECT_EQ(request.url.find("/pay"), std::string::npos);
+    }
 }
 
 // ─── Non-default environment ──────────────────────────────────────────────────
@@ -345,6 +541,258 @@ TEST_F(RunOptionsFixture, run_events_include_run_started_and_run_ended) {
     EXPECT_EQ(endedOutcome, ce::RunOutcome::Succeeded);
 }
 
+TEST_F(RunOptionsFixture, unresolved_non_actor_input_fails_before_actor_authentication) {
+    RunOptionsScratchProject project(R"YAML(
+version: 1
+name: PreflightBeforeAuthentication
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@example.test" }
+      extract: { token: $.data.accessToken }
+    inject:
+      headers: { Authorization: "Bearer {{user.token}}" }
+
+resources:
+  order:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/orders/{{env.MISSING_ORDER_ID}}
+        actor: user
+        expect_status: 200
+)YAML");
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+
+    CapturingHttpClient* http{};
+    auto engine = makeCapturingEngine(http);
+
+    ce::RunContext context;
+    const auto result = engine.run(*loaded, ce::OperationId{"order.get"}, context);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->succeeded());
+    EXPECT_TRUE(http->requests().empty());
+    ASSERT_EQ(result->steps.size(), 1u);
+    EXPECT_EQ(result->steps.front().error, ce::ErrorCode::VarUnresolved);
+}
+
+TEST_F(RunOptionsFixture, unresolved_path_reports_token_location_and_cause) {
+    RunOptionsScratchProject project(R"YAML(
+version: 1
+name: UnresolvedPathDiagnostic
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+resources:
+  order:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/orders/{{order.order_id}}
+        expect_status: 200
+)YAML");
+
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    std::vector<ce::StepFailed> failedEvents;
+    std::size_t preparedRequestCount{};
+    CapturingHttpClient* http{};
+    auto engine = makeCapturingEngine(http);
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* failed = std::get_if<ce::StepFailed>(&ev)) {
+            failedEvents.push_back(*failed);
+        } else if (std::holds_alternative<ce::RequestPrepared>(ev)) {
+            ++preparedRequestCount;
+        }
+    });
+
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"order.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->succeeded());
+    EXPECT_EQ(preparedRequestCount, 0u);
+    EXPECT_TRUE(http->requests().empty());
+    ASSERT_EQ(failedEvents.size(), 1u);
+
+    const auto& failure = failedEvents.front();
+    const std::string expectedDetail =
+        "Variable: {{order.order_id}}\n"
+        "Location: URL path\n"
+        "Cause: No usable value was available in the current run when this request was prepared.";
+    EXPECT_EQ(failure.code, ce::ErrorCode::VarUnresolved);
+    EXPECT_EQ(failure.detail, expectedDetail);
+
+    const ce::StepResult* failedStep{};
+    for (const auto& step : result->steps) {
+        if (step.status == ce::StepResult::Status::Failed) {
+            failedStep = &step;
+            break;
+        }
+    }
+    ASSERT_NE(failedStep, nullptr);
+    EXPECT_EQ(failedStep->error, ce::ErrorCode::VarUnresolved);
+    EXPECT_EQ(failedStep->detail, failure.detail);
+}
+
+TEST_F(RunOptionsFixture, unresolved_query_reports_safe_token_and_parameter_location) {
+    RunOptionsScratchProject project(R"YAML(
+version: 1
+name: UnresolvedQueryDiagnostic
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+resources:
+  order:
+    operations:
+      get:
+        method: GET
+        path: /api/v1/orders
+        query_params:
+          "organization\r\nid": "{{order.\r\norder_id}}"
+        expect_status: 200
+)YAML");
+
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    std::vector<ce::StepFailed> failedEvents;
+    std::size_t preparedRequestCount{};
+    CapturingHttpClient* http{};
+    auto engine = makeCapturingEngine(http);
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* failed = std::get_if<ce::StepFailed>(&ev)) {
+            failedEvents.push_back(*failed);
+        } else if (std::holds_alternative<ce::RequestPrepared>(ev)) {
+            ++preparedRequestCount;
+        }
+    });
+
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"order.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->succeeded());
+    EXPECT_EQ(preparedRequestCount, 0u);
+    EXPECT_TRUE(http->requests().empty());
+    ASSERT_EQ(failedEvents.size(), 1u);
+
+    const std::string expectedDetail =
+        "Variable: {{order.\\x0D\\x0Aorder_id}}\n"
+        "Location: Query parameter \"organization\\x0D\\x0Aid\"\n"
+        "Cause: No usable value was available in the current run when this request was prepared.";
+    EXPECT_EQ(failedEvents.front().code, ce::ErrorCode::VarUnresolved);
+    EXPECT_EQ(failedEvents.front().detail, expectedDetail);
+
+    const ce::StepResult* failedStep{};
+    for (const auto& step : result->steps) {
+        if (step.status == ce::StepResult::Status::Failed) {
+            failedStep = &step;
+            break;
+        }
+    }
+    ASSERT_NE(failedStep, nullptr);
+    EXPECT_EQ(failedStep->error, ce::ErrorCode::VarUnresolved);
+    EXPECT_EQ(failedStep->detail, failedEvents.front().detail);
+}
+
+TEST_F(RunOptionsFixture, unresolved_request_fields_report_all_structured_diagnostics) {
+    RunOptionsScratchProject project(kUnresolvedRequestFieldsYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    std::vector<ce::StepFailed> failedEvents;
+    std::size_t preparedRequestCount{};
+    CapturingHttpClient* http{};
+    auto engine = makeCapturingEngine(http);
+    engine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* failed = std::get_if<ce::StepFailed>(&event)) {
+            failedEvents.push_back(*failed);
+        } else if (std::holds_alternative<ce::RequestPrepared>(event)) {
+            ++preparedRequestCount;
+        }
+    });
+
+    ce::RunContext ctx;
+    const auto result = engine.run(*loaded, ce::OperationId{"order.create"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->succeeded());
+    EXPECT_EQ(preparedRequestCount, 0u);
+    EXPECT_TRUE(http->requests().empty());
+    ASSERT_EQ(failedEvents.size(), 1u);
+    const auto& failure = failedEvents.front();
+    EXPECT_EQ(failure.code, ce::ErrorCode::VarUnresolved);
+    ASSERT_EQ(result->steps.size(), 1u);
+    EXPECT_EQ(result->steps.front().status, ce::StepResult::Status::Failed);
+    EXPECT_EQ(result->steps.front().error, ce::ErrorCode::VarUnresolved);
+    EXPECT_EQ(result->steps.front().detail, failure.detail);
+    ASSERT_EQ(failure.diagnostics.size(), 6u);
+    expectEnvironmentDiagnostic(failure, ce::VariableUseKind::UrlPath, "", "env.PATH", "PATH");
+    expectEnvironmentDiagnostic(failure, ce::VariableUseKind::RawQuery, "", "env.RAW", "RAW");
+    expectEnvironmentDiagnostic(
+        failure, ce::VariableUseKind::Fragment, "", "env.FRAGMENT", "FRAGMENT");
+    expectEnvironmentDiagnostic(
+        failure, ce::VariableUseKind::NamedQuery, "account", "env.NAMED", "NAMED");
+    expectEnvironmentDiagnostic(
+        failure, ce::VariableUseKind::Header, "X-Diagnostic", "env.HEADER", "HEADER");
+    expectEnvironmentDiagnostic(failure, ce::VariableUseKind::Body, "", "env.BODY", "BODY");
+}
+
+TEST_F(RunOptionsFixture, unresolved_form_field_reports_structured_diagnostic) {
+    RunOptionsScratchProject project(kUnresolvedFormFieldYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    std::vector<ce::StepFailed> failedEvents;
+    std::size_t preparedRequestCount{};
+    CapturingHttpClient* http{};
+    auto engine = makeCapturingEngine(http);
+    engine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* failed = std::get_if<ce::StepFailed>(&event)) {
+            failedEvents.push_back(*failed);
+        } else if (std::holds_alternative<ce::RequestPrepared>(event)) {
+            ++preparedRequestCount;
+        }
+    });
+
+    ce::RunContext ctx;
+    const auto result = engine.run(*loaded, ce::OperationId{"order.create"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->succeeded());
+    EXPECT_EQ(preparedRequestCount, 0u);
+    EXPECT_TRUE(http->requests().empty());
+    ASSERT_EQ(failedEvents.size(), 1u);
+    const auto& failure = failedEvents.front();
+    EXPECT_EQ(failure.code, ce::ErrorCode::VarUnresolved);
+    ASSERT_EQ(result->steps.size(), 1u);
+    EXPECT_EQ(result->steps.front().status, ce::StepResult::Status::Failed);
+    EXPECT_EQ(result->steps.front().error, ce::ErrorCode::VarUnresolved);
+    EXPECT_EQ(result->steps.front().detail, failure.detail);
+    ASSERT_EQ(failure.diagnostics.size(), 1u);
+    expectEnvironmentDiagnostic(
+        failure, ce::VariableUseKind::FormField, "quantity", "env.FORM", "FORM");
+}
+
 TEST_F(RunOptionsFixture, step_started_events_are_emitted_for_each_step) {
     // The engine emits StepStarted for every step it executes. This test
     // confirms at least the ping.get step fires a StepStarted event.
@@ -418,11 +866,13 @@ TEST_F(RunOptionsFixture, request_prepared_event_fires_with_masked_headers) {
     // Auth login is the first send; ping.get is the second.
     const auto& authPrep = events[0];
     EXPECT_EQ(authPrep.method, ce::HttpMethod::Post);
-    EXPECT_NE(authPrep.url.find("/api/v1/auth/login"), std::string::npos);
+    EXPECT_EQ(authPrep.url.find("/api/v1/auth/login"), std::string::npos);
+    EXPECT_NE(authPrep.url.find("/%3Credacted%3E"), std::string::npos);
 
     const auto& pingPrep = events[1];
     EXPECT_EQ(pingPrep.method, ce::HttpMethod::Get);
-    EXPECT_NE(pingPrep.url.find("/api/v1/with-bearer"), std::string::npos);
+    EXPECT_EQ(pingPrep.url.find("/api/v1/with-bearer"), std::string::npos);
+    EXPECT_NE(pingPrep.url.find("/%3Credacted%3E"), std::string::npos);
 
     // Authorization header on the ping.get request MUST be redacted.
     bool sawAuthHeader = false;
@@ -434,6 +884,181 @@ TEST_F(RunOptionsFixture, request_prepared_event_fires_with_masked_headers) {
         }
     }
     EXPECT_TRUE(sawAuthHeader) << "Authorization header should still be visible (name only)";
+}
+
+TEST_F(RunOptionsFixture, request_prepared_redacts_url_components_without_changing_wire_url) {
+    RunOptionsScratchProject project(R"YAML(
+version: 1
+name: OpaqueRequestUrl
+
+default_environment: local
+
+environment:
+  baseUrl: http://wire-user:wire-password@placeholder
+  PATH: wire-path
+  KEY: wire-key
+  QUERY: wire-query
+  FRAGMENT: wire-fragment
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: "/{{env.PATH}}?{{env.KEY}}={{env.QUERY}}#{{env.FRAGMENT}}"
+        expect_status: 200
+)YAML");
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+
+    CapturingHttpClient* http{};
+    auto engine = makeCapturingEngine(http);
+    http->enqueue(200, "{}");
+    std::vector<ce::RequestPrepared> events;
+    engine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&event)) {
+            events.push_back(*prepared);
+        }
+    });
+
+    ce::RunContext context;
+    const auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, context);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_EQ(http->requests().size(), 1u);
+    EXPECT_EQ(
+        http->requests().front().url,
+        "http://wire-user:wire-password@placeholder/wire-path?wire-key=wire-query#wire-fragment");
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events.front().url,
+              "http://%3Credacted%3E/%3Credacted%3E?%3Credacted%3E#%3Credacted%3E");
+    EXPECT_EQ(events.front().url.find("placeholder"), std::string::npos);
+    EXPECT_EQ(events.front().url.find("wire-user"), std::string::npos);
+    EXPECT_EQ(events.front().url.find("wire-password"), std::string::npos);
+    EXPECT_EQ(events.front().url.find("wire-path"), std::string::npos);
+    EXPECT_EQ(events.front().url.find("wire-key"), std::string::npos);
+    EXPECT_EQ(events.front().url.find("wire-query"), std::string::npos);
+    EXPECT_EQ(events.front().url.find("wire-fragment"), std::string::npos);
+}
+
+TEST_F(RunOptionsFixture, request_prepared_redacts_hook_secret_hostname_in_events_and_history) {
+    RunOptionsScratchProject project(R"YAML(
+version: 1
+name: HookSecretHostname
+
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+  hookHost: !secret HOST
+
+resources:
+  ping:
+    operations:
+      get:
+        method: GET
+        path: /initial-path
+        pre_request: "mutate URL from secret"
+        expect_status: 200
+)YAML");
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+
+    const auto dbPath = ct::uniqueTempPath("reqloom-history-hook-url", ".sqlite");
+    std::error_code ec;
+    fs::remove(dbPath, ec);
+    fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
+    fs::remove(fs::path{dbPath.string() + "-shm"}, ec);
+
+    auto http = std::make_unique<CapturingHttpClient>();
+    auto* capturedHttp = http.get();
+    capturedHttp->enqueue(200, "{}");
+    auto history = std::make_unique<ce::SqliteHistoryStore>();
+    ASSERT_TRUE(history->open(dbPath).has_value());
+    ce::ExecutionEngine::Dependencies dependencies{
+        std::move(http),
+        nullptr,
+        std::move(history),
+        std::make_unique<FixedSecretStore>("wire-secret.example"),
+        std::make_unique<SecretHostnameHookRunner>()};
+    ce::ExecutionEngine engine{std::move(dependencies)};
+
+    std::vector<ce::RequestPrepared> emitted;
+    engine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&event)) {
+            emitted.push_back(*prepared);
+        }
+    });
+
+    ce::RunContext context;
+    const auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, context);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_EQ(capturedHttp->requests().size(), 1u);
+    EXPECT_EQ(capturedHttp->requests().front().url, "https://wire-secret.example/private-path");
+    ASSERT_EQ(emitted.size(), 1u);
+    EXPECT_EQ(emitted.front().url, "https://%3Credacted%3E/%3Credacted%3E");
+    EXPECT_EQ(emitted.front().url.find("wire-secret.example"), std::string::npos);
+
+    const auto persisted = engine.historyEvents(result->runId);
+    ASSERT_TRUE(persisted.has_value()) << persisted.error().detail;
+    std::vector<ce::RequestPrepared> persistedRequests;
+    for (const auto& event : *persisted) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&event)) {
+            persistedRequests.push_back(*prepared);
+        }
+    }
+    ASSERT_EQ(persistedRequests.size(), 1u);
+    EXPECT_EQ(persistedRequests.front().url, "https://%3Credacted%3E/%3Credacted%3E");
+    EXPECT_EQ(persistedRequests.front().url.find("wire-secret.example"), std::string::npos);
+
+    fs::remove(dbPath, ec);
+    fs::remove(fs::path{dbPath.string() + "-wal"}, ec);
+    fs::remove(fs::path{dbPath.string() + "-shm"}, ec);
+}
+
+TEST_F(RunOptionsFixture, request_prepared_redacts_scheme_like_text_inside_query) {
+    RunOptionsScratchProject project(R"YAML(
+version: 1
+name: SchemeLikeQueryText
+
+default_environment: local
+
+environment:
+  baseUrl: ""
+  CLIENT_ID: wire-secret
+
+resources:
+  oauth:
+    operations:
+      begin:
+        method: GET
+        path: "/authorize?client_id={{env.CLIENT_ID}}&redirect_uri=https://app.example.test/cb"
+        expect_status: 200
+)YAML");
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+
+    CapturingHttpClient* http{};
+    auto engine = makeCapturingEngine(http);
+    http->enqueue(200, "{}");
+    std::vector<ce::RequestPrepared> events;
+    engine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&event)) {
+            events.push_back(*prepared);
+        }
+    });
+
+    ce::RunContext context;
+    const auto result = engine.run(*loaded, ce::OperationId{"oauth.begin"}, context);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_EQ(http->requests().size(), 1u);
+    EXPECT_EQ(http->requests().front().url,
+              "/authorize?client_id=wire-secret&redirect_uri=https://app.example.test/cb");
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events.front().url, "/%3Credacted%3E?%3Credacted%3E&%3Credacted%3E");
+    EXPECT_EQ(events.front().url.find("wire-secret"), std::string::npos);
+    EXPECT_EQ(events.front().url.find("app.example.test"), std::string::npos);
 }
 
 TEST_F(RunOptionsFixture, response_received_event_carries_status_and_size) {

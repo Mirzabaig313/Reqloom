@@ -29,6 +29,31 @@ ColumnLayout {
 
     spacing: DesignTokens.spaceXs
 
+    function focusKey(key) {
+        for (let i = 0; i < rowRepeater.count; ++i) {
+            const item = rowRepeater.itemAt(i);
+            if (item && item.key === key) {
+                return item.focusValue();
+            }
+        }
+        return false;
+    }
+
+    function ensureKeyAndFocus(key) {
+        if (focusKey(key)) {
+            return true;
+        }
+        const ghostRow = rowRepeater.count - 1;
+        if (ghostRow < 0) {
+            return false;
+        }
+        root.kvModel.setKey(ghostRow, key);
+        Qt.callLater(function () {
+            root.focusKey(key);
+        });
+        return true;
+    }
+
     function isFileValue(v) {
         return typeof v === "string" && v.startsWith("@");
     }
@@ -74,6 +99,7 @@ ColumnLayout {
     }
 
     Repeater {
+        id: rowRepeater
         model: root.kvModel
 
         delegate: RowLayout {
@@ -84,6 +110,15 @@ ColumnLayout {
             required property bool isGhost
             Layout.fillWidth: true
             spacing: DesignTokens.spaceXs
+
+            function focusValue() {
+                if (!valueField.visible) {
+                    return false;
+                }
+                valueField.forceActiveFocus();
+                valueField.selectAll();
+                return true;
+            }
 
             Field {
                 id: keyField
@@ -113,6 +148,7 @@ ColumnLayout {
             // Value: a file chip when the value is an `@<path>` upload, else a
             // plain editable field.
             Field {
+                id: valueField
                 Layout.fillWidth: true
                 // Useful editing floor; with the key's 96 shrink minimum the row
                 // stays one-line and usable down to ~270 DIP.

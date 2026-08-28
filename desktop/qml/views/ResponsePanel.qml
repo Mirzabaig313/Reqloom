@@ -35,6 +35,8 @@ Rectangle {
 
     /// Emitted when the user closes the response panel; Main collapses it.
     signal closeRequested
+    signal openRequestFieldRequested(string operationId, string field, string key)
+    signal editSourceRequested(var action)
 
     /// Reveal the Timeline tab (used when replaying a past run from history).
     function showTimeline() {
@@ -1054,6 +1056,8 @@ Rectangle {
                 // Embedded as a borderless surface inside the panel.
                 color: "transparent"
                 border.width: 0
+                onOpenRequestFieldRequested: (operationId, field, key) => panel.openRequestFieldRequested(operationId, field, key)
+                onEditSourceRequested: action => panel.editSourceRequested(action)
             }
         }
     }

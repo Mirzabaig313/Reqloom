@@ -13,6 +13,16 @@ ColumnLayout {
     id: root
     spacing: 0
 
+    function focusExtraction(operationId, variableName) {
+        for (let i = 0; i < stepRepeater.count; ++i) {
+            const item = stepRepeater.itemAt(i);
+            if (item && item.operationId === operationId) {
+                return item.focusExtraction(variableName);
+            }
+        }
+        return false;
+    }
+
     component CellField: TextField {
         color: DesignTokens.textPrimary
         placeholderTextColor: DesignTokens.textSecondary
@@ -81,6 +91,7 @@ ColumnLayout {
 
     // One row per step in the chain.
     Repeater {
+        id: stepRepeater
         model: AppController.chainEditor
         delegate: ColumnLayout {
             id: step
@@ -93,6 +104,17 @@ ColumnLayout {
             required property bool forEachContinueOnError
             Layout.fillWidth: true
             spacing: 0
+
+            function focusExtraction(variableName) {
+                for (let i = 0; i < extractionRepeater.count; ++i) {
+                    const item = extractionRepeater.itemAt(i);
+                    if (item && item.key === variableName) {
+                        item.focusPath();
+                        return true;
+                    }
+                }
+                return false;
+            }
 
             RowLayout {
                 Layout.fillWidth: true
@@ -135,6 +157,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                     spacing: DesignTokens.spaceXs
                     Repeater {
+                        id: extractionRepeater
                         model: step.extractModel
                         delegate: ColumnLayout {
                             id: exRow
@@ -143,6 +166,12 @@ ColumnLayout {
                             required property string value
                             Layout.fillWidth: true
                             spacing: 2
+
+                            function focusPath() {
+                                pathField.forceActiveFocus();
+                                pathField.selectAll();
+                            }
+
                             // Live validity of the path against the step's
                             // available response (debounced to avoid re-parsing
                             // on every keystroke).

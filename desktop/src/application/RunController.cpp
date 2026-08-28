@@ -360,14 +360,15 @@ void RunController::publishEvent(const ce::RunEvent& event) {
                                 static_cast<int>(e.chainSize),
                                 QString::fromStdString(e.envName));
             } else if constexpr (std::is_same_v<T, ce::StepStarted>) {
-                emit stepStarted(
-                    static_cast<int>(e.stepIndex), QString::fromStdString(e.op.value), e.attempt);
+                emit stepStarted(format::boundedIndex(e.stepIndex),
+                                 QString::fromStdString(e.op.value),
+                                 e.attempt);
             } else if constexpr (std::is_same_v<T, ce::StepSkipped>) {
-                emit stepSkipped(static_cast<int>(e.stepIndex),
+                emit stepSkipped(format::boundedIndex(e.stepIndex),
                                  QString::fromStdString(e.op.value),
                                  format::skipReason(e.reason));
             } else if constexpr (std::is_same_v<T, ce::RequestPrepared>) {
-                emit requestPrepared(static_cast<int>(e.stepIndex),
+                emit requestPrepared(format::boundedIndex(e.stepIndex),
                                      format::method(e.method),
                                      QString::fromStdString(e.url),
                                      joinHeaders(e.maskedHeaders),
@@ -375,36 +376,41 @@ void RunController::publishEvent(const ce::RunEvent& event) {
             } else if constexpr (std::is_same_v<T, ce::ResponseReceived>) {
                 // Body is present only when the run opted in; empty optional
                 // → empty QString, which the panel renders as "not captured".
-                emit responseReceived(static_cast<int>(e.stepIndex),
+                emit responseReceived(format::boundedIndex(e.stepIndex),
                                       e.status,
                                       joinHeaders(e.headers),
                                       static_cast<int>(e.bodySize),
                                       static_cast<qint64>(e.elapsed.count()),
                                       e.body ? QString::fromStdString(*e.body) : QString{});
             } else if constexpr (std::is_same_v<T, ce::ExtractionCompleted>) {
-                emit extractionCompleted(static_cast<int>(e.stepIndex),
+                emit extractionCompleted(format::boundedIndex(e.stepIndex),
                                          QString::fromStdString(e.op.value),
                                          QString::fromStdString(e.variableName),
                                          QString::fromStdString(e.sourcePath),
                                          format::extractionOutcome(e.outcome),
                                          QString::fromStdString(e.value));
             } else if constexpr (std::is_same_v<T, ce::AssertionCompleted>) {
-                emit assertionCompleted(static_cast<int>(e.stepIndex),
+                emit assertionCompleted(format::boundedIndex(e.stepIndex),
                                         QString::fromStdString(e.op.value),
                                         QString::fromStdString(e.name),
                                         QString::fromStdString(e.expr),
                                         e.passed);
             } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
-                emit stepFailed(static_cast<int>(e.stepIndex),
+                emit stepFailed(format::boundedIndex(e.stepIndex),
                                 QString::fromStdString(e.op.value),
                                 format::errorCode(e.code),
-                                QString::fromStdString(e.detail));
+                                QString::fromStdString(e.detail),
+                                format::unresolvedDiagnostics(e.diagnostics));
+            } else if constexpr (std::is_same_v<T, ce::StepBlocked>) {
+                emit stepBlocked(format::boundedIndex(e.stepIndex),
+                                 QString::fromStdString(e.op.value),
+                                 format::boundedIndex(e.blockedByStepIndex));
             } else if constexpr (std::is_same_v<T, ce::RunEnded>) {
                 emit runEnded(format::runOutcome(e.outcome));
             }
-            // RunStarted/StepStarted/… cover the events the timeline renders;
-            // ExtractionApplied, StepCancelled, SessionRefreshed are folded
-            // into the finer-grained signals above or the final RunReport.
+            // The timeline renders every event with user-facing evidence;
+            // ExtractionApplied, StepCancelled, and SessionRefreshed remain
+            // folded into finer-grained events or the final RunReport.
         },
         event);
 }

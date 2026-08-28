@@ -6,6 +6,7 @@
 #include <reqloom/engine/Operation.h>
 #include <chrono>
 #include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -56,7 +57,7 @@ struct RequestPrepared {
     RunId runId;
     std::size_t stepIndex{};
     HttpMethod method{};
-    std::string url;  ///< Fully-resolved.
+    std::string url;  ///< Sanitized display URL; authority/components opaque, not replayable.
     std::vector<std::pair<std::string, std::string>> maskedHeaders;
     std::size_t bodySize{};
     TimePoint at;
@@ -109,6 +110,56 @@ struct ExtractionCompleted {
     TimePoint at;
 };
 
+enum class VariableUseKind : std::uint8_t {
+    Unknown,
+    UrlPath,
+    RawQuery,
+    Fragment,
+    NamedQuery,
+    Header,
+    Auth,
+    Body,
+    FormField,
+};
+
+enum class VariableSourceKind : std::uint8_t {
+    Unknown,
+    Environment,
+    Secret,
+    Actor,
+    Resource,
+    Extraction,
+};
+
+enum class UnresolvedVariableCause : std::uint8_t {
+    Unavailable,
+    EnvironmentValueMissing,
+    SecretValueMissing,
+    ActorSessionFieldMissing,
+    ResourceValueMissing,
+    ExtractionMissing,
+    ExtractionNull,
+    ExtractionInvalid,
+    ExtractionUnsupported,
+};
+
+/// Safe, value-free evidence for one unresolved request variable.
+///
+/// Display strings are bounded and escaped before reaching this event. `token`
+/// excludes template braces. Source fields identify where a user can navigate;
+/// producer fields are present only when the current run proves causality.
+struct UnresolvedVariableDiagnostic {
+    std::string token;
+    VariableUseKind useKind{VariableUseKind::Unknown};
+    std::string useName;
+    UnresolvedVariableCause cause{UnresolvedVariableCause::Unavailable};
+    VariableSourceKind sourceKind{VariableSourceKind::Unknown};
+    std::string sourceId;
+    std::string sourceField;
+    std::optional<OperationId> producerOp;
+    std::optional<std::size_t> producerStepIndex;
+};
+
 struct StepFailed {
     RunId runId;
     std::size_t stepIndex{};
@@ -117,6 +168,16 @@ struct StepFailed {
     ErrorClass cls{};
     int attempt{1};
     std::string detail;
+    TimePoint at;
+    std::vector<UnresolvedVariableDiagnostic> diagnostics;
+};
+
+/// A step that did not run because a prior step failed.
+struct StepBlocked {
+    RunId runId;
+    std::size_t stepIndex{};
+    OperationId op;
+    std::size_t blockedByStepIndex{};
     TimePoint at;
 };
 
@@ -166,6 +227,7 @@ using RunEvent = std::variant<RunStarted,
                               ExtractionCompleted,
                               AssertionCompleted,
                               StepFailed,
+                              StepBlocked,
                               StepCancelled,
                               SessionRefreshed,
                               RunEnded>;
