@@ -559,6 +559,16 @@ Item {
                     enabled: visible
                 }
 
+                // The derived chain, always visible above the editor rather than
+                // behind the Chain tab. Self-hides for a dependency-free endpoint,
+                // so a plain request loses no vertical space.
+                ChainStrip {
+                    id: chainStrip
+                    anchors.top: editorTabs.visible ? editorTabs.bottom : parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                }
+
                 EmptyState {
                     visible: !requestEditor.creating && !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount === 0
                     enabled: visible
@@ -673,7 +683,7 @@ Item {
 
                 RequestEditor {
                     id: requestEditor
-                    anchors.top: editorTabs.visible ? editorTabs.bottom : parent.top
+                    anchors.top: chainStrip.visible ? chainStrip.bottom : (editorTabs.visible ? editorTabs.bottom : parent.top)
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom

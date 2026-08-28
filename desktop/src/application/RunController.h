@@ -195,6 +195,22 @@ public:
     /// Read-only view for a cookie inspector.
     [[nodiscard]] std::map<std::string, std::string> cookies(const engine::ActorId& actor) const;
 
+    /// Read-only view of one actor's auth session in the active run context,
+    /// for the explorer's per-actor status indicator (FR-5.1). Reuses the
+    /// engine's state enum rather than mirroring it.
+    struct ActorSessionInfo {
+        engine::ActorSession::State state{engine::ActorSession::State::None};
+        /// Whole seconds until the session lapses. 0 unless `state` is `Live`
+        /// with time left, so callers can render a TTL without doing clock
+        /// arithmetic of their own.
+        int secondsRemaining{0};
+    };
+
+    /// The actor's session in the active project's run context. A default value
+    /// (state `None`) means no run has authenticated this actor yet, the
+    /// context was reset, or the project has no context at all.
+    [[nodiscard]] ActorSessionInfo sessionInfo(const engine::ActorId& actor) const;
+
 public slots:
     /// Kick off a run ending at `target` against `environment` (empty → project
     /// default). `dryRun` previews the resolved chain without sending requests.

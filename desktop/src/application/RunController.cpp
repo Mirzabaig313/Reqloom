@@ -6,6 +6,7 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <algorithm>
 #include <chrono>
 #include <map>
 #include <type_traits>
@@ -139,6 +140,27 @@ std::map<std::string, std::string> RunController::cookies(const ce::ActorId& act
         return {};
     }
     return ctx->cookies(actor);
+}
+
+RunController::ActorSessionInfo RunController::sessionInfo(const ce::ActorId& actor) const {
+    const auto* ctx = findActiveContext();
+    if (ctx == nullptr) {
+        return {};
+    }
+    const ce::ActorSession* session = ctx->session(actor);
+    if (session == nullptr) {
+        return {};
+    }
+
+    ActorSessionInfo info;
+    info.state = session->state;
+    if (info.state == ce::ActorSession::State::Live) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+            session->expiresAt - std::chrono::steady_clock::now());
+        info.secondsRemaining =
+            static_cast<int>(std::max<std::chrono::seconds::rep>(0, remaining.count()));
+    }
+    return info;
 }
 
 namespace {
