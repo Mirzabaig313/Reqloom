@@ -134,6 +134,14 @@ loading entirely**, so they never trigger a keychain unlock prompt. Unresolved
 `{{secret.X}}` in a preview is expected. See
 [secrets](/schema/secrets-and-transport/#secrets).
 
+:::tip[Session state at a glance]
+The [desktop app](/desktop/overview/) shows a dot next to each actor in the
+Explorer for whether its session is live, expiring, or absent — and offers
+**Run cleanly** and **Reset caches** to discard cached sessions and extractions
+without editing anything. See
+[fresh sessions](/desktop/running/#fresh-sessions).
+:::
+
 ## Debugging session problems
 
 **Getting 401s partway through a long run.** The token expired mid-run. Lower

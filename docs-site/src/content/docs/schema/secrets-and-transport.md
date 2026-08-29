@@ -46,16 +46,23 @@ Entries are grouped under the service **`com.reqloom.secrets`**, with the secret
 name as the account. Nothing is written to your project directory, so a secret
 can never end up in a commit.
 
-:::caution[There is no CLI command to set a secret]
-`reqloom` has three subcommands — `run`, `lint`, `import` — and none of them
-writes secrets. Use the desktop app, or your OS keychain tool directly. On
-macOS:
+### Storing a secret
+
+**Use the desktop app.** Manage Secrets lists every `{{secret.NAME}}` your schema
+references, with its keychain status, and **Set…** stores a value (entered masked,
+never displayed back). See [editing schemas](/desktop/editing/#secrets).
+
+:::caution[The CLI cannot set secrets]
+`reqloom` has three subcommands — `run`, `lint`, `import` — and none of them writes
+to the keychain. It only *reads* the secrets your schema references.
+
+Without the app, use your OS keychain tool directly. On macOS:
 
 ```bash
 security add-generic-password -s "com.reqloom.secrets" -a "ADMIN_PASSWORD" -w
 ```
 
-(omit `-w` and it prompts, so the value stays out of your shell history)
+Omit `-w` and it prompts, keeping the value out of your shell history.
 :::
 
 ### How they're loaded

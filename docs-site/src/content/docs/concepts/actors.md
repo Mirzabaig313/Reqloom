@@ -94,20 +94,74 @@ Three logins happen as part of that run, and **none of them appear as chain
 steps** — a login is part of the step that needs it. You never asked for them,
 and you never copied a token.
 
-## Actors have their own login shapes
+## Supported auth strategies
 
-The `simple` strategy above is one request. Real systems vary, so there are
-eleven strategies — OTP and MFA flows use `chain`, machine clients use
-`oauth2_client_credentials`, some APIs need no call at all:
+The `simple` strategy above is one login request. Real APIs vary, so there are
+eleven, set with `auth.strategy`:
 
-```yaml title="actors/service.yaml — no network call"
+| Strategy | Use when | Network call |
+| --- | --- | --- |
+| `simple` | One login request returns a token | yes |
+| `chain` | Login takes several steps — OTP, MFA, tenant select | yes |
+| `basic` | HTTP Basic | no |
+| `api_key` | A static key in a header, query param, or cookie | no |
+| `bearer` | You already hold the token | no |
+| `oauth2_client_credentials` | Machine-to-machine OAuth 2 | yes |
+| `oauth2_password` | OAuth 2 resource-owner password grant | yes |
+| `oauth1` | OAuth 1.0a, HMAC-SHA1 signed per request | no |
+| `aws_sigv4` | AWS Signature v4 | no |
+| `jwt` | You sign your own JWT | no |
+| `mtls` | Client-certificate TLS | no |
+
+`strategy` defaults to `simple`.
+
+:::caution[An unrecognised strategy silently becomes `simple`]
+There is no error. Note the value is `oauth2_client_credentials` — plain `oauth2`
+is not valid, and writing it gets you the `simple` strategy, which then tries to
+POST to an empty path.
+:::
+
+Several need no request at all, because the credential already exists:
+
+```yaml title="actors/service.yaml — pre-issued token, no login"
 name: service
+description: CI service account using a long-lived token
 auth:
   strategy: bearer
   token: "{{secret.SERVICE_TOKEN}}"
+session:
+  ttl: 24h
 ```
 
-See [auth strategies](/schema/auth-strategies/) for all eleven and their keys.
+Multi-step logins use `chain`, where each step can use what the previous extracted:
+
+```yaml title="actors/customer.yaml — OTP flow"
+name: customer
+auth:
+  strategy: chain
+  steps:
+    - id: request_otp
+      method: POST
+      path: /api/v1/auth/otp/request
+      body:
+        phone: "{{env.test_phone}}"
+      expect_status: 200
+    - id: verify_otp
+      method: POST
+      path: /api/v1/auth/otp/verify
+      body:
+        phone: "{{env.test_phone}}"
+        code: "{{env.test_otp}}"
+      expect_status: 200
+      extract:
+        token: $.data.accessToken
+        customer_id: $.data.user.id
+inject:
+  headers:
+    Authorization: "Bearer {{customer.token}}"
+```
+
+See [auth strategies](/schema/auth-strategies/) for the exact keys each one reads.
 
 ## One actor per identity, not per credential
 

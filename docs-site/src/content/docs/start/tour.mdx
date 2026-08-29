@@ -1,149 +1,209 @@
 ---
 title: 5-minute tour
-description: "Run a 9-step API chain end-to-end against the bundled marketplace sample. Zero configuration."
+description: "Watch Reqloom resolve a 7-step, 3-actor chain from one command, using the bundled marketplace sample. No backend needed."
 ---
 
 import { Steps, Aside, FileTree } from "@astrojs/starlight/components";
 
-This tour walks through the canonical Reqloom demo: testing
-`refund.approve` against a marketplace API. The chain spans **3 actors**
-and **9 operations** — the kind of scenario that takes 10 minutes of
-copy-paste in Postman.
+One command, one endpoint, and Reqloom works out the six requests that have to
+happen first. This tour shows that on the bundled sample.
 
-## What you'll need
+**You need:** Reqloom installed ([download](/start/install/#download)) and about
+five minutes. No backend and no configuration.
 
-- Reqloom built locally ([install guide](/start/install/))
-- ~5 minutes
-- No backend running — the test harness will start a mock server
+## Get the sample
 
-## The marketplace sample
+The sample project lives in the repository:
 
-The repository ships with a sample project at `samples/marketplace/`
-that defines:
+```bash
+git clone https://github.com/Mirzabaig313/Reqloom
+cd Reqloom/samples/marketplace
+```
 
 <FileTree>
 - samples/marketplace/
-    - reqloom.yaml          Project root + imports
+    - reqloom.yaml          project root + imports
     - environments/
-        - local.yaml         baseUrl + per-env variables
+        - local.yaml        baseUrl, test users, !secret passwords
     - actors/
-        - admin.yaml         Email + password
-        - vendor.yaml        Email + password + refresh token
-        - customer.yaml      Phone + OTP chain
+        - admin.yaml        email + password
+        - vendor.yaml       email + password, with token refresh
+        - customer.yaml     phone + OTP, a two-step chain
     - resources/
-        - products.yaml      7 operations: create, list, get, publish, etc.
-        - cart.yaml          4 operations: add, view, update, remove
-        - orders.yaml        7 operations: create, pay, ship, cancel, etc.
-        - refunds.yaml       5 operations: request, approve, reject, etc.
-        - reviews.yaml       4 operations: create, list, flag, remove
+        - products.yaml     7 operations
+        - cart.yaml         4 operations
+        - orders.yaml       7 operations
+        - refunds.yaml      5 operations
+        - reviews.yaml      4 operations
 </FileTree>
 
-## Steps
-
 <Steps>
-1. **Lint the schema first.** Make sure everything parses and the dependency
-   graph is valid:
+
+1.  ### Check that it parses
 
     ```bash
-    ./build/macos-debug/cli/reqloom lint --project samples/marketplace
+    reqloom lint
     ```
 
-    Expected output:
-
-    ```
+    ```ansi
     LINT OK — 3 actors, 5 resources, 27 operations. No errors.
     ```
 
-2. **Run the engine integration tests.** These start a mock HTTP server,
-   exercise the full `refund.approve` chain end-to-end, and verify the
-   chain composition.
+    `lint` sends no requests. It parses every file, resolves every `{{...}}`
+    reference, and dry-runs all 27 operations to prove each one's chain can be
+    ordered. Those counts are also the quickest way to confirm the parser sees
+    what you expect.
+
+2.  ### Look at what you're about to run
+
+    `refund.approve` is the last step of a refund flow. Here is its entire
+    declaration:
+
+    ```yaml title="resources/refunds.yaml"
+    approve:
+      method: POST
+      path: /api/v1/admin/refunds/{{refund.refund_id}}/approve
+      actor: admin
+      depends_on: [refund.request]
+      expect_status: 200
+    ```
+
+    One dependency. Note the two things it says: it runs as `admin`, and it needs
+    a refund to exist.
+
+3.  ### Run it
 
     ```bash
-    ctest --preset macos-debug --label-regex engine_integration
+    reqloom run refund.approve
     ```
 
-    Expected output:
+    ```ansi
+    Loaded project: MarketplaceAPI (3 actors, 5 resources)
+    Running: refund.approve (chain of 7 steps, env=local)
+      [1] Running: product.create (attempt 1)
+      [2] Running: product.publish (attempt 1)
+      [3] Running: cart.add_item (attempt 1)
+      [4] Running: order.create (attempt 1)
+      [5] Running: order.pay (attempt 1)
+      [6] Running: refund.request (attempt 1)
+      [7] Running: refund.approve (attempt 1)
 
-    ```
-    100% tests passed, 0 tests failed out of 12
-
-    Label Time Summary:
-    engine_integration  =   3.64 sec*proc (12 tests)
-    ```
-
-    The 12 tests include the canonical `RefundApproveResolvesAndExecutes`,
-    plus tests for session caching, polling, OAuth flows, and more.
-
-3. **Watch the chain run.** Run a single operation against the mock
-   server. The engine resolves the dependency chain, runs each step,
-   and prints the result.
-
-    ```bash
-    ./build/macos-debug/engine/tests/reqloom-engine-integration-tests \
-        --gtest_filter=MarketplaceHappyPath.RefundApproveResolvesAndExecutes
+    Result: SUCCEEDED
     ```
 
-    What happens internally:
+    **That's the whole point of the tool.** You asked for one operation and got
+    seven, in dependency order, across three different logged-in identities —
+    from a schema that declared one edge per file.
 
-    ```
-    Step 1: vendor.login          (POST /api/v1/auth/vendor/login)
-    Step 2: customer.send_otp     (POST /api/v1/auth/send-otp)
-    Step 3: customer.verify_otp   (POST /api/v1/auth/verify-otp)
-    Step 4: product.create        (POST /api/v1/vendors/.../products)
-    Step 5: product.publish       (POST /api/v1/products/.../publish)
-    Step 6: cart.add_item         (POST /api/v1/cart/items)
-    Step 7: order.create          (POST /api/v1/orders)
-    Step 8: order.pay             (POST /api/v1/orders/.../pay)
-    Step 9: refund.request        (POST /api/v1/orders/.../refunds)
-    Step 10: refund.approve       (POST /api/v1/admin/refunds/.../approve)  ← target
-    ```
+4.  ### See where the chain came from
 
-    Total time: ~250ms against the mock SUT.
+    Follow the declarations backwards and the seven steps are just one edge each:
 
-4. **Try a different operation.** The engine resolves a different chain.
-   For example, running just `order.pay` skips the refund-related steps:
+    | Step | Needs | Why |
+    | --- | --- | --- |
+    | `refund.approve` | `refund.request` | can't approve a refund that doesn't exist |
+    | `refund.request` | `order.pay` | can't refund an unpaid order |
+    | `order.pay` | `order.create` | can't pay a nonexistent order |
+    | `order.create` | `cart.add_item` | can't order an empty cart |
+    | `cart.add_item` | `product.publish` | can't buy an unpublished product |
+    | `product.publish` | `product.create` | can't publish nothing |
 
-    ```bash
-    ./build/macos-debug/engine/tests/reqloom-engine-integration-tests \
-        --gtest_filter=MarketplaceHappyPath.RerunUsesCachedSessions
-    ```
+    Nobody wrote that list. It falls out of the graph, and it re-derives itself
+    when you change the schema.
 
-    Sessions cached from the previous run are reused — `vendor.login` and
-    `customer.verify_otp` show as `Skipped` because their TTL hasn't
-    expired.
+5.  ### Notice what isn't in the output
+
+    Three actors took part — `vendor` for steps 1–2, `customer` for 3–6, `admin`
+    for step 7 — so three logins happened. **None of them appear as steps.**
+
+    A login is part of whichever step needs it, and the session is cached for its
+    TTL, so seven steps across three identities cost three logins rather than
+    seven. You never see a token, and you never copy one.
+
 </Steps>
 
-## What just happened
+## Running it for real
 
-You exercised the core Reqloom value prop:
+The sample points at `http://localhost:3000`, and the repository ships no
+backend — so on a fresh clone the requests have nowhere to go. What you'll
+actually see is the chain resolving correctly and then failing at the network:
 
-- **One command, one operation.** You didn't write any glue scripts.
-- **Auto-resolved chain.** The engine read your schema's `depends_on`
-  and `{{X.y}}` references to build a 9-step DAG.
-- **Topologically ordered execution.** Every step ran with all its
-  prerequisites' outputs already in scope.
-- **Session caching.** Re-running reuses live sessions instead of
-  re-authenticating.
+```ansi
+Running: refund.approve (chain of 7 steps, env=local)
+  [1] Running: product.create (attempt 1)
+  [1] FAILED: product.create [E_SESSION_REFRESH_FAILED] —
 
-In Postman, this exact scenario is 9 manual requests with 7 manual
-copy-paste operations between tabs. Every time you reset the test
-database, you do it all again.
+Result: FAILED
 
-<Aside type="tip" title="Run against a real backend">
-The marketplace sample uses a mock SUT for the test suite. To run
-against a real running API, point `baseUrl` in
-`environments/local.yaml` at your backend and run:
+--- Chain Summary ---
+Target: refund.approve   Env: local   Outcome: FAILED
+  FAIL   product.create (0ms) err=E_SESSION_REFRESH_FAILED
+  BLOCK  product.publish (0ms) err=—
+  BLOCK  cart.add_item (0ms) err=—
+  BLOCK  order.create (0ms) err=—
+  BLOCK  order.pay (0ms) err=—
+  BLOCK  refund.request (0ms) err=—
+  BLOCK  refund.approve (0ms) err=—
+```
 
-```bash
-reqloom run refund.approve --project samples/marketplace --env local
+This is worth reading rather than skipping. The chain still resolved to the same
+seven steps — resolution is independent of whether the API answers. Step 1 failed
+because the vendor's login couldn't reach the server, and the other six are
+`BLOCK`: never attempted, because something upstream failed. That's your signal to
+fix the first failure rather than debug seven things.
+
+<Aside type="tip" title="Make offline failures fast">
+Each step retries 3 times, and each attempt waits out the 5s connect timeout, so
+a dead host takes minutes. While experimenting, cut it:
+
+```yaml title="environments/local.yaml"
+transport:
+  connect_timeout: 100ms
 ```
 </Aside>
 
-## Where to next
+To get the green run, point `baseUrl` at an API implementing these routes:
 
-- **[Mental model](/concepts/mental-model/)** — the 60-second
-  conceptual overview
-- **[Schema authoring guide](/schema/authoring/)** — how to write
-  schemas for your own APIs
-- **[AI importer playbook](/ai-importer/playbook/)** — how to bootstrap
-  a schema from existing OpenAPI / Postman / curl logs in ~5 minutes
+```bash
+reqloom run refund.approve --var baseUrl=https://your-api.example.com
+```
+
+Or edit `environments/local.yaml`. The passwords are `!secret` entries, so add
+those to your keychain first — see [secrets](/schema/secrets-and-transport/#secrets).
+
+## Try a few variations
+
+```bash
+# A shorter chain — order.pay resolves to 5 steps, not 7
+reqloom run order.pay
+
+# No prerequisites at all: a public listing endpoint
+reqloom run product.list
+
+# Machine-readable output, for CI
+reqloom run refund.approve --format json
+
+# JUnit, for a CI test report
+reqloom run refund.approve --format junit --output results.xml
+
+# Override a variable for one run only
+reqloom run order.create --var baseUrl=http://localhost:4000
+```
+
+Each one resolves its own chain. `product.list` has no dependencies, so it's a
+single step — Reqloom adds nothing when nothing is needed.
+
+## What you saw
+
+- **One command per endpoint.** No glue scripts, no ordering by hand.
+- **Chains derived, not written.** From `depends_on` and `{{X.y}}` references.
+- **Multi-actor by default.** Three identities, three cached logins, zero tokens
+  in your clipboard.
+- **Deterministic order.** The same schema resolves the same chain every run.
+
+## Next
+
+- [The mental model](/concepts/mental-model/) — the four ideas behind this
+- [Authoring guide](/schema/authoring/) — write one for your own API
+- [`reqloom run`](/cli/run/) — every flag and output format
+- [AI importer](/ai-importer/playbook/) — bootstrap a schema from an existing spec

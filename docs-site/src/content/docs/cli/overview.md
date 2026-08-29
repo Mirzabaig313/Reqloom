@@ -6,6 +6,14 @@ description: "The three reqloom subcommands — run, lint, import — with their
 `reqloom` has three subcommands and no global configuration file. Everything is
 a flag or a project directory.
 
+:::tip[The CLI is one of two front ends]
+The [desktop app](/desktop/overview/) drives the same engine and the same YAML.
+Use the app to build and debug a schema — it has a step timeline, response
+inspection, and the only way to store a keychain secret. Use the CLI to run one, in
+CI or from a script. Neither is a subset of the other; see
+[which to use](/desktop/overview/#which-one-to-use).
+:::
+
 | Command | Does | Typical use |
 | --- | --- | --- |
 | [`reqloom run`](/cli/run/) | Resolves and executes a chain ending at one operation | Local development, CI |

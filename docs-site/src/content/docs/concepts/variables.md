@@ -164,6 +164,13 @@ Extracting with `[*]` makes many instances at once, which is what
       product_id: $.data[*].id       # one instance per element
 ```
 
+:::tip[Let the app write these for you]
+In the [desktop app](/desktop/overview/), typing `{{` suggests only the variables
+actually in scope at that point, and hovering a row in a response body gives you
+**＋ save as variable** — which turns the value you're looking at into an
+extraction. Between them, most reference typos never get made.
+:::
+
 ## When a reference doesn't resolve
 
 The literal text is left in place, not blanked:

@@ -164,6 +164,14 @@ export default defineConfig({
                     ],
                 },
                 {
+                    label: "Desktop App",
+                    items: [
+                        { label: "Overview", slug: "desktop/overview" },
+                        { label: "Running & debugging", slug: "desktop/running" },
+                        { label: "Editing schemas", slug: "desktop/editing" },
+                    ],
+                },
+                {
                     label: "CLI",
                     items: [
                         { label: "Overview", slug: "cli/overview" },

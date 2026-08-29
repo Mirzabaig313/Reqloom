@@ -156,6 +156,14 @@ exists. Nothing verifies that an upstream operation actually extracts
 [pitfalls](/schema/pitfalls/#lint-validates-the-scope-not-the-field).
 :::
 
+:::tip[Seeing and editing the graph]
+The [desktop app](/desktop/overview/) shows the resolved chain as a strip above the
+editor and as a layered graph you can click through. Its **Chain** tab edits every
+step's dependencies and extractions in one table, then saves them together — so
+rewiring a seven-step chain is one screen rather than seven files. See
+[editing the whole chain](/desktop/editing/#editing-the-whole-chain-at-once).
+:::
+
 ## Keeping chains short
 
 A seven-step chain is fine. A thirty-step chain is a smell, and usually means
