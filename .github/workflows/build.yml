@@ -1,11 +1,12 @@
-name: Build & Test (Linux + Windows)
+name: Build & Test (Linux + Windows + macOS)
 
-# Linux + Windows CI on GitHub Actions. macOS lives on Azure DevOps
-# (see azure-pipelines.yml) because that's already green and fast there.
+# All three platforms build here. macOS previously lived on Azure DevOps; it
+# moved here once GitHub's Apple Silicon runners became available on the
+# public-repo free tier, so there is one CI provider to reason about.
 #
 # Branch routing:
-#   * push to dev  → linux-debug   + windows-debug   (ASan/UBSan + tests)
-#   * push to main → linux-release + windows-release (-O2, build only)
+#   * push to dev  → *-debug   on all platforms (ASan/UBSan + tests)
+#   * push to main → *-release on all platforms (-O2, build only)
 #
 # Qt 6.8 LTS comes from the official Qt mirror via aqtinstall (the
 # jurplel/install-qt-action wrapper), NOT vcpkg — building qtbase from
@@ -50,6 +51,11 @@ jobs:
             name: linux
           - os: windows-latest
             name: windows
+          # Pinned to macos-14, not macos-latest: it is Apple Silicon (arm64)
+          # and keeps an Xcode 15 SDK, which Qt 6.8 needs — see the AGL note on
+          # the Xcode selection step below. Matches the release workflow's pin.
+          - os: macos-14
+            name: macos
 
     steps:
       - uses: actions/checkout@v4
@@ -98,7 +104,26 @@ jobs:
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
 
-      # ----- CMake 4.x (both OSes) ----------------------------------------
+      # ----- macOS build prerequisites ------------------------------------
+      # The runner image ships autoconf, automake, libtool, pkg-config and
+      # ninja. Only autoconf-archive is missing, and libb2's autoreconf step
+      # (pulled in via vcpkg) needs it.
+      - name: Install macOS build prerequisites
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+          HOMEBREW_NO_ENV_HINTS: 1
+        run: brew install --quiet autoconf-archive
+
+      # Qt 6.8's QtGui links -framework AGL, which the Xcode 16 / macOS 15 SDK
+      # removed ("ld: framework 'AGL' not found"). Build against the newest
+      # Xcode 15 SDK on the image, where AGL is still present.
+      - name: Select Xcode 15 (macOS)
+        if: runner.os == 'macOS'
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_15*.app | sort -V | tail -1)"
+
+      # ----- CMake 4.x (all OSes) -----------------------------------------
       - name: Set up CMake 4.x + Ninja
         uses: lukka/get-cmake@latest
         with:
@@ -151,8 +176,15 @@ jobs:
       # install-qt-action sets Qt6_DIR / CMAKE_PREFIX_PATH via the QT_ROOT_DIR
       # it exports, and lukka/run-vcpkg sets VCPKG_ROOT. CMakePresets reads
       # both from the environment.
+      # -DCMAKE_PREFIX_PATH on the command line overrides the Homebrew Qt path
+      # baked into the macos-* presets for local dev, pointing at the
+      # aqt-installed Qt instead. Harmless on Linux/Windows, whose presets read
+      # the same value from the environment.
       - name: Configure
-        run: cmake --preset ${{ steps.preset.outputs.value }}
+        shell: bash
+        run: |
+          cmake --preset ${{ steps.preset.outputs.value }} \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}"
 
       - name: Build
         run: cmake --build --preset ${{ steps.preset.outputs.value }}

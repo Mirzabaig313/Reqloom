@@ -322,6 +322,10 @@ samp,
     border: 0;
 }
 
+/* The active file-tab indicator is recoloured in astro.config.mjs via
+   expressiveCode.styleOverrides.frames — it is drawn with borders, not a
+   background, so a rule here would have no effect. */
+
 :not(pre)>code:not(:where(.not-content *)) {
     border: 1px solid var(--rl-border-subtle);
     border-radius: var(--rl-radius-sm);
@@ -533,6 +537,70 @@ blockquote:not(:where(.not-content *)) {
 .action.minimal {
     border: 1px solid var(--rl-border-strong);
     padding-inline: 1.125rem;
+}
+
+/* ------------------------------------------------------------- buttons --- */
+
+/* In-content action buttons (e.g. the prompt download). Sits inside
+   `.not-content`, so the accent has to be set explicitly. */
+.rl-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-block: 1.25rem;
+}
+
+.rl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--rl-border-strong);
+    border-radius: var(--rl-radius);
+    background: var(--rl-surface-raised);
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+    letter-spacing: -0.008em;
+    text-decoration: none;
+    transition: transform 160ms var(--rl-ease), box-shadow 160ms var(--rl-ease),
+        border-color 160ms var(--rl-ease);
+}
+
+.rl-btn:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in oklab, var(--sl-color-accent) 55%, var(--rl-border-strong));
+    box-shadow: var(--rl-shadow);
+}
+
+.rl-btn--primary {
+    background: var(--sl-color-accent);
+    border-color: var(--sl-color-accent);
+    color: var(--sl-color-text-invert);
+}
+
+.rl-btn--primary:hover {
+    background: var(--rl-accent-hover);
+    border-color: var(--rl-accent-hover);
+}
+
+/* In light mode the button carries near-white text, and the mid-teal accent only
+   reaches 2.9:1 behind it. Use the darker teal so 14px/600 clears AA (4.5:1);
+   `--sl-color-accent` stays correct for dark, where the text is the dark ink. */
+:root[data-theme="light"] .rl-btn--primary {
+    background: var(--rl-accent-hover);
+    border-color: var(--rl-accent-hover);
+}
+
+:root[data-theme="light"] .rl-btn--primary:hover {
+    background: oklch(0.37 0.088 196);
+    border-color: oklch(0.37 0.088 196);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .rl-btn:hover {
+        transform: none;
+    }
 }
 
 /* Eyebrow line above splash section headings, opt-in via `eyebrow` class. */

@@ -1,85 +1,55 @@
-# Reqloom AI Importer — Prompt Suite
+# Reqloom AI Importer
 
-> Stop trying to do AI import in one prompt. The first attempt against GiGwala produced a syntactically valid schema that broke on contact with the real backend in five different ways. This suite splits the work across stages, each with its own prompt and review gate.
+One prompt: **[`reqloom-import.md`](reqloom-import.md)**.
 
-## When to use which prompt
-
-| Stage | Prompt | Input | Output | Time |
-|---|---|---|---|---|
-| 1. Discover | `01-discover.md` | OpenAPI / Markdown / curls | A **structured digest** of actors, resources, ops, and inferred chains | 1 LLM call |
-| 2. Plan | `02-plan-schema.md` | Stage 1 digest + your hints | A **schema plan** in plain English describing every actor, resource, op, and dependency edge | 1 LLM call |
-| 3. Generate actors | `03-generate-actors.md` | Stage 2 plan | YAML files for every actor | 1 LLM call |
-| 4. Generate resources | `04-generate-resources.md` | Stage 2 plan + actor names | YAML files for every resource (one batch per resource — N calls) | N LLM calls |
-| 5. Generate environment | `05-generate-environment.md` | Stage 2 plan | The `local.yaml` env file with placeholders for credentials | 1 LLM call |
-| 6. Lint and fix | `06-fix-lint-errors.md` | `reqloom lint` output + the failing schema | Patched files | iterative |
-
-Total: typically 8–15 LLM calls for a 50-endpoint API. Cost: ~$0.10–$0.40 with Claude Sonnet or GPT-4o.
-
-## Why multi-stage beats single-prompt
-
-The single-prompt approach has three failure modes:
-
-1. **Hallucinated detail** — the model fills gaps with plausible-looking guesses (`expect_status: 200`, `body: { status: approved }`) instead of asking. Multi-stage forces the model to write the plan in plain English first, where wrong assumptions are easy to spot before YAML is generated.
-2. **Lost context on long output** — generating 30 resource files in one response triggers truncation, hallucinated repetition, or the model dropping fields. Stage 4 is N calls of one resource each.
-3. **No review gate** — by the time you see the YAML, you've burned the whole budget. The Stage 2 plan is human-readable in five minutes.
-
-## Workflow
+Paste it into your model, paste your API description after it, and you get a
+Reqloom project back in one pass.
 
 ```
-input docs (OpenAPI / Markdown / curls)
-        ↓
-   [Stage 1] DIGEST  ──── you spot-check actor + resource list
-        ↓
-   [Stage 2] PLAN  ────── you read the plan and correct the model in chat
-        ↓                 (e.g. "actually the worker uses phone+OTP not phone+password")
-        ↓
-   [Stage 3+4+5] GENERATE
-        ↓
-        reqloom lint
-        ↓
-        if errors → [Stage 6] FIX
-        ↓
-        reqloom run <op> --dry-run    ← validate without hitting the live API
-        ↓
-        reqloom run <op>              ← real run
-        ↓
-        if backend rejects → schema vs reality drift → iterate
+your OpenAPI / Postman / Markdown / curl logs
+        │
+        ▼
+  reqloom-import.md  ──►  a plan + open questions, then the YAML files
+        │
+        ▼
+  reqloom lint --project <dir>   ──►  paste errors back, iterate
+        │
+        ▼
+  reqloom run <op>               ──►  the only real proof
 ```
 
-## Lessons from the GiGwala validation run
+Typically 1–3 calls for a 50-endpoint API. No API key, no integration — it's a
+Markdown file you paste.
 
-Real bugs the single-prompt schema produced:
+## Why one prompt
 
-| Bug | Fix |
-|---|---|
-| Hardcoded phone `+919876543210` (uniqueness collision on every re-run) | Stage 5 should produce env vars for all unique-per-run identifiers |
-| `expect_status: 200` for endpoints returning 201 | Stage 1 must enumerate response status codes from the input docs |
-| `register_employee` had no `send_otp_for_signup` dependency despite the backend requiring it | Stage 2 must explicitly enumerate prerequisites for every op based on described semantics |
-| `admin_organization.verify` body had `notes:` field that the backend rejected | Stage 4 must mark every body field with `(required) / (optional) / (unknown)` and prefer omitting unknown fields |
-| `{{employer.org_id}}` referenced an actor session var the actor never produces | Stage 2 must list every variable's producer (which auth step or extraction). Stage 4 verifies references against that list |
+This started as a six-stage suite: discover, plan, generate actors, generate
+resources, generate environment, fix lint. The staging existed to stop a model
+hallucinating detail and truncating long output.
 
-The prompts in this directory encode each lesson as an explicit rule the model checks before emitting output.
+It was replaced because the friction outweighed the benefit. Six stages meant
+8–15 calls, manual copy-paste of intermediate artifacts, and a workflow nobody
+finished. The original prompts are in git history if you want them.
 
-## Costs and timing
+What actually prevents hallucination is **giving the model the schema** rather
+than splitting the work. `reqloom-import.md` embeds the full key reference, a
+worked example, and an explicit "ask instead of guessing" rule — so there is very
+little left to invent. The plan-before-YAML review gate survives as Part 1 of the
+single response.
 
-For a typical 50-endpoint API:
+## What still needs a human
 
-| Provider | Model | Cost | Time |
-|---|---|---|---|
-| Anthropic | claude-sonnet-4.6 | ~$0.25 | ~5 min wall-clock (incl. human review) |
-| Anthropic | claude-haiku-4.5 | ~$0.04 | ~3 min wall-clock |
-| OpenAI | gpt-5.4 | ~$0.30 | ~5 min wall-clock |
-| OpenAI | gpt-5.3 | ~$0.05 | ~3 min wall-clock |
+The prompt cannot know two things, and neither can any spec:
 
-Haiku/mini are good enough for Stage 1+2; switch to Sonnet/4o for Stages 3-5 if accuracy matters.
+- **Which credentials are real.** Passwords and keys come out as `!secret`
+  placeholders you populate in your OS keychain.
+- **Whether a status code or body is right.** Lint validates structure only. One
+  real run per chain is the proof.
 
-## Limits
+Read the **Open questions** section it produces. Every ungrounded inference lands
+there by design, and answering them is cheaper than debugging generated YAML.
 
-The AI importer is a starting point, not a finisher. Expect to spend 30-60 minutes hand-fixing the generated schema for any API of moderate complexity. The first time you run a generated op against the real backend, plan to fix:
+## Licence
 
-- Body field names (the backend's actual field names rarely match what's in API docs)
-- Response shape (which JSONPath actually finds the ID)
-- Status codes (especially for create-vs-replace operations)
-- Order of `depends_on` edges (the model often gets the order right but misses transitive deps)
-
-This is Phase 3 work — the desktop UI's "Review and Edit" panel will make this fast. For now, do it in your editor with `reqloom lint` running in a watch loop.
+The prompt is a designated paid component — not covered by the Apache 2.0 licence
+over the engine, CLI, schema, and desktop app. See [`LICENSE`](../../LICENSE).

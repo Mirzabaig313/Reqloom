@@ -148,6 +148,13 @@ per operation:
 
 See [timeouts and retries](/schema/secrets-and-transport/#timeouts-and-retries-per-operation).
 
+:::tip[`E_VAR_UNRESOLVED` is much faster to fix in the app]
+The [desktop timeline](/desktop/running/#unresolved-variable-diagnostics) names the
+unresolved variable and offers **Edit source** — jumping straight to the missing
+environment variable, secret, actor, or upstream extraction — plus **Show producer
+step N**. Two clicks instead of a hunt through YAML.
+:::
+
 ## Blocked steps have no code
 
 When a step fails, everything downstream is marked `BLOCK` with `err=—` — it

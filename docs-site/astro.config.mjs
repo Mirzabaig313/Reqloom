@@ -24,6 +24,14 @@ export default defineConfig({
     markdown: {
         remarkPlugins: [[remarkBaseLinks, { base }]],
     },
+    vite: {
+        server: {
+            // The import-prompt page reads prompts/import/reqloom-import.md with
+            // `?raw` so the published prompt has exactly one source of truth.
+            // That file lives above docs-site/, which Vite blocks by default.
+            fs: { allow: [".."] },
+        },
+    },
     integrations: [
         starlight({
             title: "Reqloom",
@@ -56,6 +64,10 @@ export default defineConfig({
                     uiFontFamily: "var(--sl-font)",
                     frames: {
                         shadowColor: "transparent",
+                        // Defaults to a red-orange that clashes with the teal
+                        // identity. Drawn as a border, so it has to be set here.
+                        editorActiveTabIndicatorTopColor: "var(--sl-color-accent)",
+                        editorActiveTabIndicatorBottomColor: "transparent",
                     },
                 },
             },
@@ -152,6 +164,14 @@ export default defineConfig({
                     ],
                 },
                 {
+                    label: "Desktop App",
+                    items: [
+                        { label: "Overview", slug: "desktop/overview" },
+                        { label: "Running & debugging", slug: "desktop/running" },
+                        { label: "Editing schemas", slug: "desktop/editing" },
+                    ],
+                },
+                {
                     label: "CLI",
                     items: [
                         { label: "Overview", slug: "cli/overview" },
@@ -163,8 +183,8 @@ export default defineConfig({
                 {
                     label: "AI Importer",
                     items: [
-                        { label: "Overview & playbook", slug: "ai-importer/playbook" },
-                        { label: "Multi-stage prompt suite", slug: "ai-importer/prompts" },
+                        { label: "Overview & workflow", slug: "ai-importer/playbook" },
+                        { label: "The import prompt", slug: "ai-importer/prompt" },
                         { label: "Importing OpenAPI", slug: "ai-importer/openapi" },
                         { label: "Importing Postman", slug: "ai-importer/postman" },
                         { label: "Importing curl logs", slug: "ai-importer/curl" },
@@ -184,10 +204,6 @@ export default defineConfig({
                         { label: "Schema spec", slug: "reference/schema-spec" },
                         { label: "Variable syntax", slug: "reference/variables" },
                         { label: "Error codes", slug: "reference/error-codes" },
-                        {
-                            label: "Engine requirement (full spec)",
-                            slug: "reference/engine-requirement",
-                        },
                     ],
                 },
                 {

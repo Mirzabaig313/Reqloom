@@ -184,13 +184,21 @@ sample end to end next.
 
 ## What you get
 
-- **`reqloom`** — the CLI. Every example in these docs uses it, and it's what
-  you run in CI.
-- **Reqloom** (desktop) — the GUI: project explorer, request editor, response
-  viewer, and the dependency graph. Usable, still maturing.
+Every download contains **both front ends**:
 
-Both are built from the same engine, so a schema that lints in one behaves
-identically in the other.
+- **Reqloom** (desktop) — the workbench. Project explorer, request editor,
+  response inspection, dependency graph, step timeline, run history, and keychain
+  secret storage. Start here if you're building a schema.
+  See [Desktop app](/desktop/overview/).
+- **`reqloom`** (CLI) — for CI and scripting, with JSON and JUnit output.
+  See [CLI overview](/cli/overview/).
+
+They share one engine and one schema format, so a project behaves identically in
+both. Most people build in the app and run in the CLI —
+[which to use when](/desktop/overview/#which-one-to-use).
+
+To launch the desktop app, open it like any other application. The CLI needs to be
+on your `PATH` — see [First launch](#first-launch) for your platform.
 
 ## Build from source
 

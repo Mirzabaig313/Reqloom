@@ -130,6 +130,8 @@ while linting clean:
 
 | Mistake | What happens |
 | --- | --- |
+| Missing `imports:` in a multi-file project | Every file ignored; 0 resources, exit 0 |
+| File outside `actors/` `resources/` `environments/` | Loaded, then discarded |
 | Misspelled key (`expect_stats:`) | Ignored entirely |
 | Unknown `method:` | Becomes `GET` |
 | Unknown `auth.strategy` | Becomes `simple` |

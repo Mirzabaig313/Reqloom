@@ -1,85 +1,148 @@
 ---
 title: What is Reqloom?
-description: "A workflow-aware API testing tool that auto-resolves request dependency chains. Built for backend developers and QAs who work with multi-actor SaaS APIs."
+description: "A workflow-aware API testing tool. You declare what each endpoint needs; it resolves and runs the whole chain. Built for multi-actor SaaS APIs."
 ---
+
+Reqloom treats your API as a graph of resources, actors, and dependencies rather
+than a flat list of requests. You declare what each endpoint needs once; running
+any endpoint then resolves and executes everything it depends on.
 
 ## The problem
 
-Modern SaaS backends are multi-role and deeply interconnected. To test a
-single endpoint, developers and QAs often need to:
+Modern SaaS backends are multi-actor. To test a single endpoint you often have to:
 
-1. Log in as multiple actors (admin, vendor, customer, manager)
-2. Chain 3–6 API calls to obtain prerequisite IDs
-3. Manually copy tokens and IDs between Postman/Bruno/Insomnia tabs
-4. Repeat this every time tokens expire or test data is reset
+1. Log in as several different identities
+2. Create three to six prerequisite records
+3. Copy IDs and bearer tokens between tabs
+4. Redo all of it when tokens expire or the test database resets
 
-A representative example — testing **"admin approves a customer refund"**
-in a marketplace API requires this chain:
+Take *admin approves a customer refund* on a marketplace API. Before the request
+you care about, six others must succeed — a vendor creates and publishes a
+product, a customer adds it to a cart, orders it, pays, and requests a refund.
+Three identities, seven requests, six IDs to carry forward. For one endpoint.
 
+Across a twenty-endpoint feature that's hours of mechanical work per cycle, and
+it's work you redo rather than keep.
+
+## What you write instead
+
+Each actor is declared once — how to log in, and what to attach to its requests:
+
+```yaml title="actors/vendor.yaml"
+name: vendor
+auth:
+  strategy: simple
+  method: POST
+  path: /api/v1/auth/vendor/login
+  body:
+    email: "{{env.vendor_email}}"
+    password: "{{env.vendor_password}}"
+  expect_status: 200
+  extract:
+    token: $.data.accessToken
+    vendor_id: $.data.user.id
+session:
+  ttl: 15m
+inject:
+  headers:
+    Authorization: "Bearer {{vendor.token}}"
 ```
-Admin login            → admin_token
-Vendor login           → vendor_token + vendor_id
-Customer login         → customer_token + customer_id
-Create product         → product_id            (vendor)
-Place order            → order_id              (customer)
-Pay for order          → payment_id            (customer)
-Request refund         → refund_id             (customer)
-Approve refund         ← target endpoint       (admin)
+
+Each operation states who runs it and what it needs:
+
+```yaml title="resources/refunds.yaml"
+name: refund
+operations:
+  approve:
+    method: POST
+    path: /api/v1/admin/refunds/{{refund.refund_id}}/approve
+    actor: admin
+    depends_on: [refund.request]
+    expect_status: 200
 ```
 
-That's **8 manual requests** with **7 IDs** to copy-paste, just to test
-one endpoint. Across a feature with 20 endpoints, this is hours of
-mechanical work per test cycle.
+That's the entire declaration for the endpoint above — one dependency, one actor.
 
-## Why existing tools fall short
+## What you get
 
-| Tool | Limitation |
-|------|------------|
-| **Postman** | Manual scripting; collections grow unwieldy; no actor abstraction |
-| **Postman Flows** | Visual flows require wiring every relationship by hand |
-| **Bruno** | Same scripting model as Postman; git-friendly but no dependency awareness |
-| **Insomnia** | Manual chaining; no role/actor abstraction |
-| **Hurl / Stepci** | Linear scripts; require authoring entire workflows for every endpoint |
-| **Apidog** | Better than Postman but still requires manual workflow definition |
+```bash
+reqloom run refund.approve
+```
 
-None of them model the API as a dependency graph. They treat it as a
-flat list of requests.
+```ansi
+Loaded project: MarketplaceAPI (3 actors, 5 resources)
+Running: refund.approve (chain of 7 steps, env=local)
+  [1] Running: product.create (attempt 1)
+  [2] Running: product.publish (attempt 1)
+  [3] Running: cart.add_item (attempt 1)
+  [4] Running: order.create (attempt 1)
+  [5] Running: order.pay (attempt 1)
+  [6] Running: refund.request (attempt 1)
+  [7] Running: refund.approve (attempt 1)
 
-## What Reqloom does
+Result: SUCCEEDED
+```
 
-Reqloom treats your API as a graph of **resources**, **actors**, and
-**dependencies**. Define each actor (auth flow) and each resource
-(endpoints + dependencies) **once**. Then click any endpoint and the
-engine auto-resolves the entire chain — login, prerequisites, target
-call — and executes them in the correct order.
+Seven steps from one command. The three logins happen automatically and don't even
+appear as steps — a login belongs to whichever step needs it, and sessions are
+cached, so three identities cost three logins rather than seven.
 
-The same schema also powers an **AI importer** that reads your existing
-API documentation (OpenAPI, Markdown, curl logs) and bootstraps the
-project in minutes.
+Nobody wrote that ordering. It's derived two ways:
+
+- **Implicitly**, from references. `{{refund.refund_id}}` in the path means
+  "whatever produces this must run first".
+- **Explicitly**, via `depends_on`, for prerequisites that return nothing you read
+  but still have to happen — publishing a product, verifying an account.
+
+Change the schema and the chain re-derives itself.
+
+## The four ideas
+
+| Concept | Is |
+| --- | --- |
+| [Actor](/concepts/actors/) | An identity — how to log in, what to attach to every request |
+| [Resource](/concepts/resources/) | A thing your API manages, grouping operations and owning extracted values |
+| [Dependency](/concepts/dependencies/) | What must happen first, declared not scripted |
+| [Variable](/concepts/variables/) | A value extracted from one response and referenced in a later request |
+
+That's the whole model. Everything else — polling, assertions, retries, hooks — is
+detail on top.
 
 ## Who it's for
 
-- **Backend engineers** testing their own endpoints during development
-- **QA engineers** running regression flows across admin, web, and mobile
-- **Solo developers** building multi-role SaaS who hit the same pain on
-  every project
+- **Backend engineers** testing endpoints during development
+- **QA engineers** running regression flows across admin, web, and mobile roles
+- **Anyone in CI** who wants a workflow test that fails with a real error code
 
 ## What it isn't
 
-- A replacement for Postman in single-request, ad-hoc exploration
-- A load testing tool (use k6 / Gatling)
-- A real-time collaboration tool (yet — git is the sharing model today)
+- **A replacement for an HTTP client** when you're poking at one request. If your
+  workflow is one request at a time, Postman or Bruno is the right tool and
+  Reqloom is overhead. It pays off once a request has prerequisites.
+- **A load testing tool.** Use k6 or Gatling.
+- **A collaboration platform.** Git is the sharing model — the schema is plain
+  YAML that diffs and merges.
 
 ## How it compares
 
-Reqloom's wedge is **multi-actor SaaS APIs** — the dominant shape of
-modern backend work. Tools that don't model actors as a first-class
-concept end up with a forest of scripts that nobody owns. Reqloom's
-schema makes the actor abstraction load-bearing, so the dependency
-graph becomes maintainable.
+Postman, Bruno, and Insomnia are excellent HTTP clients. They model an API as a
+list of requests, so anything about *order* lives in hand-written scripts —
+`pm.environment.set(...)` in one request, read back in the next. That works, and it
+stops working when someone runs the requests out of order or the collection grows
+past what one person maintains.
 
-## Next steps
+Hurl and Stepci model workflows properly, but linearly: you author a full script
+per scenario, and twenty endpoints means twenty scripts with duplicated setup.
 
-- [Install Reqloom](/start/install/)
-- [Take the 5-minute tour](/start/tour/)
-- [Read the schema authoring guide](/schema/authoring/)
+Reqloom's difference is that dependencies are **declared on the endpoint**, not
+scripted per scenario. Declare `refund.approve` needs `refund.request` once, and
+every chain that passes through it gets the ordering for free.
+
+Full breakdown on the [landing page](/).
+
+## Next
+
+- [Installation](/start/install/) — download a build, or compile from source
+- [5-minute tour](/start/tour/) — watch the chain above resolve on the sample
+- [The mental model](/concepts/mental-model/) — the four ideas in depth
+- [Authoring guide](/schema/authoring/) — write your first schema
