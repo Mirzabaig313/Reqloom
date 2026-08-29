@@ -324,8 +324,9 @@ struct AuthTemplateUse {
         {auth.oauth2Scope, VariableUseKind::Auth, "OAuth 2 scope", "Inline auth"},
     };
     if (auth.oauth2GrantType == "password") {
-        uses.emplace_back(auth.username, VariableUseKind::Auth, "OAuth 2 username", "Inline auth");
-        uses.emplace_back(auth.password, VariableUseKind::Auth, "OAuth 2 password", "Inline auth");
+
+        uses.push_back({auth.username, VariableUseKind::Auth, "OAuth 2 username", "Inline auth"});
+        uses.push_back({auth.password, VariableUseKind::Auth, "OAuth 2 password", "Inline auth"});
     }
     return uses;
 }
@@ -337,8 +338,8 @@ struct AuthTemplateUse {
         {auth.mtlsCaCertPath, VariableUseKind::Auth, "mTLS CA certificate", "Inline auth"},
     };
     if (auth.mtlsFormat != "p12") {
-        uses.emplace_back(
-            auth.mtlsKeyPath, VariableUseKind::Auth, "mTLS private key", "Inline auth");
+        uses.push_back(
+            {auth.mtlsKeyPath, VariableUseKind::Auth, "mTLS private key", "Inline auth"});
     }
     return uses;
 }
