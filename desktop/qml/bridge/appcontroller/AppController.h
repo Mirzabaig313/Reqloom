@@ -32,6 +32,7 @@
 #include <QtCore/QSettings>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
+#include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QVariant>
 
@@ -88,13 +89,6 @@ class AppController : public QObject {
     Q_PROPERTY(QStringList actorNames READ actorNames NOTIFY projectChanged)
     Q_PROPERTY(QStringList actorStrategies READ actorStrategies CONSTANT)
     Q_PROPERTY(QStringList operationIds READ operationIds NOTIFY projectChanged)
-    // Editable models backing the New Endpoint dialog's optional chain section.
-    Q_PROPERTY(DependencyEditModel* newEndpointDependencies READ newEndpointDependencies CONSTANT)
-    Q_PROPERTY(EditableKeyValueModel* newEndpointExtractions READ newEndpointExtractions CONSTANT)
-    // Per-dependency extraction editors for the New Endpoint dialog: one row
-    // per chosen dependency, exposing that dependency's own extract block so
-    // "what to pull from each prerequisite" is edited inline (saved to the dep).
-    Q_PROPERTY(ChainEditorModel* newEndpointDepExtracts READ newEndpointDepExtracts CONSTANT)
 
     // Selected operation (request editor)
     // ── Actor detail (read-only panel in the centre pane) ───────────────────
@@ -155,6 +149,12 @@ class AppController : public QObject {
     // faithful copy the user then tweaks); applyAndRun builds a one-shot
     // RequestOverride, saveOperation patches the real op and persists it.
     Q_PROPERTY(bool editing READ editing NOTIFY editingChanged)
+    Q_PROPERTY(bool creatingOperation READ creatingOperation NOTIFY editingChanged)
+    Q_PROPERTY(bool newOperationDraftOpen READ newOperationDraftOpen NOTIFY activeTabChanged)
+    Q_PROPERTY(QString newOperationModule READ newOperationModule NOTIFY editingChanged)
+    Q_PROPERTY(QString newOperationDraftId READ newOperationDraftId NOTIFY editingChanged)
+    Q_PROPERTY(
+        QString newOperationName READ newOperationName WRITE setNewOperationName NOTIFY editChanged)
     Q_PROPERTY(QString editMethod READ editMethod WRITE setEditMethod NOTIFY editChanged)
     Q_PROPERTY(QString editPath READ editPath WRITE setEditPath NOTIFY editChanged)
     Q_PROPERTY(QString editActor READ editActor WRITE setEditActor NOTIFY editChanged)
@@ -326,11 +326,18 @@ public:
     /// Reorder tabs: move the tab at `from` to `to` (drag-and-drop in the
     /// strip). The active tab follows the reorder; the open set persists.
     Q_INVOKABLE void moveTab(int from, int to);
-    /// Close the tab at `index`. Activates a neighbour (or clears the pane when
-    /// the last tab closes). Unsaved edits in the closed tab are discarded.
+    /// Request closing the tab at `index`. A transient endpoint draft asks QML
+    /// for discard confirmation before removal; all other tabs close immediately.
     Q_INVOKABLE void closeTab(int index);
-    /// Close every tab except `index`.
+    /// Request closing every tab except `index`; confirms first when that would
+    /// discard a transient endpoint draft.
     Q_INVOKABLE void closeOtherTabs(int index);
+    /// Request discard confirmation for the transient endpoint draft, if any.
+    Q_INVOKABLE void requestDiscardNewOperation();
+    /// Complete the pending draft-close request after the user confirms discard.
+    Q_INVOKABLE void confirmDiscardNewOperation();
+    /// Cancel the pending draft-close request and keep the draft open.
+    Q_INVOKABLE void keepEditingNewOperation();
 
     [[nodiscard]] QAbstractItemModel* explorerModel() { return &treeFilter_; }
     [[nodiscard]] QString explorerFilter() const;
@@ -427,11 +434,7 @@ public:
     [[nodiscard]] EditableKeyValueModel* actorRefreshExtract() { return &actorRefreshExtract_; }
     [[nodiscard]] AuthStepListModel* actorAuthSteps() { return &actorAuthSteps_; }
     [[nodiscard]] QStringList operationIds() const;
-    [[nodiscard]] DependencyEditModel* newEndpointDependencies() { return &newEndpointDeps_; }
-    [[nodiscard]] EditableKeyValueModel* newEndpointExtractions() {
-        return &newEndpointExtractions_;
-    }
-    [[nodiscard]] ChainEditorModel* newEndpointDepExtracts() { return &newEndpointDepExtracts_; }
+    Q_INVOKABLE [[nodiscard]] QString operationMethod(const QString& operationId) const;
 
     [[nodiscard]] bool hasActor() const { return hasActor_; }
     [[nodiscard]] QString selectedActorName() const { return selectedActorName_; }
@@ -473,6 +476,11 @@ public:
 
     // ── Editable request surface accessors ────────────────────────────────
     [[nodiscard]] bool editing() const { return editing_; }
+    [[nodiscard]] bool creatingOperation() const { return creatingOperation_; }
+    [[nodiscard]] bool newOperationDraftOpen() const { return operationDraftIndex() >= 0; }
+    [[nodiscard]] QString newOperationModule() const { return newOperationModule_; }
+    [[nodiscard]] QString newOperationDraftId() const { return newOperationDraftId_; }
+    [[nodiscard]] QString newOperationName() const { return newOperationName_; }
     [[nodiscard]] QString editMethod() const { return editMethod_; }
     [[nodiscard]] QString editPath() const { return editPath_; }
     [[nodiscard]] QString editActor() const { return editActor_; }
@@ -520,6 +528,7 @@ public:
     [[nodiscard]] QString editAuthMtlsKeyPassword() const { return editAuthMtlsKeyPassword_; }
     [[nodiscard]] QString editAuthMtlsFormat() const { return editAuthMtlsFormat_; }
     [[nodiscard]] QString editAuthMtlsCaCertPath() const { return editAuthMtlsCaCertPath_; }
+    void setNewOperationName(const QString& name);
     void setEditMethod(const QString& method);
     void setEditPath(const QString& path);
     void setEditActor(const QString& actor);
@@ -597,6 +606,9 @@ public:
     [[nodiscard]] int editAssertionsCount() const;
     [[nodiscard]] QVariantList chainNodes() const;
     [[nodiscard]] QVariantMap chainGraph() const;
+    [[nodiscard]] Q_INVOKABLE QVariantList executionPreview() const;
+    [[nodiscard]] Q_INVOKABLE QStringList extractionConsumers(const QString& producerOperationId,
+                                                              const QString& variable) const;
     [[nodiscard]] QVariantMap chainStatus() const;
     [[nodiscard]] ChainEditorModel* chainEditor() { return &chainEditor_; }
 
@@ -893,20 +905,10 @@ public:
     /// `loaded` chain refreshes the whole UI.
     Q_INVOKABLE void createProject(const QUrl& directory, const QString& name);
 
-    /// Reset the New Endpoint dialog's chain editors and dependency candidates.
-    /// `preselectedResource` selects a module up-front (empty = none).
+    /// Start a transient endpoint draft for `preselectedResource` in the existing
+    /// request editor. The draft is not persisted until Save; Cancel restores
+    /// the previously active tab and its complete unsaved editor state.
     Q_INVOKABLE void prepareNewEndpoint(const QString& preselectedResource);
-    /// Add / remove a dependency on the New Endpoint dialog's chain table.
-    Q_INVOKABLE void addNewEndpointDependency(const QString& operationId);
-    Q_INVOKABLE void removeNewEndpointDependency(const QString& operationId);
-
-    /// Create an operation from the New Endpoint dialog. Dependencies and
-    /// extractions are read from `newEndpointDependencies`/`newEndpointExtractions`.
-    Q_INVOKABLE void createOperation(const QString& module,
-                                     const QString& name,
-                                     const QString& method,
-                                     const QString& path,
-                                     const QString& actor);
 
     Q_INVOKABLE void renameOperation(const QString& operationId, const QString& newName);
     Q_INVOKABLE void deleteOperation(const QString& operationId);
@@ -956,6 +958,10 @@ signals:
     /// Fired when the active tab changes or the tab set changes (open/close),
     /// so the tab strip re-highlights and centre-pane visibility updates.
     void activeTabChanged();
+    /// Fired when a close action would discard the transient endpoint draft.
+    void newOperationDiscardRequested();
+    /// Fired after the user confirms and the transient endpoint tab is removed.
+    void newOperationDraftDiscarded();
     /// Fired when the inline actor panel should switch into edit mode (a new
     /// draft, or an "Edit…" request from the explorer).
     void actorEditRequested();
@@ -1090,9 +1096,10 @@ private:
     /// dropdown — does not touch the explorer tree (so selecting an operation
     /// doesn't reset/collapse the TreeView). Called on every selection.
     void refreshOpenOpExamples();
-    /// Rebuild the New Endpoint dialog's per-dependency extraction editors from
-    /// its currently-chosen dependencies.
-    void rebuildNewEndpointDepExtracts();
+    /// Push the active project's per-actor session state into the explorer tree
+    /// (FR-5.1), and start or stop `sessionTicker_` so a live session's TTL
+    /// counts down without polling when nothing is authenticated.
+    void refreshActorSessions();
     /// Re-seed the open operation's edit-mode depends_on / extract models from
     /// the project. Keeps the endpoint editor's Save (buildOverride) and the
     /// "EXECUTION CHAIN" preview in sync after the Chain tab's "Save chain"
@@ -1109,6 +1116,19 @@ private:
     [[nodiscard]] QString responseBodyFor(const QString& operationId) const;
     /// Fully-qualified id of the open operation ("<module>.<op>"), or empty.
     [[nodiscard]] QString currentOperationId() const;
+    /// Block a project transition while a transient endpoint draft is open.
+    /// Focuses the draft and tells the user to Save or Cancel first.
+    [[nodiscard]] bool canLeaveActiveProject();
+    /// Clear the active transient creation identity without touching its tab row.
+    void clearNewOperationDraftIdentity();
+    /// Remove a tab without prompting; shared by ordinary closes and confirmed discard.
+    void closeTabImmediately(int index);
+    /// Remove every tab except `index` without prompting.
+    void closeOtherTabsImmediately(int index);
+    /// Index of the one transient endpoint draft, or -1 when none exists.
+    [[nodiscard]] int operationDraftIndex() const;
+    /// Persist the transient draft once through ProjectModel's complete-operation path.
+    void saveNewOperation();
     /// Assemble a one-shot RequestOverride from the current edit state. Mirrors
     /// the old RequestEditorPanel::buildOverride (chainEdited tracks the guard).
     [[nodiscard]] RequestOverride buildOverride() const;
@@ -1146,10 +1166,13 @@ private:
     ResourceListModel resources_;
     OperationListModel operations_;
     ProjectTreeModel tree_;
+    // Re-reads actor session TTLs so the explorer's amber "expiring" dot ages
+    // truthfully. Runs only while some actor holds a live session.
+    // ponytail: a 15s poll, not an engine expiry callback. Ceiling — the dot can
+    // lag reality by up to 15s. Upgrade path: have RunContext emit on session
+    // state change and drop the timer.
+    QTimer sessionTicker_;
     ProjectTreeFilterModel treeFilter_;
-    DependencyEditModel newEndpointDeps_;
-    EditableKeyValueModel newEndpointExtractions_;
-    ChainEditorModel newEndpointDepExtracts_;
     TimelineModel timeline_;
     HistoryModel history_;
     ChainEditorModel chainEditor_;
@@ -1168,6 +1191,9 @@ private:
     // beginEdit; the trailing ghost-row models grow as the user types.
     EditableKeyValueModel editHeaders_;
     EditableKeyValueModel editQuery_;
+    // Prevent URL-origin model resets and Params-origin path writes from
+    // recursively synchronizing each other.
+    int querySyncDepth_{};
     EditableKeyValueModel editForm_;
     EditableKeyValueModel editExtractions_;
     EditableKeyValueModel editAssertions_;
@@ -1193,7 +1219,15 @@ private:
     QString actorRefreshPath_;
     QString actorRefreshBody_;
     DependencyEditModel editDependencies_;
+    enum class PendingDraftClose : std::uint8_t { None, SingleTab, CloseOtherTabs };
+
     bool editing_{false};
+    bool creatingOperation_{false};
+    PendingDraftClose pendingDraftClose_{PendingDraftClose::None};
+    std::optional<TabState> pendingDraftCloseKeepTab_;
+    QString newOperationModule_;
+    QString newOperationDraftId_;
+    QString newOperationName_;
     QString editMethod_;
     QString editPath_;
     QString editActor_;

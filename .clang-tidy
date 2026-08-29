@@ -30,7 +30,7 @@ WarningsAsErrors: ''
 HeaderFilterRegex: '(engine|cli|desktop)/(include|src)/.*'
 FormatStyle: file
 
-# Naming aligned with AGENTS.md:
+# Naming aligned :
 #   Types               PascalCase
 #   Functions / methods camelCase
 #   Constants           kCamelCase (compile-time) or SCREAMING_SNAKE_CASE (macros only)

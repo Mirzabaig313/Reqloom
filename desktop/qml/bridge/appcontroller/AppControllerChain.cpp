@@ -4,6 +4,7 @@
 
 #include "ThemeController.h"
 #include "application/EnvironmentSettings.h"
+#include "application/ExecutionPreview.h"
 #include "application/ProjectModel.h"
 #include "application/WorkspaceModel.h"
 #include "views/Formatting.h"
@@ -104,10 +105,29 @@ QVariantList AppController::variableSuggestions(const QString& operationId) cons
     if (!activeProject().hasProject() || !bootstrapper_ || operationId.isEmpty()) {
         return out;
     }
+    engine::Project patched;
+    const engine::Project* project = &activeProject().project();
+    const engine::OperationId targetId{operationId.toStdString()};
+    if (creatingOperation_ && operationId == newOperationDraftId_) {
+        patched = activeProject().project();
+        const qsizetype dot = operationId.indexOf(QLatin1Char('.'));
+        if (dot <= 0) {
+            return out;
+        }
+        const engine::ResourceId resourceId{operationId.left(dot).toStdString()};
+        const auto resource = patched.resources.find(resourceId);
+        if (resource == patched.resources.end()) {
+            return out;
+        }
+        engine::Operation target;
+        applyOverrideToOperation(target, buildOverride());
+        target.id = targetId;
+        target.resource = resourceId;
+        resource->second.operations[operationId.mid(dot + 1).toStdString()] = std::move(target);
+        project = &patched;
+    }
     auto result =
-        bootstrapper_->engine().suggestVariables(activeProject().project(),
-                                                 engine::OperationId{operationId.toStdString()},
-                                                 environment_.toStdString());
+        bootstrapper_->engine().suggestVariables(*project, targetId, environment_.toStdString());
     if (!result) {
         return out;
     }
@@ -481,6 +501,16 @@ bool AppController::editBodyFilled() const {
 }
 
 int AppController::editChainCount() const {
+    if (creatingOperation_) {
+        const QString targetId = currentOperationId();
+        for (int i = 0; i < chainEditor_.count(); ++i) {
+            if (chainEditor_.operationIdAt(i) == targetId) {
+                return static_cast<int>(chainEditor_.depModelAt(i)->dependencies().size() +
+                                        chainEditor_.extractModelAt(i)->pairs().size());
+            }
+        }
+        return 0;
+    }
     return static_cast<int>(editDependencies_.dependencies().size() +
                             editExtractions_.pairs().size());
 }
@@ -550,21 +580,40 @@ QVariantMap AppController::chainGraph() const {
     // re-derivation here, so the drawn graph always matches what the engine
     // actually executes.
     QVariantMap graph;
-    if (!activeProject().hasProject() || !hasOperation_ || !bootstrapper_) {
+    if (!activeProject().hasProject() || (!hasOperation_ && !creatingOperation_) ||
+        !bootstrapper_) {
         return graph;
     }
     const QString targetId = currentOperationId();
     const engine::OperationId targetOpId{targetId.toStdString()};
-    if (activeProject().findOperation(targetOpId) == nullptr) {
+
+    // Creation inserts one synthetic target into a project copy. This lets the
+    // existing resolver and graph layout preview the draft without publishing
+    // a placeholder operation to disk.
+    engine::Project patched;
+    const engine::Project* proj = &activeProject().project();
+    if (creatingOperation_) {
+        patched = activeProject().project();
+        const qsizetype dot = targetId.indexOf(QLatin1Char('.'));
+        const engine::ResourceId resourceId{targetId.left(dot).toStdString()};
+        auto resource = patched.resources.find(resourceId);
+        if (dot <= 0 || resource == patched.resources.end()) {
+            return graph;
+        }
+        engine::Operation target;
+        applyOverrideToOperation(target, buildOverride());
+        target.id = targetOpId;
+        target.resource = resourceId;
+        resource->second.operations[targetId.mid(dot + 1).toStdString()] = std::move(target);
+        proj = &patched;
+    } else if (activeProject().findOperation(targetOpId) == nullptr) {
         return graph;
     }
 
     // In edit mode the chain picker holds unsaved depends_on edits. Resolve
     // against a patched copy so the preview tracks the live wiring; otherwise
     // resolve the persisted project directly.
-    engine::Project patched;
-    const engine::Project* proj = &activeProject().project();
-    if (editing_ && chainFieldsLoaded_) {
+    if (!creatingOperation_ && editing_ && chainFieldsLoaded_) {
         patched = activeProject().project();
         const qsizetype dot = targetId.indexOf(QLatin1Char('.'));
         if (dot > 0) {
@@ -711,6 +760,79 @@ QVariantMap AppController::chainGraph() const {
     return graph;
 }
 
+QVariantList AppController::executionPreview() const {
+    QVariantList preview;
+    if (!activeProject().hasProject() || !hasOperation_ || bootstrapper_ == nullptr) {
+        return preview;
+    }
+    const engine::OperationId targetOpId{currentOperationId().toStdString()};
+    const engine::Project& project = activeProject().project();
+    if (project.resources.empty() || activeProject().findOperation(targetOpId) == nullptr) {
+        return preview;
+    }
+
+    // Resolved against the persisted project, not the edit-mode patched copy the
+    // chain graph builds: this previews what a run would do now. An unresolvable
+    // chain (cycle) yields an empty list, and the caller keeps its empty state.
+    const auto plan = bootstrapper_->engine().resolvePlan(project, targetOpId);
+    if (!plan) {
+        return preview;
+    }
+
+    const std::vector<PreviewStep> steps = buildExecutionPreview(*plan, project);
+    preview.reserve(static_cast<qsizetype>(steps.size()));
+    for (const PreviewStep& step : steps) {
+        QVariantList produces;
+        produces.reserve(static_cast<qsizetype>(step.produces.size()));
+        for (const PreviewOutput& output : step.produces) {
+            produces.append(QVariantMap{{QStringLiteral("variable"), output.variable},
+                                        {QStringLiteral("sourcePath"), output.sourcePath}});
+        }
+        QVariantList expectStatus;
+        expectStatus.reserve(step.expectStatus.size());
+        for (const int status : step.expectStatus) {
+            expectStatus.append(status);
+        }
+
+        preview.append(QVariantMap{{QStringLiteral("number"), step.number},
+                                   {QStringLiteral("operationId"), step.operationId},
+                                   {QStringLiteral("method"), step.method},
+                                   {QStringLiteral("path"), step.pathTemplate},
+                                   {QStringLiteral("actor"), step.actor},
+                                   {QStringLiteral("isTarget"), step.isTarget},
+                                   {QStringLiteral("dependsOn"), step.dependsOn},
+                                   {QStringLiteral("produces"), produces},
+                                   {QStringLiteral("expectStatus"), expectStatus}});
+    }
+    return preview;
+}
+
+QStringList AppController::extractionConsumers(const QString& producerOperationId,
+                                               const QString& variable) const {
+    if (!activeProject().hasProject() || !hasOperation_ || bootstrapper_ == nullptr) {
+        return {};
+    }
+    if (producerOperationId.isEmpty() || variable.isEmpty()) {
+        return {};
+    }
+    const engine::OperationId targetOpId{currentOperationId().toStdString()};
+    const engine::Project& project = activeProject().project();
+    if (activeProject().findOperation(targetOpId) == nullptr) {
+        return {};
+    }
+
+    // ponytail: resolves the plan per call, so a run with many missed extractions
+    // re-resolves once per row. Measured cheap on real projects (the whole
+    // marketplace sample resolves in well under a second). If a large project
+    // ever makes this show up, cache the plan per (target, chainChanged) instead
+    // of widening the API.
+    const auto plan = bootstrapper_->engine().resolvePlan(project, targetOpId);
+    if (!plan) {
+        return {};
+    }
+    return consumersOfVariable(*plan, producerOperationId, variable);
+}
+
 QVariantMap AppController::chainStatus() const {
     QVariantMap status;
     for (auto it = chainStatus_.constBegin(); it != chainStatus_.constEnd(); ++it) {
@@ -720,6 +842,17 @@ QVariantMap AppController::chainStatus() const {
 }
 
 void AppController::prepareChainEditor() {
+    if (creatingOperation_) {
+        if (chainEditor_.count() == 0) {
+            ChainEditorModel::OpSeed target;
+            target.operationId = currentOperationId();
+            target.method = editMethod_;
+            target.isTarget = true;
+            target.candidates = operationIds();
+            chainEditor_.rebuild({std::move(target)});
+        }
+        return;
+    }
     if (!activeProject().hasProject() || !hasOperation_) {
         chainEditor_.rebuild({});
         return;
@@ -789,7 +922,8 @@ void AppController::prepareChainEditor() {
 }
 
 void AppController::syncChainEditorMembership() {
-    if (!activeProject().hasProject() || !hasOperation_ || chainEditor_.count() == 0) {
+    if (!activeProject().hasProject() || (!hasOperation_ && !creatingOperation_) ||
+        chainEditor_.count() == 0) {
         return;
     }
     const QString targetId = currentOperationId();
@@ -855,7 +989,9 @@ void AppController::syncChainEditorMembership() {
         const auto* op = activeProject().findOperation(engine::OperationId{id.toStdString()});
         ChainEditorModel::OpSeed seed;
         seed.operationId = id;
-        seed.method = op != nullptr ? methodLabel(op->method) : QString{};
+        seed.method = op != nullptr
+                          ? methodLabel(op->method)
+                          : (creatingOperation_ && id == targetId ? editMethod_ : QString{});
         seed.isTarget = (id == targetId);
         if (editedDeps.contains(id)) {
             seed.dependencies = editedDeps.value(id);
@@ -928,6 +1064,10 @@ void AppController::chainRemoveStep(const QString& operationId) {
 }
 
 bool AppController::saveChainEdits() {
+    if (creatingOperation_) {
+        emit notify(tr("Save the endpoint to publish its chain."), true);
+        return false;
+    }
     if (!activeProject().hasProject()) {
         return false;
     }

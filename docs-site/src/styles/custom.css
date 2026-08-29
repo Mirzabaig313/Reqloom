@@ -1,25 +1,650 @@
-/* Reqloom brand colours — adjust once a real palette is decided. */
+/* Reqloom docs — design layer.
+   Palette and type mirror the desktop app's "Morphous Abalone" theme so the
+   docs and the product read as one thing. Source of truth for the OKLCH values
+   is desktop/src/theming/Theme.cpp; keep them in sync when the app palette
+   moves. */
+
+/* ---------------------------------------------------------------- fonts --- */
+/* Geist / Geist Mono, latin-subset woff2 (~110 KB total for all six faces).
+   Generated from desktop/fonts/*.ttf — regeneration command is in
+   docs-site/README.md. Paths are relative so they survive a BASE change. */
+
+@font-face {
+    font-family: "Geist";
+    src: url("../fonts/Geist-Regular.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Geist";
+    src: url("../fonts/Geist-Medium.woff2") format("woff2");
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Geist";
+    src: url("../fonts/Geist-SemiBold.woff2") format("woff2");
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Geist";
+    src: url("../fonts/Geist-Bold.woff2") format("woff2");
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Geist Mono";
+    src: url("../fonts/GeistMono-Regular.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Geist Mono";
+    src: url("../fonts/GeistMono-SemiBold.woff2") format("woff2");
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* --------------------------------------------------------------- tokens --- */
+
 :root {
-    --sl-color-accent-low:   #1a1f3a;
-    --sl-color-accent:       #4a6cf7;
-    --sl-color-accent-high:  #c5d2ff;
-    --sl-color-white:        #ffffff;
-    --sl-color-gray-1:       #eef0fa;
-    --sl-color-gray-2:       #c8cdde;
-    --sl-color-gray-3:       #989eb1;
-    --sl-color-gray-4:       #5d6273;
-    --sl-color-gray-5:       #383b48;
-    --sl-color-gray-6:       #25272f;
-    --sl-color-black:        #14161c;
+    --sl-font: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+        sans-serif;
+    --sl-font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono",
+        Menlo, monospace;
+
+    /* Layout: wider prose column than the Starlight default, with a measure
+       cap so long-form reference pages don't run to 110 characters. */
+    --sl-content-width: 48rem;
+    --sl-sidebar-width: 17.5rem;
+    --sl-nav-height: 4rem;
+
+    /* Elevation + shape, tuned to the app's card language. */
+    --rl-radius-sm: 0.375rem;
+    --rl-radius: 0.625rem;
+    --rl-radius-lg: 1rem;
+    --rl-ease: cubic-bezier(0.2, 0, 0.13, 1);
+}
+
+/* Dark is the default theme, matching Starlight. */
+:root,
+:root[data-theme="dark"] {
+    --rl-surface-base: oklch(0.191 0.022 205.9);
+    /* Tidepool Shadow */
+    --rl-surface-raised: oklch(0.23 0.02 207.3);
+    --rl-surface-sunken: oklch(0.165 0.02 206);
+    --rl-surface-overlay: oklch(0.26 0.02 207);
+    --rl-border-subtle: oklch(0.32 0.018 206);
+    --rl-border-strong: oklch(0.44 0.02 208);
+    --rl-accent: oklch(0.797 0.095 185.2);
+    /* Seafoam Nacre */
+    --rl-accent-hover: oklch(0.85 0.09 185.2);
+    --rl-accent-muted: oklch(0.324 0.045 200);
+    --rl-shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 8px 24px -12px oklch(0 0 0 / 0.65);
+    --rl-shadow-lg: 0 2px 4px oklch(0 0 0 / 0.35),
+        0 24px 48px -20px oklch(0 0 0 / 0.7);
+
+    --sl-color-accent-low: var(--rl-accent-muted);
+    --sl-color-accent: oklch(0.68 0.1 187);
+    --sl-color-accent-high: var(--rl-accent);
+    --sl-color-text-accent: var(--rl-accent);
+
+    --sl-color-white: oklch(0.979 0.003 264.5);
+    --sl-color-gray-1: oklch(0.93 0.005 210);
+    --sl-color-gray-2: oklch(0.82 0.01 210);
+    --sl-color-gray-3: oklch(0.72 0.012 210);
+    /* textSecondary */
+    --sl-color-gray-4: oklch(0.52 0.015 208);
+    --sl-color-gray-5: oklch(0.36 0.018 207);
+    --sl-color-gray-6: oklch(0.26 0.02 207);
+    --sl-color-gray-7: oklch(0.22 0.02 207);
+    --sl-color-black: var(--rl-surface-base);
+
+    --sl-color-bg: var(--rl-surface-base);
+    --sl-color-bg-nav: oklch(0.191 0.022 205.9 / 0.72);
+    --sl-color-bg-sidebar: var(--rl-surface-base);
+    --sl-color-bg-inline-code: oklch(0.28 0.022 200 / 0.75);
+    --sl-color-hairline: var(--rl-border-subtle);
+    --sl-color-hairline-light: var(--rl-border-subtle);
+    --sl-color-hairline-shade: oklch(0.24 0.018 206);
+
+    --sl-color-text: oklch(0.9 0.006 220);
+    --sl-color-text-invert: oklch(0.191 0.022 205.9);
+    --sl-shadow-md: var(--rl-shadow);
+    --sl-shadow-lg: var(--rl-shadow-lg);
+
+    color-scheme: dark;
 }
 
 :root[data-theme="light"] {
-    --sl-color-accent-low:   #d2dcff;
-    --sl-color-accent:       #2c4ddb;
-    --sl-color-accent-high:  #1a306b;
+    --rl-surface-base: oklch(0.933 0.007 260.7);
+    /* Pearl Grey */
+    --rl-surface-raised: oklch(0.985 0.003 264.5);
+    /* Shell Pearl */
+    --rl-surface-sunken: oklch(0.952 0.006 264.5);
+    --rl-surface-overlay: oklch(0.989 0.006 75.4);
+    /* Opal White */
+    --rl-border-subtle: oklch(0.88 0.008 232.4);
+    --rl-border-strong: oklch(0.722 0.015 207.9);
+    --rl-accent: oklch(0.52 0.105 195);
+    /* AA-safe link teal */
+    --rl-accent-hover: oklch(0.44 0.1 196);
+    --rl-accent-muted: oklch(0.91 0.03 195);
+    --rl-shadow: 0 1px 2px oklch(0.2 0.03 210 / 0.06),
+        0 8px 24px -14px oklch(0.2 0.03 210 / 0.16);
+    --rl-shadow-lg: 0 2px 4px oklch(0.2 0.03 210 / 0.07),
+        0 24px 48px -22px oklch(0.2 0.03 210 / 0.22);
+
+    --sl-color-accent-low: var(--rl-accent-muted);
+    --sl-color-accent: oklch(0.654 0.11 193.2);
+    /* Iridescent Teal */
+    --sl-color-accent-high: var(--rl-accent-hover);
+    --sl-color-text-accent: var(--rl-accent);
+
+    --sl-color-white: oklch(0.209 0.017 216.6);
+    /* Graphite Nacre */
+    --sl-color-gray-1: oklch(0.28 0.016 214);
+    --sl-color-gray-2: oklch(0.4 0.016 212);
+    --sl-color-gray-3: oklch(0.54 0.016 210);
+    /* textSecondary */
+    --sl-color-gray-4: oklch(0.66 0.014 210);
+    --sl-color-gray-5: oklch(0.84 0.01 220);
+    --sl-color-gray-6: oklch(0.94 0.006 240);
+    --sl-color-gray-7: oklch(0.965 0.004 250);
+    --sl-color-black: oklch(0.995 0.002 260);
+
+    --sl-color-bg: var(--rl-surface-base);
+    --sl-color-bg-nav: oklch(0.96 0.005 262 / 0.78);
+    --sl-color-bg-sidebar: var(--rl-surface-base);
+    --sl-color-bg-inline-code: oklch(0.9 0.008 240 / 0.85);
+    --sl-color-hairline: var(--rl-border-subtle);
+    --sl-color-hairline-light: var(--rl-border-subtle);
+    --sl-color-hairline-shade: oklch(0.9 0.008 240);
+
+    --sl-color-text: oklch(0.32 0.016 214);
+    --sl-color-text-invert: oklch(0.985 0.003 264.5);
+
+    color-scheme: light;
 }
 
-/* Slightly tighter line-height for code blocks — better for dense schema YAML. */
+/* ----------------------------------------------------------- typography --- */
+
+body {
+    font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+.sl-markdown-content :is(h1, h2, h3, h4) {
+    font-weight: 600;
+    letter-spacing: -0.018em;
+    text-wrap: balance;
+}
+
+.sl-markdown-content h1,
+.content-panel h1 {
+    letter-spacing: -0.028em;
+}
+
+/* Section headings get a hairline so long reference pages scan in one pass.
+   The rule goes on Starlight's heading wrapper, not the h2: inside that wrapper
+   the h2 is a flex item, so a border on it would stop at the end of the text
+   and short headings would get a stub of a line. */
+.sl-markdown-content .sl-heading-wrapper.level-h2:not(:where(.not-content *)) {
+    margin-top: 3rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid var(--rl-border-subtle);
+}
+
+.sl-markdown-content .sl-heading-wrapper.level-h2>h2 {
+    margin-top: 0;
+}
+
+/* Splash pages render headings without the wrapper. */
+.sl-markdown-content>h2:not(:where(.not-content *)) {
+    margin-top: 3rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid var(--rl-border-subtle);
+}
+
+.sl-markdown-content p,
+.sl-markdown-content li {
+    text-wrap: pretty;
+}
+
+/* Numerals line up in tables and CLI output. */
+.sl-markdown-content table,
+.sl-markdown-content code {
+    font-variant-numeric: tabular-nums;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.2em;
+    text-decoration-color: color-mix(in oklab, currentColor 35%, transparent);
+    transition: text-decoration-color 150ms var(--rl-ease);
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+    text-decoration-color: currentColor;
+}
+
+/* ------------------------------------------------------- chrome & shell --- */
+
+.header {
+    background: var(--sl-color-bg-nav);
+    backdrop-filter: saturate(1.6) blur(14px);
+    -webkit-backdrop-filter: saturate(1.6) blur(14px);
+    border-bottom: 1px solid var(--rl-border-subtle);
+    box-shadow: none;
+}
+
+.site-title {
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+
+/* Sidebar: quieter labels, softer active pill. */
+.sidebar-content .top-level>li>details>summary,
+.sidebar-content .top-level>li>.large {
+    font-size: var(--sl-text-xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+}
+
+.sidebar-content a {
+    border-radius: var(--rl-radius-sm);
+    transition: background-color 140ms var(--rl-ease),
+        color 140ms var(--rl-ease);
+}
+
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover {
+    background: color-mix(in oklab, var(--sl-color-accent-low) 60%, transparent);
+    color: var(--sl-color-text-accent);
+    font-weight: 600;
+}
+
+/* Table of contents */
+starlight-toc a[aria-current="true"] {
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- code --- */
+
+.expressive-code .frame {
+    border-radius: var(--rl-radius);
+    box-shadow: var(--rl-shadow);
+}
+
+.expressive-code .frame pre {
+    border: 1px solid var(--rl-border-subtle);
+    border-radius: var(--rl-radius);
+}
+
 .expressive-code .code {
-    line-height: 1.45;
+    line-height: 1.55;
+    font-size: 0.875rem;
+    letter-spacing: -0.005em;
+}
+
+/* Geist Mono ships contextual alternates that fuse `--` into a single rule and
+   swallow the space before it, so `cmake --preset` renders as `cmake--preset`.
+   Code must show exactly what you would type. */
+code,
+kbd,
+samp,
+.expressive-code .code,
+.expressive-code .code * {
+    font-variant-ligatures: none;
+    font-feature-settings: "kern" 1, "tnum" 1;
+}
+
+/* Terminal frames read as a real shell: keep the title bar quiet. */
+.expressive-code .frame.is-terminal .header {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border: 0;
+}
+
+/* The active file-tab indicator is recoloured in astro.config.mjs via
+   expressiveCode.styleOverrides.frames — it is drawn with borders, not a
+   background, so a rule here would have no effect. */
+
+:not(pre)>code:not(:where(.not-content *)) {
+    border: 1px solid var(--rl-border-subtle);
+    border-radius: var(--rl-radius-sm);
+    padding: 0.1em 0.35em;
+    font-size: 0.875em;
+}
+
+/* --------------------------------------------------------------- cards --- */
+
+.card {
+    background: var(--rl-surface-raised);
+    border: 1px solid var(--rl-border-subtle);
+    border-radius: var(--rl-radius-lg);
+    box-shadow: var(--rl-shadow);
+    transition: transform 200ms var(--rl-ease), box-shadow 200ms var(--rl-ease),
+        border-color 200ms var(--rl-ease);
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklab, var(--sl-color-accent) 45%, var(--rl-border-subtle));
+    box-shadow: var(--rl-shadow-lg);
+}
+
+.card .icon {
+    background: color-mix(in oklab, var(--sl-color-accent-low) 55%, transparent);
+    border: 1px solid color-mix(in oklab, var(--sl-color-accent) 22%, transparent);
+    border-radius: var(--rl-radius);
+    padding: 0.45rem;
+    color: var(--sl-color-text-accent);
+}
+
+.card .title {
+    font-weight: 600;
+    letter-spacing: -0.012em;
+}
+
+/* -------------------------------------------------------------- tables --- */
+
+/* Starlight sets `display: block; overflow: auto` so wide tables scroll on
+   phones. Keep that below the breakpoint; above it, restore a real table box so
+   the row separators reach the container border instead of stopping at the
+   table's intrinsic width and leaving a ragged right edge. */
+.sl-markdown-content table:not(:where(.not-content *)) {
+    width: 100%;
+    border: 1px solid var(--rl-border-subtle);
+    border-radius: var(--rl-radius);
+    font-size: var(--sl-text-sm);
+}
+
+@media (min-width: 50rem) {
+    .sl-markdown-content table:not(:where(.not-content *)) {
+        display: table;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+}
+
+.sl-markdown-content :is(th, td):not(:where(.not-content *)) {
+    border: 0;
+    border-bottom: 1px solid var(--rl-border-subtle);
+    padding: 0.55rem 0.85rem;
+    vertical-align: baseline;
+}
+
+/* Starlight zeroes the outer padding on edge cells for its borderless tables;
+   inside a bordered container the text needs to stay off the edge. */
+.sl-markdown-content :is(th:first-child, td:first-child):not(:where(.not-content *)) {
+    padding-inline-start: 0.85rem;
+}
+
+.sl-markdown-content :is(th:last-child, td:last-child):not(:where(.not-content *)) {
+    padding-inline-end: 0.85rem;
+}
+
+.sl-markdown-content th:not(:where(.not-content *)) {
+    background: var(--rl-surface-sunken);
+    font-size: var(--sl-text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+}
+
+.sl-markdown-content tbody tr:last-child :is(th, td):not(:where(.not-content *)) {
+    border-bottom: 0;
+}
+
+/* Support / no-support markers in comparison tables (see index.mdx). */
+.sl-markdown-content .yes {
+    color: oklch(0.72 0.15 155);
+    font-weight: 600;
+}
+
+.sl-markdown-content .no {
+    color: var(--sl-color-gray-4);
+}
+
+.sl-markdown-content .partial {
+    color: oklch(0.75 0.13 80);
+}
+
+:root[data-theme="light"] .sl-markdown-content .yes {
+    color: oklch(0.5 0.14 155);
+}
+
+:root[data-theme="light"] .sl-markdown-content .partial {
+    color: oklch(0.55 0.13 75);
+}
+
+/* -------------------------------------------------------------- asides --- */
+
+.starlight-aside {
+    border-radius: var(--rl-radius);
+    border-inline-start-width: 3px;
+    background: color-mix(in oklab, var(--sl-color-asides-text-accent) 8%, var(--rl-surface-raised));
+}
+
+.starlight-aside__title {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+blockquote:not(:where(.not-content *)) {
+    border-inline-start-color: var(--rl-border-strong);
+    color: var(--sl-color-gray-2);
+    font-style: normal;
+}
+
+/* --------------------------------------------------------------- badge --- */
+
+.sl-badge {
+    border-radius: 999px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+/* ---------------------------------------------------------- splash/hero --- */
+
+.hero {
+    position: relative;
+    padding-block: clamp(1rem, 4vw, 3.5rem);
+}
+
+/* Ambient teal wash behind the landing hero, matching the app's canvas.
+   Purely decorative and pointer-transparent. */
+.hero::before {
+    content: "";
+    position: absolute;
+    /* Bleed to the full viewport width: confined to the centred content box the
+       gradient's edges show up as a visible rectangle. */
+    left: 50%;
+    width: 100vw;
+    transform: translateX(-50%);
+    top: calc(var(--sl-nav-height) * -1);
+    height: 46rem;
+    z-index: -1;
+    pointer-events: none;
+    background:
+        radial-gradient(60rem 26rem at 18% 0%,
+            color-mix(in oklab, var(--sl-color-accent) 16%, transparent),
+            transparent 70%),
+        radial-gradient(44rem 22rem at 88% 12%,
+            color-mix(in oklab, var(--sl-color-accent) 10%, transparent),
+            transparent 72%);
+    mask-image: linear-gradient(to bottom, black, transparent);
+}
+
+.hero h1 {
+    font-size: clamp(2.5rem, 7vw, 4rem);
+    line-height: 1.04;
+    letter-spacing: -0.035em;
+    font-weight: 600;
+    background: linear-gradient(170deg,
+            var(--sl-color-white) 30%,
+            color-mix(in oklab, var(--sl-color-white) 55%, var(--sl-color-accent)));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.hero .tagline {
+    font-size: clamp(1.05rem, 2.2vw, 1.375rem);
+    line-height: 1.5;
+    max-width: 40ch;
+    color: var(--sl-color-gray-2);
+}
+
+.hero img {
+    filter: drop-shadow(0 24px 48px oklch(0 0 0 / 0.35));
+}
+
+.action {
+    border-radius: var(--rl-radius);
+    font-weight: 600;
+    letter-spacing: -0.008em;
+    transition: transform 180ms var(--rl-ease), box-shadow 180ms var(--rl-ease),
+        background-color 180ms var(--rl-ease);
+}
+
+.action.primary {
+    box-shadow: var(--rl-shadow);
+}
+
+.action:hover {
+    transform: translateY(-1px);
+}
+
+.action.minimal {
+    border: 1px solid var(--rl-border-strong);
+    padding-inline: 1.125rem;
+}
+
+/* ------------------------------------------------------------- buttons --- */
+
+/* In-content action buttons (e.g. the prompt download). Sits inside
+   `.not-content`, so the accent has to be set explicitly. */
+.rl-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-block: 1.25rem;
+}
+
+.rl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--rl-border-strong);
+    border-radius: var(--rl-radius);
+    background: var(--rl-surface-raised);
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+    letter-spacing: -0.008em;
+    text-decoration: none;
+    transition: transform 160ms var(--rl-ease), box-shadow 160ms var(--rl-ease),
+        border-color 160ms var(--rl-ease);
+}
+
+.rl-btn:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in oklab, var(--sl-color-accent) 55%, var(--rl-border-strong));
+    box-shadow: var(--rl-shadow);
+}
+
+.rl-btn--primary {
+    background: var(--sl-color-accent);
+    border-color: var(--sl-color-accent);
+    color: var(--sl-color-text-invert);
+}
+
+.rl-btn--primary:hover {
+    background: var(--rl-accent-hover);
+    border-color: var(--rl-accent-hover);
+}
+
+/* In light mode the button carries near-white text, and the mid-teal accent only
+   reaches 2.9:1 behind it. Use the darker teal so 14px/600 clears AA (4.5:1);
+   `--sl-color-accent` stays correct for dark, where the text is the dark ink. */
+:root[data-theme="light"] .rl-btn--primary {
+    background: var(--rl-accent-hover);
+    border-color: var(--rl-accent-hover);
+}
+
+:root[data-theme="light"] .rl-btn--primary:hover {
+    background: oklch(0.37 0.088 196);
+    border-color: oklch(0.37 0.088 196);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .rl-btn:hover {
+        transform: none;
+    }
+}
+
+/* Eyebrow line above splash section headings, opt-in via `eyebrow` class. */
+.sl-markdown-content .eyebrow {
+    font-size: var(--sl-text-xs);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+    margin-bottom: 0.35rem;
+}
+
+/* ------------------------------------------------------- footer & misc --- */
+
+.pagination-links a {
+    border-radius: var(--rl-radius);
+    border-color: var(--rl-border-subtle);
+    background: var(--rl-surface-raised);
+    transition: border-color 160ms var(--rl-ease), box-shadow 160ms var(--rl-ease);
+}
+
+.pagination-links a:hover {
+    border-color: color-mix(in oklab, var(--sl-color-accent) 45%, var(--rl-border-subtle));
+    box-shadow: var(--rl-shadow);
+}
+
+:focus-visible {
+    outline: 2px solid var(--sl-color-text-accent);
+    outline-offset: 2px;
+    border-radius: var(--rl-radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+
+    .card:hover,
+    .action:hover {
+        transform: none;
+    }
 }

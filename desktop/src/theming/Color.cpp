@@ -1,5 +1,5 @@
 // Color — see header. OKLCH → linear sRGB → gamma sRGB, per the standard
-// Oklab matrices (Björn Ottosson). DESIGN.md §2.7 notes Qt receives sRGB hex.
+// Oklab matrices (Björn Ottosson).  notes Qt receives sRGB hex.
 #include "Color.h"
 
 #include <algorithm>

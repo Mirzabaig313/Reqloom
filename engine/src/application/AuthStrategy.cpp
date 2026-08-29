@@ -91,7 +91,7 @@ public:
         session.state = ActorSession::State::Authenticating;
 
         for (const auto& step : actor.authSteps) {
-            auto resolvedPath = deps_.varResolver->resolve(step.pathTemplate, ctx, rctx);
+            auto resolvedPath = deps_.varResolver->resolveUrlPath(step.pathTemplate, ctx, rctx);
             if (!resolvedPath.unresolved.empty()) {
                 return std::unexpected(ReqloomError{
                     ErrorCode::SessionRefreshFailed,
@@ -826,7 +826,7 @@ private:
 // (a JSON claims object) from authConfig; `algorithm` is optional (default
 // HS256). Only HMAC variants are supported (crypto has no RS/ES).
 //
-// ponytail: the JWT is signed once at session creation, not per request — a
+//  the JWT is signed once at session creation, not per request — a
 // payload with time-based claims (exp/iat) is fixed for the session lifetime.
 // Upgrade path: re-sign per request (like the inline path) if actors need
 // short-lived per-request JWTs.
@@ -1005,7 +1005,7 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     }
 
     const auto& refresh = *actor.refresh;
-    auto resolvedPath = deps.varResolver->resolve(refresh.pathTemplate, ctx, rctx);
+    auto resolvedPath = deps.varResolver->resolveUrlPath(refresh.pathTemplate, ctx, rctx);
     if (!resolvedPath.unresolved.empty()) {
         return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,

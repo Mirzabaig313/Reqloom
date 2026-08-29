@@ -18,8 +18,12 @@ Dialog {
     enter: PopupEnter {}
     exit: PopupExit {}
     anchors.centerIn: Overlay.overlay
-    width: 640
+    // Fit the window; the run list below absorbs any height deficit and
+    // scrolls, so the intro row, trend strip and Close stay reachable.
+    width: Math.min(640, Overlay.overlay ? Overlay.overlay.width - 64 : 640)
+    height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
     padding: DesignTokens.spaceLg
+    focus: true
 
     function openDialog() {
         AppController.refreshHistory();
@@ -114,17 +118,29 @@ Dialog {
             }
         }
 
-        EmptyState {
+        // EmptyState centres itself with anchors, so it needs a plain Item host
+        // rather than being a direct child of this ColumnLayout.
+        Item {
             Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.preferredHeight: emptyHistory.implicitHeight
             visible: AppController.history.count === 0
-            heading: qsTr("No runs yet")
-            body: qsTr("Send a request to record your first run.")
+
+            EmptyState {
+                id: emptyHistory
+                heading: qsTr("No runs yet")
+                body: qsTr("Send a request to record your first run.")
+            }
         }
 
         ListView {
             id: runList
             Layout.fillWidth: true
-            implicitHeight: Math.min(contentHeight, 380)
+            // Shrink-wrap a short history, cap a long one, and take the deficit
+            // here when the dialog is clamped to the window.
+            Layout.fillHeight: true
+            Layout.preferredHeight: Math.min(contentHeight, 380)
+            Layout.minimumHeight: DesignTokens.controlHeight * 2
             visible: AppController.history.count > 0
             clip: true
             model: AppController.history
@@ -135,7 +151,8 @@ Dialog {
                 id: runRow
                 width: ListView.view.width
                 required property var model
-                implicitHeight: 52
+                // Grows with the target/meta text block at large OS text sizes.
+                implicitHeight: Math.max(52, runText.implicitHeight + DesignTokens.spaceMd)
 
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
@@ -154,6 +171,7 @@ Dialog {
                     }
 
                     ColumnLayout {
+                        id: runText
                         Layout.fillWidth: true
                         spacing: 0
                         Label {
@@ -216,8 +234,10 @@ Dialog {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 420
+        width: Math.min(420, Overlay.overlay ? Overlay.overlay.width - 64 : 420)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
 
         background: Rectangle {
             radius: DesignTokens.radiusLg

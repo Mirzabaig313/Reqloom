@@ -17,12 +17,39 @@ Dialog {
     enter: PopupEnter {}
     exit: PopupExit {}
     anchors.centerIn: Overlay.overlay
-    width: 560
+    // Fit the window; the secrets list below absorbs any height deficit and
+    // scrolls, so the intro text, banner and Close stay reachable.
+    width: Math.min(560, Overlay.overlay ? Overlay.overlay.width - 64 : 560)
+    height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
     padding: DesignTokens.spaceLg
+    focus: true
+    property string focusedSecretName: ""
 
     function openDialog() {
+        focusedSecretName = "";
         SecretsController.refresh();
         open();
+    }
+
+    function openSource(name) {
+        SecretsController.refresh();
+        const targetRow = SecretsController.secrets.rowForName(name);
+        if (targetRow < 0) {
+            return false;
+        }
+        focusedSecretName = name;
+        secretList.currentIndex = targetRow;
+        open();
+        Qt.callLater(function () {
+            secretList.positionViewAtIndex(targetRow, ListView.Center);
+            Qt.callLater(function () {
+                const item = secretList.itemAtIndex(targetRow);
+                if (item) {
+                    item.focusSetAction();
+                }
+            });
+        });
+        return true;
     }
 
     background: Rectangle {
@@ -68,25 +95,41 @@ Dialog {
         ListView {
             id: secretList
             Layout.fillWidth: true
-            implicitHeight: Math.min(contentHeight, 360)
+            // Shrink-wrap a short list, cap a long one, and take the deficit
+            // here (rather than from the prose above) when the dialog is
+            // clamped to the window.
+            Layout.fillHeight: true
+            Layout.preferredHeight: Math.min(contentHeight, 360)
+            Layout.minimumHeight: DesignTokens.controlHeight * 2
             clip: true
+            ScrollBar.vertical: ScrollBar {}
             model: SecretsController.secrets
 
             delegate: Rectangle {
                 id: secretRow
+                required property int index
                 required property string name
                 required property string status
+                readonly property bool sourceFocused: name === dialog.focusedSecretName
                 width: ListView.view.width
-                height: 44
-                color: "transparent"
+                // Row grows with its tallest child (reference label or the
+                // Set…/Clear actions) at large OS text sizes.
+                height: Math.max(44, rowContent.implicitHeight + DesignTokens.spaceSm * 2)
+                color: sourceFocused ? DesignTokens.accentMuted : "transparent"
+
+                function focusSetAction() {
+                    setSecretBtn.forceActiveFocus();
+                }
 
                 RowLayout {
+                    id: rowContent
                     anchors.fill: parent
                     anchors.leftMargin: DesignTokens.spaceSm
                     anchors.rightMargin: DesignTokens.spaceSm
                     spacing: DesignTokens.spaceMd
 
                     Label {
+                        id: secretName
                         Layout.fillWidth: true
                         text: "{{secret." + secretRow.name + "}}"
                         color: DesignTokens.textPrimary
@@ -103,7 +146,7 @@ Dialog {
                     Button {
                         id: setSecretBtn
                         text: qsTr("Set…")
-                        implicitHeight: 28
+                        implicitHeight: Math.max(28, implicitContentHeight + DesignTokens.spaceXs * 2)
                         leftPadding: DesignTokens.spaceSm
                         rightPadding: DesignTokens.spaceSm
                         background: Rectangle {
@@ -125,7 +168,7 @@ Dialog {
                         id: clearSecretBtn
                         text: qsTr("Clear")
                         visible: secretRow.status === "set"
-                        implicitHeight: 28
+                        implicitHeight: Math.max(28, implicitContentHeight + DesignTokens.spaceXs * 2)
                         leftPadding: DesignTokens.spaceSm
                         rightPadding: DesignTokens.spaceSm
                         background: Rectangle {
@@ -170,8 +213,10 @@ Dialog {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 380
+        width: Math.min(380, Overlay.overlay ? Overlay.overlay.width - 64 : 380)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         property string secretName: ""
         header: DialogHeader {
             title: qsTr("Set secret")
@@ -203,6 +248,7 @@ Dialog {
                 Layout.fillWidth: true
                 echoMode: TextInput.Password
                 placeholderText: qsTr("value (not shown)")
+                onAccepted: setDialog.accept()
             }
         }
         footer: DialogButtons {

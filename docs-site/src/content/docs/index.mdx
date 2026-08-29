@@ -1,131 +1,207 @@
 ---
 title: Reqloom
-description: "A workflow-aware API testing tool that auto-resolves request dependency chains."
+description: "Workflow-aware API testing. Define actors and resources once; run any endpoint and the engine resolves the whole prerequisite chain."
 template: splash
+editUrl: false
 hero:
-  tagline: Postman is an HTTP client. Reqloom is an API workflow engine.
+  # Rendered with set:html by Starlight's Hero, so the break is explicit —
+  # a YAML newline would collapse to a space.
+  title: Your API is a graph.<br />Test it like one.
+  tagline: Define each actor and resource once. Run any endpoint and Reqloom resolves the prerequisite chain for you — in order, with the right credentials.
   image:
+    alt: A request dependency graph with one resolved execution chain highlighted.
     file: ../../assets/hero.svg
   actions:
-    - text: Get started in 5 minutes
+    - text: Take the 5-minute tour
       link: start/tour
       icon: right-arrow
       variant: primary
-    - text: View on GitHub
+    - text: Read the mental model
+      link: concepts/mental-model
+      icon: open-book
+      variant: minimal
+    - text: GitHub
       link: https://github.com/Mirzabaig313/Reqloom
       icon: external
+      variant: minimal
 ---
 
-import { Card, CardGrid, Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import { Card, CardGrid, Tabs, TabItem, Aside, Steps } from "@astrojs/starlight/components";
 
-## Stop copying tokens between Postman tabs
+<p class="eyebrow">The problem</p>
 
-Modern SaaS backends are multi-actor. To test "admin approves a customer
-refund", you need to log in as three actors and create six prerequisite
-records first. Reqloom treats your API as a dependency graph: define
-each actor and resource **once**, then run any endpoint with a single
-command — the engine auto-resolves the entire chain.
+## Six requests before the one you care about
 
-```bash
-reqloom run refund.approve --project marketplace
-# resolves: vendor.login → customer.verify_otp →
-#           product.create → product.publish →
-#           order.create → order.pay →
-#           refund.request → refund.approve
-# 9 steps. 3.4 seconds. Zero copy-paste.
+Modern SaaS backends are multi-actor. To exercise *admin approves a customer
+refund*, you first authenticate as three different actors and create half a
+dozen prerequisite records — then copy IDs and bearer tokens between tabs
+until the request you actually wanted to test finally returns a 200.
+
+Reqloom treats the API as what it already is: a directed graph of resources,
+actors, and dependencies. You describe that graph once, in a file you can
+review in a pull request. After that, one command runs any node in it.
+
+```bash title="Terminal"
+reqloom run refund.approve --project samples/marketplace
 ```
 
-## Why teams switch
+```ansi title="Output"
+Loaded project: MarketplaceAPI (3 actors, 5 resources)
+Running: refund.approve (chain of 7 steps, env=local)
+  [1] Running: product.create (attempt 1)
+  [2] Running: product.publish (attempt 1)
+  [3] Running: cart.add_item (attempt 1)
+  [4] Running: order.create (attempt 1)
+  [5] Running: order.pay (attempt 1)
+  [6] Running: refund.request (attempt 1)
+  [7] Running: refund.approve (attempt 1)
+
+Result: SUCCEEDED
+```
+
+Seven requests across three actors — vendor, customer, admin — each logged in
+as needed. You asked for one endpoint and declared its prerequisites once.
+
+<p class="eyebrow">How it works</p>
+
+## Four ideas, and that's the whole model
+
+<Steps>
+
+1.  **Actors** own credentials. `admin`, `vendor`, `customer` — each with its
+    own auth flow, defined once. [Actors →](/concepts/actors/)
+
+2.  **Resources** group operations. A resource declares what it needs to
+    exist before it can be used. [Resources →](/concepts/resources/)
+
+3.  **Dependencies** are declared, not scripted. Reqloom topologically sorts
+    them and executes in order. [Resolution →](/concepts/dependencies/)
+
+4.  **Variables** carry values forward. Extract an ID from step 2, reference
+    it in step 6. [Variables →](/concepts/variables/)
+
+</Steps>
+
+<p class="eyebrow">What you get</p>
+
+## Built for the parts that usually hurt
 
 <CardGrid>
-    <Card title="Auto-resolved chains" icon="rocket">
-        Click any endpoint. The engine builds the prerequisite chain
-        from your schema and runs it in topological order.
+    <Card title="Chains resolved for you" icon="rocket">
+        Pick an endpoint. The engine walks your schema, builds the
+        prerequisite chain, and runs it in topological order — reusing
+        anything already satisfied.
     </Card>
-    <Card title="Multi-actor first" icon="setting">
-        Admin, vendor, customer, worker — each actor's auth flow is
-        defined once. No more re-logging in every morning.
+    <Card title="Multi-actor by default" icon="padlock">
+        Each actor's login, token refresh, and OTP flow lives in the schema.
+        Sessions are cached, so you don't re-authenticate every morning.
     </Card>
-    <Card title="One file, every environment" icon="document">
-        Local, staging, production. Same schema. Switch with `--env`.
+    <Card title="One schema, every environment" icon="setting">
+        Local, staging, production. Same file, different `--env`. Secrets stay
+        in your OS keychain, not in the schema.
     </Card>
-    <Card title="AI importer" icon="puzzle">
-        Generate a working schema from your OpenAPI spec, Markdown
-        docs, or pasted curl logs in ~5 minutes.
+    <Card title="Reviewable in a pull request" icon="code-branch">
+        Plain YAML. Diffs are readable, conflicts are resolvable, and the
+        schema lives next to the code it tests.
     </Card>
-    <Card title="Open core" icon="approve-check">
-        Apache 2.0 engine, CLI, schema, and desktop. No vendor lock-in.
+    <Card title="Importer for what you already have" icon="puzzle">
+        Turn an OpenAPI spec, a Postman collection, or a pasted curl log into
+        a runnable schema instead of retyping it.
     </Card>
-    <Card title="Local-first" icon="laptop">
-        Your project, schemas, and history live on your machine.
-        Nothing forced to the cloud.
+    <Card title="A desktop app and a CLI" icon="laptop">
+        Build and debug chains in the workbench — step timeline, response
+        inspection, dependency graph. Run them in CI with the same engine and
+        the same files.
+    </Card>
+    <Card title="Local-first, Apache 2.0" icon="approve-check">
+        The engine, CLI, schema, and desktop app are open source. Your
+        projects and run history stay on your machine.
     </Card>
 </CardGrid>
 
-## Quick install
+<p class="eyebrow">Positioning</p>
+
+## Where it sits next to the tools you know
+
+Postman, Bruno, and Insomnia are HTTP clients: excellent at composing and
+sending a single request. Reqloom is a workflow engine that happens to speak
+HTTP — the value is in what it does *between* requests.
+
+|                                | Postman | Bruno | Insomnia | Reqloom |
+| ------------------------------ | ------- | ----- | -------- | ------- |
+| Send a single request well     | <span class="yes">yes</span> | <span class="yes">yes</span> | <span class="yes">yes</span> | <span class="yes">yes</span> |
+| Auto-resolved request chains   | <span class="no">no</span> | <span class="no">no</span> | <span class="no">no</span> | <span class="yes">yes</span> |
+| First-class actor abstraction  | <span class="no">no</span> | <span class="no">no</span> | <span class="no">no</span> | <span class="yes">yes</span> |
+| Importer for arbitrary specs   | <span class="partial">partial</span> | <span class="no">no</span> | <span class="partial">partial</span> | <span class="yes">yes</span> |
+| Git-friendly schema files      | <span class="partial">partial</span> | <span class="yes">yes</span> | <span class="partial">partial</span> | <span class="yes">yes</span> |
+| Open source                    | <span class="no">no</span> | <span class="yes">yes</span> | <span class="partial">partial</span> | <span class="yes">yes</span> |
+| Local-first by default         | <span class="no">no</span> | <span class="yes">yes</span> | <span class="no">no</span> | <span class="yes">yes</span> |
+| CLI built for CI               | <span class="partial">partial</span> | <span class="yes">yes</span> | <span class="partial">partial</span> | <span class="yes">yes</span> |
+
+If your workflow is *one request at a time*, an HTTP client is the right
+tool and Reqloom is overhead. The trade pays off once a request has
+prerequisites.
+
+<p class="eyebrow">Install</p>
+
+## Getting it running
+
+Builds for macOS, Linux, and Windows are on the [releases
+page](https://github.com/Mirzabaig313/Reqloom/releases). The
+[installation guide](/start/install/) has direct links, checksums, and the
+first-launch steps each OS needs.
+
+<Aside type="caution" title="Alpha software">
+Reqloom is pre-1.0 and the builds are not yet signed with a paid certificate,
+so macOS and Windows will warn on first launch. [Installation](/start/install/)
+walks through it. Package managers (Homebrew, Scoop) come at v1.
+</Aside>
 
 <Tabs>
-    <TabItem label="macOS (Homebrew)">
+    <TabItem label="Download">
+        Pick your platform on the [installation
+        page](/start/install/#download) — a macOS `.dmg`, a Linux `.AppImage`,
+        or a Windows installer. Then confirm it works:
+
         ```bash
-        # Coming with v1 release. Today: build from source — see
-        # /dev/building/
-        brew install reqloom/tap/reqloom
-        ```
-    </TabItem>
-    <TabItem label="Linux">
-        ```bash
-        # AppImage:
-        curl -L https://github.com/Mirzabaig313/Reqloom/releases/latest/download/reqloom-linux-x86_64.AppImage -o reqloom
-        chmod +x reqloom
-        ```
-    </TabItem>
-    <TabItem label="Windows">
-        ```powershell
-        # Scoop:
-        scoop bucket add reqloom https://github.com/reqloom/scoop-bucket
-        scoop install reqloom
+        reqloom --help
         ```
     </TabItem>
     <TabItem label="Build from source">
         ```bash
         git clone https://github.com/Mirzabaig313/Reqloom
-        cd reqloom
-        cmake --preset macos-debug
+        cd Reqloom
+        ./tools/setup-qt.sh             # Qt 6.8 LTS via aqtinstall
+        cmake --preset macos-debug      # or linux-debug / windows-debug
         cmake --build --preset macos-debug
+        ./build/macos-debug/cli/reqloom --help
         ```
-        See [Building from source](/dev/building/) for the full prerequisites.
+        Needs CMake 4.0+, a C++23 compiler, and Qt 6.8 LTS. Full
+        prerequisites: [Building from source](/start/install/#build-from-source).
     </TabItem>
 </Tabs>
 
-## Compared to other tools
+<p class="eyebrow">Next</p>
 
-|                                | Postman | Bruno | Insomnia | **Reqloom** |
-|--------------------------------|---------|-------|----------|--------------|
-| Auto-resolved request chains   | ❌      | ❌    | ❌       | **✅**       |
-| First-class actor abstraction  | ❌      | ❌    | ❌       | **✅**       |
-| AI importer for any spec       | ❌      | ❌    | ❌       | **✅**       |
-| Git-friendly schema files      | partial | ✅    | partial  | **✅**       |
-| Open source                    | ❌      | ✅    | partial  | **✅**       |
-| Local-first by default         | ❌      | ✅    | ❌       | **✅**       |
-| CLI for CI/CD                  | partial | ✅    | partial  | **✅**       |
+## Pick a path
 
-## Where to next
-
-<CardGrid stagger>
-    <Card title="5-minute tour" icon="seti:smarty">
-        See Reqloom run the marketplace sample end-to-end.
-        [Take the tour →](/start/tour/)
+<CardGrid>
+    <Card title="See it run" icon="laptop">
+        The marketplace sample, end to end, with the resolver output
+        explained line by line.
+        [5-minute tour →](/start/tour/)
     </Card>
-    <Card title="Authoring guide" icon="open-book">
-        Learn the schema by example. From auth flows to dependency
-        chains. [Read the guide →](/schema/authoring/)
+    <Card title="Write your first schema" icon="pencil">
+        Auth flows, resources, and dependency chains, built up by example.
+        [Authoring guide →](/schema/authoring/)
     </Card>
-    <Card title="AI importer" icon="magnifier">
-        Convert your existing OpenAPI / Postman / curl into a
-        runnable schema. [Use the playbook →](/ai-importer/playbook/)
+    <Card title="Import an existing API" icon="magnifier">
+        OpenAPI, Postman, or raw curl into a runnable schema.
+        [Importer playbook →](/ai-importer/playbook/)
     </Card>
-    <Card title="Architecture" icon="setting">
-        How the engine resolves chains, caches sessions, and stays
-        Qt-UI-free. [Architecture →](/dev/architecture/)
+    <Card title="Look under the hood" icon="server">
+        How the resolver orders steps, caches sessions, and keeps the engine
+        free of any UI dependency.
+        [Architecture →](/dev/architecture/)
     </Card>
 </CardGrid>

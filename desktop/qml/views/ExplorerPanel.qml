@@ -1,4 +1,4 @@
-// ExplorerPanel — the project explorer (QML Migration Roadmap WS-A). A single
+// ExplorerPanel — the project explorer . A single
 // tree mirroring the old ProjectExplorerWidget: an "Actors" group and a
 // "Resources" group → resource folders → operation leaves (method badge + name)
 // → saved-example child rows. Live fuzzy filter (op id + method verb, empty
@@ -15,6 +15,7 @@ Rectangle {
     id: panel
 
     signal collapseRequested
+    signal newEndpointRequested(string resourceId)
 
     radius: 0
     color: DesignTokens.glassFill
@@ -94,16 +95,19 @@ Rectangle {
         }
     }
 
-    // Open the New Endpoint dialog (optionally pre-selecting a module). Lets
-    // other views (e.g. the centre endpoint-list empty state) trigger the same
-    // flow without owning a second dialog.
+    // Route endpoint creation to the workbench so the draft opens in the
+    // editor pane instead of covering the workspace with a modal.
     function openNewEndpoint(resourceId) {
-        newEndpointDialog.openFor(resourceId);
+        panel.newEndpointRequested(resourceId);
     }
     // Open the New Module dialog. Exposed so the command palette (Main) can
     // trigger it without reaching into this component's internal ids.
     function openNewModule() {
         newModuleDialog.openDialog();
+    }
+
+    function restoreFocus() {
+        searchField.forceActiveFocus();
     }
 
     // Human-readable label for the trailing operation status dot, so the colour
@@ -125,6 +129,51 @@ Rectangle {
             return qsTr("Last run cancelled");
         default:
             return hasChildren ? qsTr("Has saved responses — not run this session") : qsTr("Never run");
+        }
+    }
+
+    // A live session inside this window is treated as "expiring" so the dot warns
+    // before a chain fails on a lapsed token rather than after.
+    readonly property int sessionExpiringSeconds: 120
+
+    // ── Actor session indicator (FR-5.1) ─────────────────────────────────────
+    // Colour alone never carries the state; sessionDotTip names it in words.
+    function sessionDotColor(state, seconds) {
+        switch (state) {
+        case "live":
+            return seconds > 0 && seconds <= panel.sessionExpiringSeconds ? DesignTokens.statusWarning : DesignTokens.statusSuccess;
+        case "authenticating":
+        case "refreshing":
+            return DesignTokens.statusRunning;
+        default:
+            return DesignTokens.statusIdle;
+        }
+    }
+
+    // "1m 30s" / "45s" — coarse on purpose, since the value is re-read on a
+    // 15s tick rather than counted down continuously.
+    function sessionTtlText(seconds) {
+        if (seconds <= 0) {
+            return "";
+        }
+        if (seconds < 60) {
+            return qsTr("%1s").arg(seconds);
+        }
+        const mins = Math.floor(seconds / 60);
+        const rest = seconds % 60;
+        return rest === 0 ? qsTr("%1m").arg(mins) : qsTr("%1m %2s").arg(mins).arg(rest);
+    }
+
+    function sessionDotTip(state, seconds) {
+        switch (state) {
+        case "live":
+            return seconds > 0 ? qsTr("Signed in — expires in %1").arg(panel.sessionTtlText(seconds)) : qsTr("Signed in");
+        case "authenticating":
+            return qsTr("Signing in…");
+        case "refreshing":
+            return qsTr("Refreshing session…");
+        default:
+            return qsTr("Not signed in — the next run will authenticate");
         }
     }
 
@@ -278,10 +327,16 @@ Rectangle {
                 required property string tooltip
                 required property string projectRoot
                 required property int count
+                required property string countLabel
                 required property int status
                 required property string statusToken
+                required property string sessionState
+                required property int sessionSeconds
 
-                implicitHeight: 34
+                // Density floor (controlHeight) that grows with row content at
+                // large OS text instead of clipping. indentation stays 16 — a
+                // semantic hierarchy metric, not a density token.
+                implicitHeight: Math.max(DesignTokens.controlHeight, del.implicitContentHeight + DesignTokens.spaceXs * 2)
                 indentation: 16
 
                 readonly property bool isProject: kind === "project"
@@ -297,6 +352,10 @@ Rectangle {
                 // Live run-status token for this operation (running/success/error/…),
                 // for the trailing status dot. Empty when the op hasn't run.
                 readonly property string opRunToken: del.isOperation ? (AppController.chainStatus[del.operationId] || "") : ""
+                // True when this endpoint owns the timeline step being inspected,
+                // so the same request is identifiable in the tree, the chain
+                // graph, and the inspector at once.
+                readonly property bool inspectedStep: del.isOperation && AppController.timeline.selectedOperationId.length > 0 && del.operationId === AppController.timeline.selectedOperationId
 
                 onCurrentChanged: {
                     if (del.current) {
@@ -310,7 +369,11 @@ Rectangle {
                     anchors.topMargin: 1
                     anchors.bottomMargin: 1
                     radius: DesignTokens.radiusSm
-                    color: del.current ? DesignTokens.accentMuted : del.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
+                    // Inspected-but-not-current reads as a faint accent wash: a
+                    // full-row tint rather than a leading stripe, since coloured
+                    // side stripes are a banned pattern (DESIGN §15). Weaker than
+                    // `current` so keyboard focus stays the louder signal.
+                    color: del.current ? DesignTokens.accentMuted : del.inspectedStep ? Qt.rgba(DesignTokens.accent.r, DesignTokens.accent.g, DesignTokens.accent.b, 0.10) : del.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
                     border.width: del.current ? 1 : 0
                     border.color: del.current ? DesignTokens.accent : "transparent"
                     Behavior on color {
@@ -368,7 +431,7 @@ Rectangle {
                         Layout.alignment: Qt.AlignVCenter
                         text: del.name
                         color: del.isActiveProject ? DesignTokens.accent : (del.isExample ? DesignTokens.textSecondary : DesignTokens.textPrimary)
-                        font.pixelSize: DesignTokens.fontBody
+                        font.pointSize: DesignTokens.fontBodyPointSize
                         font.weight: (del.current || del.isProject) ? DesignTokens.weightSemiBold : DesignTokens.weightRegular
                         elide: Text.ElideRight
                         Layout.maximumWidth: implicitWidth
@@ -382,19 +445,30 @@ Rectangle {
                     }
                     // Child-count pill on folder rows (Actors 5, Resources 12…).
                     Rectangle {
-                        visible: del.count > 0 && !del.isOperation && !del.isExample
+                        // Secondary metadata: drop the child-count pill in a
+                        // very narrow (<240 DIP) sidebar so the name keeps room.
+                        visible: del.count > 0 && !del.isOperation && !del.isExample && panel.width >= 240
                         Layout.alignment: Qt.AlignVCenter
                         implicitHeight: 18
-                        implicitWidth: countLabel.implicitWidth + DesignTokens.spaceSm * 2
+                        implicitWidth: countText.implicitWidth + DesignTokens.spaceSm * 2
                         radius: DesignTokens.radiusSm
                         color: DesignTokens.surfaceSunken
                         Label {
-                            id: countLabel
+                            id: countText
                             anchors.centerIn: parent
                             text: del.count
                             color: DesignTokens.textSecondary
-                            font.pixelSize: DesignTokens.fontCaption
+                            font.pointSize: DesignTokens.fontCaptionPointSize
                             font.weight: DesignTokens.weightMedium
+                        }
+                        // The number alone is ambiguous ("GiGwala API · 2" —
+                        // two what?); the model names the unit it counted.
+                        HoverHandler {
+                            id: countHover
+                        }
+                        GlassToolTip {
+                            active: countHover.hovered && del.countLabel.length > 0
+                            text: del.countLabel
                         }
                     }
                     Item {
@@ -414,9 +488,31 @@ Rectangle {
                             anchors.centerIn: parent
                             text: del.status
                             color: parent.hue
-                            font.pixelSize: DesignTokens.fontCaption
+                            font.pointSize: DesignTokens.fontCaptionPointSize
                             font.weight: DesignTokens.weightSemiBold
                             font.family: DesignTokens.fontMono
+                        }
+                    }
+                    // Actor session dot (FR-5.1): green signed in, amber about to
+                    // lapse, accent while (re)authenticating, grey none. Answers
+                    // "why did this chain 401?" without opening the timeline.
+                    Rectangle {
+                        visible: del.isActor
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.rightMargin: DesignTokens.spaceSm
+                        implicitWidth: 8
+                        implicitHeight: 8
+                        radius: 4
+                        color: panel.sessionDotColor(del.sessionState, del.sessionSeconds)
+                        Behavior on color {
+                            ColorMotion {}
+                        }
+                        HoverHandler {
+                            id: sessionHover
+                        }
+                        GlassToolTip {
+                            active: sessionHover.hovered
+                            text: panel.sessionDotTip(del.sessionState, del.sessionSeconds)
                         }
                     }
                     // Operation status dot: live run status when available, else
@@ -508,7 +604,7 @@ Rectangle {
         id: addMenu
         GlassMenuItem {
             text: qsTr("New Endpoint…")
-            onTriggered: newEndpointDialog.openFor("")
+            onTriggered: panel.openNewEndpoint("")
         }
         GlassMenuItem {
             text: qsTr("New Module…")
@@ -541,7 +637,7 @@ Rectangle {
         id: resourceMenu
         GlassMenuItem {
             text: qsTr("New Endpoint…")
-            onTriggered: newEndpointDialog.openFor(panel.ctxResourceId)
+            onTriggered: panel.openNewEndpoint(panel.ctxResourceId)
         }
         MenuSeparator {}
         GlassMenuItem {
@@ -562,7 +658,7 @@ Rectangle {
         }
         GlassMenuItem {
             text: qsTr("New Endpoint…")
-            onTriggered: newEndpointDialog.openFor("")
+            onTriggered: panel.openNewEndpoint("")
         }
     }
     // Per-collection menu (right-click a Project node). The row's project was
@@ -571,7 +667,7 @@ Rectangle {
         id: projectMenu
         GlassMenuItem {
             text: qsTr("New Endpoint…")
-            onTriggered: newEndpointDialog.openFor("")
+            onTriggered: panel.openNewEndpoint("")
         }
         GlassMenuItem {
             text: qsTr("New Module…")
@@ -626,9 +722,6 @@ Rectangle {
     // ── Dialogs ──────────────────────────────────────────────────────────────
     NewModuleDialog {
         id: newModuleDialog
-    }
-    NewEndpointDialog {
-        id: newEndpointDialog
     }
 
     Dialog {
@@ -728,7 +821,7 @@ Rectangle {
         contentItem: Label {
             text: deleteDialog.targetKind === "resource" ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId) : (deleteDialog.targetKind === "actor" ? qsTr("Delete actor “%1”? Operations using it will become unauthenticated.").arg(deleteDialog.targetId) : qsTr("Delete endpoint “%1”?").arg(deleteDialog.targetId))
             color: DesignTokens.textPrimary
-            font.pixelSize: DesignTokens.fontBody
+            font.pointSize: DesignTokens.fontBodyPointSize
             wrapMode: Text.WordWrap
         }
 
@@ -838,7 +931,7 @@ Rectangle {
         contentItem: Label {
             text: qsTr("Delete saved example “%1”? This can't be undone.").arg(exampleDeleteDialog.targetName)
             color: DesignTokens.textPrimary
-            font.pixelSize: DesignTokens.fontBody
+            font.pointSize: DesignTokens.fontBodyPointSize
             wrapMode: Text.WordWrap
         }
 

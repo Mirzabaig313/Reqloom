@@ -1,8 +1,5 @@
-// StatusBadge — a small status pill (glyph + optional label) coloured from the
-// status vocabulary (QML Migration Roadmap WS-C). Mirrors the C++ StatusBadge
-// (DESIGN.md §6.1): colour is always paired with a glyph, never colour alone,
-// so colour-blind users can still distinguish states. The glyph + colour come
-// from DesignTokens so QML and C++ share one vocabulary.
+// Compact run-status instrument label. QML Migration Roadmap WS-C.
+// Semantic color is paired with a glyph and optional text, never used alone.
 import QtQuick
 import Reqloom
 
@@ -12,37 +9,82 @@ Rectangle {
     // Status vocabulary token: "running", "success", "warning", "error",
     // "skipped", "cancelled", "blocked", "idle", "neutral".
     required property string token
-    // Optional trailing label (e.g. "HTTP 200"). Empty → glyph only.
+    // Optional trailing label (e.g. "HTTP 200"). Empty means glyph-only.
     property string label: ""
+    readonly property color hue: ({
+            "running": DesignTokens.statusRunning,
+            "success": DesignTokens.statusSuccess,
+            "warning": DesignTokens.statusWarning,
+            "error": DesignTokens.statusError,
+            "cancelled": DesignTokens.statusCancelled,
+            "blocked": DesignTokens.statusBlocked,
+            "skipped": DesignTokens.statusSkipped,
+            "idle": DesignTokens.statusIdle,
+            "neutral": DesignTokens.statusIdle
+        })[token] || DesignTokens.statusIdle
+    readonly property string statusName: ({
+            "running": qsTr("Running"),
+            "success": qsTr("Success"),
+            "warning": qsTr("Warning"),
+            "error": qsTr("Error"),
+            "cancelled": qsTr("Cancelled"),
+            "blocked": qsTr("Blocked"),
+            "skipped": qsTr("Skipped"),
+            "idle": qsTr("Idle"),
+            "neutral": qsTr("Neutral")
+        })[token] || qsTr("Idle")
 
-    readonly property color hue: DesignTokens.statusColor(token)
-
-    implicitWidth: row.implicitWidth + DesignTokens.spaceSm * 2
-    implicitHeight: 20
+    implicitWidth: row.implicitWidth + DesignTokens.spaceXs * 2
+    implicitHeight: Math.max(20, row.implicitHeight + DesignTokens.spaceXs * 2)
     radius: DesignTokens.radiusSm
-    color: Qt.rgba(hue.r, hue.g, hue.b, 0.16)
-    Behavior on color {
-        ColorMotion {}
+    color: DesignTokens.surfaceSunken
+    border.width: 1
+    border.color: DesignTokens.borderSubtle
+
+    Accessible.role: Accessible.StaticText
+    Accessible.name: label.trim().length > 0 ? label.trim() : statusName
+    Accessible.description: {
+        const detail = label.trim();
+        return detail.length > 0 && detail.toLocaleLowerCase() !== statusName.toLocaleLowerCase() ? statusName : "";
     }
 
     Row {
         id: row
+
         anchors.centerIn: parent
-        spacing: 4
+        spacing: DesignTokens.spaceXs
+
         Text {
+            anchors.verticalCenter: parent.verticalCenter
             text: DesignTokens.statusGlyph(badge.token)
             color: badge.hue
-            font.pixelSize: DesignTokens.fontCaption
+            font.pointSize: DesignTokens.fontCaptionPointSize
             font.weight: DesignTokens.weightBold
-            anchors.verticalCenter: parent.verticalCenter
+            Accessible.ignored: true
         }
+
         Text {
+            anchors.verticalCenter: parent.verticalCenter
             visible: badge.label.length > 0
             text: badge.label
-            color: badge.hue
-            font.pixelSize: DesignTokens.fontCaption
+            color: DesignTokens.textPrimary
+            font.pointSize: DesignTokens.fontCaptionPointSize
+            font.family: DesignTokens.fontMono
             font.weight: DesignTokens.weightSemiBold
-            anchors.verticalCenter: parent.verticalCenter
+            Accessible.ignored: true
+        }
+    }
+
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        width: Math.max(0, Math.min(12, parent.width - DesignTokens.spaceXs * 2))
+        height: 2
+        radius: 1
+        color: badge.hue
+        Accessible.ignored: true
+        Behavior on color {
+            ColorMotion {}
         }
     }
 }

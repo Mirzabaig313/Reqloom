@@ -1,0 +1,61 @@
+---
+title: The import prompt
+description: "The full Reqloom import prompt, ready to copy. Paste it into any model, then paste your API description after it."
+---
+
+import { Code, Aside } from "@astrojs/starlight/components";
+// Read straight from the source file so this page can never drift from the
+// prompt that actually ships. See vite.server.fs.allow in astro.config.mjs.
+import promptSource from "../../../../../prompts/import/reqloom-import.md?raw";
+// Same file again as an emitted asset, so the download button serves the real
+// thing rather than a copy. Vite hashes the URL; `download` fixes the filename.
+import promptUrl from "../../../../../prompts/import/reqloom-import.md?url";
+
+Copy this, paste it into your model, then paste your API description — an OpenAPI
+spec, a Postman export, Markdown docs, or curl logs — after it.
+
+It returns a plan plus open questions first, then the YAML files. See
+[the workflow](/ai-importer/playbook/) for what to do with the output.
+
+{/* Labels stay on the same line as the tags: MDX turns a label on its own line
+    into a markdown paragraph, and a <p> nested inside the container is invalid
+    HTML that the browser splits. */}
+<div class="rl-actions not-content">
+  <a class="rl-btn rl-btn--primary" href={promptUrl} download="reqloom-import.md">Download reqloom-import.md</a>
+  <a class="rl-btn" href="https://github.com/Mirzabaig313/Reqloom/blob/main/prompts/import/reqloom-import.md">View on GitHub</a>
+</div>
+
+<Aside type="tip" title="Check the direct importer first">
+If your input is OpenAPI, Postman, Insomnia, Thunder Client, Hoppscotch, REST
+Client, or Bruno, [`reqloom import`](/cli/import/) converts it with no LLM and no
+cost. Use this prompt for unstructured input, or when you want actors and
+dependencies proposed.
+</Aside>
+
+<Code
+    code={promptSource}
+    lang="markdown"
+    title="prompts/import/reqloom-import.md"
+    frame="code"
+/>
+
+## Notes
+
+The prompt is deliberately long. Nearly all of it is the schema reference and a
+worked example, and that's the point — a model that can see the real key names,
+the eleven exact auth strategy values, and the reference grammar has very little
+left to invent. Shortening it trades directly against accuracy.
+
+Two rules in it do the heavy lifting:
+
+- **Never invent a path, field, or status code** — anything ungrounded goes under
+  Open questions instead. A plausible wrong `expect_status` looks correct and
+  fails on contact.
+- **Plan before YAML** — Part 1 is a five-minute review gate, where a wrong
+  assumption is one sentence rather than forty lines of buried YAML.
+
+## Licence
+
+This prompt is a designated paid component. It is **not** covered by the Apache
+2.0 licence over the engine, CLI, schema, and desktop app. See
+[`LICENSE`](https://github.com/Mirzabaig313/Reqloom/blob/main/LICENSE).

@@ -1,14 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+<!-- Favicon variant of the Reqloom loom mark: same interlace, inset on a tinted
+     plate so the mark holds against both light and dark browser chrome. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     fill="none">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#4a6cf7"/>
-      <stop offset="1" stop-color="#2c4ddb"/>
+    <linearGradient id="plate" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#12383F"/>
+      <stop offset="1" stop-color="#0A2429"/>
+    </linearGradient>
+    <linearGradient id="thread" x1="13" y1="13" x2="51" y2="51" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8BEDF0"/>
+      <stop offset="1" stop-color="#18A6B4"/>
     </linearGradient>
   </defs>
-  <circle cx="14" cy="14" r="6" fill="url(#g)"/>
-  <circle cx="50" cy="14" r="6" fill="url(#g)"/>
-  <circle cx="32" cy="50" r="6" fill="url(#g)"/>
-  <path d="M14 14 L32 50 M50 14 L32 50 M14 14 L50 14"
-        stroke="url(#g)" stroke-width="3" fill="none" stroke-linecap="round"/>
+
+  <rect width="64" height="64" rx="15" fill="url(#plate)"/>
+
+  <g stroke="url(#thread)" stroke-width="4.6" stroke-linecap="round">
+    <path d="M24 13V35"/>
+    <path d="M24 43.5V51"/>
+    <path d="M42 13V19"/>
+    <path d="M42 27.5V51"/>
+    <path d="M13 23H18"/>
+    <path d="M26.5 23H51"/>
+    <path d="M13 39.5H51"/>
+  </g>
+
+  <circle cx="42" cy="39.5" r="8" fill="url(#thread)"/>
 </svg>

@@ -13,13 +13,17 @@
 #include <reqloom/engine/Events.h>
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <support/TempPath.h>
 
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <system_error>
+#include <vector>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -50,6 +54,98 @@ private:
     // precision, so use a value that has none to start with.
     using namespace std::chrono;
     return system_clock::time_point{seconds{1748352000}};  // 2025-05-27T12:00:00Z
+}
+
+void insertLegacyDiagnosticRows(const fs::path& path) {
+    sqlite3* rawDatabase{};
+    const int openResult = sqlite3_open(path.string().c_str(), &rawDatabase);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database{rawDatabase, &sqlite3_close};
+    ASSERT_EQ(openResult, SQLITE_OK);
+
+    constexpr const char* kSql = R"SQL(
+        INSERT INTO runs (run_id, target_op, started_at) VALUES
+            (23, 'legacy.get', '2025-05-27T12:00:00Z');
+        INSERT INTO run_events
+            (run_id, seq, event_type, step_index, op_id, payload, at) VALUES
+            (23, 0, 'StepFailed', 0, 'legacy.get',
+             '{"op":"legacy.get","code":"E_VAR_UNRESOLVED","attempt":1,"detail":"legacy"}',
+             '2025-05-27T12:00:00Z'),
+            (23, 1, 'StepFailed', 1, 'legacy.get',
+             '{
+                "op":"legacy.get",
+                "code":"E_VAR_UNRESOLVED",
+                "attempt":1,
+                "detail":"future",
+                "diagnostics":[{
+                    "token":"future.token",
+                    "useKind":"FutureUse",
+                    "useName":"field",
+                    "cause":"FutureCause",
+                    "sourceKind":"FutureSource",
+                    "sourceId":"source",
+                    "sourceField":"value"
+                }]
+             }',
+             '2025-05-27T12:00:00Z');
+    )SQL";
+    char* rawError{};
+    const int result = sqlite3_exec(database.get(), kSql, nullptr, nullptr, &rawError);
+    const std::string error = rawError != nullptr ? rawError : "";
+    sqlite3_free(rawError);
+    ASSERT_EQ(result, SQLITE_OK) << error;
+}
+
+[[nodiscard]] ce::StepFailed diagnosticFailure() {
+    ce::StepFailed failure;
+    failure.runId = ce::RunId{9};
+    failure.stepIndex = 1;
+    failure.op = ce::OperationId{"x.y"};
+    failure.code = ce::ErrorCode::VarUnresolved;
+    failure.cls = ce::classify(ce::ErrorCode::VarUnresolved);
+    failure.attempt = 3;
+    failure.detail = "variable unavailable";
+    failure.at = someTimePoint();
+
+    ce::UnresolvedVariableDiagnostic environment;
+    environment.token = "env.ORDER_ID";
+    environment.useKind = ce::VariableUseKind::UrlPath;
+    environment.cause = ce::UnresolvedVariableCause::EnvironmentValueMissing;
+    environment.sourceKind = ce::VariableSourceKind::Environment;
+    environment.sourceId = "local";
+    environment.sourceField = "ORDER_ID";
+    failure.diagnostics.push_back(environment);
+
+    ce::UnresolvedVariableDiagnostic extraction;
+    extraction.token = "order.id";
+    extraction.useKind = ce::VariableUseKind::Auth;
+    extraction.useName = "Authorization";
+    extraction.cause = ce::UnresolvedVariableCause::ExtractionNull;
+    extraction.sourceKind = ce::VariableSourceKind::Extraction;
+    extraction.sourceId = "order";
+    extraction.sourceField = "id";
+    extraction.producerOp = ce::OperationId{"order.create"};
+    extraction.producerStepIndex = 0;
+    failure.diagnostics.push_back(extraction);
+    return failure;
+}
+
+void expectDiagnosticFailure(const ce::StepFailed& failure) {
+    EXPECT_EQ(failure.code, ce::ErrorCode::VarUnresolved);
+    EXPECT_EQ(failure.cls, ce::ErrorClass::Resolution);
+    EXPECT_EQ(failure.attempt, 3);
+    EXPECT_EQ(failure.detail, "variable unavailable");
+    ASSERT_EQ(failure.diagnostics.size(), 2u);
+    EXPECT_EQ(failure.diagnostics[0].token, "env.ORDER_ID");
+    EXPECT_EQ(failure.diagnostics[0].useKind, ce::VariableUseKind::UrlPath);
+    EXPECT_EQ(failure.diagnostics[0].cause, ce::UnresolvedVariableCause::EnvironmentValueMissing);
+    EXPECT_FALSE(failure.diagnostics[0].producerOp.has_value());
+    EXPECT_EQ(failure.diagnostics[1].useKind, ce::VariableUseKind::Auth);
+    EXPECT_EQ(failure.diagnostics[1].useName, "Authorization");
+    EXPECT_EQ(failure.diagnostics[1].cause, ce::UnresolvedVariableCause::ExtractionNull);
+    EXPECT_EQ(failure.diagnostics[1].sourceKind, ce::VariableSourceKind::Extraction);
+    ASSERT_TRUE(failure.diagnostics[1].producerOp.has_value());
+    EXPECT_EQ(failure.diagnostics[1].producerOp->value, "order.create");
+    EXPECT_EQ(failure.diagnostics[1].producerStepIndex, 0u);
 }
 
 }  // namespace
@@ -296,41 +392,61 @@ TEST(SqliteHistoryStore, captured_binary_body_round_trips_without_throwing) {
     EXPECT_EQ(*back->body, binary);
 }
 
-TEST(SqliteHistoryStore, step_failed_event_round_trips_with_error_code) {
+TEST(SqliteHistoryStore, step_failed_diagnostics_round_trip_with_optional_producer) {
     TempDb tmp;
     ce::SqliteHistoryStore store;
     ASSERT_TRUE(store.open(tmp.path()).has_value());
 
-    ce::RunStarted rs;
-    rs.runId = ce::RunId{9};
-    rs.target = ce::OperationId{"x.y"};
-    rs.at = someTimePoint();
-    store.append(rs);
+    ce::RunStarted started;
+    started.runId = ce::RunId{9};
+    started.target = ce::OperationId{"x.y"};
+    started.at = someTimePoint();
+    ASSERT_TRUE(store.append(started).has_value());
+    ASSERT_TRUE(store.append(diagnosticFailure()).has_value());
 
-    ce::StepFailed sf;
-    sf.runId = ce::RunId{9};
-    sf.stepIndex = 1;
-    sf.op = ce::OperationId{"x.y"};
-    sf.code = ce::ErrorCode::ExtractionFailed;
-    sf.cls = ce::classify(ce::ErrorCode::ExtractionFailed);
-    sf.attempt = 3;
-    sf.detail = "extract 'token' missed";
-    sf.at = someTimePoint();
-    ASSERT_TRUE(store.append(sf).has_value());
-
-    auto replayed = store.eventsFor(ce::RunId{9});
+    const auto replayed = store.eventsFor(ce::RunId{9});
     ASSERT_TRUE(replayed.has_value());
     ASSERT_EQ(replayed->size(), 2u);
 
-    const auto* sfBack = std::get_if<ce::StepFailed>(&(*replayed)[1]);
-    ASSERT_NE(sfBack, nullptr);
-    EXPECT_EQ(sfBack->code, ce::ErrorCode::ExtractionFailed);
-    EXPECT_EQ(sfBack->cls, ce::ErrorClass::Extraction);
-    EXPECT_EQ(sfBack->attempt, 3);
-    EXPECT_EQ(sfBack->detail, "extract 'token' missed");
+    const auto* failure = std::get_if<ce::StepFailed>(&(*replayed)[1]);
+    ASSERT_NE(failure, nullptr);
+    expectDiagnosticFailure(*failure);
 }
 
-TEST(SqliteHistoryStore, step_cancelled_and_session_refreshed_round_trip) {
+TEST(SqliteHistoryStore, legacy_and_unknown_diagnostics_replay_conservatively) {
+    TempDb tmp;
+    {
+        ce::SqliteHistoryStore schemaCreator;
+        ASSERT_TRUE(schemaCreator.open(tmp.path()).has_value());
+        schemaCreator.close();
+    }
+    insertLegacyDiagnosticRows(tmp.path());
+
+    ce::SqliteHistoryStore store;
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+    const auto replayed = store.eventsFor(ce::RunId{23});
+    ASSERT_TRUE(replayed.has_value());
+    ASSERT_EQ(replayed->size(), 2u);
+
+    const auto* legacy = std::get_if<ce::StepFailed>(&(*replayed)[0]);
+    ASSERT_NE(legacy, nullptr);
+    EXPECT_TRUE(legacy->diagnostics.empty());
+
+    const auto* future = std::get_if<ce::StepFailed>(&(*replayed)[1]);
+    ASSERT_NE(future, nullptr);
+    ASSERT_EQ(future->diagnostics.size(), 1u);
+    const auto& diagnostic = future->diagnostics.front();
+    EXPECT_EQ(diagnostic.token, "future.token");
+    EXPECT_EQ(diagnostic.useKind, ce::VariableUseKind::Unknown);
+    EXPECT_EQ(diagnostic.cause, ce::UnresolvedVariableCause::Unavailable);
+    EXPECT_EQ(diagnostic.sourceKind, ce::VariableSourceKind::Unknown);
+    EXPECT_EQ(diagnostic.sourceId, "source");
+    EXPECT_EQ(diagnostic.sourceField, "value");
+    EXPECT_FALSE(diagnostic.producerOp.has_value());
+    EXPECT_FALSE(diagnostic.producerStepIndex.has_value());
+}
+
+TEST(SqliteHistoryStore, blocked_cancelled_and_session_events_round_trip) {
     TempDb tmp;
     ce::SqliteHistoryStore store;
     ASSERT_TRUE(store.open(tmp.path()).has_value());
@@ -340,6 +456,14 @@ TEST(SqliteHistoryStore, step_cancelled_and_session_refreshed_round_trip) {
     rs.target = ce::OperationId{"x.y"};
     rs.at = someTimePoint();
     store.append(rs);
+
+    ce::StepBlocked blocked;
+    blocked.runId = ce::RunId{11};
+    blocked.stepIndex = 1;
+    blocked.op = ce::OperationId{"second.get"};
+    blocked.blockedByStepIndex = 0;
+    blocked.at = someTimePoint();
+    ASSERT_TRUE(store.append(blocked).has_value());
 
     ce::StepCancelled sc;
     sc.runId = ce::RunId{11};
@@ -357,13 +481,19 @@ TEST(SqliteHistoryStore, step_cancelled_and_session_refreshed_round_trip) {
 
     auto replayed = store.eventsFor(ce::RunId{11});
     ASSERT_TRUE(replayed.has_value());
-    ASSERT_EQ(replayed->size(), 3u);
+    ASSERT_EQ(replayed->size(), 4u);
 
-    const auto* scBack = std::get_if<ce::StepCancelled>(&(*replayed)[1]);
+    const auto* blockedBack = std::get_if<ce::StepBlocked>(&(*replayed)[1]);
+    ASSERT_NE(blockedBack, nullptr);
+    EXPECT_EQ(blockedBack->stepIndex, 1u);
+    EXPECT_EQ(blockedBack->op.value, "second.get");
+    EXPECT_EQ(blockedBack->blockedByStepIndex, 0u);
+
+    const auto* scBack = std::get_if<ce::StepCancelled>(&(*replayed)[2]);
     ASSERT_NE(scBack, nullptr);
     EXPECT_EQ(scBack->op.value, "first.get");
 
-    const auto* srBack = std::get_if<ce::SessionRefreshed>(&(*replayed)[2]);
+    const auto* srBack = std::get_if<ce::SessionRefreshed>(&(*replayed)[3]);
     ASSERT_NE(srBack, nullptr);
     EXPECT_EQ(srBack->actor.value, "vendor");
     EXPECT_EQ(srBack->trigger, ce::SessionRefreshed::Trigger::Unauthorized);

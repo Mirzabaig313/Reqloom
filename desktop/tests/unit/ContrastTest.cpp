@@ -4,7 +4,7 @@
 // for each pairing in both themes and asserts a ≥4.5:1 floor (AA for normal
 // text, §1.4.3). The foregrounds are solved to this ratio in Theme via
 // theming::oklchForContrast, so this test locks the solver's guarantee in.
-// Status badges also pair colour with a glyph (DESIGN.md §6.1), so colour is
+// Status badges also pair colour with a glyph, so colour is
 // never the sole signal.
 #include "theming/Color.h"
 #include "theming/Theme.h"

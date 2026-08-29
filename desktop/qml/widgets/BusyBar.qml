@@ -1,6 +1,6 @@
 // BusyBar — a thin indeterminate progress strip for long-running operations
 // (a request/chain run): a faint track with an accent segment sweeping across.
-// Token-driven; fades in/out with `running`. See doc/local/UI_improment.md §8.
+// Token-driven; fades in/out with `running`.
 import QtQuick
 import Reqloom
 

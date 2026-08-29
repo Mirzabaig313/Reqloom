@@ -31,7 +31,7 @@ struct PathEvalResult {
     if (path.empty() || body.empty()) {
         return {};
     }
-    // ponytail: header/status/cookie paths aren't in the JSON body, so we can't
+    //  header/status/cookie paths aren't in the JSON body, so we can't
     // confirm them here — stay neutral rather than flag a false "no match".
     // Upgrade path: validate these against the step's captured response
     // headers/status when a run has produced them.

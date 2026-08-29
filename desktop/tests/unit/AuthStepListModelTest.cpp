@@ -46,6 +46,18 @@ TEST(AuthStepListModel, rebuild_seeds_rows_and_exposes_fields) {
     EXPECT_EQ(pairs.front().first, QStringLiteral("challenge"));
 }
 
+TEST(EditableKeyValueModel, clearing_non_trailing_row_removes_it_and_keeps_ghost) {
+    EditableKeyValueModel model;
+    model.setPairs({{QStringLiteral("token"), QStringLiteral("value")}});
+
+    model.setKey(0, QString{});
+    model.setValue(0, QString{});
+
+    EXPECT_TRUE(model.pairs().empty());
+    ASSERT_EQ(model.rowCount(), 1);
+    EXPECT_TRUE(model.data(model.index(0), EditableKeyValueModel::IsGhostRole).toBool());
+}
+
 TEST(AuthStepListModel, setters_update_fields_via_data_roles) {
     AuthStepListModel model;
     model.rebuild({makeSeed("login", "POST", "/login")});

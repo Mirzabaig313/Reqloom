@@ -191,3 +191,66 @@ TEST(SecretLoading, dry_run_does_not_touch_the_secret_store) {
     ASSERT_TRUE(result.has_value()) << result.error().detail;
     EXPECT_TRUE(fakes.http->requests().empty());
 }
+
+TEST(SecretLoading, raw_query_templates_are_safe_and_structured_query_precedes_fragment) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("API_KEY", "ok&admin=true#");
+
+    auto project = makeProjectWithSecretHeader();
+    auto& operation = project.resources.at(ce::ResourceId{"item"}).operations.at("get");
+    operation.pathTemplate = "/search?x={{secret.API_KEY}}&x=fixed#results";
+    operation.queryParams["next"] = "a&b";
+
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_EQ(fakes.http->requests().size(), 1u);
+    EXPECT_EQ(fakes.http->requests().front().url,
+              "http://unused.test/search?x=ok%26admin%3Dtrue%23&x=fixed&next=a%26b#results");
+}
+
+TEST(SecretLoading, whole_path_reference_cannot_change_request_authority) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("API_KEY", "sk_live_zzz");
+
+    auto project = makeProjectWithSecretHeader();
+    project.environments["local"]["path"] = "@evil.test/collect";
+    auto& operation = project.resources.at(ce::ResourceId{"item"}).operations.at("get");
+    operation.pathTemplate = "{{env.path}}";
+
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->succeeded());
+    ASSERT_EQ(result->steps.size(), 1u);
+    EXPECT_EQ(result->steps.front().status, ce::StepResult::Status::Failed);
+    EXPECT_EQ(result->steps.front().error.value_or(ce::ErrorCode::Internal),
+              ce::ErrorCode::VarUnresolved);
+    EXPECT_TRUE(fakes.http->requests().empty())
+        << "a whole path reference must not change the baseUrl authority or dispatch X-Api-Key";
+}
+
+TEST(SecretLoading, missing_query_parameter_reference_fails_before_request) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("API_KEY", "sk_live_zzz");
+
+    auto project = makeProjectWithSecretHeader();
+    auto& operation = project.resources.at(ce::ResourceId{"item"}).operations.at("get");
+    operation.queryParams["next"] = "{{env.missing}}";
+
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->succeeded());
+    ASSERT_EQ(result->steps.size(), 1u);
+    EXPECT_EQ(result->steps.front().status, ce::StepResult::Status::Failed);
+    EXPECT_EQ(result->steps.front().error.value_or(ce::ErrorCode::Internal),
+              ce::ErrorCode::VarUnresolved);
+    EXPECT_TRUE(fakes.http->requests().empty());
+}

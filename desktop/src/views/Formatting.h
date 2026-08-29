@@ -9,19 +9,23 @@
 #include <reqloom/engine/RunContext.h>
 
 #include <QtCore/QString>
+#include <QtCore/QVariantList>
+
+#include <cstddef>
+#include <span>
 
 namespace reqloom::desktop::format {
 
 /// Uppercase HTTP verb, e.g. "POST".
 [[nodiscard]] QString method(engine::HttpMethod method);
 
-/// Status token a method verb is tinted with (DESIGN.md §6.2): GET/HEAD/OPTIONS
+/// Status token a method verb is tinted with : GET/HEAD/OPTIONS
 /// read as safe (success), POST as creation (running/cyan), DELETE as
 /// destructive (error), PUT/PATCH as mutation (warning). Shared by the explorer
 /// chips and the request address-bar pill so the vocabulary stays consistent.
 [[nodiscard]] theming::StatusToken methodStatusToken(const QString& method);
 
-/// HTTP method colour for a verb (DESIGN.md §6.2a) — a dedicated mnemonic hue
+/// HTTP method colour for a verb  — a dedicated mnemonic hue
 /// per method, distinct from the status palette. GET blue, POST green, PUT
 /// orange, PATCH yellow, DELETE red; HEAD/OPTIONS/unknown neutral. Shared by
 /// the explorer chips, the address-bar pill, and the execution-chain view.
@@ -44,5 +48,19 @@ namespace reqloom::desktop::format {
 
 /// Label for a skip reason ("session valid", "extraction cached").
 [[nodiscard]] QString skipReason(engine::SkipReason reason);
+
+/// Narrow an engine index to the timeline model's `int` contract.
+///
+/// Engine indexes are `std::size_t`; the model and QML speak `int`. Clamping
+/// (rather than casting) keeps a hostile or corrupt history index from wrapping
+/// to a negative row that would alias a real step.
+[[nodiscard]] int boundedIndex(std::size_t index) noexcept;
+
+/// Convert unresolved-variable evidence to ordered, value-free QML maps.
+///
+/// Producer indexes become one-based UI step numbers. The result contains
+/// source names and fields only; no resolved request or secret values.
+[[nodiscard]] QVariantList unresolvedDiagnostics(
+    std::span<const engine::UnresolvedVariableDiagnostic> diagnostics);
 
 }  // namespace reqloom::desktop::format

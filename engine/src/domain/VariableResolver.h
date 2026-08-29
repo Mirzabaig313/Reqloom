@@ -3,6 +3,7 @@
 #include <reqloom/engine/RunContext.h>
 #include <reqloom/engine/Transport.h>
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <string_view>
@@ -25,10 +26,42 @@ class VariableResolver {
 public:
     VariableResolver();
 
-    struct Result {
-        std::string output;                   ///< Substituted string.
-        std::vector<std::string> unresolved;  ///< {{X.y}} that could not resolve.
+    // Identifies where the unresolved token appeared. resolve() emits Value;
+    // resolveUrlPath() distinguishes path, raw query, and fragment components.
+    enum class Component : std::uint8_t {
+        Value,
+        UrlPath,
+        RawQuery,
+        Fragment,
     };
+
+    // token excludes `{{` and `}}`; duplicates are retained in encounter order.
+    struct UnresolvedOccurrence {
+        std::string token;
+        Component component{Component::Value};
+    };
+
+    struct Result {
+        std::string output;
+        // Retained as the token-only compatibility view of unresolvedOccurrences.
+        std::vector<std::string> unresolved;
+        std::vector<UnresolvedOccurrence> unresolvedOccurrences;
+    };
+
+    /// Resolve a URL path template without letting values add URL syntax.
+    ///
+    /// Literal URL bytes and separators remain unchanged. Resolved references
+    /// embedded in path segments or the raw query are percent-encoded while
+    /// existing `%HH` escapes stay intact. A reference that occupies the whole
+    /// path remains raw so response `Location` templates keep working.
+    ///
+    /// @param templateStr  Path, optional raw query, and optional fragment.
+    /// @param ctx          Current run state used for extracted values.
+    /// @param resolveCtx   Environment variables and secrets.
+    /// @return Resolved URL path and any unresolved references.
+    [[nodiscard]] Result resolveUrlPath(std::string_view templateStr,
+                                        const RunContext& ctx,
+                                        const ResolveContext& resolveCtx) const;
 
     /// Substitute every `{{X.y}}` reference. Unresolved references are
     /// listed; the caller decides whether to fail (live run) or surface

@@ -27,7 +27,10 @@ Rectangle {
     Behavior on opacity {
         FadeMotion {}
     }
-    width: Math.min(600, parent ? parent.width * 0.6 : 400)
+    // Cap the reading column, but never demand more than the window can give —
+    // the old 60%-of-parent rule squeezed messages into a tall narrow strip in
+    // a small window.
+    width: Math.max(0, Math.min(600, (parent ? parent.width : 400) - DesignTokens.spaceLg * 2))
     height: label.implicitHeight + DesignTokens.spaceMd * 2
     radius: DesignTokens.radiusSm
     color: toast.isError ? Qt.rgba(DesignTokens.statusError.r, DesignTokens.statusError.g, DesignTokens.statusError.b, 0.15) : DesignTokens.surfaceSunken

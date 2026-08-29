@@ -154,13 +154,23 @@ public:
                                       const QString& description,
                                       QString& error);
 
-    /// Create operation `name` under `resourceId` with the given method, path,
-    /// actor, and optional chain wiring (`dependencies` / `extractions`),
-    /// persist, and rebind. The draft is validated by the engine before
-    /// writing, so a dependency that would create a cycle (or an undefined
-    /// reference) is rejected and nothing changes on disk. On success returns
-    /// the new fully-qualified operation id so the caller can open it in the
-    /// editor; otherwise `error` carries a message. Emits `saved` on success.
+    /// Create `operation` under `resourceId` using `name` as its local id,
+    /// persist, and rebind. The supplied operation is preserved in full except
+    /// that its `id` and `resource` are set from the destination. The draft is
+    /// validated before writing, so failure leaves memory and disk unchanged.
+    ///
+    /// @return The fully-qualified operation id on success, or `std::nullopt`
+    /// with a human-readable message in `error` on failure.
+    [[nodiscard]] std::optional<engine::OperationId> createOperation(
+        const engine::ResourceId& resourceId,
+        const QString& name,
+        const engine::Operation& operation,
+        QString& error);
+
+    /// Create an operation with the given basic request and chain fields.
+    ///
+    /// Convenience overload for callers that do not have a complete operation.
+    /// Emits `saved` on success.
     [[nodiscard]] std::optional<engine::OperationId> createOperation(
         const engine::ResourceId& resourceId,
         const QString& name,

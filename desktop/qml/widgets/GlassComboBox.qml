@@ -8,17 +8,22 @@ import Reqloom
 
 ComboBox {
     id: control
-    implicitHeight: DesignTokens.controlHeight
-    padding: 0
+    implicitHeight: Math.max(DesignTokens.controlHeight, contentItem.implicitHeight + topPadding + bottomPadding)
+    leftPadding: 0
+    rightPadding: 0
+    topPadding: DesignTokens.spaceSm
+    bottomPadding: DesignTokens.spaceSm
     // A model row equal to this token renders as a non-interactive divider
     // (used to group long option lists). Combos that don't use it are
     // unaffected.
     readonly property string separatorToken: "──────────"
+    property var methodResolver: null
+    property real popupMaximumWidth: 420
     // Reserve room for the chevron via `spacing` (ComboBox lays the content out
     // to the left of the indicator) rather than padding the text, so the text
     // gets the full width up to the chevron and short values don't elide.
     spacing: DesignTokens.spaceSm
-    font.pixelSize: DesignTokens.fontLabel
+    font.pointSize: DesignTokens.fontLabelPointSize
     font.family: DesignTokens.fontSans
 
     background: Rectangle {
@@ -51,7 +56,7 @@ ComboBox {
 
     popup: Popup {
         y: control.height + 4
-        width: control.width
+        width: Math.min(control.width, control.popupMaximumWidth)
         implicitHeight: Math.min(popupList.contentHeight + 8, 340)
         padding: 4
 
@@ -83,20 +88,43 @@ ComboBox {
         required property var modelData
         readonly property string rowText: control.textRole && control.textRole.length > 0 ? row.model[control.textRole] : row.modelData
         readonly property bool isSeparator: row.rowText === control.separatorToken
+        readonly property string rowMethod: {
+            if (!control.methodResolver || row.isSeparator) {
+                return "";
+            }
+            const resolved = control.methodResolver(row.rowText);
+            return resolved ? resolved : "";
+        }
         width: ListView.view ? ListView.view.width : control.width
-        implicitHeight: row.isSeparator ? 9 : DesignTokens.controlHeight
+        implicitHeight: row.isSeparator ? 9 : Math.max(DesignTokens.controlHeight, rowLabel.implicitHeight + DesignTokens.spaceSm * 2)
         // Separators are inert: not clickable, not keyboard-selectable.
         enabled: !row.isSeparator
         padding: 0
         highlighted: !row.isSeparator && control.highlightedIndex === row.index
         contentItem: Item {
+            // Leading verb badge, when the host combo supplies a resolver. Fixed
+            // minimum width so the ids below it line up in a column.
+            MethodBadge {
+                id: rowBadge
+                visible: row.rowMethod.length > 0
+                method: row.rowMethod.length > 0 ? row.rowMethod : "GET"
+                minWidth: 54
+                anchors.left: parent.left
+                anchors.leftMargin: DesignTokens.spaceSm
+                anchors.verticalCenter: parent.verticalCenter
+            }
             Text {
-                anchors.fill: parent
+                id: rowLabel
+                anchors.left: rowBadge.visible ? rowBadge.right : parent.left
+                anchors.leftMargin: DesignTokens.spaceSm
+                anchors.right: parent.right
+                anchors.rightMargin: DesignTokens.spaceSm
+                anchors.verticalCenter: parent.verticalCenter
+                height: parent.height
                 visible: !row.isSeparator
-                leftPadding: DesignTokens.spaceSm
                 text: row.isSeparator ? "" : row.rowText
                 color: DesignTokens.textPrimary
-                font.pixelSize: DesignTokens.fontLabel
+                font.pointSize: DesignTokens.fontLabelPointSize
                 font.family: DesignTokens.fontSans
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight

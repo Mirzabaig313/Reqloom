@@ -41,6 +41,15 @@ QHash<int, QByteArray> SecretListModel::roleNames() const {
     return {{NameRole, "name"}, {StatusRole, "status"}, {DetailRole, "detail"}};
 }
 
+int SecretListModel::rowForName(const QString& name) const {
+    for (int row = 0; row < entries_.size(); ++row) {
+        if (entries_[row].name == name) {
+            return row;
+        }
+    }
+    return -1;
+}
+
 void SecretListModel::reload(const QList<SecretEntry>& entries) {
     beginResetModel();
     entries_ = entries;

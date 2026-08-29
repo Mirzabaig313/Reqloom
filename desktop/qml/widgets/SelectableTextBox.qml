@@ -28,7 +28,7 @@ Rectangle {
             selectByMouse: true
             persistentSelection: true
             textFormat: TextEdit.PlainText
-            wrapMode: TextArea.WrapAnywhere
+            wrapMode: TextArea.NoWrap
             text: box.text.length > 0 ? box.text : box.placeholder
             color: box.text.length > 0 ? DesignTokens.textPrimary : DesignTokens.textSecondary
             selectionColor: DesignTokens.accent

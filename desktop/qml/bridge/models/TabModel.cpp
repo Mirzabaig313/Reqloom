@@ -1,6 +1,7 @@
 // TabModel — see header.
 #include "TabModel.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace reqloom::desktop::qml {
@@ -20,7 +21,7 @@ QVariant TabModel::data(const QModelIndex& index, int role) const {
         case IdRole:
             return tab.id;
         case TitleRole:
-            return tab.title;
+            return displayTitle(index.row());
         case MethodRole:
             return tab.method;
         case SubtitleRole:
@@ -55,12 +56,37 @@ int TabModel::indexOf(TabState::Kind kind, const QString& id) const {
     return -1;
 }
 
-int TabModel::append(TabState state) {
-    const int row = static_cast<int>(tabs_.size());
-    beginInsertRows({}, row, row);
-    tabs_.push_back(std::move(state));
+QString TabModel::displayTitle(int index) const {
+    if (!valid(index)) {
+        return {};
+    }
+    const TabState& tab = tabs_.at(static_cast<std::size_t>(index));
+    // A draft has no saved name to qualify, and an actor tab has no module —
+    // both keep their bare label.
+    if (tab.module.isEmpty() || tab.operationDraft) {
+        return tab.title;
+    }
+    // Identity by address, not by index: every element lives in `tabs_`, so
+    // this is just "some other row shares my bare title".
+    const bool ambiguous = std::ranges::any_of(tabs_, [&tab](const TabState& other) {
+        return &other != &tab && other.title == tab.title;
+    });
+    return ambiguous ? tab.module + QLatin1Char('.') + tab.title : tab.title;
+}
+
+int TabModel::insert(int index, TabState state) {
+    if (index < 0 || index > count()) {
+        return -1;
+    }
+    beginInsertRows({}, index, index);
+    tabs_.insert(tabs_.begin() + static_cast<std::ptrdiff_t>(index), std::move(state));
     endInsertRows();
-    return row;
+    refreshTitles();
+    return index;
+}
+
+int TabModel::append(TabState state) {
+    return insert(count(), std::move(state));
 }
 
 void TabModel::move(int from, int to) {
@@ -83,6 +109,7 @@ void TabModel::removeAt(int index) {
     beginRemoveRows({}, index, index);
     tabs_.erase(tabs_.begin() + index);
     endRemoveRows();
+    refreshTitles();
 }
 
 void TabModel::clearAll() {
@@ -100,6 +127,16 @@ void TabModel::refreshRow(int index) {
     }
     const QModelIndex idx = createIndex(index, 0);
     emit dataChanged(idx, idx);
+    // A rename (draft promotion, actor save) can start or end a collision for
+    // some other row, so the rest of the strip re-reads its titles too.
+    refreshTitles();
+}
+
+void TabModel::refreshTitles() {
+    if (tabs_.empty()) {
+        return;
+    }
+    emit dataChanged(createIndex(0, 0), createIndex(count() - 1, 0), {TitleRole});
 }
 
 }  // namespace reqloom::desktop::qml

@@ -1,5 +1,5 @@
-// ProjectTreeFilterModel — the explorer's live filter (QML Migration Roadmap
-// WS-A). Wraps ProjectTreeModel and keeps an operation row when the query
+// ProjectTreeFilterModel — the explorer's live filter
+// Wraps ProjectTreeModel and keeps an operation row when the query
 // fuzzy-matches its id OR its method verb, plus every ancestor of a match
 // (recursive filtering). Reuses the pure FuzzyMatch matcher so the explorer
 // and the command palette rank consistently. Empty query shows everything.

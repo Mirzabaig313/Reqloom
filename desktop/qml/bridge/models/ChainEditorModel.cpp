@@ -69,9 +69,20 @@ void ChainEditorModel::rebuild(const std::vector<OpSeed>& seeds) {
         row.deps->setDependencies(seed.dependencies);
         row.extracts = std::make_unique<EditableKeyValueModel>(this);
         row.extracts->setPairs(seed.extractions);
+        const auto forwardEditorChange = [this]() {
+            emit editorChanged();
+        };
+        for (QAbstractItemModel* editor : {static_cast<QAbstractItemModel*>(row.deps.get()),
+                                           static_cast<QAbstractItemModel*>(row.extracts.get())}) {
+            connect(editor, &QAbstractItemModel::dataChanged, this, forwardEditorChange);
+            connect(editor, &QAbstractItemModel::rowsInserted, this, forwardEditorChange);
+            connect(editor, &QAbstractItemModel::rowsRemoved, this, forwardEditorChange);
+            connect(editor, &QAbstractItemModel::modelReset, this, forwardEditorChange);
+        }
         rows_.push_back(std::move(row));
     }
     endResetModel();
+    emit editorChanged();
 }
 
 std::vector<ChainEditorModel::OpSeed> ChainEditorModel::snapshotSeeds() const {
@@ -135,6 +146,7 @@ void ChainEditorModel::setForEachOver(int row, const QString& overResource) {
     target.forEachOver = overResource;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {ForEachOverRole});
+    emit editorChanged();
 }
 
 bool ChainEditorModel::forEachContinueOnErrorAt(int row) const {
@@ -155,5 +167,6 @@ void ChainEditorModel::setForEachContinueOnError(int row, bool continueOnError) 
     target.forEachContinueOnError = continueOnError;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {ForEachContinueOnErrorRole});
+    emit editorChanged();
 }
 }  // namespace reqloom::desktop::qml

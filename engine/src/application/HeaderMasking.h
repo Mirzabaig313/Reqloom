@@ -1,6 +1,6 @@
 // Redacts secret-bearing HTTP header values (and extraction-variable
 // values) before they reach the event stream or persisted history.
-// Secrets must never hit logs, telemetry, or disk — AGENTS.md security
+// Secrets must never hit logs, telemetry, or disk — security
 // rules.
 //
 // Policy: an exact allowlist (Authorization, Cookie, X-API-Key, …) plus

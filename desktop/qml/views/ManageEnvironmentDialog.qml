@@ -1,4 +1,4 @@
-// ManageEnvironmentDialog — Apidog-style environment manager: a left sidebar
+// ManageEnvironmentDialog —  environment manager: a left sidebar
 // lists every environment (coloured initials badge + name) with a "New
 // Environment" action; the right pane edits the selected environment's name and
 // variable table. Reuses AppController's env editor state (prepareEditEnvironment
@@ -19,9 +19,15 @@ Dialog {
     width: Math.min(920, Overlay.overlay ? Overlay.overlay.width - 64 : 920)
     height: Math.min(640, Overlay.overlay ? Overlay.overlay.height - 64 : 640)
     padding: 0
+    focus: true
+    // Opened from the env picker nothing was focused, so Escape and Enter had
+    // nothing to act on; put the caret in the name field like startNew() does.
+    onOpened: nameField.forceActiveFocus()
 
     // Original name of the env being edited ("" = a new, unsaved environment).
     property string editingOriginal: ""
+
+    signal navigationFailed(string message)
 
     function initials(s) {
         const t = (s || "").trim();
@@ -53,6 +59,22 @@ Dialog {
         selectEnv(target);
         open();
     }
+    function openSource(environmentName, key) {
+        if (AppController.environments.indexOf(environmentName) < 0) {
+            return false;
+        }
+        selectEnv(environmentName);
+        open();
+        Qt.callLater(function () {
+            if (key === "baseUrl") {
+                baseUrlField.forceActiveFocus();
+                baseUrlField.selectAll();
+            } else if (!variableEditor.ensureKeyAndFocus(key)) {
+                dialog.navigationFailed(qsTr("That environment variable could not be opened."));
+            }
+        });
+        return true;
+    }
     function persist(thenClose) {
         const ok = AppController.saveEnvironmentEdits(dialog.editingOriginal, nameField.text.trim());
         if (ok) {
@@ -73,8 +95,9 @@ Dialog {
     }
 
     header: Item {
-        implicitHeight: 44
+        implicitHeight: Math.max(44, envHeader.implicitHeight + DesignTokens.spaceSm * 2)
         RowLayout {
+            id: envHeader
             anchors.fill: parent
             anchors.leftMargin: DesignTokens.spaceLg
             anchors.rightMargin: DesignTokens.spaceSm
@@ -108,6 +131,10 @@ Dialog {
         // ── Sidebar ──
         Rectangle {
             Layout.preferredWidth: 248
+            // Give the variables table room in a narrow window rather than
+            // holding the sidebar at its preferred width.
+            Layout.minimumWidth: 160
+            Layout.maximumWidth: 248
             Layout.fillHeight: true
             color: DesignTokens.surfaceSunken
             ColumnLayout {
@@ -233,6 +260,12 @@ Dialog {
                     id: nameField
                     Layout.fillWidth: true
                     placeholderText: qsTr("local")
+                    // Enter runs the footer's primary action (Save & Close).
+                    onAccepted: {
+                        if (dialog.nameValid) {
+                            dialog.persist(true);
+                        }
+                    }
                 }
             }
 
@@ -240,6 +273,7 @@ Dialog {
                 text: qsTr("Base URL")
             }
             GlassTextField {
+                id: baseUrlField
                 Layout.fillWidth: true
                 text: AppController.editEnvBaseUrl
                 placeholderText: qsTr("http://localhost:3000")
@@ -263,6 +297,7 @@ Dialog {
                 clip: true
                 contentWidth: availableWidth
                 KeyValueEditorView {
+                    id: variableEditor
                     width: varsScroll.availableWidth
                     kvModel: AppController.editEnvVars
                     keyPlaceholder: qsTr("admin_email")
@@ -273,35 +308,46 @@ Dialog {
     }
 
     footer: Item {
-        implicitHeight: 60
+        implicitHeight: Math.max(60, envFooter.implicitHeight + DesignTokens.spaceLg * 2)
         RowLayout {
-            anchors.fill: parent
+            id: envFooter
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
             anchors.margins: DesignTokens.spaceLg
             spacing: DesignTokens.spaceSm
 
             GlassButton {
                 text: qsTr("Delete")
                 destructive: true
+                // Stay on the first line when the actions opposite it wrap.
+                Layout.alignment: Qt.AlignTop
                 enabled: dialog.editingOriginal.length > 0
                 onClicked: envConfirmDelete.open()
             }
-            Item {
+            // Right-to-left Flow so the three save/cancel actions wrap onto
+            // further lines instead of clipping when the footer is narrow,
+            // while Delete stays pinned left.
+            Flow {
                 Layout.fillWidth: true
-            }
-            GlassButton {
-                text: qsTr("Cancel")
-                onClicked: dialog.reject()
-            }
-            GlassButton {
-                text: qsTr("Save")
-                enabled: dialog.nameValid
-                onClicked: dialog.persist(false)
-            }
-            GlassButton {
-                text: qsTr("Save & Close")
-                primary: true
-                enabled: dialog.nameValid
-                onClicked: dialog.persist(true)
+                layoutDirection: Qt.RightToLeft
+                spacing: DesignTokens.spaceSm
+
+                GlassButton {
+                    text: qsTr("Save & Close")
+                    primary: true
+                    enabled: dialog.nameValid
+                    onClicked: dialog.persist(true)
+                }
+                GlassButton {
+                    text: qsTr("Save")
+                    enabled: dialog.nameValid
+                    onClicked: dialog.persist(false)
+                }
+                GlassButton {
+                    text: qsTr("Cancel")
+                    onClicked: dialog.reject()
+                }
             }
         }
     }
@@ -313,8 +359,10 @@ Dialog {
         enter: PopupEnter {}
         exit: PopupExit {}
         anchors.centerIn: Overlay.overlay
-        width: 400
+        width: Math.min(400, Overlay.overlay ? Overlay.overlay.width - 64 : 400)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
         padding: DesignTokens.spaceLg
+        focus: true
         title: qsTr("Delete environment")
         header: DialogHeader {
             title: qsTr("Delete environment")

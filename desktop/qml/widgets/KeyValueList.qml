@@ -31,29 +31,49 @@ Rectangle {
             required property string key
             required property string value
             width: ListView.view.width
-            height: 34
+            // Content-driven so the row grows with OS text instead of clipping;
+            // floored at the density control height.
+            height: Math.max(DesignTokens.controlHeight, kvRowLayout.implicitHeight + DesignTokens.spaceXs * 2)
             color: "transparent"
 
             RowLayout {
+                id: kvRowLayout
                 anchors.fill: parent
                 anchors.leftMargin: DesignTokens.spaceSm
                 anchors.rightMargin: DesignTokens.spaceSm
                 spacing: DesignTokens.spaceMd
                 Label {
+                    id: keyLabel
                     Layout.preferredWidth: parent.width * 0.34
                     text: kvRow.key
                     color: DesignTokens.textPrimary
                     font.pixelSize: DesignTokens.fontLabel
                     font.family: DesignTokens.fontMono
                     elide: Text.ElideRight
+                    // Elision hides the full value; reveal it on hover.
+                    HoverHandler {
+                        id: keyHover
+                    }
+                    GlassToolTip {
+                        active: keyHover.hovered && keyLabel.truncated
+                        text: kvRow.key
+                    }
                 }
                 Label {
+                    id: valueLabel
                     Layout.fillWidth: true
                     text: kvRow.value
                     color: DesignTokens.textSecondary
                     font.pixelSize: DesignTokens.fontLabel
                     font.family: DesignTokens.fontMono
                     elide: Text.ElideRight
+                    HoverHandler {
+                        id: valueHover
+                    }
+                    GlassToolTip {
+                        active: valueHover.hovered && valueLabel.truncated
+                        text: kvRow.value
+                    }
                 }
             }
 

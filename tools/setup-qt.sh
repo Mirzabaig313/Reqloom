@@ -50,7 +50,7 @@ if [[ -d "$qt_prefix" ]]; then
     echo "Qt ${QT_VERSION} already installed at: $qt_prefix"
 else
     echo "Installing Qt ${QT_VERSION} (${qt_platform}/${qt_arch}) into ${QT_DIR}..."
-    # Match the archives list used in CI (appveyor.yml / azure-pipelines.yml).
+    # Match the archives list used in CI (.github/workflows/build.yml).
     # Default also pulls qttools + qttranslations which add ~150 MB and
     # aren't used by Reqloom.
     extra_archives=()

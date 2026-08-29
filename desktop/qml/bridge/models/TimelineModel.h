@@ -1,7 +1,7 @@
-// TimelineModel — the live run timeline (QML Migration Roadmap WS-C). A flat
+// TimelineModel — the live run timeline . A flat
 // list model fed by ALL RunController signals; each streamed RunEvent appends
 // (or settles) a row, mirroring the old Widgets TimelinePanel's content and
-// its amber-not-red colouring for non-resolved extractions (DESIGN.md §2.5).
+// its amber-not-red colouring for non-resolved extractions (DESIGN..
 // C++ owns the rows; QML (TimelinePanel.qml) renders them.
 #pragma once
 
@@ -28,6 +28,22 @@ class TimelineModel : public QAbstractListModel {
     /// Summary + Freedman–Diaconis histogram of the run's latencies:
     /// `{ count, min, max, mean, median, p95, binWidth, start, bins:[int] }`.
     Q_PROPERTY(QVariantMap latencyStats READ latencyStats NOTIFY latenciesChanged)
+    /// Model row of the first causal failure, or -1 before any step fails.
+    Q_PROPERTY(int rootFailureRow READ rootFailureRow NOTIFY rootFailureChanged)
+
+    /// The step the inspector is pinned to, as a 1-based step number; `0` means
+    /// "follow the live run" and is the resting state. Owned here rather than in
+    /// QML so it rides along in `Snapshot` and is therefore per-tab for free.
+    ///
+    /// Writing a step that does not exist clears the selection instead of
+    /// pinning a dead step. QML must treat this as write-on-gesture /
+    /// read-for-render: never bind a view's `currentIndex` to it *and* assign it
+    /// back from that view's change handler, or the two form a loop.
+    Q_PROPERTY(int selectedStep READ selectedStep WRITE setSelectedStep NOTIFY selectionChanged)
+    /// Operation id owning `selectedStep`, or empty when nothing is selected.
+    /// Lets the chain graph and the explorer highlight the same operation the
+    /// timeline is showing without either of them knowing a timeline exists.
+    Q_PROPERTY(QString selectedOperationId READ selectedOperationId NOTIFY selectionChanged)
 
 public:
     /// Row kind, mirroring the RunEvent types the old TimelinePanel rendered.
@@ -48,15 +64,20 @@ public:
         IndexRole,                    ///< int: 1-based step number (0 for run-level rows)
         TitleRole,                    ///< QString: leading label (step name, "→ request", …)
         DetailRole,                   ///< QString: trailing descriptive text
-        StatusTokenRole,  ///< QString: status vocabulary token (→ DesignTokens colour)
-        StatusLabelRole,  ///< QString: short badge label ("running", "HTTP 200", …)
-        ValueRole,        ///< QString: tooltip payload (masked headers / full value)
-        MethodRole,       ///< QString: HTTP method for request rows ("GET"/"POST"); else empty
-        PathRole,         ///< QString: request URL path for request rows; else empty
-        SizeRole,         ///< QString: pre-formatted payload size ("66 B", "3.9 KB")
-        ClockRole,        ///< QString: wall-clock time the row was recorded ("10:24:10")
-        DurationRole,     ///< QString: pre-formatted duration (response rows + step totals)
-        SubLabelRole,     ///< QString: sub-step badge for child rows ("1.1", "1.2")
+        StatusTokenRole,    ///< QString: status vocabulary token (→ DesignTokens colour)
+        StatusLabelRole,    ///< QString: short badge label ("running", "HTTP 200", …)
+        ValueRole,          ///< QString: tooltip payload (masked headers / full value)
+        MethodRole,         ///< QString: HTTP method for request rows ("GET"/"POST"); else empty
+        PathRole,           ///< QString: request URL path for request rows; else empty
+        SizeRole,           ///< QString: pre-formatted payload size ("66 B", "3.9 KB")
+        ClockRole,          ///< QString: wall-clock time the row was recorded ("10:24:10")
+        DurationRole,       ///< QString: pre-formatted duration (response rows + step totals)
+        SubLabelRole,       ///< QString: sub-step badge for child rows ("1.1", "1.2")
+        OpRole,             ///< QString: owning operation id on step + extraction rows
+        VariableNameRole,   ///< QString: bare extracted variable on extraction rows; else empty
+        DiagnosticsRole,    ///< QVariantList: ordered, value-free unresolved-variable evidence
+        BlockedByStepRole,  ///< int: 1-based causal step for blocked rows; else 0
+        RootFailureRole,    ///< bool: true only for the first causal failure row
     };
 
 private:
@@ -74,6 +95,11 @@ private:
         QString clockText;     ///< Request + response rows.
         QString durationText;  ///< Response rows + step-header totals.
         QString subLabel;      ///< Child rows: "1.1", "1.2", …
+        QString op;            ///< Step + extraction rows: the owning operation id.
+        QString variableName;  ///< Extraction rows: the bare extracted variable name.
+        QVariantList diagnostics;
+        int blockedByStep{0};
+        bool rootFailure{false};
     };
 
 public:
@@ -92,6 +118,8 @@ public:
         int runChainSize{0};
         QString runEnv;
         int runStartRow{-1};
+        int rootFailureRow{-1};
+        int selectedStep{0};
     };
 
     explicit TimelineModel(QObject* parent = nullptr);
@@ -102,10 +130,21 @@ public:
 
     [[nodiscard]] QVariantList latencyBars() const { return latencyBars_; }
     [[nodiscard]] QVariantMap latencyStats() const;
+    [[nodiscard]] int rootFailureRow() const noexcept { return rootFailureRow_; }
 
     /// Model row of the step header for a 1-based step number, or -1 if absent.
     /// Lets the sparkline scroll the timeline to a clicked bar's step.
     [[nodiscard]] Q_INVOKABLE int rowForStep(int stepNumber) const;
+
+    /// 1-based step number that ran `operationId`, or 0 when this run has no such
+    /// step. Lets a consumer named on one row be jumped to on another.
+    [[nodiscard]] Q_INVOKABLE int stepForOperation(const QString& operationId) const;
+
+    [[nodiscard]] int selectedStep() const { return selectedStep_; }
+    /// Pin the inspector to a 1-based step. `0`, or any step with no row,
+    /// clears the selection. No-ops (and emits nothing) when unchanged.
+    void setSelectedStep(int stepNumber);
+    [[nodiscard]] QString selectedOperationId() const;
 
     /// Copy out the full timeline state (for a tab about to be backgrounded).
     [[nodiscard]] Snapshot takeSnapshot() const;
@@ -114,6 +153,10 @@ public:
 
 signals:
     void latenciesChanged();
+    void rootFailureChanged();
+    /// Emitted when `selectedStep` changes, and after a snapshot restore (the
+    /// step number can survive while the operation under it differs).
+    void selectionChanged();
 
 public slots:
     // One slot per RunController signal. Signatures match the signals so the
@@ -132,7 +175,9 @@ public slots:
                                QString outcome,
                                QString value);
     void onAssertionCompleted(int index, QString op, QString name, QString expr, bool passed);
-    void onStepFailed(int index, QString op, QString code, QString detail);
+    void onStepFailed(
+        int index, QString op, QString code, QString detail, QVariantList diagnostics);
+    void onStepBlocked(int index, QString op, int blockedByIndex);
     void onRunEnded(QString outcome);
 
     /// Clear all rows (a fresh run is starting, or a project loaded).
@@ -142,6 +187,7 @@ private:
     /// Find the existing top-level step row for `index`, or append one. Mirrors
     /// the old TimelinePanel::stepRow so streamed events settle the same row.
     [[nodiscard]] int stepRowFor(int index, const QString& op);
+    [[nodiscard]] QVariantList prepareDiagnostics(QVariantList diagnostics) const;
     void appendRow(Row row);
     /// QModelIndex for row position `at`. A named helper avoids the `index()`
     /// member being shadowed by the `int index` slot parameters.
@@ -166,6 +212,10 @@ private:
     // Position of the run header row, so onRunEnded can settle its stale
     // "running" badge to the final outcome instead of leaving it spinning.
     int runStartRow_{-1};
+    // First causal failure row for immediate reveal; later blocked rows never replace it.
+    int rootFailureRow_{-1};
+    // 1-based pinned step; 0 = follow the live run.
+    int selectedStep_{0};
 };
 
 }  // namespace reqloom::desktop::qml

@@ -26,6 +26,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QScopedValueRollback>
 #include <QtCore/QSet>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QStringList>
@@ -35,6 +36,7 @@
 #include <QtWidgets/QFileDialog>
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -48,6 +50,28 @@
 
 #include "AppControllerInternal.h"
 namespace reqloom::desktop::qml {
+
+namespace {
+
+/// How often a live session's remaining TTL is re-read for the explorer dot.
+constexpr int kSessionTickMs = 15'000;
+
+/// Engine session state → the token the explorer's dot switches on.
+[[nodiscard]] QString sessionStateToken(engine::ActorSession::State state) {
+    switch (state) {
+        case engine::ActorSession::State::Live:
+            return QStringLiteral("live");
+        case engine::ActorSession::State::Authenticating:
+            return QStringLiteral("authenticating");
+        case engine::ActorSession::State::Refreshing:
+            return QStringLiteral("refreshing");
+        case engine::ActorSession::State::None:
+            break;
+    }
+    return QStringLiteral("none");
+}
+
+}  // namespace
 
 AppController::AppController(QObject* parent)
     : QObject(parent),
@@ -145,7 +169,13 @@ AppController::AppController(QObject* parent)
         refreshHistory();
         // A run may have absorbed Set-Cookie headers into the actor jars.
         emit cookiesChanged();
+        // A run is the only thing that authenticates an actor, so the explorer's
+        // session dots can only have changed here.
+        refreshActorSessions();
     });
+
+    sessionTicker_.setInterval(kSessionTickMs);
+    connect(&sessionTicker_, &QTimer::timeout, this, &AppController::refreshActorSessions);
 
     // Bridge ALL streamed RunController signals into the timeline model so the
     // panel mirrors the old Widgets TimelinePanel (steps, requests, responses,
@@ -178,6 +208,10 @@ AppController::AppController(QObject* parent)
             &TimelineModel::onAssertionCompleted);
     connect(
         runController_.get(), &RunController::stepFailed, &timeline_, &TimelineModel::onStepFailed);
+    connect(runController_.get(),
+            &RunController::stepBlocked,
+            &timeline_,
+            &TimelineModel::onStepBlocked);
     connect(runController_.get(), &RunController::runEnded, &timeline_, &TimelineModel::onRunEnded);
 
     // Live per-node status for the chain graph. Run events carry an operation
@@ -220,12 +254,21 @@ AppController::AppController(QObject* parent)
                     emit chainStatusChanged();
                 }
             });
+    connect(
+        runController_.get(),
+        &RunController::stepFailed,
+        this,
+        [this](int index, const QString& op, const QString&, const QString&, const QVariantList&) {
+            runStepOp_.insert(index, op);
+            chainStatus_.insert(op, QStringLiteral("error"));
+            emit chainStatusChanged();
+        });
     connect(runController_.get(),
-            &RunController::stepFailed,
+            &RunController::stepBlocked,
             this,
-            [this](int index, const QString& op, const QString&, const QString&) {
+            [this](int index, const QString& op, int) {
                 runStepOp_.insert(index, op);
-                chainStatus_.insert(op, QStringLiteral("error"));
+                chainStatus_.insert(op, QStringLiteral("blocked"));
                 emit chainStatusChanged();
             });
 
@@ -236,9 +279,9 @@ AppController::AppController(QObject* parent)
     // bound, function-pointer form (auto-disconnect on destruction).
     const auto onEditModelChanged = [this]() {
         emit editChanged();
+        emit chainChanged();
     };
     for (QAbstractItemModel* model : {static_cast<QAbstractItemModel*>(&editHeaders_),
-                                      static_cast<QAbstractItemModel*>(&editQuery_),
                                       static_cast<QAbstractItemModel*>(&editForm_),
                                       static_cast<QAbstractItemModel*>(&editExtractions_),
                                       static_cast<QAbstractItemModel*>(&editAssertions_)}) {
@@ -247,6 +290,40 @@ AppController::AppController(QObject* parent)
         connect(model, &QAbstractItemModel::rowsRemoved, this, onEditModelChanged);
         connect(model, &QAbstractItemModel::modelReset, this, onEditModelChanged);
     }
+    const auto applyQueryPath = [this](QString path) {
+        if (path == editPath_) {
+            return;
+        }
+        QScopedValueRollback<int> querySync{querySyncDepth_, querySyncDepth_ + 1};
+        editPath_ = std::move(path);
+        emit editChanged();
+        emit chainChanged();
+    };
+    connect(&editQuery_,
+            &QAbstractItemModel::dataChanged,
+            this,
+            [this, applyQueryPath](const QModelIndex& topLeft) {
+                if (querySyncDepth_ > 0 || !topLeft.isValid()) {
+                    return;
+                }
+                const std::pair<QString, QString> pair{
+                    editQuery_.data(topLeft, EditableKeyValueModel::KeyRole).toString(),
+                    editQuery_.data(topLeft, EditableKeyValueModel::ValueRole).toString()};
+                applyQueryPath(visiblePathWithUpdatedQueryPair(
+                    editPath_, static_cast<std::size_t>(topLeft.row()), pair));
+            });
+    connect(&editQuery_,
+            &QAbstractItemModel::rowsRemoved,
+            this,
+            [this, applyQueryPath](const QModelIndex&, int first, int last) {
+                if (querySyncDepth_ > 0) {
+                    return;
+                }
+                applyQueryPath(
+                    visiblePathWithoutQueryPairs(editPath_,
+                                                 static_cast<std::size_t>(first),
+                                                 static_cast<std::size_t>(last - first + 1)));
+            });
     const auto onDepsChanged = [this]() {
         emit editChanged();
         emit chainChanged();
@@ -254,17 +331,9 @@ AppController::AppController(QObject* parent)
     connect(&editDependencies_, &QAbstractItemModel::dataChanged, this, onDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::rowsInserted, this, onDepsChanged);
 
-    // Keep the New Endpoint dialog's per-dependency extraction editors in sync
-    // with its chosen dependencies.
-    const auto onNewDepsChanged = [this]() {
-        rebuildNewEndpointDepExtracts();
-    };
-    connect(&newEndpointDeps_, &QAbstractItemModel::dataChanged, this, onNewDepsChanged);
-    connect(&newEndpointDeps_, &QAbstractItemModel::rowsInserted, this, onNewDepsChanged);
-    connect(&newEndpointDeps_, &QAbstractItemModel::rowsRemoved, this, onNewDepsChanged);
-    connect(&newEndpointDeps_, &QAbstractItemModel::modelReset, this, onNewDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::rowsRemoved, this, onDepsChanged);
     connect(&editDependencies_, &QAbstractItemModel::modelReset, this, onDepsChanged);
+    connect(&chainEditor_, &ChainEditorModel::editorChanged, this, onDepsChanged);
 
     // Toggle the active tab's dirty dot as its edit mode opens/closes.
     connect(this, &AppController::editingChanged, this, &AppController::updateActiveTabDirty);
@@ -348,15 +417,20 @@ void AppController::bindProject(ProjectModel* project) {
             Qt::UniqueConnection);
 }
 
+bool AppController::canLeaveActiveProject() {
+    const int draftIndex = operationDraftIndex();
+    if (draftIndex < 0) {
+        return true;
+    }
+    activateTab(draftIndex);
+    emit notify(tr("Save or discard the new endpoint before changing projects."), true);
+    return false;
+}
+
 void AppController::openProjectPath(const QString& path) {
     if (path.isEmpty()) {
         return;
     }
-    if (runController_->isRunning()) {
-        emit notify(tr("Finish the current run before opening another project."), true);
-        return;
-    }
-
     // Canonicalize so dedup + persistence use a stable key that matches
     // ProjectModel::rootPath() after the load.
     std::error_code ec;
@@ -364,9 +438,17 @@ void AppController::openProjectPath(const QString& path) {
         std::filesystem::weakly_canonical(std::filesystem::path{path.toStdString()}, ec);
     const QString canonical = ec ? path : QString::fromStdString(canon.string());
 
-    // Already open? Just activate it — no duplicate collections.
+    // Already open? Just activate it — no duplicate collections. Activation is
+    // a no-op for the current project, so an open draft does not block it.
     if (const int existing = workspace_->indexOfRoot(canonical); existing >= 0) {
         activateProject(existing);
+        return;
+    }
+    if (runController_->isRunning()) {
+        emit notify(tr("Finish the current run before opening another project."), true);
+        return;
+    }
+    if (!canLeaveActiveProject()) {
         return;
     }
 
@@ -401,8 +483,14 @@ void AppController::activateProject(int index) {
     if (index < 0 || index >= workspace_->count()) {
         return;
     }
+    if (index == workspace_->activeIndex()) {
+        return;
+    }
     if (runController_->isRunning()) {
         emit notify(tr("Finish the current run before switching projects."), true);
+        return;
+    }
+    if (!canLeaveActiveProject()) {
         return;
     }
     workspace_->setActiveIndex(index);
@@ -420,6 +508,9 @@ void AppController::closeProject(int index) {
     const bool wasActive = index == workspace_->activeIndex();
     if (runController_->isRunning() && wasActive) {
         emit notify(tr("Finish the current run before closing this project."), true);
+        return;
+    }
+    if (wasActive && !canLeaveActiveProject()) {
         return;
     }
     workspace_->removeProject(index);
@@ -473,6 +564,9 @@ void AppController::populateWorkspaceTree() {
         }
     }
     tree_.populate(entries, examples);
+    // populate() resets the tree, so re-apply the session snapshot the fresh
+    // actor rows should show (a project switch keeps its own context's logins).
+    refreshActorSessions();
 }
 
 void AppController::selectFirstModule() {
@@ -583,6 +677,9 @@ bool AppController::activateForRow(const QString& projectRoot) {
     if (runController_->isRunning()) {
         emit notify(tr("Finish the current run before switching projects."), true);
         return false;  // can't switch mid-run
+    }
+    if (!canLeaveActiveProject()) {
+        return false;
     }
     workspace_->setActiveIndex(idx);
     persistActiveProject();
@@ -804,7 +901,7 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
     const QString dirPath =
         targetDir.isLocalFile() ? targetDir.toLocalFile() : targetDir.toString();
 
-    // Parse + verify + write off the GUI thread (AGENTS.md threading rule): a
+    // Parse + verify + write off the GUI thread: a
     // large spec can take noticeable time. These engine free functions touch
     // no shared engine state, so running them concurrently with the GUI is
     // safe. The worker captures only owned copies (no `this`); the result is
@@ -902,6 +999,9 @@ void AppController::onSaved() {
             selectedActorDescription_ = actorDescription(selectedActorId_);
             selectedActorStrategy_ = actorAuthLabel(selectedActorId_);
             emit actorSelectionChanged();
+        } else if (tabs_.valid(activeTabIndex_) &&
+                   tabs_.stateAt(activeTabIndex_).kind == TabState::Kind::Actor) {
+            closeTabImmediately(activeTabIndex_);
         } else {
             clearActorSelection();
         }
@@ -924,7 +1024,7 @@ void AppController::onSaved() {
 
     // Refresh the open operation's read fields from the saved project, but only
     // when not editing (re-selecting would discard an in-progress edit).
-    if (!editing_ && !openModule.isEmpty() && !openOp.isEmpty()) {
+    if (!creatingOperation_ && !editing_ && !openModule.isEmpty() && !openOp.isEmpty()) {
         const auto& resources = activeProject().project().resources;
         const auto it = resources.find(engine::ResourceId{openModule.toStdString()});
         if (it != resources.end() && it->second.operations.contains(openOp.toStdString())) {
@@ -950,16 +1050,25 @@ void AppController::selectActor(const QString& projectRoot, const QString& actor
 }
 
 void AppController::clearActorSelection() {
-    if (!hasActor_) {
+    const bool deactivatingActorTab{tabs_.valid(activeTabIndex_) &&
+                                    tabs_.stateAt(activeTabIndex_).kind == TabState::Kind::Actor};
+    if (!deactivatingActorTab && !hasActor_) {
         return;
+    }
+    if (deactivatingActorTab) {
+        captureActiveTab();
+        activeTabIndex_ = -1;
     }
     hasActor_ = false;
     selectedActorId_.clear();
     emit actorSelectionChanged();
+    if (deactivatingActorTab) {
+        persistOpenTabs();
+        emit activeTabChanged();
+    }
 }
 
 void AppController::selectModule(const QString& moduleName) {
-    clearActorSelection();
     if (!activeProject().hasProject()) {
         return;
     }
@@ -968,6 +1077,7 @@ void AppController::selectModule(const QString& moduleName) {
     if (it == resources.end()) {
         return;
     }
+    clearActorSelection();
     selectedModule_ = moduleName;
     operations_.reload(it->second);
     closeOperation();
@@ -981,8 +1091,20 @@ void AppController::selectOperation(const QString& moduleName, const QString& op
 }
 
 void AppController::closeOperation() {
-    if (!hasOperation_ && opName_.isEmpty()) {
+    const bool deactivatingOperationTab{tabs_.valid(activeTabIndex_) &&
+                                        tabs_.stateAt(activeTabIndex_).kind ==
+                                            TabState::Kind::Operation};
+    const bool parkingOperationDraft{deactivatingOperationTab &&
+                                     tabs_.stateAt(activeTabIndex_).operationDraft};
+    if (!deactivatingOperationTab && !hasOperation_ && opName_.isEmpty()) {
         return;
+    }
+    if (deactivatingOperationTab) {
+        captureActiveTab();
+        activeTabIndex_ = -1;
+        if (parkingOperationDraft) {
+            clearNewOperationDraftIdentity();
+        }
     }
     hasOperation_ = false;
     opName_.clear();
@@ -1002,6 +1124,10 @@ void AppController::closeOperation() {
     chainFieldsLoaded_ = false;
     emit operationChanged();
     emit chainChanged();
+    if (deactivatingOperationTab) {
+        persistOpenTabs();
+        emit activeTabChanged();
+    }
 }
 
 void AppController::setEnvironment(const QString& env) {
@@ -1034,20 +1160,42 @@ void AppController::runSelected(bool clean, bool dryRun) {
     runController_->run(target, environment_, clean, dryRun);
 }
 
+void AppController::setNewOperationName(const QString& name) {
+    if (newOperationName_ == name) {
+        return;
+    }
+    newOperationName_ = name;
+    if (tabs_.valid(activeTabIndex_)) {
+        TabState& tab = tabs_.stateAt(activeTabIndex_);
+        if (tab.operationDraft) {
+            tab.opName = name;
+            const QString trimmed = name.trimmed();
+            tab.title = trimmed.isEmpty() ? tr("New endpoint") : trimmed;
+            tabs_.refreshRow(activeTabIndex_);
+        }
+    }
+    emit editChanged();
+    emit chainChanged();
+}
+
 void AppController::setEditMethod(const QString& method) {
     if (method == editMethod_) {
         return;
     }
     editMethod_ = method;
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditPath(const QString& path) {
     if (path == editPath_) {
         return;
     }
+    QScopedValueRollback<int> querySync{querySyncDepth_, querySyncDepth_ + 1};
     editPath_ = path;
+    editQuery_.setPairs(queryPairsFromVisiblePath(editPath_));
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditActor(const QString& actor) {
@@ -1061,6 +1209,7 @@ void AppController::setEditActor(const QString& actor) {
         editAuthType_ = QStringLiteral("none");
     }
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditExpectStatus(const QString& expectStatus) {
@@ -1069,6 +1218,7 @@ void AppController::setEditExpectStatus(const QString& expectStatus) {
     }
     editExpectStatus_ = expectStatus;
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditTimeout(int timeoutMs) {
@@ -1093,6 +1243,7 @@ void AppController::setEditBody(const QString& body) {
     }
     editBody_ = body;
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditBodyIsForm(bool isForm) {
@@ -1101,6 +1252,7 @@ void AppController::setEditBodyIsForm(bool isForm) {
     }
     editBodyIsForm_ = isForm;
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setEditBodyType(const QString& type) {
@@ -1127,6 +1279,7 @@ void AppController::setEditBodyType(const QString& type) {
         setManagedContentType(desired);
     }
     emit editChanged();
+    emit chainChanged();
 }
 
 void AppController::setManagedContentType(const QString& desired) {
@@ -1527,7 +1680,7 @@ QString AppController::pickFile(const QString& title, const QString& nameFilter)
 }
 
 void AppController::beginEdit() {
-    if (!hasOperation_ || !activeProject().hasProject()) {
+    if (creatingOperation_ || !hasOperation_ || !activeProject().hasProject()) {
         return;
     }
     const auto* op =
@@ -1539,7 +1692,13 @@ void AppController::beginEdit() {
     // Seed every editable control from the operation so a fresh edit starts as
     // a faithful copy the user then tweaks.
     editMethod_ = methodLabel(op->method);
-    editPath_ = QString::fromStdString(op->pathTemplate);
+    const auto persistedQuery{toEditPairs(op->queryParams)};
+    {
+        QScopedValueRollback<int> querySync{querySyncDepth_, querySyncDepth_ + 1};
+        editPath_ = visiblePathWithAppendedQueryPairs(QString::fromStdString(op->pathTemplate),
+                                                      persistedQuery);
+        editQuery_.setPairs(queryPairsFromVisiblePath(editPath_));
+    }
     editActor_ = QString::fromStdString(op->actor.value);
 
     // Inline (actor-less) auth: seed from the op, or reset to "none".
@@ -1651,7 +1810,6 @@ void AppController::beginEdit() {
     editForce_ = op->force;
 
     editHeaders_.setPairs(toEditPairs(op->headers));
-    editQuery_.setPairs(toEditPairs(op->queryParams));
 
     // Infer the body kind so the selector lands on the right tab. The
     // Content-Type header disambiguates raw kinds (json/xml/text) and multipart
@@ -1733,6 +1891,10 @@ void AppController::cancelEdit() {
     if (!editing_) {
         return;
     }
+    if (creatingOperation_) {
+        closeTab(activeTabIndex_);
+        return;
+    }
     editing_ = false;
     emit editingChanged();
     emit chainChanged();
@@ -1782,6 +1944,11 @@ std::optional<engine::InlineAuth> AppController::buildInlineAuthFromEdit() const
 }
 
 void AppController::saveProjectDefaultAuth() {
+    if (creatingOperation_) {
+        emit notify(QStringLiteral("Save the endpoint before changing the project default auth."),
+                    true);
+        return;
+    }
     if (!activeProject().hasProject()) {
         emit notify(QStringLiteral("Open a project first"), true);
         return;
@@ -1815,9 +1982,6 @@ RequestOverride AppController::buildOverride() const {
     ov.path = editPath_;
     for (const auto& [key, value] : editHeaders_.pairs()) {
         ov.headers.insert_or_assign(key.toStdString(), value.toStdString());
-    }
-    for (const auto& [key, value] : editQuery_.pairs()) {
-        ov.queryParams.insert_or_assign(key.toStdString(), value.toStdString());
     }
     ov.actor = editActor_;
     ov.expectStatus = editExpectStatus_;
@@ -1864,11 +2028,37 @@ RequestOverride AppController::buildOverride() const {
         }
         ov.assertions.push_back(std::move(assertion));
     }
+
+    // A transient operation has no persisted target to re-seed from. Its Chain
+    // tab is therefore the source of truth for depends_on and extract until the
+    // single endpoint Save publishes the complete operation.
+    if (creatingOperation_) {
+        const QString targetId = currentOperationId();
+        for (int i = 0; i < chainEditor_.count(); ++i) {
+            if (chainEditor_.operationIdAt(i) != targetId) {
+                continue;
+            }
+            ov.dependencies = chainEditor_.depModelAt(i)->dependencies();
+            ov.extractions.clear();
+            for (const auto& [variable, sourcePath] : chainEditor_.extractModelAt(i)->pairs()) {
+                if (sourcePath.isEmpty()) {
+                    continue;
+                }
+                engine::Extraction extraction;
+                extraction.variableName = variable.toStdString();
+                extraction.sourcePath = sourcePath.toStdString();
+                extraction.source = sourceForPath(extraction.sourcePath);
+                ov.extractions.push_back(std::move(extraction));
+            }
+            break;
+        }
+    }
+    ov.normalizePathQuery();
     return ov;
 }
 
 void AppController::applyAndRun(bool clean, bool dryRun) {
-    if (!hasOperation_ || running_) {
+    if (creatingOperation_ || !hasOperation_ || running_) {
         return;
     }
     const QString target = selectedModule_ + '.' + opName_;
@@ -1876,6 +2066,10 @@ void AppController::applyAndRun(bool clean, bool dryRun) {
 }
 
 void AppController::saveOperation() {
+    if (creatingOperation_) {
+        saveNewOperation();
+        return;
+    }
     if (!hasOperation_ || !activeProject().hasProject()) {
         return;
     }
@@ -2052,10 +2246,15 @@ void AppController::resetCaches() {
         return;
     }
     runController_->resetCaches();
+    // Every session just went away; clear the explorer dots to match.
+    refreshActorSessions();
     emit notify(QStringLiteral("Session + extraction caches cleared"), false);
 }
 
 QString AppController::currentOperationId() const {
+    if (creatingOperation_) {
+        return newOperationDraftId_;
+    }
     if (!hasOperation_ || selectedModule_.isEmpty() || opName_.isEmpty()) {
         return {};
     }
@@ -2154,6 +2353,34 @@ void AppController::refreshOpenOpExamples() {
         exampleList_.clear();
     } else {
         exampleList_.setExamples(exampleStore_.list(opId));
+    }
+}
+
+void AppController::refreshActorSessions() {
+    QMap<QString, ProjectTreeModel::ActorSessionRow> rows;
+    bool anyLive = false;
+
+    if (runController_ && activeProject().hasProject()) {
+        const QString root = projectRoot();
+        for (const auto& [actorId, unusedActor] : activeProject().project().actors) {
+            const RunController::ActorSessionInfo info = runController_->sessionInfo(actorId);
+            if (info.state == engine::ActorSession::State::Live) {
+                anyLive = true;
+            }
+            rows.insert(ProjectTreeModel::sessionKey(root, QString::fromStdString(actorId.value)),
+                        ProjectTreeModel::ActorSessionRow{sessionStateToken(info.state),
+                                                          info.secondsRemaining});
+        }
+    }
+    tree_.setActorSessions(std::move(rows));
+
+    // Nothing authenticated means nothing to count down.
+    if (anyLive) {
+        if (!sessionTicker_.isActive()) {
+            sessionTicker_.start();
+        }
+    } else {
+        sessionTicker_.stop();
     }
 }
 

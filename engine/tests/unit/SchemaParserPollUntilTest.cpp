@@ -706,7 +706,7 @@ resources:
 TEST(SchemaParserHooks, rejects_path_traversal_outside_project_root) {
     // Containment check fires on `../../etc/passwd`-style patterns
     // even when the canonicalised target exists.
-    // AGENTS.md "Reading user input" §"Path inputs".
+    //  "Reading user input" §"Path inputs".
     ScratchDir scratch;
 
     const auto yaml = scratch.write("reqloom.yaml", R"YAML(

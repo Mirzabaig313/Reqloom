@@ -404,7 +404,7 @@ resources:
 
 // ─── Resource-exhaustion guards (untrusted YAML is an attacker surface) ──────
 //
-// AGENTS.md §"Reading user input" names reqloom.yaml as attacker-controlled
+// §"Reading user input" names reqloom.yaml as attacker-controlled
 // and requires depth + document-size caps before parsing. These tests feed
 // the parser hostile input and assert it fails cleanly with a YamlParse error
 // rather than exhausting memory or overflowing the stack.

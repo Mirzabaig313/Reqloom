@@ -760,6 +760,20 @@ std::optional<engine::OperationId> ProjectModel::createOperation(
     const std::vector<engine::OperationId>& dependencies,
     const std::vector<engine::Extraction>& extractions,
     QString& error) {
+    engine::Operation operation;
+    operation.actor = actor;
+    operation.method = method;
+    operation.pathTemplate = pathTemplate.trimmed().toStdString();
+    operation.explicitDependencies = dependencies;
+    operation.extractions = extractions;
+    return createOperation(resourceId, name, operation, error);
+}
+
+std::optional<engine::OperationId> ProjectModel::createOperation(
+    const engine::ResourceId& resourceId,
+    const QString& name,
+    const engine::Operation& operation,
+    QString& error) {
     if (!project_) {
         error = QStringLiteral("No project loaded.");
         return std::nullopt;
@@ -787,19 +801,13 @@ std::optional<engine::OperationId> ProjectModel::createOperation(
         return std::nullopt;
     }
 
-    engine::Operation op;
-    op.id = engine::OperationId{resourceId.value + "." + trimmed};
-    op.resource = resourceId;
-    op.actor = actor;
-    op.method = method;
-    op.pathTemplate = pathTemplate.trimmed().toStdString();
-    op.explicitDependencies = dependencies;
-    op.extractions = extractions;
-    resIt->second.operations[trimmed] = std::move(op);
+    const engine::OperationId newId{resourceId.value + "." + trimmed};
+    engine::Operation complete = operation;
+    complete.id = newId;
+    complete.resource = resourceId;
+    resIt->second.operations[trimmed] = std::move(complete);
 
-    // Validate the draft before writing: a dependency that forms a cycle (or an
-    // undefined reference from the path template) is caught here, so a bad
-    // create never lands a project that won't reload.
+    // Validate before writing so invalid references or cycles never reach disk.
     if (auto valid = engine::validateProject(draft); !valid) {
         error = QString::fromStdString(valid.error().detail);
         return std::nullopt;
@@ -809,7 +817,6 @@ std::optional<engine::OperationId> ProjectModel::createOperation(
         error = QString::fromStdString(written.error().detail);
         return std::nullopt;
     }
-    engine::OperationId newId{resourceId.value + "." + trimmed};
     project_ = std::make_shared<const engine::Project>(std::move(draft));
     emit saved();
     return newId;
