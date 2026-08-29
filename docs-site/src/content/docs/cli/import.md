@@ -46,7 +46,7 @@ drives an LLM through a multi-stage prompt suite instead.
 ## Example
 
 ```bash
-reqloom import RHP-School-API.postman_collection.json --out school-api
+reqloom import school-api.postman_collection.json --out school-api
 ```
 
 ```ansi

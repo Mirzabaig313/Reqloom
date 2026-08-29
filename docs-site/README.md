@@ -134,13 +134,54 @@ Two constraints worth knowing before editing an SVG here:
 invalid names fail silently and render an empty box, so verify against that
 file rather than guessing.
 
-## Migrating canonical content
+## Writing rule: verify against the binary
 
-Some sections (the schema authoring guide, AI importer playbook) have
-a canonical version in `doc/local/` and a copy in `docs-site/`. The
-copy in `docs-site/` is the one users see. When updating, edit the
-`docs-site/` version; the `doc/local/` version is kept for offline
-reference but should be considered secondary.
+**Document what the code does, not what the design docs intend.** A large share of
+the original pages described features that were never implemented — a `--dry-run`
+flag, a `secrets:` block, `$.random`, named header parsers — because they were
+written from the spec rather than from the program.
+
+Before documenting a flag, run it. Before documenting output, paste the real
+thing. The parser
+(`engine/src/infrastructure/schema/YamlSchemaParser.cpp`) is the authority on
+which schema keys exist: if a key isn't read there, it isn't supported.
+
+Useful commands while writing:
+
+```bash
+../build/macos-debug/cli/reqloom --help
+../build/macos-debug/cli/reqloom lint --project ../samples/marketplace
+../build/macos-debug/cli/reqloom run refund.approve --project ../samples/marketplace --format json
+```
+
+To capture realistic failure output without a backend, copy the sample project,
+strip its `!secret` values, and set `transport: { connect_timeout: 30ms }` — the
+chain then fails fast instead of burning the retry budget.
+
+## Don't link to unpublished paths
+
+Several working documents are kept private and are **not** in the public
+repository — the PRD, the engine requirement, the implementation tracker,
+`validation/`, and anything under `doc/local/` or `.kiro/`. Only
+`doc/Reqloom - Project Layout.md` is tracked out of `doc/`.
+
+A page that links to one of those is a dead end for every reader. Before adding a
+repository link, confirm the file is actually published:
+
+```bash
+git ls-files --error-unmatch <path>     # non-zero means it is private
+```
+
+Safe to link: `engine/`, `cli/`, `desktop/`, `cmake/`, `tools/`, `samples/`,
+`prompts/import/`, `.github/workflows/`, `LICENSE`, `SECURITY.md`.
+
+Where a private document is the source of a fact, state the fact and drop the
+link — "an internal audit records 60 of 92 requirements done" rather than a URL
+that 404s.
+
+`scripts/scaffold-stubs.sh` generated the original placeholder pages. Every page
+now has real content, so it should only be needed when adding a new nav section;
+it skips files that already exist.
 
 ## Why Astro Starlight
 

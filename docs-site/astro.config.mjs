@@ -184,10 +184,6 @@ export default defineConfig({
                         { label: "Schema spec", slug: "reference/schema-spec" },
                         { label: "Variable syntax", slug: "reference/variables" },
                         { label: "Error codes", slug: "reference/error-codes" },
-                        {
-                            label: "Engine requirement (full spec)",
-                            slug: "reference/engine-requirement",
-                        },
                     ],
                 },
                 {
