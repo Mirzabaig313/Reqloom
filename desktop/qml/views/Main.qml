@@ -663,6 +663,17 @@ ApplicationWindow {
         onNewProjectRequested: newProjectDialog.openDialog()
         onOpenProjectRequested: folderDialog.open()
         onImportRequested: importSpecDialog.open()
+        onEnvironmentSourceRequested: (environmentName, key) => {
+            if (!manageEnvironmentDialog.openSource(environmentName, key)) {
+                toast.show(qsTr("That environment no longer exists."), true);
+            }
+        }
+        onSecretSourceRequested: name => {
+            if (!secretsDialog.openSource(name)) {
+                toast.show(qsTr("That secret no longer exists."), true);
+            }
+        }
+        onDiagnosticNavigationFailed: message => toast.show(message, true)
     }
 
     // ── Toast overlay (bottom centre) ──────────────────────────────────────
@@ -1184,6 +1195,7 @@ ApplicationWindow {
 
     ManageEnvironmentDialog {
         id: manageEnvironmentDialog
+        onNavigationFailed: message => toast.show(message, true)
     }
     SecretsDialog {
         id: secretsDialog

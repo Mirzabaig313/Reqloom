@@ -32,6 +32,7 @@
 #include <QtCore/QSettings>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
+#include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QVariant>
 
@@ -1095,6 +1096,10 @@ private:
     /// dropdown — does not touch the explorer tree (so selecting an operation
     /// doesn't reset/collapse the TreeView). Called on every selection.
     void refreshOpenOpExamples();
+    /// Push the active project's per-actor session state into the explorer tree
+    /// (FR-5.1), and start or stop `sessionTicker_` so a live session's TTL
+    /// counts down without polling when nothing is authenticated.
+    void refreshActorSessions();
     /// Re-seed the open operation's edit-mode depends_on / extract models from
     /// the project. Keeps the endpoint editor's Save (buildOverride) and the
     /// "EXECUTION CHAIN" preview in sync after the Chain tab's "Save chain"
@@ -1161,6 +1166,12 @@ private:
     ResourceListModel resources_;
     OperationListModel operations_;
     ProjectTreeModel tree_;
+    // Re-reads actor session TTLs so the explorer's amber "expiring" dot ages
+    // truthfully. Runs only while some actor holds a live session.
+    // ponytail: a 15s poll, not an engine expiry callback. Ceiling — the dot can
+    // lag reality by up to 15s. Upgrade path: have RunContext emit on session
+    // state change and drop the timer.
+    QTimer sessionTicker_;
     ProjectTreeFilterModel treeFilter_;
     TimelineModel timeline_;
     HistoryModel history_;

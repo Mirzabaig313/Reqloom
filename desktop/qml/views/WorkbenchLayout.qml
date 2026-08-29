@@ -20,6 +20,9 @@ Item {
     signal openProjectRequested
     signal importRequested
     signal endpointSaveConfirmationClosed
+    signal environmentSourceRequested(string environmentName, string key)
+    signal secretSourceRequested(string name)
+    signal diagnosticNavigationFailed(string message)
 
     readonly property int _railSize: 32
     readonly property int _handleSize: 6
@@ -64,6 +67,27 @@ Item {
 
     function closeEndpointSaveConfirmation() {
         requestEditor.closeSaveConfirmation();
+    }
+
+    function editDiagnosticSource(action) {
+        if (!action || action.canEditSource !== true) {
+            return;
+        }
+        if (action.editKind === "environment") {
+            environmentSourceRequested(action.editId, action.editField);
+        } else if (action.editKind === "secret") {
+            secretSourceRequested(action.editId);
+        } else if (action.editKind === "actor") {
+            if (AppController.actorNames.indexOf(action.editId) < 0) {
+                diagnosticNavigationFailed(qsTr("That actor no longer exists."));
+            } else {
+                AppController.requestActorEdit(AppController.projectRoot, action.editId);
+            }
+        } else if (action.editKind === "extraction") {
+            if (!requestEditor.openExtractionSource(action.editOperationId, action.editField)) {
+                diagnosticNavigationFailed(qsTr("The operation for that extraction no longer exists."));
+            }
+        }
     }
 
     function restoreFocusAfterDraftDiscard() {
@@ -375,6 +399,20 @@ Item {
             root.responseCollapsed = false;
             responsePanel.showTimeline();
         }
+        function onOperationChanged() {
+            root.historyReplayActive = false;
+        }
+        function onProjectChanged() {
+            root.historyReplayActive = false;
+        }
+        function onActiveTabChanged() {
+            root.historyReplayActive = false;
+        }
+        function onRunningChanged() {
+            if (AppController.running) {
+                root.historyReplayActive = false;
+            }
+        }
     }
 
     SplitView {
@@ -521,6 +559,16 @@ Item {
                     enabled: visible
                 }
 
+                // The derived chain, always visible above the editor rather than
+                // behind the Chain tab. Self-hides for a dependency-free endpoint,
+                // so a plain request loses no vertical space.
+                ChainStrip {
+                    id: chainStrip
+                    anchors.top: editorTabs.visible ? editorTabs.bottom : parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                }
+
                 EmptyState {
                     visible: !requestEditor.creating && !AppController.hasOperation && !AppController.hasActor && AppController.resourceCount === 0
                     enabled: visible
@@ -635,7 +683,7 @@ Item {
 
                 RequestEditor {
                     id: requestEditor
-                    anchors.top: editorTabs.visible ? editorTabs.bottom : parent.top
+                    anchors.top: chainStrip.visible ? chainStrip.bottom : (editorTabs.visible ? editorTabs.bottom : parent.top)
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
@@ -643,6 +691,7 @@ Item {
                     visible: requestEditor.creating || AppController.hasOperation
                     enabled: visible
                     onSaveConfirmationClosed: root.endpointSaveConfirmationClosed()
+                    onDiagnosticNavigationFailed: message => root.diagnosticNavigationFailed(message)
                 }
 
                 ActorDetail {
@@ -679,6 +728,12 @@ Item {
                     onCloseRequested: root.responseCollapsed = true
                     onToggleStackRequested: root.orientationMode = root._responseStacked ? "horizontal" : "vertical"
                     onSetStackedRequested: value => root.orientationMode = value ? "vertical" : "horizontal"
+                    onOpenRequestFieldRequested: (operationId, field, key) => {
+                        if (!requestEditor.openRequestField(operationId, field, key)) {
+                            root.diagnosticNavigationFailed(qsTr("The operation for that diagnostic no longer exists."));
+                        }
+                    }
+                    onEditSourceRequested: action => root.editDiagnosticSource(action)
                 }
 
                 Rectangle {

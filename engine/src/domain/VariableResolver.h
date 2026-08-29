@@ -3,6 +3,7 @@
 #include <reqloom/engine/RunContext.h>
 #include <reqloom/engine/Transport.h>
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <string_view>
@@ -25,9 +26,26 @@ class VariableResolver {
 public:
     VariableResolver();
 
+    // Identifies where the unresolved token appeared. resolve() emits Value;
+    // resolveUrlPath() distinguishes path, raw query, and fragment components.
+    enum class Component : std::uint8_t {
+        Value,
+        UrlPath,
+        RawQuery,
+        Fragment,
+    };
+
+    // token excludes `{{` and `}}`; duplicates are retained in encounter order.
+    struct UnresolvedOccurrence {
+        std::string token;
+        Component component{Component::Value};
+    };
+
     struct Result {
-        std::string output;                   ///< Substituted string.
-        std::vector<std::string> unresolved;  ///< {{X.y}} that could not resolve.
+        std::string output;
+        // Retained as the token-only compatibility view of unresolvedOccurrences.
+        std::vector<std::string> unresolved;
+        std::vector<UnresolvedOccurrence> unresolvedOccurrences;
     };
 
     /// Resolve a URL path template without letting values add URL syntax.

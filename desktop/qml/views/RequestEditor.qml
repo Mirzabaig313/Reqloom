@@ -21,6 +21,7 @@ ColumnLayout {
     readonly property string primaryShortcutText: Qt.platform.os === "osx" ? "⌘↵" : qsTr("Ctrl+Enter")
 
     signal saveConfirmationClosed
+    signal diagnosticNavigationFailed(string message)
 
     property bool nameTouched: false
     property bool attemptedSubmit: false
@@ -55,6 +56,78 @@ ColumnLayout {
                 creationNameField.forceActiveFocus();
             });
         }
+    }
+
+    function openRequestField(operationId, field, key) {
+        if (AppController.operationIds.indexOf(operationId) < 0) {
+            return false;
+        }
+        AppController.editOperationById(operationId);
+        const currentOperationId = AppController.selectedModule + "." + AppController.opName;
+        if (!editor.editing || currentOperationId !== operationId) {
+            return false;
+        }
+        Qt.callLater(function () {
+            if (field === "path") {
+                pathField.forceActiveFocus();
+                pathField.selectAll();
+            } else if (field === "query") {
+                editTabs.currentIndex = 0;
+                Qt.callLater(function () {
+                    if (!queryEditor.focusKey(key)) {
+                        editor.diagnosticNavigationFailed(qsTr("That query parameter no longer exists."));
+                    }
+                });
+            } else if (field === "header") {
+                editTabs.currentIndex = 1;
+                Qt.callLater(function () {
+                    if (!headerEditor.focusKey(key)) {
+                        editor.diagnosticNavigationFailed(qsTr("That request header no longer exists."));
+                    }
+                });
+            } else if (field === "body") {
+                editTabs.currentIndex = 2;
+                if (bodyBox.bodyPageIndex(AppController.editBodyType) !== 2) {
+                    editor.diagnosticNavigationFailed(qsTr("That raw request body no longer exists."));
+                } else {
+                    Qt.callLater(function () {
+                        rawBody.forceActiveFocus();
+                    });
+                }
+            } else if (field === "form") {
+                editTabs.currentIndex = 2;
+                if (bodyBox.bodyPageIndex(AppController.editBodyType) !== 1) {
+                    editor.diagnosticNavigationFailed(qsTr("That form body no longer exists."));
+                } else {
+                    Qt.callLater(function () {
+                        if (!formEditor.focusKey(key)) {
+                            editor.diagnosticNavigationFailed(qsTr("That form field no longer exists."));
+                        }
+                    });
+                }
+            }
+        });
+        return true;
+    }
+
+    function openExtractionSource(operationId, variableName) {
+        if (AppController.operationIds.indexOf(operationId) < 0) {
+            return false;
+        }
+        AppController.editOperationById(operationId);
+        const currentOperationId = AppController.selectedModule + "." + AppController.opName;
+        if (!editor.editing || currentOperationId !== operationId) {
+            return false;
+        }
+        Qt.callLater(function () {
+            editTabs.currentIndex = 5;
+            Qt.callLater(function () {
+                if (!chainTable.focusExtraction(operationId, variableName)) {
+                    editor.diagnosticNavigationFailed(qsTr("That extraction no longer exists."));
+                }
+            });
+        });
+        return true;
     }
 
     function restoreFocus() {
@@ -966,6 +1039,7 @@ ColumnLayout {
                 clip: true
                 contentWidth: availableWidth
                 KeyValueEditorView {
+                    id: queryEditor
                     width: paramsScroll.availableWidth
                     kvModel: AppController.editQuery
                 }
@@ -1051,6 +1125,7 @@ ColumnLayout {
                     }
 
                     KeyValueEditorView {
+                        id: headerEditor
                         Layout.fillWidth: true
                         kvModel: AppController.editHeaders
                         suggestHeaderNames: true
@@ -1205,6 +1280,7 @@ ColumnLayout {
                             clip: true
                             contentWidth: availableWidth
                             KeyValueEditorView {
+                                id: formEditor
                                 width: formScroll.availableWidth
                                 kvModel: AppController.editForm
                                 allowFiles: AppController.editBodyType === "form-data"

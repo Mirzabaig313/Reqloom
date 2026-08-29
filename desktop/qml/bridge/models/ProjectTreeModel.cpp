@@ -1,6 +1,8 @@
 // ProjectTreeModel — see header.
 #include "ProjectTreeModel.h"
 
+#include <functional>
+#include <numeric>
 #include <utility>
 
 namespace reqloom::desktop::qml {
@@ -133,16 +135,19 @@ QVariant ProjectTreeModel::data(const QModelIndex& index, int role) const {
         case ActiveRole:
             return node->active;
         case CountRole:
-            // Child count only for folder rows; leaves and operations show none.
-            switch (node->kind) {
-                case Kind::Project:
-                case Kind::ActorGroup:
-                case Kind::ResourceGroup:
-                case Kind::Resource:
-                    return static_cast<int>(node->children.size());
-                default:
-                    return 0;
+            return badgeCount(*node);
+        case CountLabelRole:
+            return countLabel(*node, badgeCount(*node));
+        case SessionStateRole:
+            if (node->kind != Kind::Actor) {
+                return QString{};
             }
+            return actorSessions_.value(sessionKey(node->projectRoot, node->name)).state;
+        case SessionSecondsRole:
+            if (node->kind != Kind::Actor) {
+                return 0;
+            }
+            return actorSessions_.value(sessionKey(node->projectRoot, node->name)).secondsRemaining;
         case StatusRole:
             return node->exampleStatus;
         case StatusTokenRole: {
@@ -163,6 +168,54 @@ QVariant ProjectTreeModel::data(const QModelIndex& index, int role) const {
     }
 }
 
+int ProjectTreeModel::operationCount(const Node& node) {
+    if (node.kind == Kind::Operation) {
+        return 1;
+    }
+    return std::transform_reduce(
+        node.children.begin(),
+        node.children.end(),
+        0,
+        std::plus<>{},
+        [](const std::unique_ptr<Node>& child) { return operationCount(*child); });
+}
+
+int ProjectTreeModel::badgeCount(const Node& node) {
+    switch (node.kind) {
+        case Kind::Project:
+            // A project's direct children are the two group folders, so "2"
+            // says nothing. Count the endpoints underneath instead.
+            return operationCount(node);
+        case Kind::ActorGroup:
+        case Kind::ResourceGroup:
+        case Kind::Resource:
+            return static_cast<int>(node.children.size());
+        default:
+            // Leaves (operations, actors, examples) carry no badge.
+            return 0;
+    }
+}
+
+QString ProjectTreeModel::countLabel(const Node& node, int count) {
+    if (count <= 0) {
+        return {};
+    }
+    // Singular and plural spelled out rather than tr("%n unit(s)"): Qt only
+    // picks a plural form when a translator is loaded, and untranslated builds
+    // would render the literal "1 endpoint(s)".
+    switch (node.kind) {
+        case Kind::Project:
+        case Kind::Resource:
+            return count == 1 ? tr("1 endpoint") : tr("%1 endpoints").arg(count);
+        case Kind::ActorGroup:
+            return count == 1 ? tr("1 actor") : tr("%1 actors").arg(count);
+        case Kind::ResourceGroup:
+            return count == 1 ? tr("1 resource") : tr("%1 resources").arg(count);
+        default:
+            return {};
+    }
+}
+
 QHash<int, QByteArray> ProjectTreeModel::roleNames() const {
     return {
         {KindRole, "kind"},
@@ -174,6 +227,9 @@ QHash<int, QByteArray> ProjectTreeModel::roleNames() const {
         {ExampleNameRole, "exampleName"},
         {TooltipRole, "tooltip"},
         {CountRole, "count"},
+        {CountLabelRole, "countLabel"},
+        {SessionStateRole, "sessionState"},
+        {SessionSecondsRole, "sessionSeconds"},
         {StatusRole, "status"},
         {StatusTokenRole, "statusToken"},
         {ProjectRootRole, "projectRoot"},
@@ -184,6 +240,29 @@ QHash<int, QByteArray> ProjectTreeModel::roleNames() const {
 QString ProjectTreeModel::exampleKey(const QString& projectRoot, const QString& operationId) {
     // U+001F (unit separator) can't appear in a filesystem root or an op id.
     return projectRoot + QChar(u'\x1f') + operationId;
+}
+
+QString ProjectTreeModel::sessionKey(const QString& projectRoot, const QString& actorId) {
+    return projectRoot + QChar(u'\x1f') + actorId;
+}
+
+void ProjectTreeModel::setActorSessions(QMap<QString, ActorSessionRow> sessions) {
+    if (sessions == actorSessions_) {
+        return;
+    }
+    actorSessions_ = std::move(sessions);
+
+    // Actor rows are always the first group under a project.
+    for (int p = 0; p < rowCount({}); ++p) {
+        const QModelIndex actors = index(0, 0, index(p, 0, {}));
+        const int actorRows = rowCount(actors);
+        if (actorRows == 0) {
+            continue;
+        }
+        emit dataChanged(index(0, 0, actors),
+                         index(actorRows - 1, 0, actors),
+                         {SessionStateRole, SessionSecondsRole});
+    }
 }
 
 void ProjectTreeModel::populate(const std::vector<ProjectEntry>& projects) {

@@ -9,6 +9,10 @@
 #include <reqloom/engine/RunContext.h>
 
 #include <QtCore/QString>
+#include <QtCore/QVariantList>
+
+#include <cstddef>
+#include <span>
 
 namespace reqloom::desktop::format {
 
@@ -44,5 +48,19 @@ namespace reqloom::desktop::format {
 
 /// Label for a skip reason ("session valid", "extraction cached").
 [[nodiscard]] QString skipReason(engine::SkipReason reason);
+
+/// Narrow an engine index to the timeline model's `int` contract.
+///
+/// Engine indexes are `std::size_t`; the model and QML speak `int`. Clamping
+/// (rather than casting) keeps a hostile or corrupt history index from wrapping
+/// to a negative row that would alias a real step.
+[[nodiscard]] int boundedIndex(std::size_t index) noexcept;
+
+/// Convert unresolved-variable evidence to ordered, value-free QML maps.
+///
+/// Producer indexes become one-based UI step numbers. The result contains
+/// source names and fields only; no resolved request or secret values.
+[[nodiscard]] QVariantList unresolvedDiagnostics(
+    std::span<const engine::UnresolvedVariableDiagnostic> diagnostics);
 
 }  // namespace reqloom::desktop::format

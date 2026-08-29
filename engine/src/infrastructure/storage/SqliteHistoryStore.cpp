@@ -24,16 +24,20 @@
 #include <sqlite3.h>
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
+#include <iomanip>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -142,6 +146,127 @@ constexpr int kBusyTimeoutMs = 5000;
         return RunOutcome::Cancelled;
     }
     return RunOutcome::Failed;
+}
+
+template <typename E, std::size_t N>
+using EnumWireMap = std::array<std::pair<E, std::string_view>, N>;
+
+template <typename E, std::size_t N>
+[[nodiscard]] std::string_view enumToWire(E value,
+                                          const EnumWireMap<E, N>& values,
+                                          std::string_view fallback) noexcept {
+    for (const auto& [candidate, wire] : values) {
+        if (candidate == value) {
+            return wire;
+        }
+    }
+    return fallback;
+}
+
+template <typename E, std::size_t N>
+[[nodiscard]] E enumFromWire(std::string_view wire,
+                             const EnumWireMap<E, N>& values,
+                             E fallback) noexcept {
+    for (const auto& [candidate, candidateWire] : values) {
+        if (candidateWire == wire) {
+            return candidate;
+        }
+    }
+    return fallback;
+}
+
+constexpr EnumWireMap<VariableUseKind, 9> kVariableUseKinds{{
+    {VariableUseKind::Unknown, "Unknown"},
+    {VariableUseKind::UrlPath, "UrlPath"},
+    {VariableUseKind::RawQuery, "RawQuery"},
+    {VariableUseKind::Fragment, "Fragment"},
+    {VariableUseKind::NamedQuery, "NamedQuery"},
+    {VariableUseKind::Header, "Header"},
+    {VariableUseKind::Auth, "Auth"},
+    {VariableUseKind::Body, "Body"},
+    {VariableUseKind::FormField, "FormField"},
+}};
+
+constexpr EnumWireMap<VariableSourceKind, 6> kVariableSourceKinds{{
+    {VariableSourceKind::Unknown, "Unknown"},
+    {VariableSourceKind::Environment, "Environment"},
+    {VariableSourceKind::Secret, "Secret"},
+    {VariableSourceKind::Actor, "Actor"},
+    {VariableSourceKind::Resource, "Resource"},
+    {VariableSourceKind::Extraction, "Extraction"},
+}};
+
+constexpr EnumWireMap<UnresolvedVariableCause, 9> kUnresolvedVariableCauses{{
+    {UnresolvedVariableCause::Unavailable, "Unavailable"},
+    {UnresolvedVariableCause::EnvironmentValueMissing, "EnvironmentValueMissing"},
+    {UnresolvedVariableCause::SecretValueMissing, "SecretValueMissing"},
+    {UnresolvedVariableCause::ActorSessionFieldMissing, "ActorSessionFieldMissing"},
+    {UnresolvedVariableCause::ResourceValueMissing, "ResourceValueMissing"},
+    {UnresolvedVariableCause::ExtractionMissing, "ExtractionMissing"},
+    {UnresolvedVariableCause::ExtractionNull, "ExtractionNull"},
+    {UnresolvedVariableCause::ExtractionInvalid, "ExtractionInvalid"},
+    {UnresolvedVariableCause::ExtractionUnsupported, "ExtractionUnsupported"},
+}};
+
+[[nodiscard]] json diagnosticsToJson(const std::vector<UnresolvedVariableDiagnostic>& diagnostics) {
+    json out = json::array();
+    for (const auto& diagnostic : diagnostics) {
+        json item{
+            {"token", diagnostic.token},
+            {"useKind", std::string{enumToWire(diagnostic.useKind, kVariableUseKinds, "Unknown")}},
+            {"useName", diagnostic.useName},
+            {"cause",
+             std::string{enumToWire(diagnostic.cause, kUnresolvedVariableCauses, "Unavailable")}},
+            {"sourceKind",
+             std::string{enumToWire(diagnostic.sourceKind, kVariableSourceKinds, "Unknown")}},
+            {"sourceId", diagnostic.sourceId},
+            {"sourceField", diagnostic.sourceField}};
+        if (diagnostic.producerOp) {
+            item["producerOp"] = diagnostic.producerOp->value;
+        }
+        if (diagnostic.producerStepIndex) {
+            item["producerStepIndex"] = *diagnostic.producerStepIndex;
+        }
+        out.push_back(std::move(item));
+    }
+    return out;
+}
+
+[[nodiscard]] std::vector<UnresolvedVariableDiagnostic> diagnosticsFromJson(const json& j) {
+    std::vector<UnresolvedVariableDiagnostic> out;
+    if (!j.is_array()) {
+        return out;
+    }
+    out.reserve(j.size());
+    for (const auto& item : j) {
+        if (!item.is_object()) {
+            continue;
+        }
+        UnresolvedVariableDiagnostic diagnostic{};
+        diagnostic.token = item.value("token", std::string{});
+        diagnostic.useKind = enumFromWire(
+            item.value("useKind", std::string{}), kVariableUseKinds, VariableUseKind::Unknown);
+        diagnostic.useName = item.value("useName", std::string{});
+        diagnostic.cause = enumFromWire(item.value("cause", std::string{}),
+                                        kUnresolvedVariableCauses,
+                                        UnresolvedVariableCause::Unavailable);
+        diagnostic.sourceKind = enumFromWire(item.value("sourceKind", std::string{}),
+                                             kVariableSourceKinds,
+                                             VariableSourceKind::Unknown);
+        diagnostic.sourceId = item.value("sourceId", std::string{});
+        diagnostic.sourceField = item.value("sourceField", std::string{});
+        if (item.contains("producerOp") && item["producerOp"].is_string()) {
+            diagnostic.producerOp = OperationId{item["producerOp"].get<std::string>()};
+        }
+        if (item.contains("producerStepIndex") && item["producerStepIndex"].is_number_unsigned()) {
+            const auto raw = item["producerStepIndex"].get<std::uint64_t>();
+            if (raw <= std::numeric_limits<std::size_t>::max()) {
+                diagnostic.producerStepIndex = static_cast<std::size_t>(raw);
+            }
+        }
+        out.push_back(std::move(diagnostic));
+    }
+    return out;
 }
 
 // ─── Header (de)serialization helpers ────────────────────────────────────────
@@ -334,7 +459,13 @@ struct EventEnvelope {
                 e.payload = {{"op", v.op.value},
                              {"code", std::string{toCodeString(v.code)}},
                              {"attempt", v.attempt},
-                             {"detail", v.detail}};
+                             {"detail", v.detail},
+                             {"diagnostics", diagnosticsToJson(v.diagnostics)}};
+            } else if constexpr (std::is_same_v<T, StepBlocked>) {
+                e.eventType = "StepBlocked";
+                e.stepIndex = v.stepIndex;
+                e.opId = v.op.value;
+                e.payload = {{"op", v.op.value}, {"blockedByStepIndex", v.blockedByStepIndex}};
             } else if constexpr (std::is_same_v<T, StepCancelled>) {
                 e.eventType = "StepCancelled";
                 e.stepIndex = v.stepIndex;
@@ -493,6 +624,24 @@ struct EventEnvelope {
         const auto codeStr = p.value("code", std::string{"E_SCHEMA_INVALID"});
         ev.code = fromCodeString(codeStr).value_or(ErrorCode::SchemaInvalid);
         ev.cls = classify(ev.code);
+        ev.diagnostics = diagnosticsFromJson(p.value("diagnostics", json::array()));
+        ev.at = at;
+        return ev;
+    }
+    if (eventType == "StepBlocked") {
+        if (!stepIndex || !p.contains("blockedByStepIndex") ||
+            !p["blockedByStepIndex"].is_number_unsigned()) {
+            return std::nullopt;
+        }
+        const auto blockedBy = p["blockedByStepIndex"].get<std::uint64_t>();
+        if (blockedBy > std::numeric_limits<std::size_t>::max() || blockedBy >= *stepIndex) {
+            return std::nullopt;
+        }
+        StepBlocked ev{};
+        ev.runId = runId;
+        ev.stepIndex = *stepIndex;
+        ev.op = OperationId{p.value("op", std::string{})};
+        ev.blockedByStepIndex = static_cast<std::size_t>(blockedBy);
         ev.at = at;
         return ev;
     }
@@ -732,7 +881,16 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: append before open"});
     }
 
-    const auto env = envelopeOf(event);
+    EventEnvelope env{};
+    std::string payloadStr{};
+    try {
+        env = envelopeOf(event);
+        payloadStr = env.payload.dump();
+    } catch (const json::exception&) {
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            "history: event payload is not serializable"});
+    }
 
     // All three statements below (run row + optional run-ended update +
     // event insert) commit as one unit. Without this each sqlite3_step ran
@@ -806,7 +964,6 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
     }
 
     const auto seq = impl_->nextSeq(env.runId);
-    const auto payloadStr = env.payload.dump();
 
     sqlite3_reset(impl_->insertEventStmt.get());
     sqlite3_bind_int64(impl_->insertEventStmt.get(), 1, static_cast<sqlite3_int64>(env.runId));
@@ -862,19 +1019,19 @@ std::expected<std::vector<RunEvent>, ReqloomError> SqliteHistoryStore::eventsFor
         const auto* payloadStr = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
         const auto* atStr = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 3));
 
-        json payload;
         try {
-            payload = json::parse(payloadStr != nullptr ? payloadStr : "{}");
-        } catch (const json::parse_error&) {
-            // Skip a corrupt row rather than failing the whole replay.
+            const auto payload = json::parse(payloadStr != nullptr ? payloadStr : "{}");
+            if (auto ev = eventFromRow(eventType != nullptr ? eventType : "",
+                                       run.value,
+                                       stepIndex,
+                                       atStr != nullptr ? atStr : "",
+                                       payload)) {
+                out.push_back(std::move(*ev));
+            }
+        } catch (const json::exception&) {
+            // Keep other history available when one row is malformed or
+            // contains field types this build cannot safely interpret.
             continue;
-        }
-        if (auto ev = eventFromRow(eventType != nullptr ? eventType : "",
-                                   run.value,
-                                   stepIndex,
-                                   atStr != nullptr ? atStr : "",
-                                   payload)) {
-            out.push_back(std::move(*ev));
         }
     }
     return out;

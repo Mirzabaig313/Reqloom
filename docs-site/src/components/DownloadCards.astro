@@ -1,0 +1,252 @@
+---
+// Build-time download table, populated from the GitHub Releases API.
+//
+// Why build-time rather than client-side: the docs redeploy on every push to
+// main, so the data is never more stale than the site itself, and readers with
+// JS disabled still get real links. No API key is needed for a public repo.
+//
+// This must never fail the build. Every failure path — offline, rate-limited,
+// no versioned release cut yet — leaves `release` null and renders a link to
+// the releases page instead.
+//
+// Selection and grouping live in src/lib/release-assets.mjs so they can be
+// checked without a build: node scripts/check-release-assets.mjs
+
+import {
+    REPO,
+    RELEASES_URL,
+    pickRelease,
+    groupAssets,
+    displayName,
+    megabytes,
+    shortDigest,
+} from "../lib/release-assets.mjs";
+
+let release = null;
+
+try {
+    // A token is optional. CI runners share outbound IPs and can hit the
+    // 60-req/hr unauthenticated limit, so use one when the environment has it.
+    const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+    const response = await fetch(
+        `https://api.github.com/repos/${REPO}/releases?per_page=20`,
+        {
+            headers: {
+                Accept: "application/vnd.github+json",
+                "User-Agent": "reqloom-docs-build",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            signal: AbortSignal.timeout(8000),
+        },
+    );
+
+    if (!response.ok) {
+        throw new Error(`GitHub API returned ${response.status}`);
+    }
+
+    release = pickRelease(await response.json());
+
+    if (!release) {
+        console.warn(
+            "[DownloadCards] No versioned release found (scratch tags are " +
+                "ignored by design). Rendering the fallback link.",
+        );
+    }
+} catch (error) {
+    console.warn(
+        `[DownloadCards] Could not read releases for ${REPO}: ` +
+            `${error instanceof Error ? error.message : String(error)}. ` +
+            "Rendering the fallback link.",
+    );
+}
+
+const groups = groupAssets(release);
+
+const publishedOn = release?.published_at
+    ? new Date(release.published_at).toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+      })
+    : null;
+---
+
+{
+    release ? (
+        <div class="rl-downloads not-content">
+            <p class="rl-downloads__meta">
+                Latest release <a href={release.html_url}>{release.tag_name}</a>
+                {publishedOn && <> · published {publishedOn}</>}
+            </p>
+
+            <div class="rl-downloads__grid">
+                {groups.map((group) => (
+                    <div class="rl-download">
+                        <div class="rl-download__head">
+                            <span class="rl-download__os">{group.label}</span>
+                            <span class="rl-download__note">{group.note}</span>
+                        </div>
+
+                        <ul class="rl-download__files">
+                            {group.assets.map((asset, i) => (
+                                <li>
+                                    <a
+                                        class:list={[
+                                            "rl-download__link",
+                                            i === 0 && "rl-download__link--primary",
+                                        ]}
+                                        href={asset.browser_download_url}
+                                    >
+                                        {displayName(asset.name, release.tag_name)}
+                                    </a>
+                                    <span class="rl-download__meta">
+                                        {megabytes(asset.size)}
+                                        {shortDigest(asset.digest) && (
+                                            <>
+                                                {" · "}
+                                                <code title={asset.digest}>
+                                                    {shortDigest(asset.digest)}…
+                                                </code>
+                                            </>
+                                        )}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                ))}
+            </div>
+
+            <p class="rl-downloads__all">
+                Older versions and full changelogs are on the{" "}
+                <a href={RELEASES_URL}>releases page</a>.
+            </p>
+        </div>
+    ) : (
+        <div class="rl-downloads rl-downloads--fallback not-content">
+            <p>
+                <strong>
+                    Grab the latest build from the{" "}
+                    <a href={RELEASES_URL}>releases page</a>.
+                </strong>
+            </p>
+            <p>
+                Each release carries a macOS <code>.dmg</code>, a Linux{" "}
+                <code>.AppImage</code> and <code>.tar.gz</code>, and a Windows{" "}
+                <code>-setup.exe</code>.
+            </p>
+        </div>
+    )
+}
+
+<style>
+    .rl-downloads {
+        margin-block: 1.5rem;
+    }
+
+    .rl-downloads__meta {
+        font-size: var(--sl-text-sm);
+        color: var(--sl-color-gray-3);
+        margin-block: 0 0.75rem;
+    }
+
+    .rl-downloads__grid {
+        display: grid;
+        gap: 0.75rem;
+        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    }
+
+    .rl-download {
+        border: 1px solid var(--rl-border-subtle);
+        border-radius: var(--rl-radius-lg, 1rem);
+        background: var(--rl-surface-raised);
+        padding: 0.9rem 1rem;
+    }
+
+    .rl-download__head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin-bottom: 0.6rem;
+    }
+
+    .rl-download__os {
+        font-weight: 600;
+        letter-spacing: -0.012em;
+        color: var(--sl-color-white);
+    }
+
+    .rl-download__note {
+        font-size: var(--sl-text-xs);
+        color: var(--sl-color-gray-3);
+    }
+
+    .rl-download__files {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+
+    /* Filename on its own line, size + digest beneath it. Keeping them on one
+       line made the digest wrap unpredictably between assets. */
+    .rl-download__files li {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+    }
+
+    .rl-download__link {
+        /* This component sits inside `.not-content`, so Starlight's markdown
+           link colour does not reach it — set the accent explicitly or the
+           browser default (purple) shows through. */
+        color: var(--sl-color-text-accent);
+        font-size: var(--sl-text-sm);
+        text-decoration: none;
+        align-self: start;
+        border-bottom: 1px solid
+            color-mix(in oklab, currentColor 35%, transparent);
+        transition: border-color 150ms var(--rl-ease, ease);
+    }
+
+    .rl-download__link:hover {
+        border-bottom-color: currentColor;
+    }
+
+    .rl-download__link--primary {
+        font-weight: 600;
+    }
+
+    .rl-download__meta {
+        font-size: var(--sl-text-xs);
+        color: var(--sl-color-gray-3);
+    }
+
+    .rl-download__meta code {
+        font-size: 0.7rem;
+        color: var(--sl-color-gray-4);
+        background: transparent;
+        border: 0;
+        padding: 0;
+    }
+
+    .rl-downloads__all {
+        font-size: var(--sl-text-sm);
+        color: var(--sl-color-gray-3);
+        margin-top: 0.9rem;
+    }
+
+    .rl-downloads--fallback {
+        border: 1px solid var(--rl-border-subtle);
+        border-radius: var(--rl-radius-lg, 1rem);
+        background: var(--rl-surface-raised);
+        padding: 1rem 1.1rem;
+    }
+
+    .rl-downloads--fallback p {
+        margin-block: 0.35rem;
+    }
+</style>

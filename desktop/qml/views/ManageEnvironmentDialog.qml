@@ -27,6 +27,8 @@ Dialog {
     // Original name of the env being edited ("" = a new, unsaved environment).
     property string editingOriginal: ""
 
+    signal navigationFailed(string message)
+
     function initials(s) {
         const t = (s || "").trim();
         return t.length === 0 ? "··" : t.substring(0, 2);
@@ -56,6 +58,22 @@ Dialog {
         const target = focusName && focusName.length > 0 ? focusName : (AppController.environment.length > 0 ? AppController.environment : (AppController.environments.length > 0 ? AppController.environments[0] : ""));
         selectEnv(target);
         open();
+    }
+    function openSource(environmentName, key) {
+        if (AppController.environments.indexOf(environmentName) < 0) {
+            return false;
+        }
+        selectEnv(environmentName);
+        open();
+        Qt.callLater(function () {
+            if (key === "baseUrl") {
+                baseUrlField.forceActiveFocus();
+                baseUrlField.selectAll();
+            } else if (!variableEditor.ensureKeyAndFocus(key)) {
+                dialog.navigationFailed(qsTr("That environment variable could not be opened."));
+            }
+        });
+        return true;
     }
     function persist(thenClose) {
         const ok = AppController.saveEnvironmentEdits(dialog.editingOriginal, nameField.text.trim());
@@ -255,6 +273,7 @@ Dialog {
                 text: qsTr("Base URL")
             }
             GlassTextField {
+                id: baseUrlField
                 Layout.fillWidth: true
                 text: AppController.editEnvBaseUrl
                 placeholderText: qsTr("http://localhost:3000")
@@ -278,6 +297,7 @@ Dialog {
                 clip: true
                 contentWidth: availableWidth
                 KeyValueEditorView {
+                    id: variableEditor
                     width: varsScroll.availableWidth
                     kvModel: AppController.editEnvVars
                     keyPlaceholder: qsTr("admin_email")

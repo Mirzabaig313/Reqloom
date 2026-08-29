@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <queue>
 #include <set>
@@ -49,6 +50,11 @@
 namespace reqloom::desktop::qml {
 
 namespace {
+
+[[nodiscard]] bool canDisplayTimelineIndex(const std::size_t index) noexcept {
+    constexpr auto kMax = static_cast<std::size_t>(std::numeric_limits<int>::max() - 1);
+    return index <= kMax;
+}
 
 [[nodiscard]] engine::AuthStrategy authStrategyFromLabel(const QString& label) {
     if (label == QStringLiteral("Multi-step login chain")) {
@@ -573,50 +579,65 @@ void AppController::replayRun(qulonglong runId) {
         std::visit(
             [&](const auto& e) {
                 using T = std::decay_t<decltype(e)>;
+                if constexpr (requires { e.stepIndex; }) {
+                    if (!canDisplayTimelineIndex(e.stepIndex)) {
+                        return;
+                    }
+                }
+                if constexpr (std::is_same_v<T, engine::StepBlocked>) {
+                    if (!canDisplayTimelineIndex(e.blockedByStepIndex)) {
+                        return;
+                    }
+                }
                 if constexpr (std::is_same_v<T, engine::RunStarted>) {
                     timeline_.onRunStarted(QString::fromStdString(e.target.value),
                                            static_cast<int>(e.chainSize),
                                            QString::fromStdString(e.envName));
                 } else if constexpr (std::is_same_v<T, engine::StepStarted>) {
-                    timeline_.onStepStarted(static_cast<int>(e.stepIndex),
+                    timeline_.onStepStarted(format::boundedIndex(e.stepIndex),
                                             QString::fromStdString(e.op.value),
                                             e.attempt);
                 } else if constexpr (std::is_same_v<T, engine::StepSkipped>) {
-                    timeline_.onStepSkipped(static_cast<int>(e.stepIndex),
+                    timeline_.onStepSkipped(format::boundedIndex(e.stepIndex),
                                             QString::fromStdString(e.op.value),
                                             format::skipReason(e.reason));
                 } else if constexpr (std::is_same_v<T, engine::RequestPrepared>) {
-                    timeline_.onRequestPrepared(static_cast<int>(e.stepIndex),
+                    timeline_.onRequestPrepared(format::boundedIndex(e.stepIndex),
                                                 format::method(e.method),
                                                 QString::fromStdString(e.url),
                                                 joinHeaders(e.maskedHeaders),
                                                 static_cast<int>(e.bodySize));
                 } else if constexpr (std::is_same_v<T, engine::ResponseReceived>) {
                     timeline_.onResponseReceived(
-                        static_cast<int>(e.stepIndex),
+                        format::boundedIndex(e.stepIndex),
                         e.status,
                         joinHeaders(e.headers),
                         static_cast<int>(e.bodySize),
                         static_cast<qint64>(e.elapsed.count()),
                         e.body ? QString::fromStdString(*e.body) : QString{});
                 } else if constexpr (std::is_same_v<T, engine::ExtractionCompleted>) {
-                    timeline_.onExtractionCompleted(static_cast<int>(e.stepIndex),
+                    timeline_.onExtractionCompleted(format::boundedIndex(e.stepIndex),
                                                     QString::fromStdString(e.op.value),
                                                     QString::fromStdString(e.variableName),
                                                     QString::fromStdString(e.sourcePath),
                                                     format::extractionOutcome(e.outcome),
                                                     QString::fromStdString(e.value));
                 } else if constexpr (std::is_same_v<T, engine::AssertionCompleted>) {
-                    timeline_.onAssertionCompleted(static_cast<int>(e.stepIndex),
+                    timeline_.onAssertionCompleted(format::boundedIndex(e.stepIndex),
                                                    QString::fromStdString(e.op.value),
                                                    QString::fromStdString(e.name),
                                                    QString::fromStdString(e.expr),
                                                    e.passed);
                 } else if constexpr (std::is_same_v<T, engine::StepFailed>) {
-                    timeline_.onStepFailed(static_cast<int>(e.stepIndex),
+                    timeline_.onStepFailed(format::boundedIndex(e.stepIndex),
                                            QString::fromStdString(e.op.value),
                                            format::errorCode(e.code),
-                                           QString::fromStdString(e.detail));
+                                           QString::fromStdString(e.detail),
+                                           format::unresolvedDiagnostics(e.diagnostics));
+                } else if constexpr (std::is_same_v<T, engine::StepBlocked>) {
+                    timeline_.onStepBlocked(format::boundedIndex(e.stepIndex),
+                                            QString::fromStdString(e.op.value),
+                                            format::boundedIndex(e.blockedByStepIndex));
                 } else if constexpr (std::is_same_v<T, engine::RunEnded>) {
                     timeline_.onRunEnded(format::runOutcome(e.outcome));
                 }

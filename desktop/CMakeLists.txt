@@ -138,6 +138,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/KeyValueEditorView.qml
         qml/widgets/HeaderNameAutocomplete.qml
         qml/widgets/ChainView.qml
+        qml/widgets/ChainStrip.qml
         qml/widgets/StatusBadge.qml
         qml/widgets/DependencyEditor.qml
         qml/widgets/ChainDependencyTable.qml

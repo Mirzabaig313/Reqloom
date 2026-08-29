@@ -13,5 +13,3 @@ Roadmap as of the most recent release:
 | 3 — AI importer + Postman migration | Planned | Multi-stage prompt suite + direct format converters |
 | 4 — Polish & v1 launch | Planned | Auto-update, sample projects, public release |
 | 5+ — Mock server, team sync, hosted | Post-MVP | Per PRD §13.6 |
-
-The canonical roadmap is in [`doc/Reqloom - PRD.md`](https://github.com/Mirzabaig313/Reqloom/blob/main/doc/Reqloom%20-%20PRD.md) §13.

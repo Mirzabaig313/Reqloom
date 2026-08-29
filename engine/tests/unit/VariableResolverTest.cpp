@@ -454,3 +454,38 @@ TEST(VariableResolver, url_path_rejects_unsafe_whole_path_template_outputs) {
         EXPECT_FALSE(result.unresolved.empty());
     }
 }
+
+TEST(VariableResolver, reports_url_components_in_source_order) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const auto result = resolver.resolveUrlPath(
+        "/{{missing.zeta}}/{{missing.alpha}}?first={{missing.query}}#{{missing.fragment}}",
+        ctx,
+        rctx);
+
+    ASSERT_EQ(result.unresolvedOccurrences.size(), 4u);
+    EXPECT_EQ(result.unresolvedOccurrences[0].token, "missing.zeta");
+    EXPECT_EQ(result.unresolvedOccurrences[0].component, ce::VariableResolver::Component::UrlPath);
+    EXPECT_EQ(result.unresolvedOccurrences[1].token, "missing.alpha");
+    EXPECT_EQ(result.unresolvedOccurrences[1].component, ce::VariableResolver::Component::UrlPath);
+    EXPECT_EQ(result.unresolvedOccurrences[2].token, "missing.query");
+    EXPECT_EQ(result.unresolvedOccurrences[2].component, ce::VariableResolver::Component::RawQuery);
+    EXPECT_EQ(result.unresolvedOccurrences[3].token, "missing.fragment");
+    EXPECT_EQ(result.unresolvedOccurrences[3].component, ce::VariableResolver::Component::Fragment);
+}
+
+TEST(VariableResolver, preserves_duplicate_unresolved_occurrences) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const auto result = resolver.resolveUrlPath("/{{missing.id}}/{{missing.id}}", ctx, rctx);
+
+    ASSERT_EQ(result.unresolvedOccurrences.size(), 2u);
+    EXPECT_EQ(result.unresolvedOccurrences[0].token, "missing.id");
+    EXPECT_EQ(result.unresolvedOccurrences[0].component, ce::VariableResolver::Component::UrlPath);
+    EXPECT_EQ(result.unresolvedOccurrences[1].token, "missing.id");
+    EXPECT_EQ(result.unresolvedOccurrences[1].component, ce::VariableResolver::Component::UrlPath);
+}

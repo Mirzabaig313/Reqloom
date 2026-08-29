@@ -51,6 +51,28 @@
 #include "AppControllerInternal.h"
 namespace reqloom::desktop::qml {
 
+namespace {
+
+/// How often a live session's remaining TTL is re-read for the explorer dot.
+constexpr int kSessionTickMs = 15'000;
+
+/// Engine session state → the token the explorer's dot switches on.
+[[nodiscard]] QString sessionStateToken(engine::ActorSession::State state) {
+    switch (state) {
+        case engine::ActorSession::State::Live:
+            return QStringLiteral("live");
+        case engine::ActorSession::State::Authenticating:
+            return QStringLiteral("authenticating");
+        case engine::ActorSession::State::Refreshing:
+            return QStringLiteral("refreshing");
+        case engine::ActorSession::State::None:
+            break;
+    }
+    return QStringLiteral("none");
+}
+
+}  // namespace
+
 AppController::AppController(QObject* parent)
     : QObject(parent),
       workspace_(std::make_unique<WorkspaceModel>()),
@@ -147,7 +169,13 @@ AppController::AppController(QObject* parent)
         refreshHistory();
         // A run may have absorbed Set-Cookie headers into the actor jars.
         emit cookiesChanged();
+        // A run is the only thing that authenticates an actor, so the explorer's
+        // session dots can only have changed here.
+        refreshActorSessions();
     });
+
+    sessionTicker_.setInterval(kSessionTickMs);
+    connect(&sessionTicker_, &QTimer::timeout, this, &AppController::refreshActorSessions);
 
     // Bridge ALL streamed RunController signals into the timeline model so the
     // panel mirrors the old Widgets TimelinePanel (steps, requests, responses,
@@ -180,6 +208,10 @@ AppController::AppController(QObject* parent)
             &TimelineModel::onAssertionCompleted);
     connect(
         runController_.get(), &RunController::stepFailed, &timeline_, &TimelineModel::onStepFailed);
+    connect(runController_.get(),
+            &RunController::stepBlocked,
+            &timeline_,
+            &TimelineModel::onStepBlocked);
     connect(runController_.get(), &RunController::runEnded, &timeline_, &TimelineModel::onRunEnded);
 
     // Live per-node status for the chain graph. Run events carry an operation
@@ -222,12 +254,21 @@ AppController::AppController(QObject* parent)
                     emit chainStatusChanged();
                 }
             });
+    connect(
+        runController_.get(),
+        &RunController::stepFailed,
+        this,
+        [this](int index, const QString& op, const QString&, const QString&, const QVariantList&) {
+            runStepOp_.insert(index, op);
+            chainStatus_.insert(op, QStringLiteral("error"));
+            emit chainStatusChanged();
+        });
     connect(runController_.get(),
-            &RunController::stepFailed,
+            &RunController::stepBlocked,
             this,
-            [this](int index, const QString& op, const QString&, const QString&) {
+            [this](int index, const QString& op, int) {
                 runStepOp_.insert(index, op);
-                chainStatus_.insert(op, QStringLiteral("error"));
+                chainStatus_.insert(op, QStringLiteral("blocked"));
                 emit chainStatusChanged();
             });
 
@@ -523,6 +564,9 @@ void AppController::populateWorkspaceTree() {
         }
     }
     tree_.populate(entries, examples);
+    // populate() resets the tree, so re-apply the session snapshot the fresh
+    // actor rows should show (a project switch keeps its own context's logins).
+    refreshActorSessions();
 }
 
 void AppController::selectFirstModule() {
@@ -2202,6 +2246,8 @@ void AppController::resetCaches() {
         return;
     }
     runController_->resetCaches();
+    // Every session just went away; clear the explorer dots to match.
+    refreshActorSessions();
     emit notify(QStringLiteral("Session + extraction caches cleared"), false);
 }
 
@@ -2307,6 +2353,34 @@ void AppController::refreshOpenOpExamples() {
         exampleList_.clear();
     } else {
         exampleList_.setExamples(exampleStore_.list(opId));
+    }
+}
+
+void AppController::refreshActorSessions() {
+    QMap<QString, ProjectTreeModel::ActorSessionRow> rows;
+    bool anyLive = false;
+
+    if (runController_ && activeProject().hasProject()) {
+        const QString root = projectRoot();
+        for (const auto& [actorId, unusedActor] : activeProject().project().actors) {
+            const RunController::ActorSessionInfo info = runController_->sessionInfo(actorId);
+            if (info.state == engine::ActorSession::State::Live) {
+                anyLive = true;
+            }
+            rows.insert(ProjectTreeModel::sessionKey(root, QString::fromStdString(actorId.value)),
+                        ProjectTreeModel::ActorSessionRow{sessionStateToken(info.state),
+                                                          info.secondsRemaining});
+        }
+    }
+    tree_.setActorSessions(std::move(rows));
+
+    // Nothing authenticated means nothing to count down.
+    if (anyLive) {
+        if (!sessionTicker_.isActive()) {
+            sessionTicker_.start();
+        }
+    } else {
+        sessionTicker_.stop();
     }
 }
 

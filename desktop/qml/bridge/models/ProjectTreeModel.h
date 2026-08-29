@@ -39,12 +39,15 @@ public:
         MethodRole,       ///< QString: HTTP verb for operation rows
         ExampleNameRole,  ///< QString: saved-example name
         TooltipRole,      ///< QString: full text shown on hover (names truncate)
-        CountRole,        ///< int: child count for folder rows (0 for leaves)
-        StatusRole,       ///< int: HTTP status of a saved-example row (0 otherwise)
-        StatusTokenRole,  ///< QString: success/warning/error token for the status badge
-        ProjectRootRole,  ///< QString: owning project's root path (every row carries it)
-        ActiveRole,       ///< bool: true on the active project's row
-        PathRole,         ///< QString: operation path template (for search matching)
+        CountRole,        ///< int: badge count for folder rows (0 for leaves)
+        CountLabelRole,  ///< QString: what CountRole counts ("31 endpoints"), for the badge tooltip
+        SessionStateRole,    ///< QString: actor rows — none/authenticating/live/refreshing
+        SessionSecondsRole,  ///< int: actor rows — seconds until a live session lapses
+        StatusRole,          ///< int: HTTP status of a saved-example row (0 otherwise)
+        StatusTokenRole,     ///< QString: success/warning/error token for the status badge
+        ProjectRootRole,     ///< QString: owning project's root path (every row carries it)
+        ActiveRole,          ///< bool: true on the active project's row
+        PathRole,            ///< QString: operation path template (for search matching)
     };
 
     /// One saved-example child row: its display name + the HTTP status it
@@ -67,6 +70,20 @@ public:
     /// project so identically-named operations in different collections don't
     /// share example rows.
     [[nodiscard]] static QString exampleKey(const QString& projectRoot, const QString& operationId);
+
+    /// One actor's auth session as the tree should render it. FR-5.1.
+    struct ActorSessionRow {
+        /// none | authenticating | live | refreshing.
+        QString state{QStringLiteral("none")};
+        /// Seconds until a `live` session lapses; 0 for every other state.
+        int secondsRemaining{0};
+
+        [[nodiscard]] bool operator==(const ActorSessionRow&) const = default;
+    };
+
+    /// Composite key for `setActorSessions`. Sessions live in a per-project run
+    /// context, so an actor name alone would blur two open collections together.
+    [[nodiscard]] static QString sessionKey(const QString& projectRoot, const QString& actorId);
 
     explicit ProjectTreeModel(QObject* parent = nullptr);
     ~ProjectTreeModel() override;
@@ -105,6 +122,12 @@ public:
     /// beneath their operation. (Fed by the WS-C examples bridge.)
     void setSavedExamples(const QMap<QString, QList<ExampleRow>>& examplesByOperation);
 
+    /// Replace the per-actor session snapshot, keyed by `sessionKey`. Repaints
+    /// the actor rows in place — no reset, so expansion state and selection
+    /// survive a session change mid-session. A no-op when nothing differs, so
+    /// the caller can poll this on a timer without churning the view.
+    void setActorSessions(QMap<QString, ActorSessionRow> sessions);
+
 private:
     enum class Kind : std::uint8_t {
         Project,
@@ -133,6 +156,16 @@ private:
         std::vector<std::unique_ptr<Node>> children;
     };
 
+    /// The number the child-count badge shows for `node`, or 0 for rows that
+    /// carry no badge.
+    [[nodiscard]] static int badgeCount(const Node& node);
+    /// Operation rows anywhere beneath `node`. A project's direct children are
+    /// just the two group folders, so its badge counts endpoints instead.
+    [[nodiscard]] static int operationCount(const Node& node);
+    /// Names what `badgeCount` counted ("31 endpoints", "5 actors"), so the
+    /// badge can say what it means instead of showing a bare number.
+    [[nodiscard]] static QString countLabel(const Node& node, int count);
+
     [[nodiscard]] Node* nodeFor(const QModelIndex& index) const;
     Node* addChild(Node* parent, Kind kind);
     void rebuild();
@@ -140,6 +173,9 @@ private:
     std::unique_ptr<Node> root_;
     std::vector<ProjectEntry> projects_;
     QMap<QString, QList<ExampleRow>> examples_;
+    // Keyed by sessionKey(projectRoot, actorId). Held outside the node tree so a
+    // rebuild doesn't drop live session state.
+    QMap<QString, ActorSessionRow> actorSessions_;
 };
 
 }  // namespace reqloom::desktop::qml

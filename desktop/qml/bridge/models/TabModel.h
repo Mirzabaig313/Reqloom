@@ -156,10 +156,10 @@ public:
     enum Roles : int {
         KindRole = Qt::UserRole + 1,  ///< int: 0 = operation, 1 = actor
         IdRole,                       ///< QString: operationId or actorId
-        TitleRole,                    ///< QString: tab label
-        MethodRole,                   ///< QString: HTTP method (operation tabs)
-        SubtitleRole,                 ///< QString: path (op) / strategy (actor)
-        DirtyRole,                    ///< bool: unsaved edits
+        TitleRole,     ///< QString: tab label, module-qualified when it would be ambiguous
+        MethodRole,    ///< QString: HTTP method (operation tabs)
+        SubtitleRole,  ///< QString: path (op) / strategy (actor)
+        DirtyRole,     ///< bool: unsaved edits
     };
 
     explicit TabModel(QObject* parent = nullptr) : QAbstractListModel(parent) {}
@@ -183,6 +183,15 @@ public:
     /// never matched (each "New actor" opens its own tab).
     [[nodiscard]] int indexOf(TabState::Kind kind, const QString& id) const;
 
+    /// The label QML shows for `index`: `TabState::title` on its own, or
+    /// "<module>.<title>" when another open tab carries the same bare title.
+    ///
+    /// Two operations named alike in different modules ("worker.industries" and
+    /// "employer.industries") otherwise render as two identical tabs. Derived on
+    /// read rather than written into `TabState::title` so the qualification
+    /// disappears by itself once the colliding tab closes.
+    [[nodiscard]] QString displayTitle(int index) const;
+
     /// Insert `state` at `index`; returns the inserted index, or -1 when invalid.
     int insert(int index, TabState state);
     /// Append `state` as a new tab; returns its index.
@@ -198,6 +207,11 @@ public:
     void refreshRow(int index);
 
 private:
+    /// Re-emit TitleRole for every row. Opening, closing, or renaming one tab
+    /// can create or clear a collision for a different tab, so the whole strip
+    /// has to re-read its labels, not just the row that changed.
+    void refreshTitles();
+
     std::vector<TabState> tabs_;
 };
 

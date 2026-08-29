@@ -23,6 +23,10 @@ Rectangle {
     // Binding a write back from a render-time change handler is what creates a
     // loop, so the two directions must not share a path.
     readonly property int selectedStepIndex: AppController.timeline.selectedStep
+    property int revealedRootFailureRow: -1
+
+    signal openRequestFieldRequested(string operationId, string field, string key)
+    signal editSourceRequested(var action)
 
     function activateStep(stepIndex, rowIndex, reveal) {
         if (rowIndex >= 0) {
@@ -35,6 +39,86 @@ Rectangle {
         }
         if (stepIndex > 0) {
             AppController.timeline.selectedStep = stepIndex;
+        }
+    }
+
+    function jumpToStep(stepIndex) {
+        if (stepIndex <= 0) {
+            return;
+        }
+        const rowIndex = AppController.timeline.rowForStep(stepIndex);
+        if (rowIndex >= 0) {
+            activateStep(stepIndex, rowIndex, true);
+        }
+    }
+
+    function revealRootFailure() {
+        const rowIndex = AppController.timeline.rootFailureRow;
+        if (!panel.visible || rowIndex < 0 || rowIndex === panel.revealedRootFailureRow) {
+            return;
+        }
+        panel.revealedRootFailureRow = rowIndex;
+        timelineList.followTail = false;
+        timelineList.positionViewAtIndex(rowIndex, ListView.Center);
+    }
+
+    onVisibleChanged: {
+        if (visible) {
+            Qt.callLater(panel.revealRootFailure);
+        }
+    }
+    Component.onCompleted: Qt.callLater(panel.revealRootFailure)
+
+    Connections {
+        target: AppController.timeline
+        function onRootFailureChanged() {
+            // Row indexes are snapshot-local, so the same number can identify
+            // different failures when switching tabs.
+            panel.revealedRootFailureRow = -1;
+            if (AppController.timeline.rootFailureRow >= 0) {
+                Qt.callLater(panel.revealRootFailure);
+            } else {
+                // A reset/fresh run resumes streaming until another failure is revealed.
+                timelineList.followTail = true;
+            }
+        }
+    }
+
+    function sourceActionLabel(kind) {
+        if (kind === "environment") {
+            return qsTr("Edit environment");
+        }
+        if (kind === "secret") {
+            return qsTr("Set secret");
+        }
+        if (kind === "actor") {
+            return qsTr("Edit actor");
+        }
+        if (kind === "extraction") {
+            return qsTr("Edit extraction");
+        }
+        return qsTr("Edit source");
+    }
+
+    component DiagnosticAction: Button {
+        id: diagnosticAction
+        implicitHeight: Math.max(26, implicitContentHeight + DesignTokens.spaceXs * 2)
+        leftPadding: DesignTokens.spaceSm
+        rightPadding: DesignTokens.spaceSm
+        activeFocusOnTab: visible
+        background: Rectangle {
+            radius: DesignTokens.radiusSm
+            color: diagnosticAction.hovered || diagnosticAction.down || diagnosticAction.activeFocus ? DesignTokens.accentMuted : "transparent"
+            border.width: 1
+            border.color: diagnosticAction.activeFocus ? DesignTokens.accent : DesignTokens.borderStrong
+        }
+        contentItem: Text {
+            text: diagnosticAction.text
+            color: diagnosticAction.enabled ? DesignTokens.accent : DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontCaption
+            font.weight: DesignTokens.weightMedium
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
         }
     }
 
@@ -181,6 +265,9 @@ Rectangle {
                 required property string subLabel
                 required property string op
                 required property string variableName
+                required property var diagnostics
+                required property int blockedByStep
+                required property bool rootFailure
 
                 // Steps that needed this value. Only computed for a *missed*
                 // extraction — that is the case where "what did this break?"
@@ -215,11 +302,10 @@ Rectangle {
                 // A row can reveal more than fits on one line: a payload
                 // (masked headers / response headers / raw error code). Those
                 // rows get a chevron + click-to-open.
-                readonly property bool expandable: value.length > 0
-                // Auto-open a failed step (or any error row carrying detail) so
-                // the failure reason shows without a click; everything else
-                // starts collapsed. Tapping the row still toggles it freely.
-                property bool expanded: expandable && statusToken === "error"
+                readonly property bool expandable: value.length > 0 || diagnostics.length > 0
+                // Only the first failure is opened automatically. Later errors
+                // remain collapsed so the causal failure keeps visual priority.
+                property bool expanded: expandable && rootFailure
                 // Eight lines preserve timeline scanability; the toggle below
                 // keeps the complete selectable value available on demand.
                 readonly property int payloadPreviewLines: 8
@@ -248,10 +334,10 @@ Rectangle {
                 width: ListView.view.width
                 implicitHeight: contentCol.implicitHeight + DesignTokens.spaceSm
                 radius: DesignTokens.radiusSm
-                color: row.selected ? DesignTokens.accentMuted : row.expanded ? DesignTokens.surfaceSunken : (row.isHeader || row.isStep) ? DesignTokens.surfaceSunken : "transparent"
+                color: row.selected ? DesignTokens.accentMuted : row.expanded ? DesignTokens.surfaceSunken : (row.isHeader || (row.isStep && row.statusToken !== "blocked")) ? DesignTokens.surfaceSunken : "transparent"
                 // Selection and keyboard focus use the product accent without
                 // replacing the row's semantic status glyphs or text colours.
-                border.width: row.keyboardCurrent ? 2 : (row.selected || row.isStep || row.isHeader) ? 1 : 0
+                border.width: row.keyboardCurrent ? 2 : (row.selected || row.isHeader || (row.isStep && row.statusToken !== "blocked")) ? 1 : 0
                 border.color: row.keyboardCurrent || row.selected ? DesignTokens.accent : row.statusToken === "error" ? Qt.rgba(DesignTokens.statusError.r, DesignTokens.statusError.g, DesignTokens.statusError.b, 0.45) : DesignTokens.borderSubtle
                 Accessible.role: Accessible.ListItem
                 Accessible.name: row.accessibleName
@@ -662,11 +748,106 @@ Rectangle {
                         }
                     }
 
+                    Flow {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: DesignTokens.spaceXs
+                        visible: row.blockedByStep > 0
+                        spacing: DesignTokens.spaceXs
+
+                        DiagnosticAction {
+                            text: qsTr("Show blocking step %1").arg(row.blockedByStep)
+                            onClicked: panel.jumpToStep(row.blockedByStep)
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: DesignTokens.spaceXs
+                        visible: row.expanded && row.diagnostics.length > 0
+                        spacing: DesignTokens.spaceSm
+
+                        Label {
+                            text: qsTr("Unresolved variables")
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.weight: DesignTokens.weightSemiBold
+                            font.letterSpacing: 0.6
+                        }
+
+                        Repeater {
+                            model: row.diagnostics
+                            delegate: ColumnLayout {
+                                id: diagnostic
+                                required property int index
+                                required property var modelData
+                                Layout.fillWidth: true
+                                spacing: DesignTokens.spaceXs
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: DesignTokens.spaceSm
+
+                                    Label {
+                                        text: qsTr("%1. %2").arg(diagnostic.index + 1).arg(diagnostic.modelData.token)
+                                        color: DesignTokens.textPrimary
+                                        font.pixelSize: DesignTokens.fontLabel
+                                        font.family: DesignTokens.fontMono
+                                        font.weight: DesignTokens.weightSemiBold
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: diagnostic.modelData.location
+                                        color: DesignTokens.textSecondary
+                                        font.pixelSize: DesignTokens.fontCaption
+                                        elide: Text.ElideRight
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: diagnostic.modelData.causeText
+                                    color: DesignTokens.textPrimary
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: DesignTokens.spaceXs
+
+                                    DiagnosticAction {
+                                        visible: diagnostic.modelData.canOpenRequestField === true
+                                        text: qsTr("Open request field")
+                                        onClicked: panel.openRequestFieldRequested(row.op, diagnostic.modelData.requestField, diagnostic.modelData.requestKey)
+                                    }
+                                    DiagnosticAction {
+                                        visible: diagnostic.modelData.canEditSource === true
+                                        text: panel.sourceActionLabel(diagnostic.modelData.editKind)
+                                        onClicked: panel.editSourceRequested(diagnostic.modelData)
+                                    }
+                                    DiagnosticAction {
+                                        visible: diagnostic.modelData.canShowProducer === true
+                                        text: qsTr("Show producer step %1").arg(diagnostic.modelData.producerStep)
+                                        onClicked: panel.jumpToStep(diagnostic.modelData.producerStep)
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    visible: diagnostic.index + 1 < row.diagnostics.length
+                                    implicitHeight: 1
+                                    color: DesignTokens.borderSubtle
+                                }
+                            }
+                        }
+                    }
+
                     // Expanded detail stays selectable but begins as a bounded
                     // preview so one payload cannot consume the timeline viewport.
                     Rectangle {
                         id: payloadWell
-                        visible: row.expanded
+                        visible: row.expanded && row.value.length > 0
                         Layout.fillWidth: true
                         Layout.bottomMargin: DesignTokens.spaceXs
                         implicitHeight: payloadContent.implicitHeight + DesignTokens.spaceSm * 2

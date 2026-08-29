@@ -75,6 +75,54 @@ namespace {
     return token.isEmpty() ? QStringLiteral("Failed") : token;
 }
 
+void addRequestAction(QVariantMap& item) {
+    const QString useKind = item.value(QStringLiteral("useKind")).toString();
+    const QString useName = item.value(QStringLiteral("useName")).toString();
+    QString field;
+    if (useKind == QLatin1String("urlPath") || useKind == QLatin1String("rawQuery") ||
+        useKind == QLatin1String("fragment")) {
+        field = QStringLiteral("path");
+    } else if (useKind == QLatin1String("namedQuery") && !useName.isEmpty()) {
+        field = QStringLiteral("query");
+    } else if (useKind == QLatin1String("header") && !useName.isEmpty()) {
+        field = QStringLiteral("header");
+    } else if (useKind == QLatin1String("body")) {
+        field = QStringLiteral("body");
+    } else if (useKind == QLatin1String("formField") && !useName.isEmpty()) {
+        field = QStringLiteral("form");
+    }
+    item.insert(QStringLiteral("canOpenRequestField"), !field.isEmpty());
+    item.insert(QStringLiteral("requestField"), field);
+    item.insert(QStringLiteral("requestKey"), useName);
+}
+
+void addSourceAction(QVariantMap& item) {
+    const QString kind = item.value(QStringLiteral("sourceKind")).toString();
+    const QString sourceId = item.value(QStringLiteral("sourceId")).toString();
+    const QString field = item.value(QStringLiteral("sourceField")).toString();
+    const QString producer = item.value(QStringLiteral("producerOperationId")).toString();
+    QString editKind;
+    QString editId;
+    if (kind == QLatin1String("environment") && !sourceId.isEmpty() && !field.isEmpty()) {
+        editKind = kind;
+        editId = sourceId;
+    } else if (kind == QLatin1String("secret") && !field.isEmpty()) {
+        editKind = kind;
+        editId = field;
+    } else if (kind == QLatin1String("actor") && !sourceId.isEmpty()) {
+        editKind = kind;
+        editId = sourceId;
+    } else if (kind == QLatin1String("extraction") && !producer.isEmpty() && !field.isEmpty()) {
+        editKind = kind;
+        editId = field;
+    }
+    item.insert(QStringLiteral("canEditSource"), !editKind.isEmpty());
+    item.insert(QStringLiteral("editKind"), editKind);
+    item.insert(QStringLiteral("editId"), editId);
+    item.insert(QStringLiteral("editField"), field);
+    item.insert(QStringLiteral("editOperationId"), producer);
+}
+
 }  // namespace
 
 TimelineModel::TimelineModel(QObject* parent) : QAbstractListModel(parent) {}
@@ -119,6 +167,12 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
             return row.op;
         case VariableNameRole:
             return row.variableName;
+        case DiagnosticsRole:
+            return row.diagnostics;
+        case BlockedByStepRole:
+            return row.blockedByStep;
+        case RootFailureRole:
+            return row.rootFailure;
         default:
             return {};
     }
@@ -141,6 +195,9 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
         {SubLabelRole, "subLabel"},
         {OpRole, "op"},
         {VariableNameRole, "variableName"},
+        {DiagnosticsRole, "diagnostics"},
+        {BlockedByStepRole, "blockedByStep"},
+        {RootFailureRole, "rootFailure"},
     };
 }
 
@@ -171,6 +228,21 @@ int TimelineModel::stepRowFor(int index, const QString& op) {
     return at;
 }
 
+QVariantList TimelineModel::prepareDiagnostics(QVariantList diagnostics) const {
+    for (QVariant& value : diagnostics) {
+        QVariantMap item = value.toMap();
+        addRequestAction(item);
+        addSourceAction(item);
+        const QString producer = item.value(QStringLiteral("producerOperationId")).toString();
+        const int producerStep = item.value(QStringLiteral("producerStep")).toInt();
+        const bool producerMatches =
+            producerStep > 0 && !producer.isEmpty() && stepForOperation(producer) == producerStep;
+        item.insert(QStringLiteral("canShowProducer"), producerMatches);
+        value = item;
+    }
+    return diagnostics;
+}
+
 void TimelineModel::reset() {
     beginResetModel();
     rows_.clear();
@@ -181,7 +253,12 @@ void TimelineModel::reset() {
     runChainSize_ = 0;
     runEnv_.clear();
     runStartRow_ = -1;
+    const bool hadRootFailure = rootFailureRow_ >= 0;
+    rootFailureRow_ = -1;
     endResetModel();
+    if (hadRootFailure) {
+        emit rootFailureChanged();
+    }
     if (!latencyMs_.empty() || !latencyBars_.isEmpty()) {
         latencyMs_.clear();
         latencyBars_.clear();
@@ -238,6 +315,7 @@ TimelineModel::Snapshot TimelineModel::takeSnapshot() const {
                     .runChainSize = runChainSize_,
                     .runEnv = runEnv_,
                     .runStartRow = runStartRow_,
+                    .rootFailureRow = rootFailureRow_,
                     .selectedStep = selectedStep_};
 }
 
@@ -251,6 +329,7 @@ void TimelineModel::restoreSnapshot(Snapshot snapshot) {
     runChainSize_ = snapshot.runChainSize;
     runEnv_ = std::move(snapshot.runEnv);
     runStartRow_ = snapshot.runStartRow;
+    rootFailureRow_ = snapshot.rootFailureRow;
     // Swap latency data in before endResetModel so a view reacting to the reset
     // never observes the previous tab's bars against the new tab's rows.
     latencyMs_ = std::move(snapshot.latencyMs);
@@ -258,6 +337,7 @@ void TimelineModel::restoreSnapshot(Snapshot snapshot) {
     selectedStep_ = snapshot.selectedStep;
     endResetModel();
     emit latenciesChanged();
+    emit rootFailureChanged();
     // Unconditional: the step number may be unchanged while the rows beneath it
     // belong to a different tab, so selectedOperationId can differ regardless.
     emit selectionChanged();
@@ -467,7 +547,8 @@ void TimelineModel::onAssertionCompleted(
     appendRow(std::move(row));
 }
 
-void TimelineModel::onStepFailed(int index, QString op, QString code, QString detail) {
+void TimelineModel::onStepFailed(
+    int index, QString op, QString code, QString detail, QVariantList diagnostics) {
     const int at = stepRowFor(index, op);
     Row& row = rows_[static_cast<std::size_t>(at)];
     row.statusToken = QStringLiteral("error");
@@ -482,6 +563,26 @@ void TimelineModel::onStepFailed(int index, QString op, QString code, QString de
     }
     expanded += QStringLiteral("Error code: %1").arg(code);
     row.value = expanded;
+    row.diagnostics = prepareDiagnostics(std::move(diagnostics));
+    const bool firstFailure = rootFailureRow_ < 0;
+    if (firstFailure) {
+        rootFailureRow_ = at;
+        row.rootFailure = true;
+    }
+    const QModelIndex idx = rowIndex(at);
+    emit dataChanged(idx, idx);
+    if (firstFailure) {
+        emit rootFailureChanged();
+    }
+}
+
+void TimelineModel::onStepBlocked(int index, QString op, int blockedByIndex) {
+    const int at = stepRowFor(index, op);
+    Row& row = rows_[static_cast<std::size_t>(at)];
+    row.statusToken = QStringLiteral("blocked");
+    row.statusLabel = QStringLiteral("blocked");
+    row.blockedByStep = blockedByIndex + 1;
+    row.detail = QStringLiteral("Blocked by step %1").arg(row.blockedByStep);
     const QModelIndex idx = rowIndex(at);
     emit dataChanged(idx, idx);
 }

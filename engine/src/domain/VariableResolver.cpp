@@ -19,6 +19,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace reqloom::engine {
@@ -142,12 +143,15 @@ ResolvedRef resolveDotted(std::string_view ref,
 /// by the env branch (which re-expands embedded refs like a `!secret`
 /// env value that parsed to `{{secret.NAME}}`). `depth` bounds the
 /// re-expansion so a self-referential env value can't recurse forever.
-std::string substituteRefs(std::string_view input,
-                           const RunContext& ctx,
-                           const ResolveContext& rctx,
-                           std::vector<std::string>& unresolved,
-                           int depth,
-                           bool encodeResolvedRefs);
+std::string substituteRefs(
+    std::string_view input,
+    const RunContext& ctx,
+    const ResolveContext& rctx,
+    std::vector<std::string>& unresolved,
+    std::vector<VariableResolver::UnresolvedOccurrence>& unresolvedOccurrences,
+    VariableResolver::Component component,
+    int depth,
+    bool encodeResolvedRefs);
 
 [[nodiscard]] std::optional<std::size_t> findReferenceEnd(std::string_view input,
                                                           std::size_t referenceStart) noexcept {
@@ -489,7 +493,15 @@ ResolvedRef resolveDotted(std::string_view ref,
         // records it, matching how every other unresolved ref behaves.
         if (it->second.find("{{") != std::string::npos) {
             std::vector<std::string> nested;
-            auto expanded = substituteRefs(it->second, ctx, rctx, nested, depth + 1, false);
+            std::vector<VariableResolver::UnresolvedOccurrence> nestedOccurrences;
+            auto expanded = substituteRefs(it->second,
+                                           ctx,
+                                           rctx,
+                                           nested,
+                                           nestedOccurrences,
+                                           VariableResolver::Component::Value,
+                                           depth + 1,
+                                           false);
             if (!nested.empty()) {
                 return std::nullopt;
             }
@@ -566,19 +578,38 @@ ResolvedRef resolveDotted(std::string_view ref,
     return std::nullopt;
 }
 
-std::string substituteRefs(std::string_view input,
-                           const RunContext& ctx,
-                           const ResolveContext& rctx,
-                           std::vector<std::string>& unresolved,
-                           int depth,
-                           bool encodeResolvedRefs) {
+void recordUnresolved(std::string_view legacyToken,
+                      std::string_view token,
+                      VariableResolver::Component component,
+                      std::vector<std::string>& unresolved,
+                      std::vector<VariableResolver::UnresolvedOccurrence>& unresolvedOccurrences) {
+    unresolved.emplace_back(legacyToken);
+    unresolvedOccurrences.push_back(
+        VariableResolver::UnresolvedOccurrence{std::string{token}, component});
+}
+
+std::string substituteRefs(
+    std::string_view input,
+    const RunContext& ctx,
+    const ResolveContext& rctx,
+    std::vector<std::string>& unresolved,
+    std::vector<VariableResolver::UnresolvedOccurrence>& unresolvedOccurrences,
+    VariableResolver::Component component,
+    int depth,
+    bool encodeResolvedRefs) {
     // Depth guard: a self-referential env value (e.g. one whose value
     // references itself) would otherwise loop. Preserve the text but report
     // the nested reference so callers fail closed at the cap.
     if (depth >= kMaxResolveDepth) {
         const std::size_t referenceStart{input.find("{{")};
         if (referenceStart != std::string_view::npos) {
-            unresolved.emplace_back(input.substr(referenceStart));
+            const auto referenceEnd = findReferenceEnd(input, referenceStart);
+            const auto token =
+                referenceEnd
+                    ? trim(input.substr(referenceStart + 2, *referenceEnd - referenceStart - 2))
+                    : trim(input.substr(referenceStart + 2));
+            recordUnresolved(
+                input.substr(referenceStart), token, component, unresolved, unresolvedOccurrences);
         }
         return std::string{input};
     }
@@ -596,7 +627,11 @@ std::string substituteRefs(std::string_view input,
 
         const auto referenceEnd = findReferenceEnd(input, referenceStart);
         if (!referenceEnd) {
-            unresolved.emplace_back(input.substr(referenceStart));
+            recordUnresolved(input.substr(referenceStart),
+                             trim(input.substr(referenceStart + 2)),
+                             component,
+                             unresolved,
+                             unresolvedOccurrences);
             output.append(input.substr(referenceStart));
             break;
         }
@@ -615,7 +650,7 @@ std::string substituteRefs(std::string_view input,
         if (resolved) {
             output += encodeResolvedRefs ? urlEncodePreservingEscapes(*resolved) : *resolved;
         } else {
-            unresolved.push_back(trimmedRef);
+            recordUnresolved(trimmedRef, trimmedRef, component, unresolved, unresolvedOccurrences);
             output.append(input.substr(referenceStart, *referenceEnd + 2 - referenceStart));
         }
         offset = *referenceEnd + 2;
@@ -631,8 +666,16 @@ VariableResolver::Result VariableResolver::resolve(std::string_view templateStr,
                                                    const RunContext& ctx,
                                                    const ResolveContext& resolveCtx) const {
     std::vector<std::string> unresolved;
-    std::string output = substituteRefs(templateStr, ctx, resolveCtx, unresolved, 0, false);
-    return Result{std::move(output), std::move(unresolved)};
+    std::vector<UnresolvedOccurrence> unresolvedOccurrences;
+    std::string output = substituteRefs(templateStr,
+                                        ctx,
+                                        resolveCtx,
+                                        unresolved,
+                                        unresolvedOccurrences,
+                                        Component::Value,
+                                        0,
+                                        false);
+    return Result{std::move(output), std::move(unresolved), std::move(unresolvedOccurrences)};
 }
 
 VariableResolver::Result VariableResolver::resolveUrlPath(std::string_view templateStr,
@@ -649,14 +692,22 @@ VariableResolver::Result VariableResolver::resolveUrlPath(std::string_view templ
                  : (fragmentStart == std::string_view::npos ? templateStr.size() : fragmentStart);
 
     std::vector<std::string> unresolved;
+    std::vector<UnresolvedOccurrence> unresolvedOccurrences;
     std::string output;
     output.reserve(templateStr.size());
     const auto pathTemplate = templateStr.substr(0, pathEnd);
     const bool wholePathReference = isWholeReference(pathTemplate);
-    const std::string resolvedPath =
-        substituteRefs(pathTemplate, ctx, resolveCtx, unresolved, 0, !wholePathReference);
+    const std::string resolvedPath = substituteRefs(pathTemplate,
+                                                    ctx,
+                                                    resolveCtx,
+                                                    unresolved,
+                                                    unresolvedOccurrences,
+                                                    Component::UrlPath,
+                                                    0,
+                                                    !wholePathReference);
     if (wholePathReference && unresolved.empty() && !isSafeWholePathOutput(resolvedPath)) {
-        unresolved.emplace_back(trim(pathTemplate.substr(2, pathTemplate.size() - 4)));
+        const auto token = trim(pathTemplate.substr(2, pathTemplate.size() - 4));
+        recordUnresolved(token, token, Component::UrlPath, unresolved, unresolvedOccurrences);
         output.append(pathTemplate);
     } else {
         output += resolvedPath;
@@ -670,14 +721,22 @@ VariableResolver::Result VariableResolver::resolveUrlPath(std::string_view templ
                                  ctx,
                                  resolveCtx,
                                  unresolved,
+                                 unresolvedOccurrences,
+                                 Component::RawQuery,
                                  0,
                                  true);
     }
     if (fragmentStart != std::string_view::npos) {
-        output += substituteRefs(
-            templateStr.substr(fragmentStart), ctx, resolveCtx, unresolved, 0, false);
+        output += substituteRefs(templateStr.substr(fragmentStart),
+                                 ctx,
+                                 resolveCtx,
+                                 unresolved,
+                                 unresolvedOccurrences,
+                                 Component::Fragment,
+                                 0,
+                                 false);
     }
-    return Result{std::move(output), std::move(unresolved)};
+    return Result{std::move(output), std::move(unresolved), std::move(unresolvedOccurrences)};
 }
 
 }  // namespace reqloom::engine

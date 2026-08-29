@@ -23,10 +23,33 @@ Dialog {
     height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
     padding: DesignTokens.spaceLg
     focus: true
+    property string focusedSecretName: ""
 
     function openDialog() {
+        focusedSecretName = "";
         SecretsController.refresh();
         open();
+    }
+
+    function openSource(name) {
+        SecretsController.refresh();
+        const targetRow = SecretsController.secrets.rowForName(name);
+        if (targetRow < 0) {
+            return false;
+        }
+        focusedSecretName = name;
+        secretList.currentIndex = targetRow;
+        open();
+        Qt.callLater(function () {
+            secretList.positionViewAtIndex(targetRow, ListView.Center);
+            Qt.callLater(function () {
+                const item = secretList.itemAtIndex(targetRow);
+                if (item) {
+                    item.focusSetAction();
+                }
+            });
+        });
+        return true;
     }
 
     background: Rectangle {
@@ -84,13 +107,19 @@ Dialog {
 
             delegate: Rectangle {
                 id: secretRow
+                required property int index
                 required property string name
                 required property string status
+                readonly property bool sourceFocused: name === dialog.focusedSecretName
                 width: ListView.view.width
                 // Row grows with its tallest child (reference label or the
                 // Set…/Clear actions) at large OS text sizes.
                 height: Math.max(44, rowContent.implicitHeight + DesignTokens.spaceSm * 2)
-                color: "transparent"
+                color: sourceFocused ? DesignTokens.accentMuted : "transparent"
+
+                function focusSetAction() {
+                    setSecretBtn.forceActiveFocus();
+                }
 
                 RowLayout {
                     id: rowContent

@@ -132,6 +132,51 @@ Rectangle {
         }
     }
 
+    // A live session inside this window is treated as "expiring" so the dot warns
+    // before a chain fails on a lapsed token rather than after.
+    readonly property int sessionExpiringSeconds: 120
+
+    // ── Actor session indicator (FR-5.1) ─────────────────────────────────────
+    // Colour alone never carries the state; sessionDotTip names it in words.
+    function sessionDotColor(state, seconds) {
+        switch (state) {
+        case "live":
+            return seconds > 0 && seconds <= panel.sessionExpiringSeconds ? DesignTokens.statusWarning : DesignTokens.statusSuccess;
+        case "authenticating":
+        case "refreshing":
+            return DesignTokens.statusRunning;
+        default:
+            return DesignTokens.statusIdle;
+        }
+    }
+
+    // "1m 30s" / "45s" — coarse on purpose, since the value is re-read on a
+    // 15s tick rather than counted down continuously.
+    function sessionTtlText(seconds) {
+        if (seconds <= 0) {
+            return "";
+        }
+        if (seconds < 60) {
+            return qsTr("%1s").arg(seconds);
+        }
+        const mins = Math.floor(seconds / 60);
+        const rest = seconds % 60;
+        return rest === 0 ? qsTr("%1m").arg(mins) : qsTr("%1m %2s").arg(mins).arg(rest);
+    }
+
+    function sessionDotTip(state, seconds) {
+        switch (state) {
+        case "live":
+            return seconds > 0 ? qsTr("Signed in — expires in %1").arg(panel.sessionTtlText(seconds)) : qsTr("Signed in");
+        case "authenticating":
+            return qsTr("Signing in…");
+        case "refreshing":
+            return qsTr("Refreshing session…");
+        default:
+            return qsTr("Not signed in — the next run will authenticate");
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: DesignTokens.spaceLg
@@ -282,8 +327,11 @@ Rectangle {
                 required property string tooltip
                 required property string projectRoot
                 required property int count
+                required property string countLabel
                 required property int status
                 required property string statusToken
+                required property string sessionState
+                required property int sessionSeconds
 
                 // Density floor (controlHeight) that grows with row content at
                 // large OS text instead of clipping. indentation stays 16 — a
@@ -402,16 +450,25 @@ Rectangle {
                         visible: del.count > 0 && !del.isOperation && !del.isExample && panel.width >= 240
                         Layout.alignment: Qt.AlignVCenter
                         implicitHeight: 18
-                        implicitWidth: countLabel.implicitWidth + DesignTokens.spaceSm * 2
+                        implicitWidth: countText.implicitWidth + DesignTokens.spaceSm * 2
                         radius: DesignTokens.radiusSm
                         color: DesignTokens.surfaceSunken
                         Label {
-                            id: countLabel
+                            id: countText
                             anchors.centerIn: parent
                             text: del.count
                             color: DesignTokens.textSecondary
                             font.pointSize: DesignTokens.fontCaptionPointSize
                             font.weight: DesignTokens.weightMedium
+                        }
+                        // The number alone is ambiguous ("GiGwala API · 2" —
+                        // two what?); the model names the unit it counted.
+                        HoverHandler {
+                            id: countHover
+                        }
+                        GlassToolTip {
+                            active: countHover.hovered && del.countLabel.length > 0
+                            text: del.countLabel
                         }
                     }
                     Item {
@@ -434,6 +491,28 @@ Rectangle {
                             font.pointSize: DesignTokens.fontCaptionPointSize
                             font.weight: DesignTokens.weightSemiBold
                             font.family: DesignTokens.fontMono
+                        }
+                    }
+                    // Actor session dot (FR-5.1): green signed in, amber about to
+                    // lapse, accent while (re)authenticating, grey none. Answers
+                    // "why did this chain 401?" without opening the timeline.
+                    Rectangle {
+                        visible: del.isActor
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.rightMargin: DesignTokens.spaceSm
+                        implicitWidth: 8
+                        implicitHeight: 8
+                        radius: 4
+                        color: panel.sessionDotColor(del.sessionState, del.sessionSeconds)
+                        Behavior on color {
+                            ColorMotion {}
+                        }
+                        HoverHandler {
+                            id: sessionHover
+                        }
+                        GlassToolTip {
+                            active: sessionHover.hovered
+                            text: panel.sessionDotTip(del.sessionState, del.sessionSeconds)
                         }
                     }
                     // Operation status dot: live run status when available, else
