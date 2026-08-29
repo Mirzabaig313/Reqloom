@@ -42,21 +42,25 @@ actors, and dependencies. You describe that graph once, in a file you can
 review in a pull request. After that, one command runs any node in it.
 
 ```bash title="Terminal"
-reqloom run refund.approve --project marketplace
+reqloom run refund.approve --project samples/marketplace
 ```
 
-```ansi title="Resolved chain"
-vendor.login          201  142ms
-customer.verify_otp   200   88ms
-product.create        201  113ms
-product.publish       200   79ms
-order.create          201  164ms
-order.pay             200  402ms
-refund.request        201   97ms
-refund.approve        200  121ms
+```ansi title="Output"
+Loaded project: MarketplaceAPI (3 actors, 5 resources)
+Running: refund.approve (chain of 7 steps, env=local)
+  [1] Running: product.create (attempt 1)
+  [2] Running: product.publish (attempt 1)
+  [3] Running: cart.add_item (attempt 1)
+  [4] Running: order.create (attempt 1)
+  [5] Running: order.pay (attempt 1)
+  [6] Running: refund.request (attempt 1)
+  [7] Running: refund.approve (attempt 1)
 
-8 steps · 1.2s · 0 manual copy-paste
+Result: SUCCEEDED
 ```
+
+Seven requests across three actors — vendor, customer, admin — each logged in
+as needed. You asked for one endpoint and declared its prerequisites once.
 
 <p class="eyebrow">How it works</p>
 
@@ -137,44 +141,38 @@ prerequisites.
 
 ## Getting it running
 
-<Aside type="caution" title="Pre-1.0">
-Reqloom has not cut its first release yet, so the package managers below are
-not live. **Building from source is the supported path today** — see
-[Building from source](/dev/building/). The other tabs document where the
-binaries will land at v1.
+Builds for macOS, Linux, and Windows are on the [releases
+page](https://github.com/Mirzabaig313/Reqloom/releases). The
+[installation guide](/start/install/) has direct links, checksums, and the
+first-launch steps each OS needs.
+
+<Aside type="caution" title="Alpha software">
+Reqloom is pre-1.0 and the builds are not yet signed with a paid certificate,
+so macOS and Windows will warn on first launch. [Installation](/start/install/)
+walks through it. Package managers (Homebrew, Scoop) come at v1.
 </Aside>
 
 <Tabs>
+    <TabItem label="Download">
+        Pick your platform on the [installation
+        page](/start/install/#download) — a macOS `.dmg`, a Linux `.AppImage`,
+        or a Windows installer. Then confirm it works:
+
+        ```bash
+        reqloom --help
+        ```
+    </TabItem>
     <TabItem label="Build from source">
         ```bash
         git clone https://github.com/Mirzabaig313/Reqloom
         cd Reqloom
+        ./tools/setup-qt.sh             # Qt 6.8 LTS via aqtinstall
         cmake --preset macos-debug      # or linux-debug / windows-debug
         cmake --build --preset macos-debug
         ./build/macos-debug/cli/reqloom --help
         ```
         Needs CMake 4.0+, a C++23 compiler, and Qt 6.8 LTS. Full
-        prerequisites: [Building from source](/dev/building/).
-    </TabItem>
-    <TabItem label="macOS">
-        ```bash
-        # Planned for v1 — not yet published.
-        brew install reqloom/tap/reqloom
-        ```
-    </TabItem>
-    <TabItem label="Linux">
-        ```bash
-        # Planned for v1 — not yet published.
-        curl -fsSL https://github.com/Mirzabaig313/Reqloom/releases/latest/download/reqloom-linux-x86_64.AppImage -o reqloom
-        chmod +x reqloom
-        ```
-    </TabItem>
-    <TabItem label="Windows">
-        ```powershell
-        # Planned for v1 — not yet published.
-        scoop bucket add reqloom https://github.com/Mirzabaig313/scoop-reqloom
-        scoop install reqloom
-        ```
+        prerequisites: [Building from source](/start/install/#build-from-source).
     </TabItem>
 </Tabs>
 

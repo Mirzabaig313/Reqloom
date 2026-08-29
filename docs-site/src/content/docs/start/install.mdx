@@ -1,154 +1,372 @@
 ---
 title: Installation
-description: "Install Reqloom on macOS, Linux, or Windows. Or build from source."
+description: "Download Reqloom for macOS, Linux, or Windows — or build it from source. Includes the first-launch security steps for unsigned builds."
 ---
 
-import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+import { Tabs, TabItem, Aside, Steps } from "@astrojs/starlight/components";
+import DownloadCards from "../../../components/DownloadCards.astro";
 
-<Aside type="caution" title="Pre-1.0 status">
-Pre-built binaries for macOS / Linux / Windows are part of the v1.0
-milestone. Today, the supported install path is **build from source** —
-takes ~10 minutes on macOS, ~5 minutes on Linux/Windows once
-prerequisites are in place.
+Reqloom ships a CLI (`reqloom`) and a desktop app in the same archive. Download
+a build below, or [build from source](#build-from-source) if you want to
+contribute.
+
+<Aside type="caution" title="Alpha software">
+Reqloom is pre-1.0. The schema format is stable enough to build on — it is
+versioned, and the loader accepts versions 1–3 — but expect rough edges in the
+desktop UI, and expect flags to gain options rather than lose them.
 </Aside>
 
-## Build from source
+## Download
+
+<DownloadCards />
+
+Each platform gets two files. Take the first one unless you have a reason not
+to:
+
+| Platform | Recommended | Alternative |
+| --- | --- | --- |
+| macOS | `.dmg` — drag to Applications | `.zip` — unpack anywhere |
+| Linux | `.AppImage` — single self-contained file | `.tar.gz` — unpack anywhere |
+| Windows | `-setup.exe` — installer | `.zip` — portable, no install |
+
+## First launch
+
+The builds are **not signed with a paid certificate and not notarized**, so
+every OS will warn you the first time. This is expected for an alpha, and the
+steps below are the standard way through it. If you'd rather not bypass the
+warnings, [build from source](#build-from-source) instead.
+
+<Tabs>
+    <TabItem label="macOS">
+        The app is ad-hoc signed, which prevents the misleading *"Reqloom is
+        damaged and can't be opened"* error — but macOS still blocks an
+        unidentified developer on first launch.
+
+        <Steps>
+
+        1.  Open the `.dmg` and drag **Reqloom** to Applications.
+
+        2.  **Right-click** (or Control-click) Reqloom in Applications and
+            choose **Open**. Using right-click → Open is what registers your
+            consent; double-clicking will keep getting refused.
+
+        3.  Confirm **Open** in the dialog. macOS remembers the decision, so
+            later launches are normal.
+
+        </Steps>
+
+        If macOS still refuses, clear the download quarantine flag explicitly:
+
+        ```bash
+        xattr -dr com.apple.quarantine /Applications/Reqloom.app
+        ```
+
+        To put the CLI on your `PATH`:
+
+        ```bash
+        sudo ln -sf /Applications/Reqloom.app/Contents/MacOS/reqloom \
+                    /usr/local/bin/reqloom
+        ```
+    </TabItem>
+
+    <TabItem label="Linux">
+        The AppImage needs the executable bit set, and nothing else:
+
+        ```bash
+        chmod +x Reqloom-*-linux-x86_64.AppImage
+        ./Reqloom-*-linux-x86_64.AppImage --help
+        ```
+
+        On a minimal system (containers, slim server images) an AppImage may
+        need FUSE:
+
+        ```bash
+        sudo apt-get install -y libfuse2      # Debian / Ubuntu
+        ```
+
+        Or skip FUSE entirely by extracting it:
+
+        ```bash
+        ./Reqloom-*.AppImage --appimage-extract
+        ./squashfs-root/AppRun --help
+        ```
+
+        To put the CLI on your `PATH`:
+
+        ```bash
+        sudo install -m 755 Reqloom-*-linux-x86_64.AppImage /usr/local/bin/reqloom
+        ```
+    </TabItem>
+
+    <TabItem label="Windows">
+        The installer is unsigned, so **SmartScreen** shows *"Windows protected
+        your PC"*.
+
+        <Steps>
+
+        1.  Click **More info**.
+
+        2.  Click **Run anyway**.
+
+        </Steps>
+
+        The installer adds the CLI to your `PATH`. Open a **new** terminal
+        afterwards — an already-open one keeps the stale `PATH`.
+
+        Prefer no installer? Take the `.zip`, unpack it, and run
+        `reqloom.exe` from the extracted folder.
+    </TabItem>
+</Tabs>
+
+### Verify the download
+
+Every asset is published with a SHA-256 digest, shown truncated next to each
+file above and in full on the release page. To check a download:
 
 <Tabs>
     <TabItem label="macOS">
         ```bash
-        # 1. Build prerequisites
-        brew install ninja autoconf autoconf-archive automake \
-                     libtool pkg-config qt@6
+        shasum -a 256 Reqloom-*-macos.dmg
+        ```
+    </TabItem>
+    <TabItem label="Linux">
+        ```bash
+        sha256sum Reqloom-*-linux-x86_64.AppImage
+        ```
+    </TabItem>
+    <TabItem label="Windows">
+        ```powershell
+        Get-FileHash .\Reqloom-*-windows-x64-setup.exe -Algorithm SHA256
+        ```
+    </TabItem>
+</Tabs>
+
+## Check that it works
+
+```bash
+reqloom --help
+```
+
+You should see the three subcommands and their flags:
+
+```ansi
+Reqloom CLI
+  reqloom run <operation> [opts]   Execute a chain ending at <operation>
+    --project <path>                Project directory (default: cwd)
+    --env <name>                    Environment to run against
+    --var KEY=VALUE                 Override an env variable (repeatable)
+    --format text|json|junit        Output format (default: text)
+    --output <file>                 Write rendered output to <file>
+    --quiet                         Suppress live progress on stdout
+  reqloom lint                     Validate the schema in current project
+    --project <path>                Project directory (default: cwd)
+  reqloom import <file>            Import an external API spec
+    --out <dir>                     Directory to write the project (default: cwd)
+    --project-root <dir>            Containment root the spec must resolve under
+    --force                         Overwrite an existing reqloom.yaml
+  reqloom --help                   Show this message
+```
+
+Then validate the bundled sample project, which exercises the parser and the
+dependency resolver without sending a single request:
+
+```bash
+git clone https://github.com/Mirzabaig313/Reqloom
+reqloom lint --project Reqloom/samples/marketplace
+```
+
+```ansi
+LINT OK — 3 actors, 5 resources, 27 operations. No errors.
+```
+
+If you see that line, you're set. The [5-minute tour](/start/tour/) runs the
+sample end to end next.
+
+## What you get
+
+- **`reqloom`** — the CLI. Every example in these docs uses it, and it's what
+  you run in CI.
+- **Reqloom** (desktop) — the GUI: project explorer, request editor, response
+  viewer, and the dependency graph. Usable, still maturing.
+
+Both are built from the same engine, so a schema that lints in one behaves
+identically in the other.
+
+## Build from source
+
+Needed if you're contributing, or if you're on a platform without a published
+build (Apple Intel is covered by the universal `.dmg`; ARM Linux is not).
+
+**Prerequisites**
+
+| Tool | Version | Notes |
+| --- | --- | --- |
+| CMake | **4.0+** | Most package managers still ship 3.x — see [troubleshooting](#cmake-command-not-found) |
+| C++ compiler | Apple Clang 16+, Clang 18+, GCC 14+, MSVC 19.40+ | C++23 is required |
+| Qt | **6.8 LTS** | Installed by `tools/setup-qt.sh`, not by your package manager |
+| vcpkg | manifest mode | Every dependency except Qt |
+| Ninja | any recent | Generator used by all presets |
+
+<Aside type="tip" title="Qt comes from aqtinstall, not vcpkg">
+`tools/setup-qt.sh` fetches pre-built Qt 6.8.3 from the official Qt mirror via
+[aqtinstall](https://github.com/miurahr/aqtinstall). Building Qt from source
+through vcpkg added 45–90 minutes to a cold CI run, so the project doesn't do
+it — and neither should you locally.
+</Aside>
+
+<Tabs>
+    <TabItem label="macOS">
+        ```bash
+        # 1. Toolchain
+        brew install cmake ninja autoconf autoconf-archive automake libtool pkg-config
 
         # 2. vcpkg (one-time)
         git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
         ~/vcpkg/bootstrap-vcpkg.sh
-        echo 'export VCPKG_ROOT="$HOME/vcpkg"' >> ~/.zshrc
-        exec zsh
+        echo 'export VCPKG_ROOT="$HOME/vcpkg"' >> ~/.zshrc && exec zsh
 
-        # 3. Reqloom
+        # 3. Reqloom + Qt
         git clone https://github.com/Mirzabaig313/Reqloom
-        cd reqloom
+        cd Reqloom
+        ./tools/setup-qt.sh
+        export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"
+
+        # 4. Build
         cmake --preset macos-debug
         cmake --build --preset macos-debug
 
-        # 4. Run
+        # 5. Run
         ./build/macos-debug/cli/reqloom --help
         ```
     </TabItem>
-    <TabItem label="Linux (Ubuntu 24.04)">
+
+    <TabItem label="Linux">
         ```bash
-        # 1. Build prerequisites
-        sudo apt-get install -y ninja-build cmake autoconf \
-            autoconf-archive automake libtool pkg-config \
-            qt6-base-dev qt6-declarative-dev
+        # 1. Toolchain (Ubuntu 24.04)
+        sudo apt-get install -y ninja-build autoconf autoconf-archive \
+            automake libtool pkg-config libgl1-mesa-dev python3-pip
 
         # 2. vcpkg (one-time)
         git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
         ~/vcpkg/bootstrap-vcpkg.sh
         export VCPKG_ROOT="$HOME/vcpkg"
 
-        # 3. Reqloom
+        # 3. Reqloom + Qt
         git clone https://github.com/Mirzabaig313/Reqloom
-        cd reqloom
+        cd Reqloom
+        ./tools/setup-qt.sh
+        export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/gcc_64"
+
+        # 4. Build
         cmake --preset linux-debug
         cmake --build --preset linux-debug
 
-        # 4. Run
+        # 5. Run
         ./build/linux-debug/cli/reqloom --help
         ```
+
+        GCC 14 is required. On Ubuntu 24.04 install it with
+        `sudo apt-get install -y gcc-14 g++-14` and select it via
+        `CC=gcc-14 CXX=g++-14` before configuring.
     </TabItem>
+
     <TabItem label="Windows">
         ```powershell
-        # 1. Prerequisites: Visual Studio 2022 (with C++ workload)
-        #    Qt 6.8+ from the Qt online installer
-        #    Git for Windows
+        # 1. Prerequisites: Visual Studio 2022 (Desktop C++ workload),
+        #    Git for Windows, Python 3, CMake 4.0+
 
-        # 2. vcpkg
+        # 2. vcpkg (one-time)
         git clone https://github.com/microsoft/vcpkg.git $HOME\vcpkg
-        $HOME\vcpkg\bootstrap-vcpkg.bat
+        & $HOME\vcpkg\bootstrap-vcpkg.bat
         $env:VCPKG_ROOT = "$HOME\vcpkg"
 
-        # 3. Reqloom
+        # 3. Reqloom + Qt
         git clone https://github.com/Mirzabaig313/Reqloom
-        cd reqloom
+        cd Reqloom
+        .\tools\setup-qt.cmd
+        $env:CMAKE_PREFIX_PATH = "C:\Qt\6.8.3\msvc2022_64"
+
+        # 4. Build
         cmake --preset windows-debug
         cmake --build --preset windows-debug
 
-        # 4. Run
+        # 5. Run
         .\build\windows-debug\cli\reqloom.exe --help
         ```
     </TabItem>
 </Tabs>
 
-## Verify the install
+Release presets (`macos-release`, `linux-release`, `windows-release`) build
+optimised binaries without sanitizers. The debug presets enable ASan and UBSan,
+which makes them slower but far better for development.
+
+Run the test suite to confirm a healthy build:
 
 ```bash
-reqloom --help
-# Reqloom CLI
-#   reqloom run <operation>      Execute a chain ending at <operation>
-#   reqloom lint                 Validate the schema in current project
-#   reqloom import <file>        Import an external API spec
-#   reqloom --help               Show this message
-
-reqloom lint --project samples/marketplace
-# LINT OK — 3 actors, 5 resources, 27 operations. No errors.
+ctest --test-dir build/macos-debug --output-on-failure
 ```
-
-If both commands work, you're set up. Take the [5-minute tour](/start/tour/) next.
-
-## What's installed
-
-The build produces three binaries:
-
-- **`reqloom`** (CLI) — the daily-driver command-line tool. Used in
-  shell scripts, CI/CD, and the bulk of this documentation's examples.
-- **`Reqloom.app`** (macOS) / `Reqloom` (Linux/Windows) — the desktop
-  app. Phase 2 milestone; UI is still minimal.
-- **`reqloom-mock-sut`** — the test-fixture HTTP server used by the
-  engine's integration tests. Not part of the daily workflow.
 
 ## Troubleshooting
 
 ### `cmake: command not found`
 
-CMake 4.0+ is required. macOS Homebrew and most Linux package
-managers ship 3.x. Install from [cmake.org](https://cmake.org/download/)
-or via `pip install cmake`.
+Reqloom needs CMake **4.0 or newer**. Homebrew and most Linux repositories
+still ship 3.x, which fails at configure time with a policy error. Install a
+current build from [cmake.org](https://cmake.org/download/) or with
+`pip install "cmake>=4.0"`.
 
-### vcpkg can't find Qt
+### CMake can't find Qt
 
-vcpkg's Qt build takes ~2 hours and ~15 GB of disk on the first run.
-The macOS preset uses Homebrew's Qt to skip this — that's why the
-macOS section installs `qt@6` via brew. Linux/Windows presets use
-vcpkg-built Qt for reproducibility.
-
-### "qt@6 keg-only"
-
-Add the brew Qt to your `CMAKE_PREFIX_PATH` if cmake doesn't find it
-automatically:
+The presets don't guess at Qt's location. Set `CMAKE_PREFIX_PATH` to the
+directory `tools/setup-qt.sh` printed:
 
 ```bash
-export CMAKE_PREFIX_PATH="/opt/homebrew/opt/qt@6:$CMAKE_PREFIX_PATH"
+export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"      # or .../gcc_64 on Linux
 ```
 
-Or just point the preset at it (already done in `CMakePresets.json` for
-the macOS presets).
+If you skipped `setup-qt.sh` and installed Qt some other way, it must be 6.8 or
+newer — 6.7 and earlier are missing APIs the desktop app relies on.
 
-### Build succeeds but the binary fails to start
+### The build fails inside vcpkg
 
-Most likely a Qt deployment issue. Try `otool -L build/macos-debug/cli/reqloom`
-(macOS) or `ldd build/linux-debug/cli/reqloom` (Linux) to see which
-shared libraries are missing.
+Delete the build directory and reconfigure, which is enough for most stale-cache
+failures:
+
+```bash
+rm -rf build/macos-debug && cmake --preset macos-debug
+```
+
+vcpkg writes a per-package log; the configure output names the exact file to
+read. Include that log if you open an issue.
+
+### The binary builds but won't start
+
+Usually a missing shared library. Inspect what it wants:
+
+```bash
+otool -L build/macos-debug/cli/reqloom      # macOS
+ldd    build/linux-debug/cli/reqloom        # Linux
+```
+
+### `reqloom: command not found` after installing
+
+The CLI lives inside the app bundle or archive and isn't on your `PATH` until
+you link it — see the [First launch](#first-launch) tab for your platform. On
+Windows, open a new terminal so it picks up the updated `PATH`.
 
 ## Updating
 
+Downloaded a build? Grab the newer one from the [releases
+page](https://github.com/Mirzabaig313/Reqloom/releases) and replace it. Your
+projects are plain files on disk and are untouched by an upgrade.
+
+Built from source?
+
 ```bash
-cd reqloom
+cd Reqloom
 git pull
 cmake --build --preset macos-debug
 ```
 
-vcpkg picks up new dependencies automatically when the `vcpkg.json`
-manifest changes.
+vcpkg picks up dependency changes from `vcpkg.json` automatically. If `git pull`
+brought in a Qt version bump, re-run `./tools/setup-qt.sh` first.

@@ -37,13 +37,13 @@ stub "concepts/actors" "Actors" \
     "Actor abstraction in Reqloom: identities with their own auth flows, session caches, and injected headers." \
     "Actors are identities with their own auth flows. Each actor defines a sequence of HTTP requests that produce a session, and a set of headers to inject into every operation that runs as this actor.
 
-See [Mental model](/concepts/mental-model/) and [Auth strategies](/schema/auth-strategies/) for the concrete details. Full content for this page is part of Phase 2 documentation."
+See [Mental model](/concepts/mental-model/) and [Auth strategies](/schema/auth-strategies/) for the concrete details.
 
 stub "concepts/resources" "Resources & operations" \
     "Resources group operations by domain entity. Each operation captures HTTP method, path, body, expected status, and what to extract from the response." \
     "Resources are domain entities (\`order\`, \`payment\`, \`refund\`). Each resource holds a set of named operations — individual HTTP endpoints.
 
-See [Schema authoring guide](/schema/authoring/) for examples and the [Schema spec](/reference/schema-spec/) for the full field reference. Full content for this page is part of Phase 2 documentation."
+See [Schema authoring guide](/schema/authoring/) for examples and the [Schema spec](/reference/schema-spec/) for the full field reference. .
 
 stub "concepts/dependencies" "Dependency resolution" \
     "How Reqloom builds the prerequisite chain for any target operation: implicit edges from variable references plus explicit depends_on declarations." \
@@ -163,7 +163,7 @@ The CLI prints a chain summary on completion. On failure, it shows the
 HTTP status received and the first 200 chars of the response body for
 the failing step.
 
-Full content for this page is part of Phase 2 documentation."
+
 
 stub "cli/lint" "reqloom lint" \
     "Validate the schema and dependency graph without making any HTTP requests." \
@@ -324,7 +324,7 @@ stub "reference/variables" "Variable syntax reference" \
 
 Resolution order: builtins → actor → resource → env → secret.
 
-Full content for this page is part of Phase 2 documentation."
+
 
 stub "reference/error-codes" "Error codes" \
     "Every E_* code the engine emits, what triggers it, and whether it's retryable." \
@@ -376,7 +376,7 @@ Key principles:
 - **Layered C++** — domain → application → infrastructure, dependencies pointing inward only.
 - **Phase B option** — the engine is constructable as an in-process library today and extractable to a separate process or rewritten in Rust later. Architectural guardrails make this a build-system change, not a rewrite.
 
-Full content for this page is part of Phase 2 documentation."
+
 
 stub "dev/building" "Building from source" \
     "Full build instructions for macOS, Linux, Windows. Prerequisites, troubleshooting, presets." \
@@ -390,7 +390,7 @@ stub "dev/building" "Building from source" \
 
 CI uses Linux + Windows presets with full vcpkg builds. Local macOS uses Homebrew Qt for speed.
 
-Full content for this page is part of Phase 2 documentation."
+
 
 stub "dev/contributing" "Contributing" \
     "How to contribute: development workflow, code style, the architectural firewall, the boundary check, PR guidelines." \

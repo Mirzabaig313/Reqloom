@@ -13,4 +13,4 @@ See the [installation guide](/start/install/) for end-to-end build instructions.
 
 CI uses Linux + Windows presets with full vcpkg builds. Local macOS uses Homebrew Qt for speed.
 
-Full content for this page is part of Phase 2 documentation.
+

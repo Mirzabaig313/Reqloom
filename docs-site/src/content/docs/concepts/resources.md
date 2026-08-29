@@ -5,4 +5,4 @@ description: "Resources group operations by domain entity. Each operation captur
 
 Resources are domain entities (`order`, `payment`, `refund`). Each resource holds a set of named operations — individual HTTP endpoints.
 
-See [Schema authoring guide](/schema/authoring/) for examples and the [Schema spec](/reference/schema-spec/) for the full field reference. Full content for this page is part of Phase 2 documentation.
+See [Schema authoring guide](/schema/authoring/) for examples and the [Schema spec](/reference/schema-spec/) for the full field reference. 

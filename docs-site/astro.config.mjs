@@ -139,6 +139,14 @@ export default defineConfig({
                         { label: "Authoring guide", slug: "schema/authoring" },
                         { label: "File structure", slug: "schema/file-structure" },
                         { label: "Auth strategies", slug: "schema/auth-strategies" },
+                        {
+                            label: "Advanced operations",
+                            slug: "schema/advanced-operations",
+                        },
+                        {
+                            label: "Secrets, TLS & timeouts",
+                            slug: "schema/secrets-and-transport",
+                        },
                         { label: "Common pitfalls", slug: "schema/pitfalls" },
                         { label: "Cheat sheet", slug: "schema/cheatsheet" },
                     ],
