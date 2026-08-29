@@ -157,7 +157,7 @@ enum is the QA contract.
 | Platform | Runner |
 | --- | --- |
 | Linux, Windows | GitHub Actions |
-| macOS | Azure DevOps Pipelines |
+| macOS | GitHub Actions |
 
 Both pin the same Qt version and run the same test suite. The docs site deploys
 separately from `docs-site/**` changes.

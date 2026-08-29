@@ -73,7 +73,20 @@ don't conflict.
 
 ## How imports resolve
 
-Two rules here are easy to get wrong.
+Three rules here are easy to get wrong, and all three fail silently.
+
+:::danger[Without `imports:`, nothing in those directories is read]
+The globs aren't a convenience — they're the only thing that loads the files.
+A project with a populated `resources/` but no `imports:` block parses to an
+empty project and lints clean:
+
+```ansi
+LINT OK — 0 actors, 0 resources, 0 operations. No errors.
+```
+
+Exit code `0`, and the files are sitting right there. Check the counts `lint`
+prints against what you expect.
+:::
 
 ### Directory names are load-bearing
 

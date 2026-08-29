@@ -53,9 +53,9 @@ The pragmatic route for a large spec:
 
 1. **Direct import** for the mechanical translation — paths, methods, headers,
    bodies. Deterministic and free.
-2. **AI importer stages 1–2** pointed at the same spec, to *propose* actors and
-   dependency edges. Read the plan; it's five minutes and it's where the guessing
-   is visible.
+2. **The AI importer** pointed at the same spec, to *propose* actors and
+   dependency edges. Read the plan it produces; it's five minutes, and it's where
+   the guessing is visible.
 3. **Hand-wire** the chains you'll test. Usually a handful of `depends_on` lines
    and one actor.
 
@@ -128,5 +128,5 @@ real traffic is better input, even though it's messier. See
 ## Next
 
 - [`reqloom import`](/cli/import/) — the direct importer in full
-- [Prompt suite](/ai-importer/prompts/) — the six stages
+- [AI importer](/ai-importer/playbook/) — the prompt and the workflow
 - [Dependency resolution](/concepts/dependencies/) — what you're wiring toward

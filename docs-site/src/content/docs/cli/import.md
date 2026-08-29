@@ -39,8 +39,8 @@ All auto-detected:
 
 :::note[curl logs and Markdown docs go elsewhere]
 `reqloom import` needs structured input. For raw curl logs, HAR captures, or
-prose API documentation, use the [AI importer](/ai-importer/playbook/), which
-drives an LLM through a multi-stage prompt suite instead.
+prose API documentation, use the [AI importer](/ai-importer/playbook/) — a single
+prompt you paste into a model.
 :::
 
 ## Example

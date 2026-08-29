@@ -1,6 +1,6 @@
 ---
 title: Importing curl logs
-description: "The hardest input and the most truthful one. How to prepare curl or HAR captures, and why Stage 1 will ask you a lot of questions."
+description: "The hardest input and the most truthful one. How to prepare curl or HAR captures, and why it will ask you a lot of questions."
 ---
 
 Curl logs have no schema, no metadata, and no declared structure. There's no direct
@@ -60,7 +60,7 @@ from the session.
 
 ## Expect questions
 
-Stage 1 (`01-discover.md`) will surface a long list of open questions on curl input
+The prompt will surface a long list of open questions on curl input
 — far more than for OpenAPI. That's the prompt working correctly, not failing.
 Typical ones:
 
@@ -95,7 +95,7 @@ silently later. Search generated output for digits in paths.
 reqloom lint --project my-api
 ```
 
-Iterate with stage 6 until clean, then **run one chain for real**. Lint cannot tell
+Iterate with the model until lint is clean, then **run one chain for real**. Lint cannot tell
 you that a status code or a body field is wrong — only a real request can. Mark
 what you've confirmed:
 
@@ -116,6 +116,6 @@ well.
 
 ## Next
 
-- [Prompt suite](/ai-importer/prompts/) — the six stages
+- [AI importer](/ai-importer/playbook/) — the prompt and the workflow
 - [Overview & playbook](/ai-importer/playbook/) — the end-to-end workflow
 - [Authoring guide](/schema/authoring/) — writing it yourself

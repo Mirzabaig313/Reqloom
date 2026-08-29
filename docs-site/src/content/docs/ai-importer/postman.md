@@ -111,9 +111,9 @@ Then drop the per-operation header and add `actor: user`.
 4. **One actor** to replace the token variable
 5. **Wire only the chains you'll test** — not all 105 operations
 
-If the collection is large and script-heavy, AI importer
-[stages 1–2](/ai-importer/prompts/) can propose the actor and dependency structure
-from the scripts. Read the plan before generating anything.
+If the collection is large and script-heavy, the
+[AI importer](/ai-importer/playbook/) can propose the actor and dependency
+structure from the scripts. Read the plan before accepting the YAML.
 
 ## Collection-runner ordering
 
@@ -143,4 +143,4 @@ as success until you add one.
 
 - [`reqloom import`](/cli/import/) — the direct importer in full
 - [Variables & references](/concepts/variables/) — resource refs vs global variables
-- [Prompt suite](/ai-importer/prompts/) — for script-heavy collections
+- [AI importer](/ai-importer/playbook/) — for script-heavy collections

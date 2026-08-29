@@ -129,6 +129,39 @@ LINT FAIL [E_REF_UNDEFINED]: Operation 'order.get' references undefined symbol
 'invoice.invoice_id': no actor, resource, env, or secret named 'invoice'
 ```
 
+## A missing `imports:` ignores every file
+
+Possibly the worst one, because the files are right there on disk. Given this
+project:
+
+```
+my-api/
+├── reqloom.yaml          ← no `imports:` block
+└── resources/
+    └── orders.yaml
+```
+
+```ansi
+LINT OK — 0 actors, 0 resources, 0 operations. No errors.
+```
+
+Exit code `0`. The resource file is never read, because nothing imported it.
+Multi-file projects **require** the globs:
+
+```yaml title="reqloom.yaml"
+imports:
+  - environments/*.yaml
+  - actors/*.yaml
+  - resources/*.yaml
+```
+
+The same silence applies to a file in an unrecognised directory — only
+`actors/`, `resources/`, and `environments/` prefixes are parsed, and anything
+else is loaded then discarded. And to a non-expanding glob: `resources/**/*.yaml`
+is treated as a literal filename and matches nothing.
+
+Always sanity-check the counts `lint` prints against what you expect.
+
 ## Resource ids come from `name:`, not the filename
 
 In a multi-file project, the id is the `name:` inside the file:
