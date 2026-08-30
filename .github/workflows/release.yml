@@ -197,9 +197,7 @@ jobs:
           Categories=Development;
           Terminal=false
           EOF
-          # Use the committed 256x256 brand icon. No runtime generation, so
-          # nothing can corrupt it (base64-in-YAML mangling broke this twice).
-          cp desktop/branding/Reqloom-app-icon.png \
+          cp desktop/branding/Reqloom-256.png \
             "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png"
 
           # APPIMAGE_EXTRACT_AND_RUN=1: GitHub runners often can't mount FUSE,
