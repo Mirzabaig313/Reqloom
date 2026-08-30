@@ -133,16 +133,18 @@ jobs:
         run: |
           set -euo pipefail
           cd "${QT_ROOT_DIR}"
-          mapfile -t files < <(grep -rl -- "AGL" lib/cmake mkspecs 2>/dev/null || true)
-          if [[ ${#files[@]} -eq 0 ]]; then
+          # No mapfile/readarray: macOS ships bash 3.2, where they don't exist.
+          files="$(grep -rl -- 'AGL' lib/cmake mkspecs 2>/dev/null || true)"
+          if [[ -z "${files}" ]]; then
             echo "No AGL references found — Qt or the SDK no longer needs this."
             exit 0
           fi
-          for f in "${files[@]}"; do
+          printf '%s\n' "${files}" | while IFS= read -r f; do
+            [[ -n "${f}" ]] || continue
             echo "patching ${f}"
             # Remove the framework flag, and AGL as a bare entry in CMake's
             # semicolon-separated lists / qmake's space-separated LIBS.
-            perl -pi -e 's/-framework\s+AGL//g; s/;AGL(?=[;"\s])/;/g; s/(?<=[;"\s])AGL;/;/g' "$f"
+            perl -pi -e 's/-framework\s+AGL//g; s/;AGL(?=[;"\s])/;/g; s/(?<=[;"\s])AGL;/;/g' "${f}"
           done
           if grep -rq -- "-framework AGL" lib/cmake mkspecs 2>/dev/null; then
             echo "::error::AGL reference still present after patching"
