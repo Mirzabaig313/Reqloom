@@ -51,10 +51,7 @@ jobs:
             name: linux
           - os: windows-latest
             name: windows
-          # Pinned to macos-14, not macos-latest: it is Apple Silicon (arm64)
-          # and keeps an Xcode 15 SDK, which Qt 6.8 needs — see the AGL note on
-          # the Xcode selection step below. Matches the release workflow's pin.
-          - os: macos-14
+          - os: macos-latest
             name: macos
 
     steps:
@@ -116,13 +113,6 @@ jobs:
           HOMEBREW_NO_ENV_HINTS: 1
         run: brew install --quiet autoconf-archive
 
-      # Qt 6.8's QtGui links -framework AGL, which the Xcode 16 / macOS 15 SDK
-      # removed ("ld: framework 'AGL' not found"). Build against the newest
-      # Xcode 15 SDK on the image, where AGL is still present.
-      - name: Select Xcode 15 (macOS)
-        if: runner.os == 'macOS'
-        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_15*.app | sort -V | tail -1)"
-
       # ----- CMake 4.x (all OSes) -----------------------------------------
       - name: Set up CMake 4.x + Ninja
         uses: lukka/get-cmake@latest
@@ -158,6 +148,32 @@ jobs:
       - name: Export CMAKE_PREFIX_PATH for Qt
         shell: bash
         run: echo "CMAKE_PREFIX_PATH=${QT_ROOT_DIR}" >> "$GITHUB_ENV"
+
+
+      - name: Drop Qt's stale AGL reference (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${QT_ROOT_DIR}"
+          # No mapfile/readarray: macOS ships bash 3.2, where they don't exist.
+          files="$(grep -rl -- 'AGL' lib/cmake mkspecs 2>/dev/null || true)"
+          if [[ -z "${files}" ]]; then
+            echo "No AGL references found — Qt or the SDK no longer needs this."
+            exit 0
+          fi
+          printf '%s\n' "${files}" | while IFS= read -r f; do
+            [[ -n "${f}" ]] || continue
+            echo "patching ${f}"
+            # Remove the framework flag, and AGL as a bare entry in CMake's
+            # semicolon-separated lists / qmake's space-separated LIBS.
+            perl -pi -e 's/-framework\s+AGL//g; s/;AGL(?=[;"\s])/;/g; s/(?<=[;"\s])AGL;/;/g' "${f}"
+          done
+          if grep -rq -- "-framework AGL" lib/cmake mkspecs 2>/dev/null; then
+            echo "::error::AGL reference still present after patching"
+            exit 1
+          fi
+          echo "AGL references removed."
 
       # ----- MSVC environment (Windows) -----------------------------------
       - name: Set up MSVC environment

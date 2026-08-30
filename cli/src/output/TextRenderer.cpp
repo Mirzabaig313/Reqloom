@@ -4,7 +4,8 @@
 
 #include "StepFormatting.h"
 
-#include <print>
+#include <format>
+#include <ostream>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -14,6 +15,15 @@ namespace reqloom::cli {
 namespace {
 
 namespace ce = reqloom::engine;
+
+// C++23 <print> only provides std::println(FILE*, ...) and std::println(...)
+// overloads — no std::ostream overload. Xcode 15.4's libc++ correctly rejects
+// std::println(ostream, ...) per the standard, so we format via std::format
+// and stream the result with a trailing newline (println semantics).
+template <typename... Args>
+void ostreamPrintln(std::ostream& out, std::format_string<Args...> fmt, Args&&... args) {
+    out << std::format(fmt, std::forward<Args>(args)...) << '\n';
+}
 
 }  // namespace
 
@@ -29,11 +39,11 @@ void TextRenderer::printProjectPreamble(const std::string& projectName,
     if (quiet_) {
         return;
     }
-    std::println(progress_,
-                 "Loaded project: {} ({} actors, {} resources)",
-                 projectName,
-                 actorCount,
-                 resourceCount);
+    ostreamPrintln(progress_,
+                   "Loaded project: {} ({} actors, {} resources)",
+                   projectName,
+                   actorCount,
+                   resourceCount);
 }
 
 void TextRenderer::onEvent(const ce::RunEvent& event) {
@@ -44,38 +54,39 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
                 if (quiet_) {
                     return;
                 }
-                std::println(progress_,
-                             "Running: {} (chain of {} steps, env={})",
-                             e.target.value,
-                             e.chainSize,
-                             e.envName);
+                ostreamPrintln(progress_,
+                               "Running: {} (chain of {} steps, env={})",
+                               e.target.value,
+                               e.chainSize,
+                               e.envName);
             } else if constexpr (std::is_same_v<T, ce::StepStarted>) {
                 if (quiet_) {
                     return;
                 }
-                std::println(progress_,
-                             "  [{}] Running: {} (attempt {})",
-                             e.stepIndex + 1,
-                             e.op.value,
-                             e.attempt);
+                ostreamPrintln(progress_,
+                               "  [{}] Running: {} (attempt {})",
+                               e.stepIndex + 1,
+                               e.op.value,
+                               e.attempt);
             } else if constexpr (std::is_same_v<T, ce::StepSkipped>) {
                 if (quiet_) {
                     return;
                 }
-                std::println(progress_, "  [{}] Skipped: {} (cached)", e.stepIndex + 1, e.op.value);
+                ostreamPrintln(
+                    progress_, "  [{}] Skipped: {} (cached)", e.stepIndex + 1, e.op.value);
             } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
                 // Failures always go to stderr, even when quiet — CI logs need them.
-                std::println(err_,
-                             "  [{}] FAILED: {} [{}] — {}",
-                             e.stepIndex + 1,
-                             e.op.value,
-                             std::string(ce::toCodeString(e.code)),
-                             e.detail);
+                ostreamPrintln(err_,
+                               "  [{}] FAILED: {} [{}] — {}",
+                               e.stepIndex + 1,
+                               e.op.value,
+                               std::string(ce::toCodeString(e.code)),
+                               e.detail);
             } else if constexpr (std::is_same_v<T, ce::RunEnded>) {
                 if (quiet_) {
                     return;
                 }
-                std::println(progress_, "\nResult: {}", std::string(runOutcomeName(e.outcome)));
+                ostreamPrintln(progress_, "\nResult: {}", std::string(runOutcomeName(e.outcome)));
             }
         },
         event);
@@ -87,48 +98,48 @@ void TextRenderer::render(const ce::OperationId& target,
     // Summary table prints even in quiet mode — it's the canonical record
     // of which steps ran. Suppressing it would make the run silent on
     // success, which defeats `--quiet` consumers that do their own parsing.
-    std::println(summary_, "\n--- Chain Summary ---");
-    std::println(summary_,
-                 "Target: {}   Env: {}   Outcome: {}",
-                 target.value,
-                 environment.empty() ? std::string_view{"<default>"} : environment,
-                 std::string(runOutcomeName(result.outcome)));
+    ostreamPrintln(summary_, "\n--- Chain Summary ---");
+    ostreamPrintln(summary_,
+                   "Target: {}   Env: {}   Outcome: {}",
+                   target.value,
+                   environment.empty() ? std::string_view{"<default>"} : environment,
+                   std::string(runOutcomeName(result.outcome)));
 
     for (const auto& step : result.steps) {
         if (step.pollAttempt) {
-            std::println(summary_,
-                         "    poll #{:<2} {:<6} {} ({}ms){}",
-                         *step.pollAttempt,
-                         std::string(statusGlyph(step.status)),
-                         step.op.value,
-                         step.elapsed.count(),
-                         step.detail.empty() ? std::string{} : "  " + step.detail);
+            ostreamPrintln(summary_,
+                           "    poll #{:<2} {:<6} {} ({}ms){}",
+                           *step.pollAttempt,
+                           std::string(statusGlyph(step.status)),
+                           step.op.value,
+                           step.elapsed.count(),
+                           step.detail.empty() ? std::string{} : "  " + step.detail);
             continue;
         }
         if (step.forEachIndex) {
-            std::println(summary_,
-                         "    iter #{:<2} {:<6} {} ({}ms){}",
-                         *step.forEachIndex,
-                         std::string(statusGlyph(step.status)),
-                         step.op.value,
-                         step.elapsed.count(),
-                         step.detail.empty() ? std::string{} : "  " + step.detail);
+            ostreamPrintln(summary_,
+                           "    iter #{:<2} {:<6} {} ({}ms){}",
+                           *step.forEachIndex,
+                           std::string(statusGlyph(step.status)),
+                           step.op.value,
+                           step.elapsed.count(),
+                           step.detail.empty() ? std::string{} : "  " + step.detail);
             continue;
         }
-        std::println(summary_,
-                     "  {:<6} {} ({}ms) err={}",
-                     std::string(statusGlyph(step.status)),
-                     step.op.value,
-                     step.elapsed.count(),
-                     errorCodeName(step));
+        ostreamPrintln(summary_,
+                       "  {:<6} {} ({}ms) err={}",
+                       std::string(statusGlyph(step.status)),
+                       step.op.value,
+                       step.elapsed.count(),
+                       errorCodeName(step));
         if (!step.detail.empty()) {
-            std::println(summary_, "         {}", step.detail);
+            ostreamPrintln(summary_, "         {}", step.detail);
         }
         for (const auto& a : step.assertions) {
-            std::println(summary_,
-                         "         {} assert: {}",
-                         a.passed ? std::string{"\u2713"} : std::string{"\u2717"},
-                         a.name);
+            ostreamPrintln(summary_,
+                           "         {} assert: {}",
+                           a.passed ? std::string{"\u2713"} : std::string{"\u2717"},
+                           a.name);
         }
     }
 }

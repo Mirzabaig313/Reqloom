@@ -42,17 +42,16 @@ struct RunArgs {
 };
 
 void printUsage(std::ostream& os) {
-    std::println(os,
-                 "Usage: reqloom run <resource.operation> [options]\n"
-                 "Options:\n"
-                 "  --project <path>     Project directory (default: cwd)\n"
-                 "  --env <name>         Environment to run against\n"
-                 "  --var KEY=VALUE      Override an environment variable (repeatable)\n"
-                 "  --format <fmt>       Output format: text (default), json, junit\n"
-                 "  --output <file>      Write rendered output to <file> (default: stdout)\n"
-                 "  --quiet              Suppress live progress on stdout (failures still go\n"
-                 "                       to stderr). Implied by --format json|junit.\n"
-                 "Exit codes: 0 success, 1 run/schema failure, 2 invalid arguments.");
+    os << "Usage: reqloom run <resource.operation> [options]\n"
+          "Options:\n"
+          "  --project <path>     Project directory (default: cwd)\n"
+          "  --env <name>         Environment to run against\n"
+          "  --var KEY=VALUE      Override an environment variable (repeatable)\n"
+          "  --format <fmt>       Output format: text (default), json, junit\n"
+          "  --output <file>      Write rendered output to <file> (default: stdout)\n"
+          "  --quiet              Suppress live progress on stdout (failures still go\n"
+          "                       to stderr). Implied by --format json|junit.\n"
+          "Exit codes: 0 success, 1 run/schema failure, 2 invalid arguments.\n";
 }
 
 [[nodiscard]] std::expected<Format, std::string> parseFormat(const std::string& token) {
