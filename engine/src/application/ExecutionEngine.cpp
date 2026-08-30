@@ -324,7 +324,6 @@ struct AuthTemplateUse {
         {auth.oauth2Scope, VariableUseKind::Auth, "OAuth 2 scope", "Inline auth"},
     };
     if (auth.oauth2GrantType == "password") {
-
         uses.push_back({auth.username, VariableUseKind::Auth, "OAuth 2 username", "Inline auth"});
         uses.push_back({auth.password, VariableUseKind::Auth, "OAuth 2 password", "Inline auth"});
     }
