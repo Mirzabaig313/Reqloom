@@ -47,12 +47,10 @@ jobs:
             name: linux
           - os: windows-latest
             name: windows
-          # Pinned to macos-14, not macos-latest: macOS 15 / Xcode 16 dropped
-          # AGL.framework from the SDK, which Qt 6.8's QtGui still references at
-          # link time ("ld: framework 'AGL' not found"). macos-14 keeps the
-          # Xcode 15 SDK (AGL present) and stays arm64. Revisit when Qt drops
-          # the AGL reference.
-          - os: macos-14
+          # Apple Silicon (arm64), current image. Not pinned to an older macOS
+          # for Qt 6.8's stale AGL link reference — that is patched out after
+          # the Qt install instead, which works on any SDK.
+          - os: macos-latest
             name: macos
 
     steps:
@@ -98,26 +96,6 @@ jobs:
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
 
-      # Qt 6.8's QtGui links -framework AGL, which the Xcode 16 / macOS 15 SDK
-      # dropped ("ld: framework 'AGL' not found").
-      #
-
-      - name: Provide AGL framework for Qt 6.8 (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-          xc15="$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)"
-          agl="${xc15}/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/AGL.framework"
-          active="$(xcrun --show-sdk-path)"
-          if [[ ! -d "${agl}" ]]; then
-            echo "::error::AGL.framework not found in an Xcode 15 SDK (looked in ${agl})"
-            exit 1
-          fi
-          if [[ ! -d "${active}/System/Library/Frameworks/AGL.framework" ]]; then
-            sudo cp -R "${agl}" "${active}/System/Library/Frameworks/"
-          fi
-          ls -d "${active}/System/Library/Frameworks/AGL.framework"
-          clang --version | head -1
 
       # ----- CMake 4.x + Ninja --------------------------------------------
       - name: Set up CMake 4.x + Ninja
@@ -147,6 +125,30 @@ jobs:
       - name: Export CMAKE_PREFIX_PATH for Qt
         shell: bash
         run: echo "CMAKE_PREFIX_PATH=${QT_ROOT_DIR}" >> "$GITHUB_ENV"
+
+
+      - name: Drop Qt's stale AGL reference (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${QT_ROOT_DIR}"
+          mapfile -t files < <(grep -rl -- "AGL" lib/cmake mkspecs 2>/dev/null || true)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No AGL references found — Qt or the SDK no longer needs this."
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "patching ${f}"
+            # Remove the framework flag, and AGL as a bare entry in CMake's
+            # semicolon-separated lists / qmake's space-separated LIBS.
+            perl -pi -e 's/-framework\s+AGL//g; s/;AGL(?=[;"\s])/;/g; s/(?<=[;"\s])AGL;/;/g' "$f"
+          done
+          if grep -rq -- "-framework AGL" lib/cmake mkspecs 2>/dev/null; then
+            echo "::error::AGL reference still present after patching"
+            exit 1
+          fi
+          echo "AGL references removed."
 
       # ----- MSVC environment (Windows) -----------------------------------
       - name: Set up MSVC environment
