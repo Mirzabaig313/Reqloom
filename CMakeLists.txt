@@ -86,6 +86,21 @@ find_package(Qt6Keychain CONFIG QUIET)
 # UI-only deps
 if(REQLOOM_BUILD_DESKTOP)
     find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Gui Quick Qml QuickControls2 QuickWidgets Concurrent Core5Compat Network)
+    # Qt 6.8.3's FindWrapOpenGL adds the removed AGL framework on macOS.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND Qt6_VERSION VERSION_EQUAL "6.8.3"
+       AND TARGET WrapOpenGL::WrapOpenGL)
+        get_target_property(reqloom_opengl_libraries WrapOpenGL::WrapOpenGL INTERFACE_LINK_LIBRARIES)
+        if(reqloom_opengl_libraries)
+            list(FIND reqloom_opengl_libraries "/System/Library/Frameworks/AGL.framework" reqloom_agl_index)
+            if(reqloom_agl_index GREATER -1)
+                list(REMOVE_AT reqloom_opengl_libraries ${reqloom_agl_index})
+                set_target_properties(WrapOpenGL::WrapOpenGL PROPERTIES
+                    INTERFACE_LINK_LIBRARIES "${reqloom_opengl_libraries}")
+            endif()
+        endif()
+        unset(reqloom_agl_index)
+        unset(reqloom_opengl_libraries)
+    endif()
     # Core5Compat provides QTextCodec, which the vendored Scintilla Qt platform
     # layer (third_party) still uses under Qt6.
 endif()
