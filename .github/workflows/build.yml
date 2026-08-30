@@ -117,11 +117,25 @@ jobs:
         run: brew install --quiet autoconf-archive
 
       # Qt 6.8's QtGui links -framework AGL, which the Xcode 16 / macOS 15 SDK
-      # removed ("ld: framework 'AGL' not found"). Build against the newest
-      # Xcode 15 SDK on the image, where AGL is still present.
-      - name: Select Xcode 15 (macOS)
+      # dropped ("ld: framework 'AGL' not found").
+      #
+
+      - name: Provide AGL framework for Qt 6.8 (macOS)
         if: runner.os == 'macOS'
-        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_15*.app | sort -V | tail -1)"
+        run: |
+          set -euo pipefail
+          xc15="$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)"
+          agl="${xc15}/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/AGL.framework"
+          active="$(xcrun --show-sdk-path)"
+          if [[ ! -d "${agl}" ]]; then
+            echo "::error::AGL.framework not found in an Xcode 15 SDK (looked in ${agl})"
+            exit 1
+          fi
+          if [[ ! -d "${active}/System/Library/Frameworks/AGL.framework" ]]; then
+            sudo cp -R "${agl}" "${active}/System/Library/Frameworks/"
+          fi
+          ls -d "${active}/System/Library/Frameworks/AGL.framework"
+          clang --version | head -1
 
       # ----- CMake 4.x (all OSes) -----------------------------------------
       - name: Set up CMake 4.x + Ninja
