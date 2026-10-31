@@ -4,13 +4,12 @@ import starlight from "@astrojs/starlight";
 import remarkBaseLinks from "./src/plugins/remark-base-links.mjs";
 
 // Site URL is set per-deploy via the SITE/BASE env vars (see deploy-docs.yml).
-// Defaults target the project page at https://mirzabaig313.github.io/Reqloom/
-// so a local or non-CI build still produces correct, prefixed internal links.
-// CI overrides these:
-//   SITE = https://<user>.github.io   BASE = /Reqloom/   (project page)
-//   SITE = https://<user>.github.io   BASE = /            (org page)
-const site = process.env.SITE ?? "https://mirzabaig313.github.io";
-const base = process.env.BASE ?? "/Reqloom/";
+// Defaults target the custom domain https://docs.reqloom.tech/ (served from the root)
+// so a local or non-CI build produces the same links as production.
+// To build for a GitHub project page instead, override:
+//   SITE = https://<user>.github.io   BASE = /<repo>/
+const site = process.env.SITE ?? "https://docs.reqloom.tech";
+const base = process.env.BASE ?? "/";
 
 const description =
     "Reqloom is a workflow-aware API testing tool. Define actors and resources " +
