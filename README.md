@@ -6,7 +6,7 @@
 
 [![Release (cross-platform)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/release.yml/badge.svg)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/release.yml)
 [![Build & Test (Linux + Windows + macOS)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml)
-[![Docs](https://img.shields.io/badge/docs-online-2496ED.svg)](https://mirzabaig313.github.io/Reqloom/)
+[![Docs](https://img.shields.io/badge/docs-online-2496ED.svg)](https://docs.reqloom.tech/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)](https://en.cppreference.com/w/cpp/23)
 [![CMake](https://img.shields.io/badge/CMake-4.0%2B-064F8C.svg)](https://cmake.org/)
@@ -24,7 +24,7 @@ login, prerequisites, target call — and executes them in the correct order.
 
 > Postman is an HTTP client. Reqloom is an API workflow engine.
 
-📖 **Full documentation: [mirzabaig313.github.io/Reqloom](https://mirzabaig313.github.io/Reqloom/)**
+📖 **Full documentation: [docs.reqloom.tech](https://docs.reqloom.tech/)**
 
 📦 **Download:** grab the latest build for macOS (`.dmg`), Windows (`.exe` installer), or Linux (`.AppImage`) from the [Releases page](https://github.com/Mirzabaig313/Reqloom/releases).
 
@@ -101,7 +101,7 @@ then the target — with every extracted ID flowing automatically between steps.
 
 ### Planned
 
-Committed directions from the [product roadmap](https://mirzabaig313.github.io/Reqloom/). The
+Committed directions from the [product roadmap](https://docs.reqloom.tech/). The
 guiding rule is that the **same `reqloom.yaml`** that powers testing also powers
 these features — no parallel definitions.
 
@@ -312,7 +312,7 @@ CI fails the whole pipeline on a single misformatted line, using
 ## Documentation
 
 Full documentation — schema reference, auth strategies, polling, hooks, and the
-CLI guide — lives at **[mirzabaig313.github.io/Reqloom](https://mirzabaig313.github.io/Reqloom/)**.
+CLI guide — lives at **[docs.reqloom.tech](https://docs.reqloom.tech/)**.
 
 The site is built from `docs-site/` (Astro Starlight). To run it locally:
 

@@ -78,7 +78,7 @@ elif command -v clang-format >/dev/null 2>&1; then
   yellow "  using \$(which clang-format), not pinned to v18 — CI may disagree"
 fi
 
-if [[ -z "$clang_format" ]]; then
+if [[ -z "$clang_format" && "${SKIP_FORMAT:-0}" != "1" ]]; then
   fail "clang-format not on PATH. Install clang-format 18 (brew install llvm@18 on macOS, apt install clang-format-18 on Ubuntu) and ensure it's reachable. Override with SKIP_FORMAT=1 if you must (CI will still reject)."
 fi
 

@@ -49,26 +49,13 @@ jobs:
             npm install --no-audit --no-fund
           fi
 
-      - name: Determine site URL
-        id: site
-        run: |
-          REPO_OWNER="${{ github.repository_owner }}"
-          REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          if [[ "${REPO_NAME}" == "${REPO_OWNER}.github.io" ]]; then
-            # Org / user pages — served from the root.
-            echo "site=https://${REPO_OWNER}.github.io"   >> "$GITHUB_OUTPUT"
-            echo "base=/"                                  >> "$GITHUB_OUTPUT"
-          else
-            # Project pages — served under /<repo-name>/.
-            echo "site=https://${REPO_OWNER}.github.io"   >> "$GITHUB_OUTPUT"
-            echo "base=/${REPO_NAME}/"                     >> "$GITHUB_OUTPUT"
-          fi
-
+      # Docs are served from the custom domain docs.reqloom.tech (see docs-site/public/CNAME
+      # and Settings → Pages → Custom domain), so everything lives at the root.
       - name: Build
         working-directory: docs-site
         env:
-          SITE: ${{ steps.site.outputs.site }}
-          BASE: ${{ steps.site.outputs.base }}
+          SITE: https://docs.reqloom.tech
+          BASE: /
         run: npm run build
 
       - name: Upload artifact
