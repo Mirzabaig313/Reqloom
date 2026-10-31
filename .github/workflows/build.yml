@@ -15,6 +15,13 @@ name: Build & Test (Linux + Windows + macOS)
 on:
   push:
     branches: [main, dev]
+    # Docs-only pushes are built and deployed by deploy-docs.yml; skip the
+    # three-platform C++ build for them.
+    paths-ignore:
+      - "docs-site/**"
+      - "doc/**"
+      - "**/*.md"
+      - "LICENSE"
 
 env:
   VCPKG_COMMIT: aa40adda5352e87655b8583cfb2451d5e9e276fd
