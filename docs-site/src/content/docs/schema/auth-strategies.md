@@ -21,8 +21,17 @@ issues credentials.
 | [`jwt`](#jwt) | You sign your own JWT | no |
 | [`mtls`](#mtls) | Client-certificate TLS | no |
 
-`strategy:` defaults to `simple`. An unrecognised value **silently falls back to
-`simple`** — note `oauth2` alone is not valid, it's `oauth2_client_credentials`.
+`strategy:` defaults to `simple`. Any other value fails the load and lists the
+accepted ones — note `oauth2` alone is not valid, it's `oauth2_client_credentials`:
+
+```ansi
+LINT FAIL [E_SCHEMA_INVALID]: ./actors/svc.yaml:2:19: unknown strategy 'oauth2'; accepted values: simple, chain, basic, api_key, oauth2_client_credentials, oauth2_password, oauth1, aws_sigv4, bearer, jwt, mtls
+```
+
+When a login fails, the step fails with `E_SESSION_REFRESH_FAILED` and a detail
+that names the actor and the cause, such as
+`actor 'vendor' could not sign in: auth: step 'login' returned HTTP 401 (expected 200) — {"error":"invalid password"}`.
+The quoted response has secrets masked.
 
 ## simple
 
@@ -141,6 +150,10 @@ auth:
   scope: "orders:read orders:write"     # optional
 ```
 
+When the token response has `expires_in`, the session ends 30 seconds before the
+token expires, or at the actor's `session.ttl` if that comes first. Without
+`expires_in`, `ttl` alone decides. The same applies to `oauth2_password`.
+
 ## oauth2_password
 
 RFC 6749 §4.3 — the above plus user credentials.
@@ -164,7 +177,9 @@ flow with PKCE and holds the resulting token in memory.
 
 ## oauth1
 
-RFC 5849, HMAC-SHA1, signed per request.
+RFC 5849, HMAC-SHA1, signed per request. The signature base string uses the
+URL with the scheme and host in lower case and the default port (`:80` for
+http, `:443` for https) removed.
 
 ```yaml
 auth:
@@ -189,6 +204,13 @@ auth:
   service: execute-api
   session_token: "{{secret.AWS_SESSION_TOKEN}}"   # optional, for STS
 ```
+
+S3 paths are signed as S3 expects them. A multipart (`body_form` with a file)
+upload is signed only for `service: s3`, with the payload marked
+`UNSIGNED-PAYLOAD`. For any other service the step fails with
+`E_SESSION_REFRESH_FAILED` and the detail `aws_sigv4 signing failed (AWS SigV4
+cannot sign a multipart upload for service 'execute-api'; only s3 is
+supported)`.
 
 ## jwt
 
@@ -242,8 +264,9 @@ Refresh extractions are **merged** into the existing session, so variables the
 login produced and refresh doesn't (like `vendor_id`) survive. With no
 `expect_status`, any 2xx counts as success.
 
-Malformed `ttl` values fall back to 15m silently — `ttl: 15 minutes` is not
-valid. See [sessions & caching](/concepts/sessions/).
+A bare number is whole seconds (`ttl: 3600` is an hour). A malformed `ttl` —
+`ttl: 15 minutes` — fails the load. A successful refresh
+replaces the credential the actor sends; see [sessions & caching](/concepts/sessions/#refresh-instead-of-re-login).
 
 ## Inline auth for one endpoint
 
@@ -260,8 +283,8 @@ health check on another host — put the credential on the operation:
 ```
 
 `type:` accepts `bearer`, `basic`, `apikey` (or `api_key`), `aws_sigv4`,
-`oauth1`, `oauth2`, `jwt`, `mtls`, and `inherit`. Anything unrecognised means
-**no auth is applied** — silently.
+`oauth1`, `oauth2`, `jwt`, `mtls`, `inherit`, and `none`, in any letter case.
+Anything else fails the load with the list of accepted values.
 
 Common shapes:
 

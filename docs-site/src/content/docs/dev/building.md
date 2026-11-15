@@ -11,22 +11,26 @@ you need once you're actually developing.
 
 Six, from `CMakePresets.json`:
 
-| Preset | Build type | Sanitizers |
-| --- | --- | --- |
-| `macos-debug` | Debug | ASan + UBSan |
-| `macos-release` | Release | none |
-| `linux-debug` | Debug | ASan + UBSan |
-| `linux-release` | Release | none |
-| `windows-debug` | Debug | none |
-| `windows-release` | Release | none |
+| Preset | Build type | Sanitizers | Qt |
+| --- | --- | --- | --- |
+| `macos-debug` | Debug | none | Homebrew `qt@6` at `/opt/homebrew/opt/qt@6` |
+| `macos-release` | Release | none | Homebrew `qt@6` |
+| `linux-debug` | Debug | ASan + UBSan | `CMAKE_PREFIX_PATH` |
+| `linux-release` | Release | none | `CMAKE_PREFIX_PATH` |
+| `windows-debug` | Debug | none | `CMAKE_PREFIX_PATH` |
+| `windows-release` | Release | none | `CMAKE_PREFIX_PATH` |
 
 ```bash
 cmake --preset macos-debug
 cmake --build --preset macos-debug
 ```
 
-Debug presets enable AddressSanitizer and UndefinedBehaviorSanitizer, which makes
-binaries noticeably slower but catches memory and UB bugs at the point they
+Every preset takes the vcpkg toolchain from `$VCPKG_ROOT`, so that variable must
+be set before you configure; without it, configure fails with *"Could not find
+toolchain file"*.
+
+Only `linux-debug` enables AddressSanitizer and UndefinedBehaviorSanitizer, which
+makes binaries noticeably slower but catches memory and UB bugs at the point they
 happen. Develop on debug; benchmark on release.
 
 ## Running tests
@@ -45,7 +49,7 @@ ctest --test-dir build/macos-debug --label-regex engine
 ctest --test-dir build/macos-debug -R DependencyResolver
 ```
 
-852 tests currently pass. A red suite on a clean checkout is a bug — please
+The suite registers 1,129 tests. A red suite on a clean checkout is a bug — please
 [report it](https://github.com/Mirzabaig313/Reqloom/issues) with your platform and
 compiler version.
 
@@ -102,9 +106,14 @@ so a new file can't silently fail to build.
 tools/format.sh            # clang-format over the tree
 ```
 
-`clang-tidy` runs per `.clang-tidy`. Warnings are `-Wall -Wextra -Wpedantic
--Wconversion`; `-Werror` is on in CI but not locally, so your build won't break on
-a warning while you're mid-change — CI will.
+Formatting is pinned to **clang-format 18**. The lightest install is
+`pipx install clang-format==18.1.8`; `brew install llvm@18` (macOS) and
+`apt install clang-format-18` (Linux) also work. The pre-push hook checks
+formatting; CI doesn't, so the hook is where an unformatted change is caught.
+
+`clang-tidy` runs per `.clang-tidy`. Warnings include `-Wall -Wextra -Wpedantic
+-Wconversion -Wshadow` (`/W4` on MSVC). Warnings are not errors, locally or in
+CI.
 
 ## The pre-push hook
 
@@ -114,8 +123,9 @@ Wire it up once:
 git config core.hooksPath tools/git-hooks
 ```
 
-It runs `tools/pre-push-check.sh` — configure, build, tests, boundary check —
-which is roughly what CI does. Catching a failure locally is much faster than
+It runs `tools/pre-push-check.sh` — clang-format check, configure, build, tests,
+boundary check — which is roughly what CI does, plus the format check.
+`SKIP_FORMAT=1` skips the format step when you have to. Catching a failure locally is much faster than
 waiting for a CI round trip.
 
 ```bash
@@ -125,14 +135,19 @@ git push --no-verify               # skip it, when you have a reason
 
 ## Qt notes
 
-Qt comes from [aqtinstall](https://github.com/miurahr/aqtinstall) via
-`tools/setup-qt.sh`, **not** vcpkg. Building Qt from source through vcpkg added
-45–90 minutes to a cold CI run and blew past job time limits, so the project
-doesn't do it.
+Qt never comes from vcpkg. Building Qt from source through vcpkg added 45–90
+minutes to a cold CI run and blew past job time limits, so the project doesn't
+do it.
+
+- **macOS, locally:** Homebrew's `qt@6`, which the `macos-*` presets find at
+  `/opt/homebrew/opt/qt@6`. To use another Qt, pass
+  `-DCMAKE_PREFIX_PATH=<path>` when configuring.
+- **Linux and Windows, and CI on every platform:** pre-built Qt 6.8.3 from the
+  official mirror via [aqtinstall](https://github.com/miurahr/aqtinstall).
 
 ```bash
-./tools/setup-qt.sh
-export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"      # or .../gcc_64 on Linux
+./tools/setup-qt.sh                                   # Linux
+export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/gcc_64"
 ```
 
 `QT_VERSION` is pinned in `tools/setup-qt.sh` and in the CI workflows — keep them
@@ -154,13 +169,13 @@ enum is the QA contract.
 
 ## CI
 
-| Platform | Runner |
-| --- | --- |
-| Linux, Windows | GitHub Actions |
-| macOS | GitHub Actions |
+All three platforms build on **GitHub Actions** (`ubuntu-latest`,
+`windows-latest`, `macos-latest`) in one workflow, after a static boundary check.
+A push to `dev` builds the debug presets and runs the tests; a push to `main`
+builds the release presets. Every platform pins the same Qt version.
 
-Both pin the same Qt version and run the same test suite. The docs site deploys
-separately from `docs-site/**` changes.
+Pushes that only touch docs (`docs-site/**`, `doc/**`, Markdown files) skip the
+platform builds; the docs site builds and deploys from its own workflow.
 
 ## Troubleshooting
 

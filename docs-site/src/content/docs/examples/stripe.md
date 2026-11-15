@@ -45,8 +45,9 @@ Bracket keys are preserved verbatim — quote them in YAML and they arrive as
 `metadata[source]=reqloom`, which is what Stripe expects for nested objects.
 
 `body_form` also picks the encoding for you: it's
-`application/x-www-form-urlencoded` unless a value starts with `@`, in which case
-it becomes multipart. See
+`application/x-www-form-urlencoded` unless a value is written with one leading
+`@` (a file), in which case it becomes multipart. `@@` sends text that starts
+with `@`. See
 [file uploads](/schema/advanced-operations/#file-uploads).
 
 :::caution[Repeated keys aren't supported the way the finding proposed]

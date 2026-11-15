@@ -17,6 +17,7 @@ One file, one actor, one operation:
 ```yaml title="reqloom.yaml"
 version: 1
 name: My API
+id: 3f6b2a9e-1c4d-4e8a-9b7f-2d5c8e1a4b60
 default_environment: local
 
 environment:
@@ -75,7 +76,9 @@ Three things worth noticing:
 - **`baseUrl` is magic.** The request URL is `baseUrl` + `path`. It's camelCase,
   and it stops at the host — no `/api` prefix.
 - **The password is `!secret`.** It reads from your OS keychain, so this file is
-  safe to commit. See [secrets](/schema/secrets-and-transport/#secrets).
+  safe to commit. Secrets are stored per project, which is what the `id:` line is
+  for — any unique value without a `/`; the desktop app adds one if it's missing.
+  See [secrets](/schema/secrets-and-transport/#secrets).
 - **`expect_status` is worth setting.** Without it, a `500` counts as success.
 
 ## 2. Your first chain
@@ -135,8 +138,8 @@ Rule of thumb: if you use a value from it, the reference is the dependency. If y
 only need its *side effect* — published, activated, verified, approved — say
 `depends_on`.
 
-`depends_on` must be a **sequence**. Written as a bare scalar it's silently
-ignored and you get no dependency at all.
+`depends_on` takes a sequence, or a single operation id (`depends_on:
+order.create`), which counts as one item.
 
 ## 3. The bug that catches everyone
 
@@ -222,8 +225,10 @@ environment variable with `--var` when the caller has to know the value.
           - "$.data.currency in ['USD', 'EUR']"
 ```
 
-`assert` must be a **sequence**. Written as a map it is silently ignored and the
-step always passes — so if your assertions never seem to fire, check for the `-`.
+`assert` must be a **sequence**; written as a map it fails the load. An
+assertion may compare with an earlier value — `"$.data.id == '{{order.order_id}}'"`
+— and the placeholder is substituted as a single value; see
+[templates in predicates](/schema/advanced-operations/#templates-in-predicates).
 
 ## 6. Split the file once it grows
 
@@ -246,6 +251,7 @@ my-api/
 ```yaml title="reqloom.yaml"
 version: 1
 name: My API
+id: 3f6b2a9e-1c4d-4e8a-9b7f-2d5c8e1a4b60
 default_environment: local
 imports:
   - environments/*.yaml
@@ -306,9 +312,10 @@ reqloom run <op>                  # the only real proof
 reqloom run <op> --format json    # for scripts and CI
 ```
 
-Lint catches YAML errors, undefined scopes, missing `depends_on` targets, and
-cycles. It cannot tell you a path, body, or status code is wrong — only a real
-request can.
+Lint catches YAML errors, undefined scopes and actors, missing `depends_on`
+targets, malformed assertions, unknown builtins, ambiguous producers, and cycles
+— the [full list](/cli/lint/#what-it-checks). It cannot tell you a path, body, or
+status code is wrong — only a real request can.
 
 Sanity-check the counts it prints. `0 resources` when you have six files means
 they aren't being imported.

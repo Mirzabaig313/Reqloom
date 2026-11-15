@@ -43,7 +43,7 @@ resource, not to the operation that produced them.**
 
 `order.create` extracts `order_id`. `order.pay` extracts `payment_id`. Both are
 now available as `{{order.order_id}}` and `{{order.payment_id}}` — the resource
-accumulates them:
+collects them from all its operations:
 
 ```yaml
   refund:
@@ -155,21 +155,31 @@ JSONPath unless the prefix says otherwise:
 which is what [`for_each`](/schema/advanced-operations/#fanning-out-with-for_each)
 iterates over. Otherwise, references resolve to the most recent instance.
 
-XPath and regex need the explicit form:
+Regex needs the explicit form:
 
 ```yaml
     extract:
-      title:
-        path: "//book/title"
-        source: xpath
+      order_ref:
+        path: "ref-([0-9]+)"
+        source: regex
 ```
+
+`source: xpath` is accepted by the parser but not implemented, so it never yields
+a value. JSONPath supports field access, indexes, `[*]`, and `[?(...)]` filters;
+`$..name` is an error. See
+[JSONPath in extractions](/schema/advanced-operations/#jsonpath-in-extractions).
 
 ## Instances
 
-Every time an operation extracts values, it creates an instance of its resource.
-Run `order.create` three times and there are three orders, so `{{order.order_id}}`
-means "the most recent" and `{{order[2].order_id}}` means the second — counting
-from 1, not 0.
+Every time an operation extracts values, it creates an instance of its resource;
+a `[*]` extraction or a `for_each` creates several. `{{order.order_id}}` means
+"the most recent" and `{{order[2].order_id}}` means the second — counting from 1,
+not 0.
+
+When an operation runs again, its new instances replace the ones it produced
+before; instances from the resource's other operations stay. That matters in the
+desktop app, which keeps extracted values between runs: re-running
+`product.list` gives you the current list, not the old one plus the new one.
 
 Most schemas never need indexing. It matters when you deliberately create several
 of something and then act on a specific one.

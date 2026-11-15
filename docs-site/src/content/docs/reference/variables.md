@@ -4,7 +4,8 @@ description: "The complete {{...}} reference grammar: scopes, resolution order, 
 ---
 
 One sigil, `{{ ... }}`, usable in any path, header, query param, body, form
-field, actor auth config, or predicate. Whitespace inside is trimmed, so
+field, actor auth config, assertion or poll condition. Whitespace inside is
+trimmed, so
 `{{ order.order_id }}` and `{{order.order_id}}` are the same.
 
 ## Scopes
@@ -31,14 +32,26 @@ Checked in this order, first match wins:
 5. **Indexed resource** — when the scope looks like `name[N]`
 6. **Resource instances** — searched **newest first**
 
-That last point matters. A resource accumulates variables across operations, so
-`order.create` extracting `order_id` and `order.pay` extracting `payment_id`
+That last point matters. A resource collects variables from all its operations,
+so `order.create` extracting `order_id` and `order.pay` extracting `payment_id`
 both remain referenceable as `{{order.order_id}}` and `{{order.payment_id}}`.
 
+Two rules keep the newest-first search honest:
+
+- **A re-run replaces.** When an operation runs again, the instances it produced
+  before are dropped and its new ones become the newest. Instances from other
+  operations keep their place.
+- **`null` stops the search.** If the latest response from the operation that
+  extracts a field returned `null` for it, or did not contain it, the reference
+  is unresolved. It does not fall back to an older instance's value, and the
+  failure says why: "The last user.create response returned null for
+  'user_id'".
+
 :::caution[An unresolved reference is left in place, not blanked]
-If nothing matches, the literal text `{{order.typo}}` is sent as-is and recorded
-as unresolved. You'll see a request URL with braces in it rather than an empty
-segment — that's the signal to check the name.
+If nothing matches, the reference text `{{order.typo}}` stays in place and is
+recorded as unresolved. An operation with an unresolved reference fails with
+`E_VAR_UNRESOLVED` before its request is sent, and the timeline shows the braces
+where the value should be — that's the signal to check the name.
 :::
 
 ## Builtins
@@ -52,7 +65,7 @@ segment — that's the signal to check the name.
 | `{{$.now + 1h}}` | Offset timestamp — `s`, `m`, `h`, `d`, signed |
 | `{{$.faker.email}}` | `test+<hex>@example.com` |
 | `{{$.faker.phone}}` | A `+1555…` number |
-| `{{$.env.NAME}}` | A **process** environment variable |
+| `{{$.env.NAME}}` | A **process** environment variable listed in `allowed_env` |
 
 ```yaml
     headers:
@@ -62,10 +75,14 @@ segment — that's the signal to check the name.
       expires_at: "{{$.now + 24h}}"
 ```
 
-Only `email` and `phone` are real faker generators. Any other type — 
-`{{$.faker.name}}`, `{{$.faker.address}}` — returns a placeholder shaped like
-`faker_name_1a2b3c4d`. It never fails, which means a typo produces junk rather
-than an error.
+Only `email` and `phone` exist. Any other name — `{{$.faker.name}}`,
+`{{$.faker.address}}` — is an error: the project fails to load, and `reqloom lint`
+says so:
+
+```ansi
+LINT FAIL [E_REF_UNDEFINED]: Operation 'o.a' uses $.faker.name, which is not a
+faker generator; valid names: email, phone
+```
 
 :::note[There is no `$.random`, `$.timestamp`, or `$.date`]
 `$.uuid` and `$.now` are the only generators, plus faker. Offsets work on
@@ -92,7 +109,9 @@ The argument is either a quoted literal or another reference:
 ```
 
 Note the inner reference is written **without** braces — `order.order_id`, not
-`{{order.order_id}}`.
+`{{order.order_id}}`. It is checked at load like any other reference: an unknown
+scope inside a function call fails with `E_REF_UNDEFINED`, and a resource
+referenced there becomes a dependency.
 
 ## `env` vs `$.env`
 
@@ -104,10 +123,20 @@ environment:
 ```
 
 - `{{env.region}}` → `us-east-1`, from the schema
-- `{{$.env.region}}` → the shell's `$region`, via `getenv`, usually nothing
+- `{{$.env.region}}` → the shell's `$region`, via `getenv` — and only if
+  `region` is listed under `allowed_env:` in `reqloom.yaml`
 
 Use `{{env.X}}` for project configuration and `{{$.env.X}}` only to pull a value
-the CI runner already has in its environment.
+the CI runner already has in its environment:
+
+```yaml title="reqloom.yaml"
+allowed_env:
+  - CI_API_TOKEN
+```
+
+A `$.env` name that isn't in `allowed_env` fails the load with `E_REF_UNDEFINED`.
+Values read through `$.env` are masked in output like secrets. See
+[`{{secret.X}}` vs `{{$.env.X}}`](/schema/secrets-and-transport/#secretx-vs-envx).
 
 An `env` value may itself contain a reference, and is expanded one level further:
 
@@ -177,6 +206,37 @@ Referencing a resource creates an implicit dependency, which is how chains build
 themselves. `depends_on` is only needed for prerequisites that don't hand you a
 value.
 
+## JSON bodies
+
+When a body is sent as JSON, a value substituted **inside a JSON string** is
+escaped as string content, so quotes, backslashes, and newlines in the value
+can't break the document:
+
+```yaml
+    body:
+      note: "{{env.note}}"       # env.note = He said "hi"
+```
+
+```json
+{"note":"He said \"hi\""}
+```
+
+A value **outside** a string is inserted exactly as written, so numbers,
+booleans, arrays, and objects still work. In a structured `body:` every value is
+already a JSON string, so use a scalar body for this:
+
+```yaml
+    body: |
+      {"quantity": {{env.qty}}, "tags": {{env.tags_json}}}
+```
+
+The body counts as JSON when it starts with `{` or `[` and either has no
+`Content-Type` header or one that is `application/json` or ends in `+json`.
+Other bodies — form data, XML, plain text — get plain substitution.
+
+Write values unescaped. A value you escaped by hand (`He said \"hi\"`) is escaped
+again and arrives with the backslashes in it.
+
 ## URL encoding
 
 In a `path`, resolved values are percent-encoded automatically, and existing
@@ -190,9 +250,15 @@ it's rejected as unresolved rather than sent.
 ## Where references work
 
 Everywhere a template is accepted: `path`, `headers`, `query_params`, `body`,
-`body_form`, `expect_status`-adjacent predicates (`assert`,
-`poll_until.success_when` / `fail_when`), actor `auth` config, `inject.headers`,
-and session `refresh` blocks.
+`body_form`, the `poll_until` path, actor `auth` config, `inject.headers`, and
+session `refresh` blocks.
+
+In predicates — `assert`, `poll_until.success_when` and `poll_until.fail_when`
+— each placeholder becomes one value: escaped for the string literal it sits in,
+or, outside a literal, a bare number, `true`, `false` or `null` when the value is
+exactly that and a quoted string otherwise. A value can never change the
+structure of the predicate. A poll condition is resolved once, before the first
+attempt. See [templates in predicates](/schema/advanced-operations/#templates-in-predicates).
 
 ## Next
 

@@ -13,6 +13,7 @@ Fine for a handful of operations, and what the importer's output starts as:
 ```yaml title="reqloom.yaml"
 version: 1
 name: MyAPI
+id: 7d2e4c1a-5b3f-4a9e-8c6d-1f0b2a3e4d5c    # needed because this project uses a secret
 default_environment: local
 
 environment:
@@ -61,6 +62,7 @@ my-api/
 ```yaml title="reqloom.yaml"
 version: 1
 name: MarketplaceAPI
+id: b24c09e7-400e-461e-be0f-ab5f28c1c347
 default_environment: local
 imports:
   - environments/*.yaml
@@ -73,7 +75,8 @@ don't conflict.
 
 ## How imports resolve
 
-Three rules here are easy to get wrong, and all three fail silently.
+Three rules here are easy to get wrong. The first fails silently; for the other
+two, `reqloom lint` prints a warning and still passes.
 
 :::danger[Without `imports:`, nothing in those directories is read]
 The globs aren't a convenience — they're the only thing that loads the files.
@@ -99,12 +102,16 @@ are recognised:
 | `resources/` | a resource |
 | `environments/` | an environment |
 
-A file imported from anywhere else is read and then **silently discarded**. So
-this fails quietly:
+A file imported from anywhere else is ignored, with a warning. So this loads
+nothing:
 
 ```yaml
 imports:
-  - shared/common-actors.yaml     # loaded, then thrown away
+  - shared/common-actors.yaml     # ignored
+```
+
+```ansi
+  WARNING: ./reqloom.yaml:2:5: imported file ./shared/common-actors.yaml is not under actors/, resources/ or environments/; ignored
 ```
 
 Put it in `actors/`, or don't import it.
@@ -112,7 +119,8 @@ Put it in `actors/`, or don't import it.
 ### Globs are narrow
 
 Only a trailing `*.yaml` or `*.yml` expands. Anything else is treated as a
-literal filename:
+literal filename, and a pattern that matches no file is a warning
+(`imports pattern 'resources/**/*.yaml' matched no files`):
 
 ```yaml
 imports:
@@ -168,7 +176,17 @@ order:
 ```
 
 Both give a resource with id `order`. With neither form, the **filename stem** is
-used — so `orders.yaml` would give you `orders`.
+used — so `orders.yaml` would give you `orders`. A file whose only key is
+`operations:` (or, for an actor, `auth:`) is the flat form without a `name:`, and
+also takes the stem.
+
+An empty file is skipped with a warning. Ids must be non-empty, must not start
+with `.`, and must not contain `/`, `\` or `:`; an unsafe id fails the load. Two
+files that define the same id fail the load naming both:
+
+```ansi
+LINT FAIL [E_SCHEMA_INVALID]: ./actors/b.yaml:1:1: actor 'svc' is already defined in ./actors/a.yaml:1
+```
 
 :::caution[The id is `name:`, not the filename]
 `resources/orders.yaml` declaring `name: order` produces `order.create`, and
@@ -229,7 +247,9 @@ zero variables. See [pitfalls](/schema/pitfalls/#a-misspelled---env-runs-with-no
 | --- | --- | --- | --- |
 | `version` | integer | — | Required. Must be 1–3 |
 | `name` | string | `Unnamed Project` | Shown in output and the desktop |
+| `id` | string | — | Required once the project uses secrets. See [secrets](/schema/secrets-and-transport/#a-project-that-uses-secrets-needs-an-id) |
 | `default_environment` | string | `local` | Used when `--env` is absent |
+| `allowed_env` | sequence | — | Process environment variables `{{$.env.NAME}}` may read |
 | `imports` | sequence or map | — | Glob patterns |
 | `environment` | map | — | Variables for the default environment |
 | `actors` | map | — | Inline actors |
@@ -238,8 +258,10 @@ zero variables. See [pitfalls](/schema/pitfalls/#a-misspelled---env-runs-with-no
 | `transport` | map | — | Applies to the **default environment only** |
 | `latency_slo` | `{ p95_ms }` | — | Surfaced on the desktop latency chart |
 
-Inline `actors:` / `resources:` and imported files coexist — imports are
-processed first, so an inline definition with the same id wins.
+Inline `actors:` / `resources:` and imported files coexist, as long as the ids
+differ. An inline definition with the same id as an imported one fails the load.
+When Reqloom writes a project — a desktop save, or `reqloom import` — the
+`imports:` it writes lists only the folders the project has files in.
 
 ## Limits
 
@@ -248,7 +270,7 @@ processed first, so an inline definition with the same id wins.
 | Schema file size | 8 MiB per file |
 | YAML nesting depth in a body | 64 |
 | Hook script size | 1 MiB |
-| Upload file size | 50 MiB |
+| Upload file size | 50 MiB per file, 256 MiB per request |
 
 ## Where to put hooks and fixtures
 
@@ -270,23 +292,29 @@ my-api/
 ```
 
 An absolute or escaping hook path is rejected at load with `E_SCHEMA_INVALID`.
-Upload paths are *not* sandboxed — see
+A relative upload path like `@./fixtures/avatar.png` resolves against the project
+folder, wherever you run Reqloom from. Upload paths are *not* sandboxed — see
 [uploads](/schema/advanced-operations/#file-uploads).
 
 ## Version control
 
-Commit everything except secrets, which never touch the filesystem anyway:
+Commit everything except secrets, which never touch the project directory
+anyway:
 
 ```gitignore
 # nothing schema-related to ignore — secrets live in the OS keychain
 ```
 
-Keep environment files committed with non-sensitive values and `!secret` tags for
-the rest. That way a new contributor clones, adds their keychain entries, and
-runs.
+Commit the `id:` line too: everyone who clones the project uses the same id, and
+each machine records its own folder for it. Keep environment files committed with
+non-sensitive values and `!secret` tags for the rest. That way a new contributor
+clones, adds their keychain entries, and runs.
+
+If you copy a project to start a new one, change the copy's `id:` — otherwise the
+copy is refused the secrets of the original on your machine.
 
 ## Next
 
 - [Authoring guide](/schema/authoring/) — build a project up from scratch
 - [Secrets, TLS & timeouts](/schema/secrets-and-transport/) — the `!secret` tag
-- [Common pitfalls](/schema/pitfalls/) — silent failures in this area
+- [Common pitfalls](/schema/pitfalls/) — what lint warns about and what it misses

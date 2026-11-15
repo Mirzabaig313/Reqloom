@@ -256,7 +256,7 @@ process becomes a build-system change rather than a rewrite.
 - **C++23** compiler (Apple Clang 16+ / Clang 18+ / GCC 14+ / MSVC 19.40+)
 - **Qt 6.8 LTS** (Homebrew `qt@6` on macOS; `tools/setup-qt.sh` on Linux and
   `tools\setup-qt.cmd` on Windows)
-- **clang-format 18**, the version CI checks with. The light install is
+- **clang-format 18**, the version the pre-push check uses. The light install is
   `pipx install clang-format==18.1.8`; `brew install llvm@18` (macOS) and
   `apt install clang-format-18` (Linux) also work.
 - **vcpkg** for the non-Qt dependencies (curl, openssl, sqlite3, yaml-cpp,
@@ -439,8 +439,8 @@ before pushing:
 If you ran `git config core.hooksPath tools/git-hooks`, this also runs
 automatically on `git push`. Bypass when justified with `git push --no-verify`.
 
-CI fails the whole pipeline on a single misformatted line, using
-**clang-format 18** specifically. Mirror that check locally:
+Formatting is checked by the pre-push check, not by CI, using
+**clang-format 18** specifically. To format the tree:
 
 ```bash
 ./tools/format.sh

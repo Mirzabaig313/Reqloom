@@ -37,9 +37,11 @@ arguments, and passing a flag to the wrong command either errors or is ignored:
 | `--format <fmt>` | yes | — | — |
 | `--output <file>` | yes | — | — |
 | `--quiet` | yes | — | — |
+| `--failure-body-size <size>` | yes | — | — |
 | `--out <dir>` | — | — | yes |
 | `--project-root <dir>` | — | — | yes |
 | `--force` | — | — | yes |
+| `--no-secrets` | — | — | yes |
 | `--help` / `-h` | yes | — | yes |
 
 Two things to know about that table:
@@ -76,7 +78,7 @@ a genuine test failure apart from a broken invocation.
 | --- | --- |
 | `0` | Success. The chain passed, the schema is clean, or the import was written |
 | `1` | Ran correctly, result was bad — failing step, schema error, or write failure |
-| `2` | You invoked it wrong — unknown flag, missing operation, bad `--format` |
+| `2` | You invoked it wrong — unknown flag, missing operation, bad `--format` or `--failure-body-size` |
 | `3` | Reqloom crashed. Please [report it](https://github.com/Mirzabaig313/Reqloom/issues) |
 
 In a CI pipeline, treat `1` as "the API is broken" and `2` or `3` as "the
@@ -100,9 +102,10 @@ output. See [error codes](/reference/error-codes/) for the full list.
 Deliberately split so you can pipe one without the other:
 
 - **stdout** — the rendered result: the summary table, or the JSON/JUnit
-  document, or `import`'s success line.
-- **stderr** — failures and diagnostics: failed steps, schema errors, and
-  `import`'s review notes.
+  document, or `import`'s success line and the names of the credentials it moved
+  into secrets.
+- **stderr** — failures and diagnostics: failed steps, schema errors, lint's
+  `WARNING:` lines, and `import`'s review notes and kept-credential warnings.
 
 Failed steps print to stderr **even under `--quiet`**, so a CI log always shows
 what broke:
@@ -115,4 +118,4 @@ reqloom run order.pay --quiet > /dev/null    # stderr still reports failures
 
 - [`reqloom run`](/cli/run/) — output formats, variable overrides, CI recipes
 - [`reqloom lint`](/cli/lint/) — what it checks, and what it can't
-- [`reqloom import`](/cli/import/) — the seven formats it accepts
+- [`reqloom import`](/cli/import/) — the nine formats it accepts

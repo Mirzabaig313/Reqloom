@@ -27,6 +27,7 @@ you `order.create`, not `orders.create`.
 | `--format <fmt>` | `text`, `json`, or `junit` | `text` |
 | `--output <file>` | Write the rendered result to a file | stdout |
 | `--quiet` | Suppress live progress | off |
+| `--failure-body-size <size>` | How much response text a failure message quotes: bytes, or a whole number with `KiB` or `MiB`; `0` for none; at most 1 MiB | `4KiB` |
 | `--help` / `-h` | Show usage | — |
 
 There are no short forms other than `-h`, and no `--dry-run`, `--timeout`,
@@ -87,13 +88,14 @@ The failing step prints to stderr, and everything downstream is marked
 ```ansi
 Running: refund.approve (chain of 7 steps, env=local)
   [1] Running: product.create (attempt 1)
-  [1] FAILED: product.create [E_SESSION_REFRESH_FAILED] —
+  [1] FAILED: product.create [E_SESSION_REFRESH_FAILED] — actor 'vendor' could not sign in: auth: network error during step 'login': curl error: Could not connect to server
 
 Result: FAILED
 
 --- Chain Summary ---
 Target: refund.approve   Env: local   Outcome: FAILED
   FAIL   product.create (0ms) err=E_SESSION_REFRESH_FAILED
+         actor 'vendor' could not sign in: auth: network error during step 'login': curl error: Could not connect to server
   BLOCK  product.publish (0ms) err=—
   BLOCK  cart.add_item (0ms) err=—
   BLOCK  order.create (0ms) err=—
@@ -103,11 +105,46 @@ Target: refund.approve   Env: local   Outcome: FAILED
 ```
 
 That's the real output when the vendor's login can't reach the server: step 1
-fails on auth, and the other six never run. `BLOCK` is your signal to fix the
-first failure and re-run rather than debug seven things.
+fails on auth, and the other six never run. The line under the `FAIL` row is the
+failure message. `BLOCK` is your signal to fix the first failure and re-run
+rather than debug seven things.
 
 Exit code is `1`. The `E_*` code tells you the class of problem — see
 [error codes](/reference/error-codes/).
+
+### Failure messages quote the response
+
+When a status isn't in `expect_status`, the message includes the API's response,
+with secrets masked:
+
+```ansi
+  FAIL   user.create (1ms) err=E_HTTP_4XX
+         HTTP 422 (expected 201) — {"error":{"message":"email is taken","code":"conflict"},"trace":"xxxx… (truncated, 5.9 KiB total)
+```
+
+A run quotes at most 4 KiB of response text per failure, and marks a longer one
+as truncated with its full size. `--failure-body-size` changes the limit for the
+run:
+
+```bash
+reqloom run user.create --failure-body-size 16KiB
+reqloom run user.create --failure-body-size 0       # status line only
+```
+
+Values above `1MiB` are treated as `1MiB`. Anything that isn't a whole number of
+bytes or a whole number followed by `KiB` or `MiB` is exit code `2`:
+
+```ansi
+reqloom run: --failure-body-size must be a byte count or a size in KiB or MiB such as 16KiB, got '4KB'
+```
+
+To quote only the useful fields, set
+[`failure_message.show`](/schema/secrets-and-transport/#failure-messages) in the
+schema:
+
+```ansi
+         HTTP 422 (expected 201) — $.error.message: email is taken; $.error.code: conflict
+```
 
 ## Output formats
 
@@ -149,7 +186,7 @@ reqloom run refund.approve --format json
       "error_code": "E_SESSION_REFRESH_FAILED",
       "poll_attempt": null,
       "for_each_index": null,
-      "detail": "",
+      "detail": "actor 'vendor' could not sign in: auth: network error during step 'login': curl error: Could not connect to server",
       "assertions": []
     }
   ]
@@ -161,6 +198,11 @@ reqloom run refund.approve --format json
 `for_each_iterations` are counted separately in `summary` and excluded from the
 status totals, so `succeeded + failed + skipped + blocked + cancelled` equals
 the number of real steps.
+
+`detail` and every other text field pass through the engine's
+[masking](/schema/secrets-and-transport/#masking): secret values and token-like
+fields appear as `<redacted>`. The CLI keeps no run history, so `run_id` numbers
+the runs of one invocation and starts at 1 each time.
 
 ### junit
 
@@ -181,7 +223,7 @@ reqloom run checkout.complete --format junit --output results.xml
       <property name="reqloom.run_id" value="1"/>
     </properties>
     <testcase classname="reqloom.refund.approve" name="product.create" time="0">
-      <failure type="E_SESSION_REFRESH_FAILED" message=""/>
+      <failure type="E_SESSION_REFRESH_FAILED" message="actor &apos;vendor&apos; could not sign in: auth: network error during step &apos;login&apos;: curl error: Could not connect to server"/>
     </testcase>
     <testcase classname="reqloom.refund.approve" name="product.publish" time="0">
       <error type="BLOCKED" message="upstream step failed; this step did not run"/>
@@ -264,9 +306,10 @@ invocation itself is wrong — see [exit codes](/cli/overview/#exit-codes).
 
 ### The run takes minutes against a server that isn't up
 
-Expected, and worth understanding. Each step retries **3 times** by default, and
-each attempt waits out the connect timeout (5s default). A seven-step chain
-against a dead host is therefore several minutes of mostly waiting.
+Expected, and worth understanding. A step can be sent up to **3 times** by
+default (`retry.max` counts every send), and an attempt against a host that
+doesn't answer waits out the connect timeout (5s default). A long chain against a
+dead host is therefore mostly waiting.
 
 Shorten the connect timeout while developing offline:
 

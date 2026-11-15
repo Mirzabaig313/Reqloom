@@ -20,6 +20,44 @@ Whichever operation extracts it becomes a prerequisite:
 ```
 
 Most of your chain comes from this. You don't declare it; you just use the value.
+A reference counts wherever it appears: the path, headers, query, body, form, the
+inline `auth:` block, the poll path and conditions, and `assert:`. So an
+assertion such as `"$.owner == '{{user.user_id}}'"` pulls `user.create` into the
+chain too.
+
+### When several operations extract the same value
+
+A resource often has more than one operation that returns its id: `create`,
+`get` and `update` may all extract `order_id`. The engine picks the producer of
+`{{order.order_id}}` like this:
+
+1. Take every other operation in the resource that extracts `order_id`.
+2. Drop any that also **use** `{{order.order_id}}` themselves — they need the
+   value already, so they can't be where it first comes from.
+3. One left: that's the producer. Several left: the ones the operation lists in
+   `depends_on` are used. None of them listed: the load fails.
+
+So `get` and `update` on `/orders/{{order.order_id}}` drop out at step 2 and
+`create` is the producer. When two operations that don't use the id both extract
+it — say `create` and an `import` endpoint — the reference is ambiguous:
+
+```ansi
+LINT FAIL [E_REF_UNDEFINED]: Operation 'order.delete': ambiguous producer for
+{{order.order_id}}: candidates order.create, order.import — add depends_on
+```
+
+Add the one you mean to `depends_on` and the ambiguity is gone:
+
+```yaml
+  delete:
+    method: DELETE
+    path: /orders/{{order.order_id}}
+    depends_on: [order.create]
+```
+
+If every operation that extracts the value also uses it, there is no producer at
+all, and the load fails with `no producer for {{order.order_id}}`. Operations that
+extract the same variable are not a cycle on their own.
 
 ### Explicit — `depends_on`
 
@@ -37,7 +75,8 @@ Publishing a product returns no value this operation needs — but an unpublishe
 product can't be added to a cart. State changes like publish, activate, approve,
 and verify are the usual reason to reach for `depends_on`.
 
-`depends_on` must be a **sequence**. As a bare scalar it is silently ignored.
+`depends_on` takes a sequence, or a single operation id as one item. A map fails
+the load.
 
 ## Worked example
 
@@ -144,10 +183,16 @@ three logins, invisibly.
 Before any request, and therefore during `reqloom lint`:
 
 1. Every referenced **scope** exists — an actor, resource, environment variable,
-   or secret by that name
-2. Every `depends_on` target is a real operation
-3. The graph is acyclic
-4. Every operation's chain resolves to an executable order
+   or secret by that name — including references inside function calls such as
+   `{{$.base64.encode(order.order_id)}}`
+2. Every operation's and poll's `actor`, and every `for_each` resource, is
+   defined
+3. Every `depends_on` target is a real operation
+4. Each referenced value has one clear producer
+5. Assertions, poll conditions, and regex patterns parse; `$.faker` names exist;
+   `$.env` names are listed in `allowed_env`
+6. The graph is acyclic
+7. Every operation's chain resolves to an executable order
 
 :::caution[Scopes are checked, fields are not]
 `{{order.missing_var}}` passes validation as long as a resource named `order`

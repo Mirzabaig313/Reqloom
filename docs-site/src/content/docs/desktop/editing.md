@@ -45,8 +45,11 @@ Some details worth knowing:
 
 - **Body** has a **Beautify** button in edit mode that reformats for real. The
   read-mode Beautify is display-only — it never changes the saved body.
-- **form-data** supports file attachments, and **Check upload** reports the
-  multipart part count and total size before you send.
+- **form-data** attaches a file with the **attach** button on a row, which stores
+  the file's full path. Typing `@…` into a value is text, not a file — the app
+  saves it as `@@…` so it is sent literally. **Check upload** reports the
+  multipart part count and total size before you send. An imported upload with
+  no file yet shows **Choose a file…**.
 - **Assertions** evaluate live against the last response, showing ✓ / ✗ per row, so
   you can write one and immediately see whether it holds.
 - **Auth** offers the inline types — API Key, Bearer, Basic, OAuth 2.0
@@ -108,8 +111,22 @@ Values are **never displayed back** — only whether each is set. The list is de
 from your schema, so a secret appears here once something references it; you don't
 add names by hand.
 
-If your build has no keychain backend, a red banner says so and writes won't
-persist.
+Secrets are stored under the project's `id:`. When you open a project that has
+no `id:` line, the app adds one to `reqloom.yaml` — a single new line after
+`name:`, with the rest of the file left as it was.
+
+**After moving a project.** Each project id is tied to the folder that first used
+its secrets. If you open a project whose id belongs to another folder on this
+machine, Manage Secrets shows that folder and a button, **I moved this project —
+use its secrets here**. Confirming moves the secrets to the new folder; the old
+folder loses access. If the project is a *copy*, don't confirm — give the copy a
+new `id:` in `reqloom.yaml` and enter its secrets again. See
+[each project id belongs to one folder](/schema/secrets-and-transport/#each-project-id-belongs-to-one-folder).
+
+If your build has no keychain backend, a red banner says so. **Set…** and
+**Clear** then fail with an error (`secret not saved: this build has no OS
+keychain backend. …`) instead of appearing to work, and a run that needs a secret
+says that no OS keychain is available.
 
 ## Environments
 
@@ -163,11 +180,14 @@ Working in git makes all of this low-risk: save, then diff.
 | Environment | Environment selector → New |
 
 Names are validated as you type — no `.`, `/`, or `\`, since those break ids.
-Nothing is written until you save, and a half-finished endpoint prompts before it's
-discarded.
+An actor, resource, or environment name that is empty, starts with `.`, or
+contains `/`, `\`, or `:` is refused when saving and fails the load of a
+hand-edited project, because the name becomes a file name, and a save never
+writes outside the project folder. Nothing is written
+until you save, and a half-finished endpoint prompts before it's discarded.
 
 ## Next
 
 - [Running & debugging](/desktop/running/) — verify what you just edited
 - [Authoring guide](/schema/authoring/) — the same concepts, in YAML
-- [Common pitfalls](/schema/pitfalls/) — silent failures the app can't warn about
+- [Common pitfalls](/schema/pitfalls/) — mistakes the app can't warn about
