@@ -56,6 +56,29 @@ namespace detail {
         name);
 }
 
+/// A file name that contains a `{{...}}` variable is only known at run
+/// time, after the importer's directory stripping has run, so a value from
+/// the imported environment could put a full path back. Such a reference
+/// is never imported.
+[[nodiscard]] inline bool namesAVariable(std::string_view name) {
+    return name.find("{{") != std::string_view::npos;
+}
+
+inline void warnVariableFileName(std::string_view kind,
+                                 std::string_view opId,
+                                 std::string_view field,
+                                 std::string_view original,
+                                 std::vector<std::string>& warnings) {
+    warnings.push_back(std::format(
+        "operation {}: {} field `{}` value `{}` takes its file name from a variable, which "
+        "could resolve to any path at run time; it was imported as an empty file slot — "
+        "choose the file in the form editor",
+        opId,
+        kind,
+        field,
+        original));
+}
+
 }  // namespace detail
 
 /// `body_form` value for an imported FILE field whose source path is
@@ -69,6 +92,10 @@ template <typename Rewrite>
                                          std::vector<std::string>& warnings,
                                          Rewrite&& rewrite) {
     const auto base = fileBaseName(path);
+    if (detail::namesAVariable(base.name)) {
+        detail::warnVariableFileName("file", opId, field, path, warnings);
+        return "@";
+    }
     if (base.hadDirectory) {
         if (base.name.empty()) {
             warnings.push_back(std::format(
@@ -109,6 +136,10 @@ template <typename Rewrite>
         return std::forward<Rewrite>(rewrite)(value);
     }
     const auto base = fileBaseName(value.substr(1));
+    if (detail::namesAVariable(base.name)) {
+        detail::warnVariableFileName("text", opId, field, value, warnings);
+        return "@";
+    }
     std::string detailText = base.hadDirectory
                                  ? std::format("its directory was dropped and only `{}` kept — {}",
                                                base.name,

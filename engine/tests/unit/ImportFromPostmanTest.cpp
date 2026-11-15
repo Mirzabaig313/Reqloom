@@ -277,6 +277,36 @@ TEST(ImportFromPostman, file_field_paths_are_reduced_to_base_names_with_warnings
     EXPECT_NE(w.find("current working directory"), std::string::npos) << w;
 }
 
+// A file name made of a variable is resolved only at run time, after the
+// importer's directory stripping, so an imported environment value could put
+// a full path back. Such a reference is imported as an empty file slot.
+TEST(ImportFileRefs, file_reference_built_from_a_variable_becomes_an_empty_slot) {
+    using ce::import_files::fileFieldValue;
+    using ce::import_files::textFieldValue;
+    const auto identity = [](std::string_view s) {
+        return std::string{s};
+    };
+
+    std::vector<std::string> warnings;
+    EXPECT_EQ(fileFieldValue("{{file}}", "up.load", "doc", warnings, identity), "@");
+    ASSERT_EQ(warnings.size(), 1U);
+    EXPECT_NE(warnings[0].find("variable"), std::string::npos) << warnings[0];
+    EXPECT_NE(warnings[0].find("operation up.load"), std::string::npos) << warnings[0];
+
+    warnings.clear();
+    EXPECT_EQ(fileFieldValue("/tmp/pre-{{file}}.png", "up.load", "doc", warnings, identity), "@");
+    EXPECT_FALSE(warnings.empty());
+
+    warnings.clear();
+    EXPECT_EQ(textFieldValue("@{{file}}", "up.load", "note", warnings, identity), "@");
+    EXPECT_FALSE(warnings.empty());
+
+    // A plain name is unaffected.
+    warnings.clear();
+    EXPECT_EQ(fileFieldValue("photo.png", "up.load", "doc", warnings, identity), "@photo.png");
+    EXPECT_TRUE(warnings.empty());
+}
+
 TEST(ImportFileRefs, base_name_handles_separators_drives_and_edge_cases) {
     using ce::import_files::fileBaseName;
     struct Case {
