@@ -1,6 +1,9 @@
 <div align="center">
 
-# Reqloom
+<h1>
+  <img src="desktop/branding/Reqloom-256.png" alt="" width="44" height="44" align="absmiddle">
+  Reqloom
+</h1>
 
 **A workflow-aware API testing tool that auto-resolves request dependency chains.**
 
@@ -8,14 +11,13 @@
 [![Build & Test (Linux + Windows + macOS)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml)
 [![Docs](https://img.shields.io/badge/docs-online-2496ED.svg)](https://docs.reqloom.tech/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)](https://en.cppreference.com/w/cpp/23)
-[![CMake](https://img.shields.io/badge/CMake-4.0%2B-064F8C.svg)](https://cmake.org/)
-[![Qt](https://img.shields.io/badge/Qt-6.8_LTS-41CD52.svg)](https://www.qt.io/)
 [![Latest release](https://img.shields.io/github/v/release/Mirzabaig313/Reqloom?include_prereleases&label=download)](https://github.com/Mirzabaig313/Reqloom/releases)
 
 </div>
 
 ---
+
+## What is Reqloom
 
 Reqloom treats your API as a graph of resources, actors, and dependencies.
 Define each actor (auth flow) and each resource (endpoints + dependencies)
@@ -24,9 +26,29 @@ login, prerequisites, target call — and executes them in the correct order.
 
 > Postman is an HTTP client. Reqloom is an API workflow engine.
 
-📖 **Full documentation: [docs.reqloom.tech](https://docs.reqloom.tech/)**
+<p align="center">
+  <img src=".github/assets/reqloom-desktop.png" alt="The Reqloom desktop app showing order.create and the four-step chain it resolves" width="800">
+  <br>
+  <em>Select order.create and Reqloom works out the chain: create a product, publish it, add it to the cart, then place the order.</em>
+</p>
 
-📦 **Download:** grab the latest build for macOS (`.dmg`), Windows (`.exe` installer), or Linux (`.AppImage`) from the [Releases page](https://github.com/Mirzabaig313/Reqloom/releases).
+Next on the roadmap: the same engine opened to AI coding agents, so an agent can
+run a chain and you watch it live in the app. See [Coming next](#coming-next).
+
+📦 **Download:** Reqloom is in alpha. Grab the latest pre-release build for macOS (`.dmg`), Windows (`.exe` installer), or Linux (`.AppImage`) from the [Releases page](https://github.com/Mirzabaig313/Reqloom/releases).
+
+## Why Reqloom
+
+- **Dependency-aware execution.** Model resources and their prerequisites once;
+  Reqloom computes the execution order and runs the full chain for you.
+- **Actors as first-class citizens.** Authentication flows are declared once per
+  actor and reused across every request that needs them.
+- **Three ways to run.** A pure C++ engine library, a scriptable CLI, and a Qt 6
+  desktop app — all driven by the same project definition.
+- **Clean architecture, enforced.** The engine has zero UI dependency, and that
+  boundary is mechanically verified at configure time and in CI.
+- **Reproducible runs.** Every step is recorded, secrets are masked, and results
+  export to text, JSON, and JUnit for pipelines.
 
 ## How it works
 
@@ -58,64 +80,136 @@ Invoking `refund.approve` resolves and runs the whole chain in order — actor
 logins (reusing cached sessions), `order.create`, `order.pay`, `refund.request`,
 then the target — with every extracted ID flowing automatically between steps.
 
-## Why Reqloom
-
-- **Dependency-aware execution.** Model resources and their prerequisites once;
-  Reqloom computes the execution order and runs the full chain for you.
-- **Actors as first-class citizens.** Authentication flows are declared once per
-  actor and reused across every request that needs them.
-- **Three ways to run.** A pure C++ engine library, a scriptable CLI, and a Qt 6
-  desktop app — all driven by the same project definition.
-- **Clean architecture, enforced.** The engine has zero UI dependency, and that
-  boundary is mechanically verified at configure time and in CI.
-- **Reproducible runs.** Every step is recorded, secrets are masked, and results
-  export to text, JSON, and JUnit for pipelines.
-
 ## Features
 
-### Current capabilities
+### Available today
 
 - **Dependency-graph execution** — resources, actors, and operations form a
   directed graph resolved with a topological sort; the engine runs prerequisites
   in order and stops on first failure.
 - **Named auth strategies** — `simple`, `chain` (multi-step / OTP), `basic`,
-  `api_key`, `oauth2_client_credentials`, and `oauth2_password` with per-actor
-  session caching and TTL-based refresh.
+  `bearer`, `api_key`, `jwt`, `oauth2_client_credentials`, `oauth2_password`,
+  `oauth1`, `aws_sigv4`, and `mtls`, with per-actor session caching, TTL-based
+  refresh, and a per-actor cookie jar. Credentials can also be set inline on a
+  single operation or inherited from a project default.
 - **Variable resolution** — reference session and resource outputs
   (`{{order.order_id}}`), environment values, and built-ins (`{{$.uuid}}`,
   `{{$.now+5m}}`, base64/hex/url codecs).
 - **Polling** — model async `202 Accepted` flows with `poll_until`
   (predicate-driven success/fail, fixed interval or exponential backoff, and
   wall-clock plus attempt-count caps).
+- **Iteration** — `for_each` runs one operation over every item an earlier
+  operation produced.
+- **Retries** — per-operation attempt budget with backoff; requests that are
+  not safe to repeat are only re-sent when they provably never reached the
+  server, unless the operation opts in.
 - **Scripting hooks** — sandboxed pre-request / post-response JavaScript
   (QuickJS) for custom signing and payload transforms, with crypto helpers
   pre-bound on the hook context.
 - **Variable extraction** — JSONPath, header, status-code, cookie, and regex
   sources.
-- **Request bodies** — JSON, form-data, `x-www-form-urlencoded`, multipart file
-  uploads, and raw payloads.
+- **Request bodies** — JSON, `x-www-form-urlencoded`, multipart form-data with
+  file uploads, and raw text payloads.
+- **Environments** — named environments with per-run overrides, and
+  per-environment transport settings (proxy, CA bundle, timeouts, TLS
+  verification).
 - **Secret references** — `{{secret.NAME}}` values resolved on demand from the
   OS keychain and masked in events, logs, and on-disk history.
+- **Declarative assertions** — `assert:` predicates per operation, with grouping
+  and regex matching, reported in every output format.
+- **Desktop app** — project explorer, request editor, response viewer with
+  diff against a previous response, run timeline, and a dependency graph that
+  highlights the chain as it runs. Projects can be authored and edited in the
+  app and are written back to YAML.
+- **Run history** — every run is saved locally and can be replayed.
+- **Collection import** — Postman, Bruno, Insomnia, Hoppscotch, Apidog, Thunder
+  Client, HTTPie, REST Client (`.http`), and OpenAPI, from the CLI or the app.
 - **CLI reporters** — text, JSON, and JUnit output with CI-friendly exit codes.
 - **Cross-platform** — macOS, Linux, and Windows.
 
-### Planned
+### Coming next
 
-Committed directions from the [product roadmap](https://docs.reqloom.tech/). The
-guiding rule is that the **same `reqloom.yaml`** that powers testing also powers
-these features — no parallel definitions.
+The direction is **Human + AI**: people and AI coding agents work on the same
+project through the same engine. The desktop app stays; an agent surface is
+added beside it. The guiding rule is unchanged — the **same `reqloom.yaml`**
+powers every feature, with no parallel definitions.
 
-- **Desktop UI** *(in progress)* — project explorer, request editor, response
-  viewer, and a run timeline, with a visual dependency graph.
-- **Collection import** — direct import of Postman, Bruno, and Insomnia
-  collections for zero-friction migration.
-- **Mock server mode** — flip a project into "serve" mode to expose a local HTTP
-  server returning recorded or templated responses for its operations.
+Nothing in this section is built yet. Stages are an order, not a schedule.
+
+**Stage 1 — The agent door and the live view**
+
+- **Graph commands in the CLI** — `list`, `describe`, and `plan` (what must run
+  before an operation, as which actor) with stable JSON output, so an agent can
+  ask the dependency graph instead of guessing call order and IDs.
+- **Responses in CLI output** — status code, body, and extracted values, with
+  secrets masked, so a failure can be diagnosed from the terminal.
+- **Headless secrets** — `REQLOOM_SECRET_<NAME>` for CI and cloud sandboxes that
+  have no OS keychain.
+- **Agent integration** — a skill file, an `AGENTS.md` snippet, a thin MCP
+  server, and plugins for Claude Code, Codex, Gemini CLI, and Cursor.
+- **Live session** — a chain an agent runs from the terminal appears in the
+  desktop app's timeline as it executes, labelled with who ran it.
+- **Hand-off** — send a failed step from the app to the agent.
+- **Host approval** — credentials are sent to a host only after you have
+  approved that host for the project; the project file alone never grants it.
+
+**Stage 2 — Proof that a change works**
+
+- **Permission matrix** — run an operation as every actor and check who is
+  allowed, forbidden, or sees nothing, including another tenant's records.
+- **`reqloom verify`** — one command for lint, assertions, and the matrix, with
+  `--affected` to run only the chains touching changed endpoints, plus a
+  ready-made agent stop hook, pre-push hook, and GitHub Action.
+- **Evidence bundle** — a pull-request summary of what ran, as whom, and what
+  came back.
+- **Behaviour diff** — compare a run with the last accepted baseline.
+
+**Stage 3 — QA and scale**
+
+- **Test data lifecycle** — per-run unique data and declared cleanup that runs
+  even when a run fails, so parallel runs do not collide.
+- **Review queue** — agent runs listed in the app with their evidence and diffs.
+- **Negative cases** — wrong actor, missing credentials, and someone else's ID,
+  generated with prerequisites already satisfied.
+- **OpenAPI conformance** — check live responses against the spec inside chains.
+
+**Stage 4 — Agent panel in the app**
+
+- A chat panel that hosts your own coding agent through the Agent Client
+  Protocol. Reqloom ships no model and no agent of its own.
+
+**Finishing the core**
+
+Gaps against the current product spec:
+
+- **Binary request bodies** — send a file as the body itself, not only as a
+  multipart part.
+- **Fuller Postman migration** — import Postman environment files and convert
+  pre-request and test scripts to hooks.
+- **History tools** — filter runs, compare two runs of the same operation, and
+  a retention limit.
+- **Command palette over operations** — jump to and run any operation by name.
+- **Live reload** — pick up project files changed on disk.
+- **Single-file export** — bundle a project into one YAML file for sharing.
+- **Releases** — auto-update, notarized macOS and signed Windows builds, and
+  `.deb` / `.rpm` packages.
+
+**Also planned**
+
+- **AI doc import with review** — generate a project from API docs with a
+  verification pass and a review screen. Today this is a prompt you give to your
+  own model, checked with `reqloom lint` and `reqloom run`.
+- **Mock server mode** — serve recorded or templated responses for a project's
+  operations from a local HTTP server.
 - **Schema-driven documentation** — render a project to a browsable docs site
-  with example request/response pairs captured from real runs.
+  with request and response examples captured from real runs.
+- **Conditional dependencies and scenarios** — `when:`-guarded prerequisites
+  and named multi-step regression scenarios, still declared in YAML.
+- **Browser request capture** — build a project from requests captured in a
+  running app.
 - **Team sync** — git-based sharing of projects and run state.
-- **Editor integrations** — VS Code extension and a browser request-capture
-  helper.
+- **Hosted version** — team workspaces, and a browser-based client for staging
+  and production APIs.
 - **Streaming protocols** — WebSocket, SSE, and GraphQL subscription support.
 
 ## Repository layout
@@ -132,6 +226,9 @@ reqloom/
 ├── ipc/          Engine-as-separate-process scaffold (opt-in, off by default)
 ├── third_party/  Vendored dependencies
 ├── samples/      Bundled sample projects
+├── prompts/      The AI import prompt
+├── docs-site/    Documentation site (Astro Starlight)
+├── doc/          Project layout notes
 └── tools/        Format, lint, and CI helpers
 ```
 
@@ -157,44 +254,48 @@ process becomes a build-system change rather than a rewrite.
 
 - **CMake** 4.0+
 - **C++23** compiler (Apple Clang 16+ / Clang 18+ / GCC 14+ / MSVC 19.40+)
-- **Qt 6.8 LTS** (installed via `tools/setup-qt.sh`)
-- **clang-format 18** (`brew install llvm@18` on macOS, `apt install clang-format-18` on Linux)
-- **vcpkg** for the non-Qt dependencies (curl, sqlite3, yaml-cpp, nlohmann-json, gtest)
+- **Qt 6.8 LTS** (Homebrew `qt@6` on macOS; `tools/setup-qt.sh` on Linux and
+  `tools\setup-qt.cmd` on Windows)
+- **clang-format 18**, the version CI checks with. The light install is
+  `pipx install clang-format==18.1.8`; `brew install llvm@18` (macOS) and
+  `apt install clang-format-18` (Linux) also work.
+- **vcpkg** for the non-Qt dependencies (curl, openssl, sqlite3, yaml-cpp,
+  nlohmann-json, cpp-httplib, quickjs-ng, gtest)
 
 ### First-time setup
 
-Qt is installed out-of-band via [`aqtinstall`](https://github.com/miurahr/aqtinstall)
-rather than vcpkg, because building qtbase from source took 45-90 minutes per
-cold-cache CI run. The helper script downloads pre-built Qt from the official Qt
-mirror — the same artifacts the Qt online installer uses.
+Qt is not built through vcpkg, because building qtbase from source took 45-90
+minutes per cold-cache CI run. On macOS the `macos-*` presets look for Homebrew
+Qt at `/opt/homebrew/opt/qt@6`. On Linux and Windows, and in CI, pre-built Qt is
+downloaded with [`aqtinstall`](https://github.com/miurahr/aqtinstall) by the
+helper script.
 
 ```bash
 # 1. System build prerequisites (macOS)
-brew install ninja autoconf autoconf-archive automake libtool pkg-config llvm@18
+brew install ninja autoconf autoconf-archive automake libtool pkg-config qt@6
+pipx install clang-format==18.1.8
 
-# 2. vcpkg (one-time)
+# 2. vcpkg (one-time). The presets read the toolchain from VCPKG_ROOT; if it is
+#    unset, configure fails with "Could not find toolchain file".
 git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 ~/vcpkg/bootstrap-vcpkg.sh
 echo 'export VCPKG_ROOT="$HOME/vcpkg"' >> ~/.zshrc
-
-# 3. Qt 6.8 LTS via aqtinstall
-./tools/setup-qt.sh
-echo 'export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"' >> ~/.zshrc
-echo 'export PATH="/opt/homebrew/opt/llvm@18/bin:$PATH"' >> ~/.zshrc
 exec zsh
 
-# 4. Enable the project's git hooks
+# 3. Enable the project's git hooks
 git config core.hooksPath tools/git-hooks
 ```
 
-On Linux, substitute `apt-get install ...` and the `gcc_64` Qt subdir
-(`$HOME/Qt/6.8.3/gcc_64`). On Windows, use `tools\setup-qt.cmd` and
-`C:\Qt\6.8.3\msvc2022_64`.
+On Linux, substitute `apt-get install ...`, run `./tools/setup-qt.sh`, and set
+`CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/gcc_64"`. On Windows, use
+`tools\setup-qt.cmd` and `C:\Qt\6.8.3\msvc2022_64`. To use the aqtinstall Qt
+on macOS instead of Homebrew's, pass
+`-DCMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"` when configuring.
 
 ### Build and run
 
 ```bash
-# macOS Debug (with ASan + UBSan)
+# macOS Debug
 cmake --preset macos-debug
 cmake --build --preset macos-debug
 
@@ -208,26 +309,44 @@ ctest --preset macos-debug
 ./build/macos-debug/desktop/Reqloom.app/Contents/MacOS/Reqloom
 ```
 
-Other presets: `macos-release`, `linux-debug`, `linux-release`,
-`windows-debug`, `windows-release` — all defined in `CMakePresets.json`.
+Other presets: `macos-release`, `linux-debug` (with ASan + UBSan),
+`linux-release`, `windows-debug`, `windows-release` — all defined in
+`CMakePresets.json`.
 
 ### Try a sample
 
-The repository bundles a `marketplace` sample project. Run any operation and the
-engine resolves and executes its full dependency chain — logging in the required
-actors, creating prerequisites, then calling the target:
+The repository bundles a `marketplace` sample project: three actors and a
+`refund.approve` chain that logs in the required actors, creates the
+prerequisites, then calls the target.
+
+Validating it needs nothing else:
+
+```bash
+./build/macos-debug/cli/reqloom lint --project samples/marketplace
+```
+
+Running it needs an API to talk to. The sample's `local` environment points at
+`http://localhost:3000` and reads two passwords, `ADMIN_PASSWORD` and
+`VENDOR_PASSWORD`, from the keychain (set them in the desktop app under Manage
+Secrets). With a server in place:
 
 ```bash
 # Execute the chain ending at refund.approve
 ./build/macos-debug/cli/reqloom run refund.approve --project samples/marketplace
 
-# Validate the schema
-./build/macos-debug/cli/reqloom lint --project samples/marketplace
+# Point it at another host for one run
+./build/macos-debug/cli/reqloom run refund.approve \
+  --project samples/marketplace --var baseUrl=http://127.0.0.1:8080
 
 # Emit JUnit XML for CI
 ./build/macos-debug/cli/reqloom run refund.approve \
   --project samples/marketplace --format junit --output results.xml
 ```
+
+The test suite runs this same sample end to end against the bundled mock server
+(`engine/tests/integration/HappyPathTest.cpp` with
+`engine/tests/fixtures/marketplace-routes.json`), which is the quickest way to
+see a full chain execute: `ctest --preset macos-debug -R MarketplaceHappyPath`.
 
 ### CLI reference
 
@@ -240,9 +359,16 @@ reqloom run <operation> [opts]   Execute a chain ending at <operation>
   --output <file>                 Write rendered output to <file>
   --quiet                         Suppress live progress on stdout
 reqloom lint                     Validate the schema in the current project
-reqloom import <file>            Import an external API spec
+  --project <path>                Project directory (default: cwd)
+reqloom import <file>            Import a collection or API spec
+  --out <dir>                     Directory to write the project (default: cwd)
+  --project-root <dir>            Folder the input file must be inside
+  --force                         Overwrite the files the import writes;
+                                  never deletes other files
 reqloom --help                   Show usage
 ```
+
+Exit codes: `0` success, `1` a run or schema failure, `2` invalid arguments.
 
 ### Build options
 
@@ -263,6 +389,13 @@ referenced names from the OS keychain into the run — it never bulk-dumps the
 keychain — and substitutes them into outbound requests. Values are masked in
 events, logs, and on-disk history.
 
+Secrets belong to a project. Each project has an `id:` in `reqloom.yaml` (the
+desktop app and `reqloom import` add one), and its secrets are stored under that
+id, so one project cannot read another's by name. The first use also records
+which folder the id belongs to, on your machine and outside the project; a
+different folder claiming the same id is refused until you confirm the move in
+the app's Manage Secrets dialog.
+
 The backend is [QtKeychain](https://github.com/frankosterfeld/qtkeychain)
 (macOS Keychain, Windows Credential Store, libsecret/KWallet on Linux). It is
 **not** part of Qt and is not shipped by aqtinstall, so it resolves one of two
@@ -282,9 +415,13 @@ ways:
    QtKeychain is found, `third_party/CMakeLists.txt` fetches and builds it
    (v0.14.0, ~20-30s) against the already-present Qt6. This is what CI uses.
 
-If QtKeychain is absent entirely, the engine falls back to a no-op store and
-`{{secret.X}}` references resolve to empty — useful for CI smoke builds, but not
-a production path.
+If QtKeychain is absent entirely, the engine falls back to a store that holds
+nothing, so `{{secret.X}}` references find no value — enough for CI smoke
+builds, not a production path. Reading secrets from environment variables for
+CI is planned (see "Coming next").
+
+`{{$.env.NAME}}` reads a process environment variable, and only for names the
+project lists under `allowed_env:` in `reqloom.yaml`.
 
 > **Note:** the first keychain access from a freshly built (unsigned) binary
 > triggers the OS authorization prompt — launch the app or CLI normally and
@@ -327,11 +464,15 @@ Pushes to `main` that touch `docs-site/` auto-deploy via
 
 ## Project status
 
-The C++ engine and the `reqloom` CLI are functional: the engine resolves and
-executes dependency chains, named auth strategies, polling, hooks, and secret
-substitution, covered by an extensive unit and integration test suite. The Qt 6
-desktop app (project explorer, request editor, response viewer, run timeline) is
-under active development.
+The C++ engine, the `reqloom` CLI, and the Qt 6 desktop app are functional and
+covered by an extensive unit and integration test suite. The engine resolves and
+executes dependency chains with named auth strategies, polling, hooks,
+assertions, and secret substitution; the desktop app runs, inspects, and edits
+projects; nine importers bring in existing collections.
+
+Not yet built: everything under "Coming next" — the agent surface, AI doc
+import inside the app, and the remaining core gaps such as auto-update and
+signed release builds.
 
 ## Contributing
 
