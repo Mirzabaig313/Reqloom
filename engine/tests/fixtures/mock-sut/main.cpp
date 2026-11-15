@@ -309,13 +309,19 @@ int main(int argc, char** argv) {
         res.set_content("OK", "text/plain");
     });
 
-    auto port = server.bind_to_any_port("127.0.0.1");
-    if (port < 0) {
-        std::println(stderr, "mock-sut: failed to bind");
-        return 2;
-    }
-    if (requestedPort != 0 && port != requestedPort) {
-        // Caller wanted a specific port but we got something else; not fatal.
+    int port{};
+    if (requestedPort != 0) {
+        if (!server.bind_to_port("127.0.0.1", requestedPort)) {
+            std::println(stderr, "mock-sut: failed to bind port {}", requestedPort);
+            return 2;
+        }
+        port = requestedPort;
+    } else {
+        port = server.bind_to_any_port("127.0.0.1");
+        if (port < 0) {
+            std::println(stderr, "mock-sut: failed to bind");
+            return 2;
+        }
     }
 
     std::println("PORT: {}", port);

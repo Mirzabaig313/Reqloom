@@ -114,9 +114,15 @@ fi
 step "2/5  cmake configure"
 if [[ "${SKIP_CONFIGURE:-0}" == "1" ]]; then
   yellow "  SKIP_CONFIGURE=1 — skipped"
-elif [[ -d "$build_dir" ]]; then
-  ok "build dir exists, will reuse on build step"
+elif [[ -f "$build_dir/build.ninja" ]]; then
+  ok "build dir is configured, will reuse on build step"
 else
+  # A folder without build.ninja is a configure that failed part-way; reusing
+  # it makes the build step fail with an unrelated error.
+  if [[ -z "${VCPKG_ROOT:-}" ]]; then
+    fail "VCPKG_ROOT is not set, so cmake cannot find the vcpkg toolchain. Run: export VCPKG_ROOT=\"\$HOME/vcpkg\" (and add it to your shell profile)"
+  fi
+  rm -rf "$build_dir"
   cmake --preset "$preset" || fail "cmake configure failed"
   ok "configured"
 fi
