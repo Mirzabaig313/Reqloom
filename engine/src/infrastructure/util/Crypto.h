@@ -13,6 +13,7 @@
 // against the expected digest size.
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -29,6 +30,11 @@ namespace reqloom::engine::crypto {
 // ─── Plain hash ─────────────────────────────────────────────────────────────
 
 [[nodiscard]] std::string sha256(std::string_view data);
+
+// ─── Randomness ─────────────────────────────────────────────────────────────
+
+/// `count` bytes from the OpenSSL CSPRNG (`RAND_bytes`); empty on failure.
+[[nodiscard]] std::string randomBytes(std::size_t count);
 
 // ─── JWT (HMAC variants only) ───────────────────────────────────────────────
 //

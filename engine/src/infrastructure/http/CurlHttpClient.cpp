@@ -270,7 +270,7 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &responseBody);
     curl_easy_setopt(curl.get(), CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.get(), CURLOPT_HEADERDATA, &responseHeaders);
-    curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, request.followRedirects ? 1L : 0L);
     curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, kMaxRedirects);
     curl_easy_setopt(curl.get(),
                      CURLOPT_TIMEOUT_MS,

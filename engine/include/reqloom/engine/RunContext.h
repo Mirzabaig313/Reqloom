@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,21 @@ struct ActorSession {
 /// One extracted resource instance. Indexed for `{{R[k].x}}` resolution.
 struct ResourceInstance {
     std::map<std::string, std::string> variables;
+
+    /// Operation whose response produced this instance; empty when a caller seeded it.
+    OperationId producer;
+
+    /// Fields the producing response returned as JSON null.
+    std::set<std::string> nullVariables;
+
+    /// Fields the producing response did not contain.
+    std::set<std::string> missingVariables;
+
+    /// True when this instance records `name` as null or missing: a lookup stops here rather
+    /// than falling back to an older instance's value.
+    [[nodiscard]] bool isUnset(const std::string& name) const {
+        return nullVariables.contains(name) || missingVariables.contains(name);
+    }
 };
 
 /// Outcome of one declared assertion evaluated against the final response.
@@ -144,6 +160,9 @@ public:
     /// the latest Set-Cookie wins on name collision.
     void setCookie(const ActorId& actor, std::string name, std::string value);
 
+    /// Drop one cookie from the actor's jar (a `Set-Cookie` that expires it). No-op when absent.
+    void removeCookie(const ActorId& actor, const std::string& name);
+
     /// Drop the actor's entire jar. Called by `invalidateSession`.
     void clearCookies(const ActorId& actor);
 
@@ -151,6 +170,12 @@ public:
     [[nodiscard]] const std::vector<ResourceInstance>& instances(
         const ResourceId& resource) const noexcept;
     void appendInstance(const ResourceId& resource, ResourceInstance instance);
+    /// Drop the instances of `resource` that `producer` recorded earlier, then append
+    /// `instances` (each stamped with `producer`) as the newest. Instances from other
+    /// producers keep their place.
+    void replaceInstances(const ResourceId& resource,
+                          const OperationId& producer,
+                          std::vector<ResourceInstance> instances);
     void clearExtractions();
 
     // For-each iteration binding. While set, a bare `{{<resource>.<field>}}`

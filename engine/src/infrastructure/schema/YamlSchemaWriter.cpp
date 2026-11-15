@@ -2,17 +2,25 @@
 #include "YamlSchemaWriter.h"
 
 #include "../../domain/Codecs.h"
+#include "../../domain/DependencyResolver.h"
+#include "SchemaParser.h"
 
 #include <reqloom/engine/ProjectIdentity.h>
 
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
+#include <random>
 #include <ranges>
 #include <set>
 #include <string>
@@ -20,6 +28,12 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -51,6 +65,18 @@ constexpr std::string_view provenanceSourceToString(Provenance::Source s) {
             return "har_import";
         case Provenance::Source::AiImport:
             return "ai_import";
+        case Provenance::Source::ApidogImport:
+            return "apidog_import";
+        case Provenance::Source::HoppscotchImport:
+            return "hoppscotch_import";
+        case Provenance::Source::ThunderClientImport:
+            return "thunder_client_import";
+        case Provenance::Source::HttpieImport:
+            return "httpie_import";
+        case Provenance::Source::HttpFileImport:
+            return "http_file_import";
+        case Provenance::Source::Unknown:
+            return "unknown";
     }
     return "hand_written";
 }
@@ -120,7 +146,20 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
     return existing == content;
 }
 
-// Write `content` to a `.tmp` sibling of `target` (creating parent dirs). The
+// A temp name no other process saving the same project will pick: pid plus random bits.
+[[nodiscard]] fs::path uniqueTempPath(const fs::path& target) {
+#ifdef _WIN32
+    const auto pid = _getpid();
+#else
+    const auto pid = getpid();
+#endif
+    thread_local std::mt19937_64 rng{std::random_device{}()};
+    auto temp = target;
+    temp += std::format(".{}-{:016x}.tmp", pid, rng());
+    return temp;
+}
+
+// Write `content` to a uniquely named temp sibling of `target` (creating parent dirs). The
 // caller commits by renaming the temp onto the target. Two-phase staging makes
 // a multi-file save near-atomic: if any file fails to stage, none is committed.
 [[nodiscard]] std::expected<fs::path, ReqloomError> stageTemp(const fs::path& target,
@@ -133,31 +172,23 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
             ErrorClass::Schema,
             "writer: cannot create dir " + target.parent_path().string() + ": " + ec.message()});
     }
-    auto temp = target;
-    temp += ".tmp";
-    {
-        std::ofstream out{temp, std::ios::binary | std::ios::trunc};
-        if (!out) {
-            return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
-                                                ErrorClass::Schema,
-                                                "writer: cannot open temp file " + temp.string()});
-        }
-        out << content;
-        if (!out) {
-            return std::unexpected(
-                ReqloomError{ErrorCode::SchemaInvalid,
-                             ErrorClass::Schema,
-                             "writer: failed writing temp file " + temp.string()});
-        }
+    const auto temp = uniqueTempPath(target);
+    std::ofstream out{temp, std::ios::binary | std::ios::trunc};
+    if (!out) {
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            "writer: cannot open temp file " + temp.string()});
+    }
+    out << content;
+    out.close();
+    if (!out) {
+        std::error_code rmEc;
+        fs::remove(temp, rmEc);
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            "writer: failed writing temp file " + temp.string()});
     }
     return temp;
-}
-
-// IDs become file stems: reject empty, leading dot, path separators, NUL, and a colon
-// (Windows drive-letter / stream forms).
-[[nodiscard]] bool isSafeFileStem(std::string_view stem) {
-    return !stem.empty() && stem.front() != '.' &&
-           stem.find_first_of(std::string_view{"/\\:\0", 4}) == std::string_view::npos;
 }
 
 [[nodiscard]] bool isUnder(const fs::path& root, const fs::path& path) {
@@ -174,14 +205,102 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
 
 [[nodiscard]] std::expected<void, ReqloomError> checkStem(std::string_view kind,
                                                           const std::string& stem) {
-    if (isSafeFileStem(stem)) {
-        return {};
+    auto ok = checkEntityFileStem(kind, stem);
+    if (!ok) {
+        auto error = ok.error();
+        error.detail = "writer: " + error.detail;
+        return std::unexpected(std::move(error));
     }
-    return std::unexpected(ReqloomError{
-        ErrorCode::SchemaInvalid,
-        ErrorClass::Schema,
-        "writer: unsafe " + std::string{kind} + " '" + stem +
-            "' (must be non-empty, not start with '.', and contain no '/', '\\', ':' or NUL)"});
+    return {};
+}
+
+// ─── Guarded save: only files this model loaded may be replaced or pruned ─────
+
+using SavePlan = std::vector<std::pair<fs::path, std::string>>;
+
+[[nodiscard]] std::optional<std::string> readFileBytes(const fs::path& path) {
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) {
+        return std::nullopt;
+    }
+    std::ifstream in{path, std::ios::binary};
+    return std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+[[nodiscard]] ReqloomError writerError(std::string detail) {
+    return ReqloomError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
+}
+
+[[nodiscard]] ReqloomError changedOnDisk(const fs::path& path) {
+    return writerError(
+        std::format("writer: {} changed on disk since the project was loaded; reload before saving",
+                    path.string()));
+}
+
+/// Refuse the save when a target or a prune candidate is not what this model loaded. Returns
+/// the loaded files to prune: those in the managed folders that the plan no longer writes.
+[[nodiscard]] std::expected<std::vector<fs::path>, ReqloomError> checkAgainstLoaded(
+    const fs::path& targetDir,
+    const SavePlan& plan,
+    const std::map<fs::path, std::size_t>& loaded,
+    bool prune) {
+    std::set<fs::path> planKeys;
+    for (const auto& [target, content] : plan) {
+        const auto key = canonicalSchemaPath(target);
+        planKeys.insert(key);
+        const auto onDisk = readFileBytes(target);
+        if (!onDisk || *onDisk == content) {
+            continue;
+        }
+        const auto it = loaded.find(key);
+        if (it == loaded.end()) {
+            return std::unexpected(writerError(std::format(
+                "writer: {} exists but was not loaded with this project (another program may "
+                "have created it); reload before saving",
+                target.string())));
+        }
+        if (schemaFileHash(*onDisk) != it->second) {
+            return std::unexpected(changedOnDisk(target));
+        }
+    }
+
+    std::vector<fs::path> toPrune;
+    if (!prune) {
+        return toPrune;
+    }
+    const std::set<fs::path> managed{canonicalSchemaPath(targetDir / "actors"),
+                                     canonicalSchemaPath(targetDir / "resources"),
+                                     canonicalSchemaPath(targetDir / "environments")};
+    for (const auto& [path, hash] : loaded) {
+        if (planKeys.contains(path) || !managed.contains(path.parent_path())) {
+            continue;
+        }
+        const auto onDisk = readFileBytes(path);
+        if (!onDisk) {
+            continue;
+        }
+        if (schemaFileHash(*onDisk) != hash) {
+            return std::unexpected(changedOnDisk(path));
+        }
+        toPrune.push_back(path);
+    }
+    return toPrune;
+}
+
+/// After a guarded commit: delete the pruned files and record what is on disk now.
+void finishGuardedSave(const SavePlan& plan,
+                       const std::vector<fs::path>& toPrune,
+                       std::map<fs::path, std::size_t>& loaded) {
+    for (const auto& path : toPrune) {
+        std::error_code rmEc;
+        fs::remove(path, rmEc);
+        if (!rmEc) {
+            loaded.erase(path);
+        }
+    }
+    for (const auto& [target, content] : plan) {
+        loaded[canonicalSchemaPath(target)] = schemaFileHash(content);
+    }
 }
 
 // ─── Emitter helpers ─────────────────────────────────────────────────────────
@@ -317,7 +436,10 @@ void emitAssertions(YAML::Emitter& e, const std::vector<Assertion>& assertions) 
 
 void emitProvenance(YAML::Emitter& e, const Provenance& p) {
     e << YAML::Key << "_provenance" << YAML::Value << YAML::BeginMap;
-    e << YAML::Key << "source" << YAML::Value << std::string{provenanceSourceToString(p.source)};
+    e << YAML::Key << "source" << YAML::Value
+      << (p.source == Provenance::Source::Unknown && !p.unknownSource.empty()
+              ? p.unknownSource
+              : std::string{provenanceSourceToString(p.source)});
     if (p.verifiedAgainst != Provenance::VerifiedAgainst::None) {
         e << YAML::Key << "verified_against" << YAML::Value
           << std::string{verifiedAgainstToString(p.verifiedAgainst)};
@@ -709,6 +831,22 @@ std::string emitActor(const Actor& actor) {
     return e.c_str();
 }
 
+// The largest IEC unit (KiB, MiB, GiB) that divides `bytes`, else a bare byte count; the
+// parser's `max_response_size` accepts exactly these forms.
+std::string byteSizeLiteral(std::size_t bytes) {
+    constexpr std::array<std::pair<std::size_t, std::string_view>, 3> kUnits{{
+        {std::size_t{1} << 30, "GiB"},
+        {std::size_t{1} << 20, "MiB"},
+        {std::size_t{1} << 10, "KiB"},
+    }};
+    for (const auto& [scale, suffix] : kUnits) {
+        if (bytes % scale == 0) {
+            return std::format("{}{}", bytes / scale, suffix);
+        }
+    }
+    return std::to_string(bytes);
+}
+
 std::string emitEnvironment(const std::string& name,
                             const std::map<std::string, std::string>& vars,
                             const std::optional<TransportConfig>& transport) {
@@ -738,6 +876,10 @@ std::string emitEnvironment(const std::string& name,
         if (transport->connectTimeout != defaults.connectTimeout) {
             e << YAML::Key << "connect_timeout" << YAML::Value
               << (std::to_string(transport->connectTimeout.count()) + "ms");
+        }
+        if (transport->maxResponseBytes != defaults.maxResponseBytes) {
+            e << YAML::Key << "max_response_size" << YAML::Value
+              << byteSizeLiteral(transport->maxResponseBytes);
         }
         e << YAML::EndMap;
     }
@@ -802,7 +944,8 @@ YamlSchemaWriter::~YamlSchemaWriter() = default;
 SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
                                           const Project& project,
                                           bool overwrite,
-                                          bool pruneStale) {
+                                          bool pruneStale,
+                                          std::map<fs::path, std::size_t>* loadedFiles) {
     // Validate every id-derived file stem first, so a bad id writes (or prunes) nothing outside
     // targetDir.
     if (!project.id.empty()) {
@@ -827,10 +970,10 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
     }
 
     std::error_code ec;
-    if (fs::exists(targetDir) && !overwrite) {
+    if (fs::exists(targetDir, ec) && !overwrite) {
         // Only fail if reqloom.yaml is already there — the directory
         // existing alone is fine (lets the writer slot into an existing project).
-        if (fs::exists(targetDir / "reqloom.yaml")) {
+        if (fs::exists(targetDir / "reqloom.yaml", ec)) {
             return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
                                                 ErrorClass::Schema,
                                                 "writer: reqloom.yaml exists in " +
@@ -849,7 +992,7 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
     // Build the full (target, content) plan up front, then stage + commit in
     // two phases so a multi-file save is near-atomic: if any file fails to
     // stage, nothing is committed and no target file is touched.
-    std::vector<std::pair<fs::path, std::string>> plan;
+    SavePlan plan;
     plan.emplace_back(targetDir / "reqloom.yaml",
                       emitRoot(project, effectiveProjectId(project, targetDir / "reqloom.yaml")));
     for (const auto& [id, actor] : project.actors) {
@@ -874,6 +1017,15 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
                                                     entry.first.string() + " outside " +
                                                     targetDir.string()});
         }
+    }
+
+    std::vector<fs::path> guardedPrune;
+    if (loadedFiles != nullptr) {
+        auto checked = checkAgainstLoaded(targetDir, plan, *loadedFiles, overwrite && pruneStale);
+        if (!checked) {
+            return std::unexpected(checked.error());
+        }
+        guardedPrune = std::move(*checked);
     }
 
     // Phase 1 — stage: write a .tmp for each changed file. Skip unchanged
@@ -911,6 +1063,11 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
                              ErrorClass::Schema,
                              "writer: cannot commit " + s.target.string() + ": " + ec.message()});
         }
+    }
+
+    if (loadedFiles != nullptr) {
+        finishGuardedSave(plan, guardedPrune, *loadedFiles);
+        return targetDir / "reqloom.yaml";
     }
 
     // Prune files for entities that no longer exist (rename/delete), so a

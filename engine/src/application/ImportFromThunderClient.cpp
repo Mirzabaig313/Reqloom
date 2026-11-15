@@ -483,7 +483,7 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
             }
 
             Provenance prov;
-            prov.source = Provenance::Source::HandWritten;  // no TC-specific enum value
+            prov.source = Provenance::Source::ThunderClientImport;
             prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
             prov.importedAt = importedAt;
             prov.evidence["imported_from"] = "thunder_client";

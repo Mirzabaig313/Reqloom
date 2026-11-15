@@ -98,6 +98,12 @@ void RunContext::setCookie(const ActorId& actor, std::string name, std::string v
     impl_->cookieJars[actor][std::move(name)] = std::move(value);
 }
 
+void RunContext::removeCookie(const ActorId& actor, const std::string& name) {
+    if (const auto it = impl_->cookieJars.find(actor); it != impl_->cookieJars.end()) {
+        it->second.erase(name);
+    }
+}
+
 void RunContext::clearCookies(const ActorId& actor) {
     impl_->cookieJars.erase(actor);
 }
@@ -110,6 +116,18 @@ const std::vector<ResourceInstance>& RunContext::instances(
 
 void RunContext::appendInstance(const ResourceId& resource, ResourceInstance instance) {
     impl_->instances[resource].push_back(std::move(instance));
+}
+
+void RunContext::replaceInstances(const ResourceId& resource,
+                                  const OperationId& producer,
+                                  std::vector<ResourceInstance> instances) {
+    auto& stored = impl_->instances[resource];
+    std::erase_if(stored,
+                  [&](const ResourceInstance& instance) { return instance.producer == producer; });
+    for (auto& instance : instances) {
+        instance.producer = producer;
+        stored.push_back(std::move(instance));
+    }
 }
 
 void RunContext::clearExtractions() {

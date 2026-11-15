@@ -17,6 +17,7 @@
 
 #include <chrono>
 #include <string>
+#include <utility>
 
 namespace ce = reqloom::engine;
 
@@ -354,4 +355,69 @@ TEST(QuickJsHookRunner, module_top_level_throw_reports_the_real_error) {
     EXPECT_EQ(outcome.error().code, ce::ErrorCode::HookFailure);
     EXPECT_NE(outcome.error().detail.find("top-level-boom"), std::string::npos)
         << outcome.error().detail;
+}
+
+// ─── Byte fidelity ───────────────────────────────────────────────────────────
+
+namespace {
+
+[[nodiscard]] ce::HookContext withResponseBody(std::string body) {
+    auto hctx = baseContext();
+    ce::HookResponseView resp;
+    resp.status = 200;
+    resp.headers["X-Raw"] = std::string{"caf\xE9", 4};
+    resp.body = std::move(body);
+    hctx.response = resp;
+    return hctx;
+}
+
+}  // namespace
+
+TEST(QuickJsHookRunner, read_only_post_hook_keeps_a_body_with_a_nul_byte) {
+    ce::QuickJsHookRunner runner;
+    const std::string body{"{\"a\":1}\0tail", 12};
+
+    auto outcome =
+        runner.runPostResponse("const n = ctx.response.body.length;", withResponseBody(body));
+
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    EXPECT_EQ(outcome->mutatedResponse->body, body);
+}
+
+TEST(QuickJsHookRunner, read_only_post_hook_keeps_bytes_that_are_not_utf8) {
+    ce::QuickJsHookRunner runner;
+    const std::string body{"\x89PNG\r\n\x1A\n\xFF\xFE\x00\x80", 12};
+
+    auto outcome = runner.runPostResponse(
+        "const b = ctx.response.body; const h = ctx.response.headers['X-Raw'];",
+        withResponseBody(body));
+
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    EXPECT_EQ(outcome->mutatedResponse->body, body);
+    EXPECT_EQ(outcome->mutatedResponse->headers.at("X-Raw"), std::string("caf\xE9", 4));
+}
+
+TEST(QuickJsHookRunner, binary_body_is_exposed_one_character_per_byte) {
+    ce::QuickJsHookRunner runner;
+    const std::string body{"\xFF\x01", 2};
+
+    auto outcome = runner.runPostResponse(
+        "ctx.response.body = ctx.response.body.charCodeAt(0) + ':' + ctx.response.body.length;",
+        withResponseBody(body));
+
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    EXPECT_EQ(outcome->mutatedResponse->body, "255:2");
+}
+
+TEST(QuickJsHookRunner, pre_request_keeps_a_body_with_a_nul_byte) {
+    ce::QuickJsHookRunner runner;
+    auto hctx = baseContext();
+    hctx.request.body = std::string{"a\0b", 3};
+
+    auto outcome = runner.runPreRequest(
+        "ctx.request.headers['X-Len'] = '' + ctx.request.body.length;", std::move(hctx));
+
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    EXPECT_EQ(*outcome->mutatedRequest.body, std::string("a\0b", 3));
+    EXPECT_EQ(outcome->mutatedRequest.headers.at("X-Len"), "3");
 }

@@ -9,9 +9,14 @@
 //
 //   ctx.request.{method,url,headers,body}      — read/write (pre+post)
 //   ctx.response.{status,headers,body}         — read/write (post only)
-//   ctx.actors[name][var]                      — read-only
+//   ctx.actors[name][var]                      — read-only, the operation's own actor only
 //   ctx.env[name]                              — read-only
-//   ctx.secret[name]                           — read-only
+//   ctx.secret[name]                           — read-only, only the names the engine passes
+//
+// A body or header value that is not valid UTF-8 is exposed as a binary string: one
+// character per byte (U+0000–U+00FF). Written back, a string whose characters are all
+// ≤ U+00FF becomes those bytes; any other string is written as UTF-8. A field the hook
+// leaves alone comes back byte-for-byte, NUL bytes included.
 //   ctx.base64.{encode,decode}(s)              — string codecs
 //   ctx.hex.{encode,decode}(s)
 //   ctx.url.{encode,decode}(s)
@@ -59,6 +64,7 @@
 #pragma clang diagnostic pop
 #endif
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -135,17 +141,96 @@ private:
     if (JS_IsUndefined(v) || JS_IsNull(v)) {
         return {};
     }
-    const char* c = JS_ToCString(ctx, v);
+    std::size_t len{0};
+    const char* c = JS_ToCStringLen(ctx, &len, v);
     if (c == nullptr) {
         return {};
     }
-    std::string out{c};
+    std::string out{c, len};
     JS_FreeCString(ctx, c);
     return out;
 }
 
 [[nodiscard]] JSValue jsStr(JSContext* ctx, std::string_view s) {
     return JS_NewStringLen(ctx, s.data(), s.size());
+}
+
+// Strict UTF-8 (no overlongs, surrogates or code points above U+10FFFF), O(n).
+[[nodiscard]] bool isValidUtf8(std::string_view s) noexcept {
+    std::size_t i{0};
+    while (i < s.size()) {
+        const auto lead = static_cast<unsigned char>(s[i]);
+        std::size_t extra{0};
+        std::uint32_t cp{0};
+        if (lead < 0x80U) {
+            ++i;
+            continue;
+        }
+        if ((lead & 0xE0U) == 0xC0U) {
+            extra = 1;
+            cp = lead & 0x1FU;
+        } else if ((lead & 0xF0U) == 0xE0U) {
+            extra = 2;
+            cp = lead & 0x0FU;
+        } else if ((lead & 0xF8U) == 0xF0U) {
+            extra = 3;
+            cp = lead & 0x07U;
+        } else {
+            return false;
+        }
+        if (i + extra >= s.size()) {
+            return false;
+        }
+        for (std::size_t k = 1; k <= extra; ++k) {
+            const auto cont = static_cast<unsigned char>(s[i + k]);
+            if ((cont & 0xC0U) != 0x80U) {
+                return false;
+            }
+            cp = (cp << 6U) | (cont & 0x3FU);
+        }
+        constexpr std::array<std::uint32_t, 4> kMinForLength{0, 0x80, 0x800, 0x10000};
+        if (cp < kMinForLength[extra] || cp > 0x10FFFFU || (cp >= 0xD800U && cp <= 0xDFFFU)) {
+            return false;
+        }
+        i += extra + 1;
+    }
+    return true;
+}
+
+/// A byte string as a JS string: UTF-8 text as text, anything else one character per byte.
+[[nodiscard]] JSValue jsBytes(JSContext* ctx, std::string_view s) {
+    if (isValidUtf8(s)) {
+        return jsStr(ctx, s);
+    }
+    std::vector<std::uint16_t> units(s.begin(), s.end());
+    for (auto& unit : units) {
+        unit = static_cast<std::uint16_t>(unit & 0xFFU);
+    }
+    return JS_NewStringUTF16(ctx, units.data(), units.size());
+}
+
+/// Inverse of `jsBytes` for a value whose original was `binary`.
+[[nodiscard]] std::string fromJsBytes(JSContext* ctx, JSValueConst v, bool binary) {
+    if (!binary) {
+        return toCppString(ctx, v);
+    }
+    std::size_t len{0};
+    const std::uint16_t* units = JS_ToCStringLenUTF16(ctx, &len, v);
+    if (units == nullptr) {
+        return {};
+    }
+    std::string out;
+    out.reserve(len);
+    bool allBytes{true};
+    for (std::size_t i = 0; i < len; ++i) {
+        if (units[i] > 0xFFU) {
+            allBytes = false;
+            break;
+        }
+        out.push_back(static_cast<char>(units[i]));
+    }
+    JS_FreeCStringUTF16(ctx, units);
+    return allBytes ? out : toCppString(ctx, v);
 }
 
 void setStringProp(JSContext* ctx, JSValueConst obj, const char* name, std::string_view value) {
@@ -159,12 +244,14 @@ void setIntProp(JSContext* ctx, JSValueConst obj, const char* name, int32_t valu
 [[nodiscard]] JSValue makeStringMap(JSContext* ctx, const std::map<std::string, std::string>& map) {
     JSValue obj = JS_NewObject(ctx);
     for (const auto& [k, v] : map) {
-        JS_SetPropertyStr(ctx, obj, k.c_str(), jsStr(ctx, v));
+        JS_SetPropertyStr(ctx, obj, k.c_str(), jsBytes(ctx, v));
     }
     return obj;
 }
 
-[[nodiscard]] std::map<std::string, std::string> readStringMap(JSContext* ctx, JSValueConst obj) {
+/// Read a JS string map back; `original` decides how each pre-existing value is decoded.
+[[nodiscard]] std::map<std::string, std::string> readStringMap(
+    JSContext* ctx, JSValueConst obj, const std::map<std::string, std::string>& original) {
     std::map<std::string, std::string> out;
     if (!JS_IsObject(obj)) {
         return out;
@@ -184,7 +271,9 @@ void setIntProp(JSContext* ctx, JSValueConst obj, const char* name, int32_t valu
         JSValue const v = JS_GetProperty(ctx, obj, tab[i].atom);
 
         if (JS_IsString(v)) {
-            out.emplace(key, toCppString(ctx, v));
+            const auto before = original.find(key);
+            const bool binary = before != original.end() && !isValidUtf8(before->second);
+            out.emplace(key, fromJsBytes(ctx, v, binary));
         }
         JS_FreeValue(ctx, v);
         JS_FreeCString(ctx, key);
@@ -382,7 +471,7 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
         setStringProp(ctx, req, "url", hctx.request.url);
         JS_SetPropertyStr(ctx, req, "headers", makeStringMap(ctx, hctx.request.headers));
         if (hctx.request.body) {
-            setStringProp(ctx, req, "body", *hctx.request.body);
+            JS_SetPropertyStr(ctx, req, "body", jsBytes(ctx, *hctx.request.body));
         } else {
             JS_SetPropertyStr(ctx, req, "body", JS_NULL);
         }
@@ -394,7 +483,7 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
         JSValue const resp = JS_NewObject(ctx);
         setIntProp(ctx, resp, "status", hctx.response->status);
         JS_SetPropertyStr(ctx, resp, "headers", makeStringMap(ctx, hctx.response->headers));
-        setStringProp(ctx, resp, "body", hctx.response->body);
+        JS_SetPropertyStr(ctx, resp, "body", jsBytes(ctx, hctx.response->body));
         JS_SetPropertyStr(ctx, root, "response", resp);
     } else {
         JS_SetPropertyStr(ctx, root, "response", JS_NULL);
@@ -472,7 +561,7 @@ void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outR
         JSValue const body = JS_GetPropertyStr(ctx, req, "body");
         JsValueGuard const bodyGuard{ctx, body};
         if (JS_IsString(body)) {
-            outReq.body = toCppString(ctx, body);
+            outReq.body = fromJsBytes(ctx, body, outReq.body && !isValidUtf8(*outReq.body));
         } else if (JS_IsNull(body) || JS_IsUndefined(body)) {
             outReq.body = std::nullopt;
         }
@@ -481,7 +570,7 @@ void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outR
         JSValue const headers = JS_GetPropertyStr(ctx, req, "headers");
         JsValueGuard const headersGuard{ctx, headers};
         if (JS_IsObject(headers)) {
-            outReq.headers = readStringMap(ctx, headers);
+            outReq.headers = readStringMap(ctx, headers, outReq.headers);
         }
     }
     // method is intentionally read-only post-resolution; templates have
@@ -509,14 +598,14 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
         JSValue const body = JS_GetPropertyStr(ctx, resp, "body");
         JsValueGuard const bodyGuard{ctx, body};
         if (JS_IsString(body)) {
-            outResp.body = toCppString(ctx, body);
+            outResp.body = fromJsBytes(ctx, body, !isValidUtf8(outResp.body));
         }
     }
     {
         JSValue const headers = JS_GetPropertyStr(ctx, resp, "headers");
         JsValueGuard const headersGuard{ctx, headers};
         if (JS_IsObject(headers)) {
-            outResp.headers = readStringMap(ctx, headers);
+            outResp.headers = readStringMap(ctx, headers, outResp.headers);
         }
     }
 }

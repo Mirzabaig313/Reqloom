@@ -9,6 +9,7 @@
 
 #include <expected>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace reqloom::engine {
@@ -53,6 +54,13 @@ public:
     /// context — we never bulk-dump the keychain. Sorted, de-duplicated.
     [[nodiscard]] static std::vector<std::string> collectSecretReferences(const Project& project);
 };
+
+/// Check that an actor id, resource id or environment name (`kind`) can be a file stem: not
+/// empty, no leading `.`, no `/`, `\`, `:` or NUL. Used at load (`validate`) and by the writer.
+///
+/// @return void, or `SchemaInvalid` naming `kind` and `name`.
+[[nodiscard]] std::expected<void, ReqloomError> checkEntityFileStem(std::string_view kind,
+                                                                    std::string_view name);
 
 /// Enumerate the `{{...}}` references usable at `target`, given its already
 /// resolved `plan`: upstream extracts (`resource.var` for every producing op

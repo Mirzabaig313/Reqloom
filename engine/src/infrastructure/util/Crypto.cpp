@@ -13,6 +13,7 @@
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/rand.h>
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -128,6 +129,15 @@ std::string hmacSha512(std::string_view key, std::string_view data) {
 
 std::string sha256(std::string_view data) {
     return hashWith(EVP_sha256(), data);
+}
+
+std::string randomBytes(std::size_t count) {
+    std::string out(count, '\0');
+    if (count > static_cast<std::size_t>(INT_MAX) ||
+        RAND_bytes(reinterpret_cast<unsigned char*>(out.data()), static_cast<int>(count)) != 1) {
+        return {};
+    }
+    return out;
 }
 
 std::string jwtSignHs256(std::string_view payloadJson, std::string_view key) {

@@ -5,8 +5,10 @@
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/ExecutionEngine.h>
 
+#include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <map>
 
 namespace reqloom::engine {
 
@@ -31,15 +33,22 @@ public:
     /// Actor ids, resource ids and environment names become file names, so an unsafe one (empty,
     /// leading dot, `/`, `\`, `:`, NUL) is rejected and nothing is written.
     ///
+    /// `loadedFiles` (canonical path → hash of the bytes at load, as the parser records in
+    /// `Project::loadedFiles`), when given, limits pruning to those files and fails the write
+    /// before anything is committed if a target is on disk but not in it, or if a file in it
+    /// changed since load. On success it is replaced by the files now on disk.
+    ///
     /// Layout produced:
     ///   targetDir/reqloom.yaml
     ///   targetDir/actors/<id>.yaml
     ///   targetDir/resources/<id>.yaml
     ///   targetDir/environments/<n>.yaml
-    virtual SchemaWriteResult write(const std::filesystem::path& targetDir,
-                                    const Project& project,
-                                    bool overwrite = false,
-                                    bool pruneStale = true) = 0;
+    virtual SchemaWriteResult write(
+        const std::filesystem::path& targetDir,
+        const Project& project,
+        bool overwrite = false,
+        bool pruneStale = true,
+        std::map<std::filesystem::path, std::size_t>* loadedFiles = nullptr) = 0;
 };
 
 }  // namespace reqloom::engine

@@ -33,6 +33,12 @@ namespace reqloom::engine {
 /// when malformed. Used at project load so a bad assertion is rejected before any request.
 [[nodiscard]] std::expected<void, ReqloomError> validatePredicate(std::string_view expression);
 
+/// `validatePredicate` for a predicate that may contain `{{…}}` placeholders: each is replaced
+/// by the neutral value the run-time substitution would produce (a string, quoted outside a
+/// literal), so syntax errors around a placeholder are still caught at load.
+[[nodiscard]] std::expected<void, ReqloomError> validateTemplatedPredicate(
+    std::string_view expression);
+
 /// Check a regex the engine will run over response text: at most 1024 bytes, no repeated
 /// group ending in an unbounded repeat (`(a+)+`; a heuristic, not a proof), and valid
 /// ECMAScript syntax. `ReqloomError{SchemaInvalid}` otherwise.

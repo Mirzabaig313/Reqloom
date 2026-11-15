@@ -86,8 +86,10 @@ add_library(reqloom-engine-application OBJECT
     src/application/ImportFromHttpie.cpp
     src/application/ImportFromApidog.cpp
     src/application/ExecutionEngine.cpp
+    src/application/HookScope.cpp
     src/application/Factories.cpp
     src/application/PredicateEvaluator.cpp
+    src/application/PredicateTemplates.cpp
     src/application/Verifier.cpp
     src/application/AuthStrategy.cpp
     src/application/Cookies.cpp

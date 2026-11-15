@@ -127,6 +127,12 @@ struct Provenance {
         InsomniaImport,
         HarImport,
         AiImport,  ///< LLM-driven import
+        ApidogImport,
+        HoppscotchImport,
+        ThunderClientImport,
+        HttpieImport,
+        HttpFileImport,  ///< REST Client / JetBrains `.http` file
+        Unknown,         ///< a YAML spelling this version does not know; see `unknownSource`
     };
 
     /// What kind of sample response (if any) the verifier used to confirm
@@ -143,6 +149,10 @@ struct Provenance {
 
     Source source{Source::HandWritten};
     VerifiedAgainst verifiedAgainst{VerifiedAgainst::None};
+
+    /// The original `source:` text when `source` is `Unknown`, written back verbatim so a
+    /// newer importer's label survives a save by this version.
+    std::string unknownSource;
 
     std::optional<std::string> model;
 
@@ -246,6 +256,13 @@ struct Assertion {
     std::optional<std::string> name;
 };
 
+/// Where an entity was defined: the schema file as the parser opened it and the 1-based line
+/// of its key (0 when unknown). Set by the parser, never written to YAML; empty in memory.
+struct SourceLocation {
+    std::string file;
+    int line{0};
+};
+
 /// One declared operation.
 struct Operation {
     OperationId id;
@@ -306,6 +323,9 @@ struct Operation {
     /// Set only for non-hand-written operations. Pure metadata — the runtime
     /// ignores this; tooling and the UI consume it.
     std::optional<Provenance> provenance;
+
+    /// Where the operation was defined; see `SourceLocation`.
+    SourceLocation source;
 };
 
 }  // namespace reqloom::engine

@@ -103,6 +103,8 @@ TEST(ImportFromThunderClient, folder_becomes_resource_and_requests_become_operat
 
     const auto* create = findOp(project, "orders.create_order");
     ASSERT_NE(create, nullptr);
+    ASSERT_TRUE(create->provenance.has_value());
+    EXPECT_EQ(create->provenance->source, ce::Provenance::Source::ThunderClientImport);
     EXPECT_EQ(create->method, ce::HttpMethod::Post);
     EXPECT_EQ(create->pathTemplate, "/api/v1/orders");
     ASSERT_TRUE(create->bodyTemplate.has_value());

@@ -1397,10 +1397,20 @@ TEST(SchemaParserDurations, unit_suffixes_still_parse) {
     EXPECT_EQ(timeout2h, std::chrono::milliseconds{7'200'000});
 }
 
-TEST(SchemaParserDurations, empty_literal_falls_back_to_default) {
-    const auto [ttl, timeout] = parseDurations("", "");
-    EXPECT_EQ(ttl, std::chrono::seconds{900});
-    EXPECT_EQ(timeout, std::chrono::milliseconds{5'000});
+TEST(SchemaParserDurations, empty_literal_is_an_error) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: Durations
+actors:
+  user:
+    auth: { method: POST, path: /login }
+    session:
+      ttl: ""
+)YAML");
+    auto result = ce::parseProject(yaml);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().detail.find("'ttl'"), std::string::npos) << result.error().detail;
 }
 
 TEST(SchemaParserTransport, environment_file_transport_block_is_picked_up) {

@@ -7,6 +7,7 @@
 #include <reqloom/engine/Events.h>
 #include <reqloom/engine/RunContext.h>
 
+#include <chrono>
 #include <expected>
 #include <functional>
 #include <map>
@@ -70,6 +71,16 @@ public:
 /// copying it.
 [[nodiscard]] std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor,
                                                                  AuthDependencies deps);
+
+/// Subtracted from a token's `expires_in` so a token is never presented just before it expires.
+inline constexpr std::chrono::seconds kTokenExpiryMargin{30};
+
+/// How long a session obtained or refreshed for `actor` stays live. `actor.sessionTtl`, except
+/// that for an OAuth2 actor whose `variables` carry a positive integer `expires_in` it is
+/// `min(expires_in - kTokenExpiryMargin, sessionTtl)` (`expires_in` itself when it is within the
+/// margin).
+[[nodiscard]] std::chrono::seconds sessionLifetime(
+    const Actor& actor, const std::map<std::string, std::string>& variables);
 
 /// Run the actor's `refresh:` block (a single HTTP step with templates,
 /// expected status, and extractions) and return the new variable map

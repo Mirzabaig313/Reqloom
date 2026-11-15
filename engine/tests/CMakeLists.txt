@@ -39,16 +39,21 @@ add_executable(reqloom-engine-unit-tests
     unit/CookiesTest.cpp
     unit/MultipartBuilderTest.cpp
     unit/QuickJsHookRunnerTest.cpp
+    unit/HookScopeTest.cpp
+    unit/PredicateTemplatesTest.cpp
     unit/SchemaParserMultiFileTest.cpp
     unit/HeaderMaskingTest.cpp
     unit/SecretRedactionTest.cpp
     unit/SqliteHistoryStoreTest.cpp
     unit/SchemaValidationTest.cpp
+    unit/SchemaStrictnessTest.cpp
+    unit/SchemaWriterSafetyTest.cpp
     unit/SecretEnvTagTest.cpp
     unit/ValidateProjectTest.cpp
     unit/JsonBodyTemplateTest.cpp
     unit/ProjectTrustStoreTest.cpp
     unit/ProjectIdInsertTest.cpp
+    unit/KeychainSecretStoreTest.cpp
 )
 target_include_directories(reqloom-engine-unit-tests
     PRIVATE
@@ -95,6 +100,8 @@ add_executable(reqloom-engine-integration-tests
     integration/SecretLoadingTest.cpp
     integration/JsonBodyEscapingTest.cpp
     integration/ValueRedactionTest.cpp
+    integration/EngineStateTest.cpp
+    integration/AuthSessionTest.cpp
 )
 target_link_libraries(reqloom-engine-integration-tests
     PRIVATE

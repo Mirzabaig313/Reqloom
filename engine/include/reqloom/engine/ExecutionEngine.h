@@ -81,6 +81,19 @@ struct Project {
     /// milliseconds. 0 means unset (no SLO). Surfaced on the timeline's
     /// latency chart: the p95 marker turns red when the run breaches it.
     int latencySloP95Ms{0};
+
+    /// Where each environment was defined, keyed like `environments`. Set by the parser,
+    /// never written to YAML.
+    std::map<std::string, SourceLocation> environmentSources;
+
+    /// The schema files the parser read, keyed by canonical path, valued by a hash of their
+    /// bytes at load. Never written to YAML. Pass `&loadedFiles` to `writeProject` so a save
+    /// prunes only these files and refuses files that changed or appeared since load.
+    std::map<std::filesystem::path, std::size_t> loadedFiles;
+
+    /// Non-fatal findings from the load (unknown keys, imports that matched nothing), each
+    /// prefixed with `file:line:column:`. Never written to YAML.
+    std::vector<std::string> loadWarnings;
 };
 
 /// Per-run options.

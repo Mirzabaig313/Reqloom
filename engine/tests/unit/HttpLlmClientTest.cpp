@@ -265,3 +265,66 @@ TEST(HttpLlmClient, undecodable_provider_body_surfaces_LlmResponseInvalid) {
     ASSERT_FALSE(resp.has_value());
     EXPECT_EQ(resp.error().code, ce::ErrorCode::LlmResponseInvalid);
 }
+
+// ─── Transport safety ───────────────────────────────────────────────────────
+
+TEST(HttpLlmClient, plain_http_endpoint_to_a_remote_host_is_refused_before_sending) {
+    FakeHttpTransport transport;
+    ce::HttpLlmClient client{transport};
+    auto req = makeRequest(ce::LlmProvider::Anthropic, "sk-ant-secret-1");
+    req.config.endpoint = "http://llm.example.test";
+
+    auto result = client.complete(req);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::LlmRequestFailed);
+    EXPECT_TRUE(transport.recorded().empty());
+    EXPECT_EQ(result.error().detail.find("sk-ant-secret-1"), std::string::npos);
+}
+
+TEST(HttpLlmClient, loopback_disguised_in_userinfo_is_refused) {
+    FakeHttpTransport transport;
+    ce::HttpLlmClient client{transport};
+    auto req = makeRequest(ce::LlmProvider::OpenAI, "sk-x");
+    req.config.endpoint = "http://localhost@evil.example.test";
+
+    EXPECT_FALSE(client.complete(req).has_value());
+    EXPECT_TRUE(transport.recorded().empty());
+}
+
+TEST(HttpLlmClient, plain_http_to_loopback_is_allowed) {
+    for (const auto* endpoint :
+         {"http://localhost:11434", "http://127.0.0.1:8080", "http://[::1]:11434"}) {
+        FakeHttpTransport transport;
+        transport.enqueue(200, R"({"message":{"content":"pong"}})");
+        ce::HttpLlmClient client{transport};
+        auto req = makeRequest(ce::LlmProvider::Ollama, "");
+        req.config.endpoint = endpoint;
+
+        EXPECT_TRUE(client.complete(req).has_value()) << endpoint;
+    }
+}
+
+TEST(HttpLlmClient, llm_requests_do_not_follow_redirects) {
+    FakeHttpTransport transport;
+    transport.enqueue(307, "");
+    ce::HttpLlmClient client{transport};
+
+    auto result = client.complete(makeRequest(ce::LlmProvider::Anthropic, "sk-ant-secret-2"));
+
+    ASSERT_EQ(transport.recorded().size(), 1U);
+    EXPECT_FALSE(transport.recorded().front().followRedirects);
+    ASSERT_FALSE(result.has_value());
+}
+
+TEST(HttpLlmClient, api_key_echoed_by_the_provider_is_masked_in_the_error) {
+    FakeHttpTransport transport;
+    transport.enqueue(401, R"({"error":"invalid key sk-ant-secret-3"})");
+    ce::HttpLlmClient client{transport};
+
+    auto result = client.complete(makeRequest(ce::LlmProvider::Anthropic, "sk-ant-secret-3"));
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().detail.find("sk-ant-secret-3"), std::string::npos)
+        << result.error().detail;
+}

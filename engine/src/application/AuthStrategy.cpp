@@ -14,6 +14,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cstdint>
+#include <system_error>
 
 #include <reqloom/engine/Actor.h>
 #include <reqloom/engine/Events.h>
@@ -137,10 +140,10 @@ public:
 
             auto response = deps_.http->send(req);
             if (!response) {
-                return std::unexpected(
-                    ReqloomError{ErrorCode::SessionRefreshFailed,
-                                 ErrorClass::Auth,
-                                 "auth: network error during step '" + step.id + "'"});
+                return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                                    ErrorClass::Auth,
+                                                    "auth: network error during step '" + step.id +
+                                                        "': " + response.error().detail});
             }
 
             if (deps_.emit) {
@@ -160,17 +163,17 @@ public:
             // actor) carry the cookie. PHP / Rails apps that issue a
             // session cookie on /login depend on this; without it the
             // cookie disappears the moment authenticate() returns.
-            for (const auto& [name, value] : cookies::collectFromResponse(response->headers)) {
-                ctx.setCookie(actor.id, name, value);
-            }
+            cookies::absorbSetCookies(response->headers, actor.id, ctx);
 
             if (step.expectStatus && response->status != *step.expectStatus) {
-                return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                                    ErrorClass::Auth,
-                                                    "auth: step '" + step.id + "' returned HTTP " +
-                                                        std::to_string(response->status) +
-                                                        " (expected " +
-                                                        std::to_string(*step.expectStatus) + ")"});
+                const auto excerpt = safeBodyExcerpt(response->body, &ctx.secretRegistry());
+                return std::unexpected(
+                    ReqloomError{ErrorCode::SessionRefreshFailed,
+                                 ErrorClass::Auth,
+                                 "auth: step '" + step.id + "' returned HTTP " +
+                                     std::to_string(response->status) + " (expected " +
+                                     std::to_string(*step.expectStatus) + ")" +
+                                     (excerpt ? " — " + *excerpt : std::string{})});
             }
 
             if (!response->body.empty() && !step.extractions.empty()) {
@@ -403,10 +406,13 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     try {
         doc = json::parse(response->body);
     } catch (const json::parse_error& e) {
-        return std::unexpected(ReqloomError{
-            ErrorCode::SessionRefreshFailed,
-            ErrorClass::Auth,
-            "auth: " + std::string{strategyLabel} + " response is not valid JSON: " + e.what()});
+        // e.what() quotes the input near the error, which may be the token itself.
+        return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
+                                            ErrorClass::Auth,
+                                            "auth: " + std::string{strategyLabel} +
+                                                " response is not valid JSON (syntax error at "
+                                                "byte " +
+                                                std::to_string(e.byte) + ")"});
     }
 
     const auto accessTokenIt = doc.find("access_token");
@@ -1002,6 +1008,25 @@ std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor, AuthDepen
     return nullptr;
 }
 
+std::chrono::seconds sessionLifetime(const Actor& actor,
+                                     const std::map<std::string, std::string>& variables) {
+    const bool isOAuth2 = actor.strategy == AuthStrategy::OAuth2ClientCredentials ||
+                          actor.strategy == AuthStrategy::OAuth2Password;
+    const auto it = variables.find("expires_in");
+    if (!isOAuth2 || it == variables.end()) {
+        return actor.sessionTtl;
+    }
+    std::int64_t secs{0};
+    const auto& text = it->second;
+    if (std::from_chars(text.data(), text.data() + text.size(), secs).ec != std::errc{} ||
+        secs <= 0) {
+        return actor.sessionTtl;
+    }
+    const std::chrono::seconds lifetime{secs};
+    const auto usable = lifetime > kTokenExpiryMargin ? lifetime - kTokenExpiryMargin : lifetime;
+    return std::min(usable, actor.sessionTtl);
+}
+
 std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     const Actor& actor, RunContext& ctx, const ResolveContext& rctx, const AuthDependencies& deps) {
     if (!actor.refresh) {
@@ -1076,9 +1101,7 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     // contract as ChainAuthenticator. Refresh endpoints commonly
     // rotate session cookies (CSRF tokens, anti-replay nonces) and
     // the next operation as this actor needs the rotated value.
-    for (const auto& [name, value] : cookies::collectFromResponse(response->headers)) {
-        ctx.setCookie(actor.id, name, value);
-    }
+    cookies::absorbSetCookies(response->headers, actor.id, ctx);
 
     // Honour the user's `expect_status:` when set, otherwise fall back
     // to "any 2xx is success". Both forms align with the operation-level

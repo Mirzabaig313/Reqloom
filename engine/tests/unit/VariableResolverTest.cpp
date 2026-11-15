@@ -11,14 +11,22 @@
 #include <chrono>
 #include <cstdlib>
 #include <iomanip>
+#include <map>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace ce = reqloom::engine;
 
 namespace {
+
+[[nodiscard]] ce::ResourceInstance instanceWith(std::map<std::string, std::string> variables) {
+    ce::ResourceInstance instance;
+    instance.variables = std::move(variables);
+    return instance;
+}
 
 ce::ResolveContext makeResolveCtx() {
     ce::ResolveContext rctx;
@@ -144,8 +152,8 @@ TEST(VariableResolver, preserves_indexed_resource_lookup) {
     ce::RunContext ctx;
     const auto rctx = makeResolveCtx();
 
-    ctx.appendInstance(ce::ResourceId{"order"}, ce::ResourceInstance{{{"id", "ord-1"}}});
-    ctx.appendInstance(ce::ResourceId{"order"}, ce::ResourceInstance{{{"id", "ord-2"}}});
+    ctx.appendInstance(ce::ResourceId{"order"}, instanceWith({{"id", "ord-1"}}));
+    ctx.appendInstance(ce::ResourceId{"order"}, instanceWith({{"id", "ord-2"}}));
 
     EXPECT_EQ(resolver.resolve("{{order[1].id}}", ctx, rctx).output, "ord-1");
     EXPECT_EQ(resolver.resolve("{{order[2].id}}", ctx, rctx).output, "ord-2");
@@ -165,9 +173,9 @@ TEST(VariableResolver, for_each_iteration_binding_selects_the_bound_instance) {
     const auto rctx = makeResolveCtx();
 
     const ce::ResourceId order{"order"};
-    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-1"}}});
-    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-2"}}});
-    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-3"}}});
+    ctx.appendInstance(order, instanceWith({{"id", "ord-1"}}));
+    ctx.appendInstance(order, instanceWith({{"id", "ord-2"}}));
+    ctx.appendInstance(order, instanceWith({{"id", "ord-3"}}));
 
     // No binding → most-recent.
     EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-3");
@@ -380,8 +388,7 @@ TEST(VariableResolver, url_path_encodes_only_query_template_outputs) {
     ce::VariableResolver resolver;
     ce::RunContext ctx;
     const auto rctx = makeResolveCtx();
-    ctx.appendInstance(ce::ResourceId{"resource"},
-                       ce::ResourceInstance{{{"value", "ok&admin=true#"}}});
+    ctx.appendInstance(ce::ResourceId{"resource"}, instanceWith({{"value", "ok&admin=true#"}}));
 
     const auto result =
         resolver.resolveUrlPath("/search?x={{resource.value}}&x=fixed%20value#results", ctx, rctx);
@@ -410,8 +417,7 @@ TEST(VariableResolver, url_path_encodes_embedded_path_segment_substitutions) {
     ce::VariableResolver resolver;
     ce::RunContext ctx;
     const auto rctx = makeResolveCtx();
-    ctx.appendInstance(ce::ResourceId{"resource"},
-                       ce::ResourceInstance{{{"id", "ok?admin=true#/child"}}});
+    ctx.appendInstance(ce::ResourceId{"resource"}, instanceWith({{"id", "ok?admin=true#/child"}}));
 
     const auto result = resolver.resolveUrlPath("/items/{{resource.id}}?scope=user", ctx, rctx);
 
@@ -551,18 +557,45 @@ TEST(VariableResolver, unknown_faker_name_is_unresolved_not_a_placeholder) {
     EXPECT_TRUE(phone.output.starts_with("+1555")) << phone.output;
 }
 
-// Item 9 (documents current behaviour; not changed here): when the newest
-// instance lacks a field — which is what a Null extraction leaves behind,
-// since a Null outcome stores no value and does not fail the step — a
-// `{{res.var}}` reference silently falls back to an OLDER instance's value.
+// A resource accrues fields across operations (create extracts `token`, a later op extracts
+// `user`), so a field the newest instance never mentions comes from an older one.
 TEST(VariableResolver, missing_field_on_newest_instance_falls_back_to_older_instance) {
     ce::VariableResolver resolver;
     ce::RunContext ctx;
     const auto rctx = makeResolveCtx();
-    ctx.appendInstance(ce::ResourceId{"session"}, ce::ResourceInstance{{{"token", "old-token"}}});
-    ctx.appendInstance(ce::ResourceId{"session"}, ce::ResourceInstance{{{"user", "u2"}}});
+    ctx.appendInstance(ce::ResourceId{"session"}, instanceWith({{"token", "old-token"}}));
+    ctx.appendInstance(ce::ResourceId{"session"}, instanceWith({{"user", "u2"}}));
 
     const auto result = resolver.resolve("{{session.token}}", ctx, rctx);
     EXPECT_TRUE(result.unresolved.empty());
     EXPECT_EQ(result.output, "old-token");
+}
+
+TEST(VariableResolver, field_recorded_null_on_newest_instance_does_not_fall_back) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+    ctx.appendInstance(ce::ResourceId{"session"}, instanceWith({{"token", "old-token"}}));
+    ce::ResourceInstance latest;
+    latest.nullVariables.insert("token");
+    ctx.appendInstance(ce::ResourceId{"session"}, std::move(latest));
+
+    const auto result = resolver.resolve("{{session.token}}", ctx, rctx);
+
+    ASSERT_EQ(result.unresolved.size(), 1U);
+    EXPECT_EQ(result.output.find("old-token"), std::string::npos);
+}
+
+TEST(VariableResolver, field_recorded_missing_on_newest_instance_does_not_fall_back) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+    ctx.appendInstance(ce::ResourceId{"session"}, instanceWith({{"token", "old-token"}}));
+    ce::ResourceInstance latest;
+    latest.missingVariables.insert("token");
+    ctx.appendInstance(ce::ResourceId{"session"}, std::move(latest));
+
+    const auto result = resolver.resolve("{{session.token}}", ctx, rctx);
+
+    EXPECT_EQ(result.unresolved.size(), 1U);
 }

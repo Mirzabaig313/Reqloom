@@ -8,8 +8,10 @@
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/ExecutionEngine.h>
 
+#include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,8 +26,8 @@ namespace reqloom::engine {
 
 /// Whether the secret store returned by `makeKeychainSecretStore()` is
 /// backed by a real OS keychain. False when the engine was built without
-/// QtKeychain — in that case the store is a no-op (reads find nothing,
-/// writes are dropped), and a UI should warn rather than imply persistence.
+/// QtKeychain — in that case reads find nothing and writes and removals fail
+/// with `SecretAccessFailed`, and a UI should warn rather than imply persistence.
 [[nodiscard]] bool keychainBackendAvailable() noexcept;
 
 /// Where the per-user project trust file lives: `projects.json` in the application config
@@ -83,12 +85,19 @@ class LlmClient;
 /// Actor ids, resource ids and environment names must be safe file stems (non-empty, no
 /// leading dot, no `/`, `\`, `:` or NUL); otherwise an error names the id and nothing is written.
 ///
+/// `loadedFiles` (normally `&project.loadedFiles` of the parsed project or its edited copy)
+/// guards against other writers: pruning deletes only files in it, writing a file that is on
+/// disk but not in it is an error, and so is replacing or pruning a file whose bytes changed
+/// since load. On success it is updated to the files now on disk, ready for the next save.
+/// Null keeps the unguarded behaviour.
+///
 /// Returns the path to the written `reqloom.yaml` on success.
 [[nodiscard]] std::expected<std::filesystem::path, ReqloomError> writeProject(
     const std::filesystem::path& targetDir,
     const Project& project,
     bool overwrite = false,
-    bool pruneStale = true);
+    bool pruneStale = true,
+    std::map<std::filesystem::path, std::size_t>* loadedFiles = nullptr);
 
 /// Write `<targetDir>/reqloom.d.ts` describing the hook sandbox `ctx`
 /// surface. Hook authors place this file alongside their `.js` scripts

@@ -15,6 +15,7 @@
 #include "AuthStrategy.h"
 #include "Cookies.h"
 #include "HeaderMasking.h"
+#include "HookScope.h"
 #include "JsonExtraction.h"
 
 #include <reqloom/engine/JsonValues.h>
@@ -22,6 +23,7 @@
 #include "../domain/SecretRegistry.h"
 #include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
+#include "PredicateTemplates.h"
 #include "RequestSigners.h"
 #include "SecretRedaction.h"
 
@@ -30,16 +32,17 @@
 #include <cctype>
 #include <charconv>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -235,6 +238,48 @@ struct ExtractionEvidence {
     return evidence;
 }
 
+/// The instance that answers `{{resource.field}}` when it records the field as null or missing.
+[[nodiscard]] const ResourceInstance* latestUnsetRecord(const RunContext& ctx,
+                                                        const VariableParts& parts) {
+    if (parts.rawScope != parts.sourceScope) {
+        return nullptr;
+    }
+    const ResourceId resource{std::string{parts.sourceScope}};
+    const std::string field{parts.field};
+    const auto& instances = ctx.instances(resource);
+    if (const auto bound = ctx.iteration(resource); bound && *bound < instances.size()) {
+        return instances[*bound].isUnset(field) ? &instances[*bound] : nullptr;
+    }
+    for (auto it = instances.rbegin(); it != instances.rend(); ++it) {
+        if (it->variables.contains(field)) {
+            return nullptr;
+        }
+        if (it->isUnset(field)) {
+            return &*it;
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::optional<std::string> unsetFieldReason(const RunContext& ctx,
+                                                          const std::string_view token) {
+    const auto parts = parseVariableParts(token);
+    if (!parts) {
+        return std::nullopt;
+    }
+    const auto* record = latestUnsetRecord(ctx, *parts);
+    if (record == nullptr) {
+        return std::nullopt;
+    }
+    const std::string field{parts->field};
+    const std::string producer =
+        record->producer.value.empty() ? std::string{"producing"} : record->producer.value;
+    if (record->nullVariables.contains(field)) {
+        return "The last " + producer + " response returned null for '" + field + "'.";
+    }
+    return "The last " + producer + " response did not contain '" + field + "'.";
+}
+
 [[nodiscard]] UnresolvedVariableDiagnostic makeUnresolvedDiagnostic(
     const VariableResolver::UnresolvedOccurrence& occurrence,
     const bool exposeToken,
@@ -276,6 +321,14 @@ struct ExtractionEvidence {
             diagnostic.sourceKind = VariableSourceKind::Extraction;
             diagnostic.producerOp = evidence->producerOp;
             diagnostic.producerStepIndex = evidence->producerStepIndex;
+        } else if (const auto* record = latestUnsetRecord(ctx, *parts)) {
+            diagnostic.cause = record->nullVariables.contains(std::string{parts->field})
+                                   ? UnresolvedVariableCause::ExtractionNull
+                                   : UnresolvedVariableCause::ExtractionMissing;
+            diagnostic.sourceKind = VariableSourceKind::Extraction;
+            if (!record->producer.value.empty()) {
+                diagnostic.producerOp = record->producer;
+            }
         }
     }
     return diagnostic;
@@ -411,26 +464,30 @@ void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
     }
 }
 
-/// Build a HookContext snapshot from current run state.
-/// hooks get read-only access to actor variables; we copy them so the
-/// hook can't reach back into RunContext via reference.
+/// Build a HookContext snapshot from current run state. Values are copied so the hook can't
+/// reach back into RunContext. A hook sees only its operation's actor session and the secrets
+/// `hookSecretNames` allows.
 [[nodiscard]] HookContext buildHookContext(const HttpRequest& req,
                                            const RunContext& ctx,
                                            const ResolveContext& rctx,
-                                           const Project& project) {
+                                           const Operation& op,
+                                           const Project& project,
+                                           const std::string_view script) {
     HookContext out;
     out.request.method = req.method;
     out.request.url = req.url;
     out.request.headers = req.headers;
     out.request.body = req.body;
 
-    for (const auto& [actorId, _] : project.actors) {
-        if (const auto* sess = ctx.session(actorId); sess) {
-            out.variables[actorId.value] = sess->variables;
-        }
+    if (const auto* sess = ctx.session(op.actor); sess != nullptr && !op.actor.value.empty()) {
+        out.variables[op.actor.value] = sess->variables;
     }
     out.env = rctx.envVars;
-    out.secrets = rctx.secrets;
+    for (const auto& name : hookSecretNames(op, project, rctx.envVars, script)) {
+        if (const auto it = rctx.secrets.find(name); it != rctx.secrets.end()) {
+            out.secrets.insert(*it);
+        }
+    }
     return out;
 }
 
@@ -448,6 +505,30 @@ void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
 /// Convert a hook-mutated header map back into vector<pair> form so the
 /// downstream pipeline (extraction, response viewer) sees the same shape
 /// it would have seen without the hook.
+/// Add the secrets the chain's hook scripts name, which no template references.
+void appendHookScriptSecrets(const Project& project,
+                             const std::vector<OperationId>& chain,
+                             std::vector<std::string>& names) {
+    std::set<std::string> all{names.begin(), names.end()};
+    for (const auto& opId : chain) {
+        const auto dot = opId.value.find('.');
+        const auto res = project.resources.find(ResourceId{opId.value.substr(0, dot)});
+        if (dot == std::string::npos || res == project.resources.end()) {
+            continue;
+        }
+        const auto op = res->second.operations.find(opId.value.substr(dot + 1));
+        if (op == res->second.operations.end()) {
+            continue;
+        }
+        for (const auto* script : {&op->second.preRequestScript, &op->second.postResponseScript}) {
+            if (*script) {
+                all.merge(hookScriptSecretNames(**script));
+            }
+        }
+    }
+    names.assign(all.begin(), all.end());
+}
+
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> headersToVector(
     const std::map<std::string, std::string>& headers) {
     std::vector<std::pair<std::string, std::string>> out;
@@ -670,6 +751,14 @@ struct ExecutionEngine::Impl {
     std::atomic<std::uint64_t> nextRunId{1};
     // 0 = nothing cancelled; any other value = the run with that id is being cancelled.
     std::atomic<std::uint64_t> cancelledRunId{0};
+    // cancel() notifies under this mutex so a cancellable wait wakes at once.
+    std::mutex cancelMutex;
+    std::condition_variable cancelWake;
+
+    // Operations that have stored resource instances during the run in progress. The first
+    // store replaces what that operation produced in earlier runs; later ones (for_each
+    // iterations) append.
+    std::set<OperationId> producedThisRun;
 
     // Set per-run from RunOptions. Runs are serialized on one engine
     // instance (concurrent run() is unsupported in the MVP), so a plain
@@ -701,6 +790,25 @@ struct ExecutionEngine::Impl {
     [[nodiscard]] bool isCancelled(RunId runId) const noexcept {
         const auto cancelled = cancelledRunId.load(std::memory_order_acquire);
         return cancelled != 0 && cancelled == runId.value;
+    }
+
+    /// Sleep for `delay` unless the run is cancelled first; true when cancelled.
+    [[nodiscard]] bool waitUnlessCancelled(RunId runId, std::chrono::milliseconds delay) {
+        std::unique_lock lock(cancelMutex);
+        return cancelWake.wait_for(lock, delay, [&] { return isCancelled(runId); });
+    }
+
+    void storeInstances(RunContext& ctx,
+                        const Operation& op,
+                        std::vector<ResourceInstance> instances) {
+        if (producedThisRun.insert(op.id).second) {
+            ctx.replaceInstances(op.resource, op.id, std::move(instances));
+            return;
+        }
+        for (auto& instance : instances) {
+            instance.producer = op.id;
+            ctx.appendInstance(op.resource, std::move(instance));
+        }
     }
 
     /// Build the opt-in body payload for a `ResponseReceived` event.
@@ -818,13 +926,13 @@ struct ExecutionEngine::Impl {
         }
     }
 
-    // Authenticate an actor if session is not live. Returns true on success.
-
-    bool ensureSession(const Actor& actor,
-                       RunContext& ctx,
-                       const ResolveContext& rctx,
-                       RunId runId,
-                       std::size_t stepIndex) {
+    // Authenticate an actor if its session is not live. nullopt on success, else why the
+    // actor could not be signed in.
+    std::optional<ReqloomError> ensureSession(const Actor& actor,
+                                              RunContext& ctx,
+                                              const ResolveContext& rctx,
+                                              RunId runId,
+                                              std::size_t stepIndex) {
         // Forwards auth-flow events into Impl::emit so they reach
         // subscribers and history under the parent step's runId/stepIndex.
         auto sink = [this](const RunEvent& ev) {
@@ -835,7 +943,7 @@ struct ExecutionEngine::Impl {
         if ((existing != nullptr) && existing->state == ActorSession::State::Live) {
             const auto now = std::chrono::steady_clock::now();
             if (now < existing->expiresAt) {
-                return true;
+                return std::nullopt;
             }
 
             if (actor.refresh) {
@@ -849,13 +957,14 @@ struct ExecutionEngine::Impl {
                         updated.variables[k] = std::move(v);
                     }
                     updated.state = ActorSession::State::Live;
-                    updated.expiresAt = std::chrono::steady_clock::now() + actor.sessionTtl;
+                    updated.expiresAt = std::chrono::steady_clock::now() +
+                                        sessionLifetime(actor, updated.variables);
                     ctx.putSession(actor.id, std::move(updated));
                     emit(SessionRefreshed{runId,
                                           actor.id,
                                           SessionRefreshed::Trigger::Expiry,
                                           std::chrono::system_clock::now()});
-                    return true;
+                    return std::nullopt;
                 }
                 // Refresh failed — fall through to full re-auth.
             }
@@ -865,19 +974,24 @@ struct ExecutionEngine::Impl {
             deps.http.get(), &varResolver, sink, runId, stepIndex, captureResponseBodies};
         auto authenticator = selectAuthenticator(actor, std::move(authDeps));
         if (!authenticator) {
-            return false;
+            return ReqloomError{ErrorCode::SessionRefreshFailed,
+                                ErrorClass::Auth,
+                                "actor '" + actor.id.value + "': unsupported auth strategy"};
         }
 
         auto outcome = authenticator->authenticate(actor, ctx, rctx);
         if (!outcome) {
-            return false;
+            auto error = std::move(outcome.error());
+            error.detail = "actor '" + actor.id.value + "' could not sign in: " + error.detail;
+            return error;
         }
 
         ActorSession session = std::move(*outcome);
         session.state = ActorSession::State::Live;
-        session.expiresAt = std::chrono::steady_clock::now() + actor.sessionTtl;
+        session.expiresAt =
+            std::chrono::steady_clock::now() + sessionLifetime(actor, session.variables);
         ctx.putSession(actor.id, std::move(session));
-        return true;
+        return std::nullopt;
     }
 
     // Run the polling phase for an operation. Returns the FINAL poll response on
@@ -894,7 +1008,31 @@ struct ExecutionEngine::Impl {
                                                           std::vector<StepResult>& attemptRows) {
         PredicateEvaluator const evaluator;
 
-        auto successPredicate = evaluator.parse(poll.successWhen);
+        // Placeholders resolve once, before the first attempt, as values (PredicateTemplates.h).
+        const auto substitute =
+            [&](const std::string_view field,
+                const std::string& predicate) -> std::expected<std::string, ReqloomError> {
+            auto text = substitutePredicateTemplates(
+                predicate, [&](std::string_view placeholder) -> std::optional<std::string> {
+                    auto resolved = varResolver.resolve(placeholder, ctx, rctx);
+                    if (!resolved.unresolvedOccurrences.empty()) {
+                        return std::nullopt;
+                    }
+                    return std::move(resolved.output);
+                });
+            if (!text) {
+                return std::unexpected(ReqloomError{ErrorCode::VarUnresolved,
+                                                    ErrorClass::Resolution,
+                                                    std::string{field} + ": unresolved variable " +
+                                                        safeDiagnosticText(text.error())});
+            }
+            return std::move(*text);
+        };
+        const auto successText = substitute("poll_until.success_when", poll.successWhen);
+        if (!successText) {
+            return std::unexpected(successText.error());
+        }
+        auto successPredicate = evaluator.parse(*successText);
         if (!successPredicate) {
             return std::unexpected(
                 ReqloomError{ErrorCode::SchemaInvalid,
@@ -904,7 +1042,11 @@ struct ExecutionEngine::Impl {
 
         std::optional<ParsedPredicate> failPredicate;
         if (poll.failWhen) {
-            auto parsed = evaluator.parse(*poll.failWhen);
+            const auto failText = substitute("poll_until.fail_when", *poll.failWhen);
+            if (!failText) {
+                return std::unexpected(failText.error());
+            }
+            auto parsed = evaluator.parse(*failText);
             if (!parsed) {
                 return std::unexpected(
                     ReqloomError{ErrorCode::SchemaInvalid,
@@ -930,10 +1072,11 @@ struct ExecutionEngine::Impl {
             pollActor = &it->second;
         }
 
-        if ((pollActor != nullptr) && !ensureSession(*pollActor, ctx, rctx, runId, stepIndex)) {
-            return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                                ErrorClass::Auth,
-                                                "poll_until: actor session refresh failed"});
+        if (pollActor != nullptr) {
+            if (auto authError = ensureSession(*pollActor, ctx, rctx, runId, stepIndex)) {
+                authError->detail = "poll_until: " + authError->detail;
+                return std::unexpected(std::move(*authError));
+            }
         }
 
         const auto deadline = std::chrono::steady_clock::now() + poll.timeout;
@@ -1164,7 +1307,10 @@ struct ExecutionEngine::Impl {
             }
             const auto sleepFor =
                 std::min(std::chrono::duration_cast<std::chrono::milliseconds>(remaining), delay);
-            std::this_thread::sleep_for(sleepFor);
+            if (waitUnlessCancelled(runId, sleepFor)) {
+                return std::unexpected(
+                    ReqloomError{ErrorCode::Cancelled, ErrorClass::Run, "poll_until: cancelled"});
+            }
         }
 
         return std::unexpected(ReqloomError{
@@ -1370,8 +1516,8 @@ struct ExecutionEngine::Impl {
     // actor and reusing the tested OAuth2 authenticator, then inject the
     // resulting Authorization: Bearer. Returns an error on token-fetch failure.
     //
-    // The token is cached in the RunContext session store keyed by
-    // token_url|client_id|scope, honoring the token endpoint's `expires_in`
+    // The token is cached in the RunContext session store keyed by the resolved
+    // token_url / client_id / username / scope, honoring the token endpoint's `expires_in`
     // (with a small safety margin), so ops sharing the same OAuth2 config —
     // and repeated runs on the same context — reuse one token instead of
     // re-fetching per operation.
@@ -1403,9 +1549,18 @@ struct ExecutionEngine::Impl {
             return std::nullopt;
         }
 
-        const ActorId cacheId{"__inline_oauth2:" + auth->oauth2GrantType + "|" +
-                              auth->oauth2TokenUrl + "|" + auth->oauth2ClientId + "|" +
-                              auth->username + "|" + auth->oauth2Scope};
+        // Hashed: a resolved value can carry a secret, and the key is stored as an actor id.
+        std::string cacheKeyMaterial = auth->oauth2GrantType;
+        for (const auto* field : {&auth->oauth2TokenUrl,
+                                  &auth->oauth2ClientId,
+                                  &auth->username,
+                                  &auth->oauth2Scope,
+                                  &auth->oauth2ClientAuth}) {
+            const auto resolved = varResolver.resolve(*field, ctx, rctx).output;
+            cacheKeyMaterial += '\n' + std::to_string(resolved.size()) + ':' + resolved;
+        }
+        const ActorId cacheId{"__inline_oauth2:" +
+                              codecs::hexEncode(crypto::sha256(cacheKeyMaterial))};
 
         // Reuse a still-valid cached token.
         if (const auto* cached = ctx.session(cacheId);
@@ -1489,18 +1644,26 @@ struct ExecutionEngine::Impl {
         result.op = op.id;
         result.attempts = 1;
         auto startTime = std::chrono::steady_clock::now();
+        if (isCancelled(runId)) {
+            result.status = StepResult::Status::Cancelled;
+            result.error = ErrorCode::Cancelled;
+            return result;
+        }
 
         constexpr std::size_t kMaxDiagnosticsPerStep{128};
         bool foundUnresolved{};
         bool ignoreCurrentActorUnresolved{};
         std::optional<std::pair<std::string, std::string>> firstUnresolved{};
 
-        const auto unresolvedVariableDetail = [&rctx](const std::string_view safeVariable,
-                                                      const std::string_view location) {
-            const auto envReason = envBuiltinFailureReason(safeVariable, rctx);
+        const auto unresolvedVariableDetail = [&rctx, &ctx](const std::string_view safeVariable,
+                                                            const std::string_view location) {
+            auto reason = envBuiltinFailureReason(safeVariable, rctx);
+            if (!reason) {
+                reason = unsetFieldReason(ctx, safeVariable);
+            }
             return std::string{"Variable: {{"} + std::string{safeVariable} +
                    "}}\nLocation: " + std::string{location} + "\nCause: " +
-                   envReason.value_or(
+                   reason.value_or(
                        "No usable value was available in the current run when "
                        "this request was prepared.");
         };
@@ -1758,7 +1921,8 @@ struct ExecutionEngine::Impl {
             // Hooks rerun after session refresh because their output may depend
             // on freshly resolved headers, URL, or body values.
             if (op.preRequestScript && deps.hooks) {
-                auto hookContext = buildHookContext(req, ctx, rctx, project);
+                auto hookContext =
+                    buildHookContext(req, ctx, rctx, op, project, *op.preRequestScript);
                 auto outcome =
                     deps.hooks->runPreRequest(*op.preRequestScript, std::move(hookContext));
                 if (!outcome) {
@@ -1790,9 +1954,8 @@ struct ExecutionEngine::Impl {
                                     "', which is not defined");
                 return result;
             }
-            if (!ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
-                result.status = StepResult::Status::Failed;
-                result.error = ErrorCode::SessionRefreshFailed;
+            if (auto authError = ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
+                failPreparation(ErrorCode::SessionRefreshFailed, std::move(authError->detail));
                 return result;
             }
         }
@@ -1812,7 +1975,8 @@ struct ExecutionEngine::Impl {
             if (delay > op.retry.maxBackoff) {
                 delay = op.retry.maxBackoff;
             }
-            std::this_thread::sleep_for(delay);
+            // The next attempt's cancellation check ends the step.
+            (void)waitUnlessCancelled(runId, delay);
         };
 
         for (int attempt = 0; attempt < maxAttempts; ++attempt) {
@@ -1938,8 +2102,19 @@ struct ExecutionEngine::Impl {
         if (httpResp && httpResp->status == 401 && !op.actor.value.empty() && !userExpects401) {
             auto actorIt = project.actors.find(op.actor);
             if (actorIt != project.actors.end()) {
+                const auto cancelledStep = [&] {
+                    result.status = StepResult::Status::Cancelled;
+                    result.error = ErrorCode::Cancelled;
+                    return result;
+                };
+                if (isCancelled(runId)) {
+                    return cancelledStep();
+                }
                 ctx.invalidateSession(op.actor);
-                if (ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
+                if (!ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
+                    if (isCancelled(runId)) {
+                        return cancelledStep();
+                    }
                     emit(SessionRefreshed{runId,
                                           op.actor,
                                           SessionRefreshed::Trigger::Unauthorized,
@@ -2053,7 +2228,9 @@ struct ExecutionEngine::Impl {
                                           *httpResp,
                                           pollAttemptRows);
             if (!pollResult.has_value()) {
-                result.status = StepResult::Status::Failed;
+                result.status = pollResult.error().code == ErrorCode::Cancelled
+                                    ? StepResult::Status::Cancelled
+                                    : StepResult::Status::Failed;
                 result.error = pollResult.error().code;
                 result.detail = pollResult.error().detail;
                 auto elapsed = std::chrono::steady_clock::now() - startTime;
@@ -2068,11 +2245,12 @@ struct ExecutionEngine::Impl {
         // status/headers/body — extractions then see the mutated body.
         // Useful for decrypting / unwrapping vendor envelopes.
         if (httpResp && op.postResponseScript && deps.hooks) {
-            auto hctx = buildHookContext(req, ctx, rctx, project);
+            auto hctx = buildHookContext(req, ctx, rctx, op, project, *op.postResponseScript);
             HookResponseView respView;
             respView.status = httpResp->status;
             respView.headers = headersToMap(httpResp->headers);
             respView.body = httpResp->body;
+            const auto exposedHeaders = respView.headers;
             hctx.response = std::move(respView);
 
             auto outcome = deps.hooks->runPostResponse(*op.postResponseScript, std::move(hctx));
@@ -2086,7 +2264,8 @@ struct ExecutionEngine::Impl {
             }
             if (outcome->mutatedResponse) {
                 httpResp->status = outcome->mutatedResponse->status;
-                httpResp->headers = headersToVector(outcome->mutatedResponse->headers);
+                httpResp->headers = mergeHookHeaders(
+                    httpResp->headers, exposedHeaders, outcome->mutatedResponse->headers);
                 httpResp->body = std::move(outcome->mutatedResponse->body);
             }
         }
@@ -2105,6 +2284,8 @@ struct ExecutionEngine::Impl {
             }
 
             std::map<std::string, std::string> scalarValues;
+            std::set<std::string> nullVariables;
+            std::set<std::string> missingVariables;
             if (!scalarExts.empty()) {
                 auto detailed = extractFromResponseDetailed(
                     op.id, httpResp->body, httpResp->status, httpResp->headers, scalarExts);
@@ -2133,6 +2314,11 @@ struct ExecutionEngine::Impl {
                                             t.outcome == ExtractionTrace::Outcome::InvalidPattern;
                     if (!firstMiss && isMissLike) {
                         firstMiss = t.variableName;
+                    }
+                    if (t.outcome == ExtractionTrace::Outcome::Null) {
+                        nullVariables.insert(t.variableName);
+                    } else if (t.outcome != ExtractionTrace::Outcome::Resolved) {
+                        missingVariables.insert(t.variableName);
                     }
 
                     ExtractionCompleted ev;
@@ -2170,6 +2356,12 @@ struct ExecutionEngine::Impl {
                     ctx.recordExtraction(std::move(t));
                 }
                 if (firstMiss) {
+                    // Record the miss so a later reference cannot use this op's earlier value.
+                    std::vector<ResourceInstance> latest(1);
+                    latest.front().variables = std::move(detailed->values);
+                    latest.front().nullVariables = std::move(nullVariables);
+                    latest.front().missingVariables = std::move(missingVariables);
+                    storeInstances(ctx, op, std::move(latest));
                     result.status = StepResult::Status::Failed;
                     result.error = ErrorCode::ExtractionFailed;
                     result.detail = "extract '" + *firstMiss + "' missed for " + op.id.value;
@@ -2182,9 +2374,10 @@ struct ExecutionEngine::Impl {
 
             if (listExts.empty()) {
                 // Plain extraction: one instance from the scalar values.
-                if (!scalarValues.empty()) {
+                if (!scalarValues.empty() || !nullVariables.empty()) {
                     ResourceInstance instance;
                     instance.variables = std::move(scalarValues);
+                    instance.nullVariables = std::move(nullVariables);
 
                     std::vector<std::string> names;
                     names.reserve(instance.variables.size());
@@ -2196,7 +2389,9 @@ struct ExecutionEngine::Impl {
                                            op.resource,
                                            std::move(names),
                                            std::chrono::system_clock::now()});
-                    ctx.appendInstance(op.resource, std::move(instance));
+                    std::vector<ResourceInstance> latest;
+                    latest.push_back(std::move(instance));
+                    storeInstances(ctx, op, std::move(latest));
                 }
             } else {
                 // List extraction (for-each producer): each `[*]` path yields a
@@ -2231,6 +2426,7 @@ struct ExecutionEngine::Impl {
                     lists.emplace_back(ext.variableName, std::move(values));
                 }
                 if (emptyList) {
+                    storeInstances(ctx, op, {});
                     result.status = StepResult::Status::Failed;
                     result.error = ErrorCode::ExtractionFailed;
                     result.detail =
@@ -2254,16 +2450,20 @@ struct ExecutionEngine::Impl {
                                        std::move(names),
                                        std::chrono::system_clock::now()});
 
+                std::vector<ResourceInstance> items;
+                items.reserve(count);
                 for (std::size_t k = 0; k < count; ++k) {
                     ResourceInstance instance;
                     instance.variables = scalarValues;  // broadcast scalars
+                    instance.nullVariables = nullVariables;
                     for (const auto& [var, values] : lists) {
                         if (k < values.size()) {
                             instance.variables[var] = values[k];
                         }
                     }
-                    ctx.appendInstance(op.resource, std::move(instance));
+                    items.push_back(std::move(instance));
                 }
+                storeInstances(ctx, op, std::move(items));
             }
         }
 
@@ -2276,17 +2476,35 @@ struct ExecutionEngine::Impl {
             const auto parsedBody = assertionEval.parseBody(httpResp->body);
             std::optional<std::string> firstFail;
             std::string firstFailParseError;
+            std::string firstFailUnresolved;
             for (const auto& assertion : op.assertions) {
                 AssertionResult ar;
                 ar.expr = assertion.expr;
                 ar.name = assertion.name.value_or(assertion.expr);
-                const auto parsed = assertionEval.parse(assertion.expr);
+                const std::string location = "Assertion \"" + safeDiagnosticText(ar.name) + '"';
+                // Events and details carry `assertion.expr`; the substituted text stays here.
+                const auto substituted = substitutePredicateTemplates(
+                    assertion.expr,
+                    [&](std::string_view placeholder) -> std::optional<std::string> {
+                        auto resolved = varResolver.resolve(placeholder, ctx, rctx);
+                        if (!resolved.unresolvedOccurrences.empty()) {
+                            addValueDiagnostics(resolved, VariableUseKind::Unknown, {}, location);
+                            return std::nullopt;
+                        }
+                        return std::move(resolved.output);
+                    });
+                const auto parsed = substituted ? assertionEval.parse(*substituted)
+                                                : std::expected<ParsedPredicate, ReqloomError>{
+                                                      std::unexpect, ReqloomError{}};
                 ar.passed =
                     parsed && assertionEval.evaluate(*parsed, parsedBody, httpResp->status) ==
                                   PredicateValue::True;
                 if (!ar.passed && !firstFail) {
                     firstFail = ar.name;
-                    if (!parsed) {
+                    if (!substituted && firstUnresolved) {
+                        firstFailUnresolved = unresolvedVariableDetail(firstUnresolved->first,
+                                                                       firstUnresolved->second);
+                    } else if (!parsed) {
                         firstFailParseError = parsed.error().detail;
                     }
                 }
@@ -2298,6 +2516,14 @@ struct ExecutionEngine::Impl {
                                         ar.passed,
                                         std::chrono::system_clock::now()});
                 result.assertions.push_back(std::move(ar));
+            }
+            if (firstFail && !firstFailUnresolved.empty()) {
+                result.status = StepResult::Status::Failed;
+                result.error = ErrorCode::VarUnresolved;
+                result.detail = std::move(firstFailUnresolved);
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+                return result;
             }
             if (firstFail) {
                 result.status = StepResult::Status::Failed;
@@ -2334,6 +2560,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
                                                             RunContext& ctx,
                                                             const RunOptions& options) {
     impl_->cancelledRunId.store(0, std::memory_order_release);
+    impl_->producedThisRun.clear();
     impl_->captureResponseBodies = options.captureResponseBodies;
     const auto runStart = std::chrono::steady_clock::now();
     impl_->activeSecrets = &ctx.secretRegistry();
@@ -2381,22 +2608,51 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     // Skipped on dry runs: a preview must not touch the OS keychain, which
     // can pop an interactive unlock/authorization prompt. Unresolved
     // `{{secret.X}}` markers in the previewed chain are expected.
+    //
+    // The run id is announced first: a keychain prompt can block, and cancel() needs a target.
+    const auto runId = impl_->allocateRunId();
+    impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});
+    const auto emitRunEnded = [&](const RunOutcome outcome) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - runStart);
+        impl_->emit(RunEnded{runId, outcome, elapsed, std::chrono::system_clock::now()});
+    };
+    const auto failBeforeFirstStep = [&](ReqloomError error) {
+        emitRunEnded(RunOutcome::Failed);
+        return std::unexpected(std::move(error));
+    };
     if (impl_->deps.secrets && !options.dryRun) {
-        const auto secretNames = DependencyResolver::collectSecretReferences(project);
+        auto secretNames = DependencyResolver::collectSecretReferences(project);
+        appendHookScriptSecrets(project, chain, secretNames);
         // A copied or hostile project may claim another project's id; refuse before any read.
         if (!secretNames.empty()) {
             if (auto trusted = checkProjectFolder(impl_->deps.trust.get(), project); !trusted) {
-                return std::unexpected(trusted.error());
+                return failBeforeFirstStep(trusted.error());
             }
         }
         for (const auto& name : secretNames) {
             auto key = projectSecretKey(project, name);
             if (!key) {
-                return std::unexpected(key.error());
+                return failBeforeFirstStep(key.error());
             }
             auto value = impl_->deps.secrets->read(*key);
+            if (impl_->isCancelled(runId)) {
+                RunResult cancelled;
+                cancelled.runId = runId;
+                cancelled.outcome = RunOutcome::Cancelled;
+                for (std::size_t j = 0; j < chain.size(); ++j) {
+                    StepResult row;
+                    row.op = chain[j];
+                    row.status = StepResult::Status::Cancelled;
+                    cancelled.steps.push_back(std::move(row));
+                    impl_->emit(
+                        StepCancelled{runId, j, chain[j], std::chrono::system_clock::now()});
+                }
+                emitRunEnded(RunOutcome::Cancelled);
+                return cancelled;
+            }
             if (!value) {
-                return std::unexpected(ReqloomError{
+                return failBeforeFirstStep(ReqloomError{
                     ErrorCode::SecretAccessFailed,
                     ErrorClass::Auth,
                     "secret store: failed to read '" + name + "': " + value.error().detail});
@@ -2408,8 +2664,6 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     }
 
     registerResolveSecrets(rctx, ctx.secretRegistry());
-    const auto runId = impl_->allocateRunId();
-    impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});
 
     RunResult result;
     result.runId = runId;
@@ -2444,9 +2698,12 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
                 bool allPresent = true;
                 for (const auto& ext : op.extractions) {
                     bool found = false;
-                    for (const auto& inst : instances) {
-                        if (inst.variables.contains(ext.variableName)) {
+                    for (auto inst = instances.rbegin(); inst != instances.rend(); ++inst) {
+                        if (inst->variables.contains(ext.variableName)) {
                             found = true;
+                            break;
+                        }
+                        if (inst->isUnset(ext.variableName)) {
                             break;
                         }
                     }
@@ -2459,6 +2716,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
                     StepResult skipResult;
                     skipResult.op = opId;
                     skipResult.status = StepResult::Status::Skipped;
+                    ctx.record(skipResult);
                     result.steps.push_back(std::move(skipResult));
                     impl_->emit(StepSkipped{runId,
                                             i,
@@ -2622,9 +2880,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
         }
     }
 
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - runStart);
-    impl_->emit(RunEnded{runId, result.outcome, elapsed, std::chrono::system_clock::now()});
+    emitRunEnded(result.outcome);
     return result;
 }
 
@@ -2643,7 +2899,11 @@ std::expected<std::vector<VariableSuggestion>, ReqloomError> ExecutionEngine::su
 }
 
 void ExecutionEngine::cancel(RunId run) {
-    impl_->cancelledRunId.store(run.value, std::memory_order_release);
+    {
+        const std::lock_guard lock(impl_->cancelMutex);
+        impl_->cancelledRunId.store(run.value, std::memory_order_release);
+    }
+    impl_->cancelWake.notify_all();
 }
 
 void ExecutionEngine::subscribe(EventCallback callback) {

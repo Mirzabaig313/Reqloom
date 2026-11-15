@@ -964,7 +964,7 @@ resources:
       get:
         method: GET
         path: /initial-path
-        pre_request: "mutate URL from secret"
+        pre_request: "mutate URL from ctx.secret.HOST"
         expect_status: 200
 )YAML");
     auto loaded = ce::parseProject(project.yaml());

@@ -432,7 +432,7 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
         }
 
         Provenance prov;
-        prov.source = Provenance::Source::HandWritten;  // no Hoppscotch-specific enum value
+        prov.source = Provenance::Source::HoppscotchImport;
         prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
         prov.importedAt = importedAt;
         prov.evidence["imported_from"] = "hoppscotch";

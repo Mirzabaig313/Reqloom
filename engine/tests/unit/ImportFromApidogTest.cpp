@@ -128,6 +128,8 @@ TEST(ImportFromApidog, unwraps_root_and_folder_becomes_resource) {
 
     const auto* login = findOp(project, "authentication.login");
     ASSERT_NE(login, nullptr);
+    ASSERT_TRUE(login->provenance.has_value());
+    EXPECT_EQ(login->provenance->source, ce::Provenance::Source::ApidogImport);
     EXPECT_EQ(login->method, ce::HttpMethod::Post);
     EXPECT_EQ(login->pathTemplate, "/auth/login");
     ASSERT_TRUE(login->bodyTemplate.has_value());

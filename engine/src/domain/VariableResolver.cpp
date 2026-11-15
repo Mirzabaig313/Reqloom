@@ -582,6 +582,10 @@ ResolvedRef resolveDotted(std::string_view ref,
         if (fieldIt != it->variables.end()) {
             return fieldIt->second;
         }
+        // The latest response said null or nothing; an older run's value must not stand in.
+        if (it->isUnset(std::string{field})) {
+            return std::nullopt;
+        }
     }
 
     return std::nullopt;

@@ -355,7 +355,7 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
         }
 
         Provenance prov;
-        prov.source = Provenance::Source::HandWritten;  // no Apidog-specific enum value
+        prov.source = Provenance::Source::ApidogImport;
         prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
         prov.importedAt = importedAt;
         prov.evidence["imported_from"] = "apidog";

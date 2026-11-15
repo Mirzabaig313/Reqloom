@@ -13,35 +13,6 @@ namespace reqloom::engine {
 
 namespace {
 
-/// Index of the `}}` closing the placeholder opened at `start`; quote state is tracked because
-/// quoted builtin arguments may contain `}}`.
-[[nodiscard]] std::optional<std::size_t> findPlaceholderEnd(std::string_view input,
-                                                            std::size_t start) noexcept {
-    char quote{};
-    bool escaped{};
-    for (std::size_t index = start + 2; index < input.size(); ++index) {
-        const char character = input[index];
-        if (quote != '\0') {
-            if (escaped) {
-                escaped = false;
-            } else if (character == '\\') {
-                escaped = true;
-            } else if (character == quote) {
-                quote = '\0';
-            }
-            continue;
-        }
-        if (character == '"' || character == '\'') {
-            quote = character;
-            continue;
-        }
-        if (character == '}' && index + 1 < input.size() && input[index + 1] == '}') {
-            return index;
-        }
-    }
-    return std::nullopt;
-}
-
 [[nodiscard]] std::string toLowerAscii(std::string_view text) {
     std::string lowered{};
     lowered.reserve(text.size());
@@ -87,6 +58,32 @@ void appendPlaceholder(const VariableResolver& resolver,
 }
 
 }  // namespace
+
+std::optional<std::size_t> findPlaceholderEnd(std::string_view input, std::size_t start) noexcept {
+    char quote{};
+    bool escaped{};
+    for (std::size_t index = start + 2; index < input.size(); ++index) {
+        const char character = input[index];
+        if (quote != '\0') {
+            if (escaped) {
+                escaped = false;
+            } else if (character == '\\') {
+                escaped = true;
+            } else if (character == quote) {
+                quote = '\0';
+            }
+            continue;
+        }
+        if (character == '"' || character == '\'') {
+            quote = character;
+            continue;
+        }
+        if (character == '}' && index + 1 < input.size() && input[index + 1] == '}') {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
 
 std::string escapeJsonStringContent(std::string_view value) {
     std::string escaped{};

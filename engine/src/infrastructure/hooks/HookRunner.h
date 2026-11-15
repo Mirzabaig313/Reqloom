@@ -5,7 +5,7 @@
 //   - No filesystem access
 //   - No network beyond the operation's own request
 //   - 1-second timeout per hook
-//   - Read-only access to other actors' variables
+//   - Read-only access to the operation's own actor variables and to the secrets it uses
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>

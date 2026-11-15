@@ -131,3 +131,12 @@ TEST(Crypto, jwt_hs512_signature_is_distinct_from_hs256) {
     const auto sig512Len = t512.size() - secondDot512 - 1;
     EXPECT_LT(sig256Len, sig512Len) << "HS512 signature must be longer than HS256";
 }
+
+TEST(Crypto, random_bytes_returns_the_requested_length_and_differs_between_calls) {
+    const auto a = ce::crypto::randomBytes(32);
+    const auto b = ce::crypto::randomBytes(32);
+    EXPECT_EQ(a.size(), 32U);
+    EXPECT_EQ(b.size(), 32U);
+    EXPECT_NE(a, b);
+    EXPECT_TRUE(ce::crypto::randomBytes(0).empty());
+}

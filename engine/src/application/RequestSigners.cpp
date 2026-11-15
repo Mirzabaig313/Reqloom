@@ -20,21 +20,9 @@ namespace {
 
 using namespace codecs;
 
+// 32 bytes from the OpenSSL CSPRNG, hex-encoded; empty when the generator fails.
 std::string randomNonce() {
-    thread_local std::mt19937_64 gen{std::random_device{}()};
-    std::uniform_int_distribution<std::uint64_t> dist;
-    std::string nonce;
-    nonce.reserve(64);
-    for (int i = 0; i < 4; ++i) {
-        const auto v = dist(gen);
-        for (int j = 0; j < 8; ++j) {
-            constexpr char kHex[] = "0123456789abcdef";
-            const auto byte = static_cast<unsigned>((v >> (j * 8)) & 0xFFU);
-            nonce.push_back(kHex[byte >> 4]);
-            nonce.push_back(kHex[byte & 0xF]);
-        }
-    }
-    return nonce;
+    return codecs::hexEncode(crypto::randomBytes(32));
 }
 
 std::string nowUnixSeconds() {
@@ -48,6 +36,41 @@ struct UrlParts {
     std::string queryString;
 };
 
+std::string asciiLower(std::string_view s) {
+    std::string out{s};
+    for (auto& c : out) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c + ('a' - 'A'));
+        }
+    }
+    return out;
+}
+
+// RFC 5849 §3.4.1.2: scheme and host are lowercase and the default port (80 for http, 443 for
+// https) is omitted; the path keeps its case.
+std::string normalizedBaseUri(std::string_view base) {
+    const auto schemeEnd = base.find("://");
+    const auto scheme = asciiLower(base.substr(0, schemeEnd));
+    const auto authorityStart = schemeEnd + 3;
+    const auto pathStart = base.find('/', authorityStart);
+    auto authority = base.substr(authorityStart, pathStart - authorityStart);
+    const auto path =
+        pathStart == std::string_view::npos ? std::string_view{"/"} : base.substr(pathStart);
+    if (const auto at = authority.rfind('@'); at != std::string_view::npos) {
+        authority.remove_prefix(at + 1);
+    }
+    auto host = asciiLower(authority);
+    const auto colon = host.rfind(':');
+    if (colon != std::string::npos && host.find(']', colon) == std::string::npos) {
+        const auto port = std::string_view{host}.substr(colon + 1);
+        if ((scheme == "http" && port == "80") || (scheme == "https" && port == "443") ||
+            port.empty()) {
+            host.resize(colon);
+        }
+    }
+    return scheme + "://" + host + std::string{path};
+}
+
 std::optional<UrlParts> splitUrl(std::string_view url) {
     const auto schemeEnd = url.find("://");
     if (schemeEnd == std::string_view::npos) {
@@ -60,18 +83,12 @@ std::optional<UrlParts> splitUrl(std::string_view url) {
 
     UrlParts out;
     const auto baseEnd = std::min(queryStart, fragStart);
-    if (baseEnd == std::string_view::npos) {
-        out.base = std::string{url};
+    std::string_view base = baseEnd == std::string_view::npos ? url : url.substr(0, baseEnd);
+    if (pathStart == std::string_view::npos || pathStart > baseEnd) {
+        // An empty path is "/" (RFC 5849 §3.4.1.2).
+        out.base = normalizedBaseUri(std::string{base} + '/');
     } else {
-        out.base = std::string{url.substr(0, baseEnd)};
-    }
-
-    if (pathStart == std::string_view::npos ||
-        (queryStart != std::string_view::npos && pathStart > queryStart) ||
-        (fragStart != std::string_view::npos && pathStart > fragStart)) {
-        // No path component — append "/" per RFC 5849 §3.4.1.2 which
-        // requires the path with "/" as the default for empty.
-        out.base += '/';
+        out.base = normalizedBaseUri(base);
     }
 
     if (queryStart != std::string_view::npos) {
@@ -169,7 +186,10 @@ bool signOAuth1Request(HttpRequest& req,
         }
     }
 
-    const std::string nonce = overrides.nonce.value_or(randomNonce());
+    const std::string nonce = overrides.nonce ? *overrides.nonce : randomNonce();
+    if (nonce.empty()) {
+        return false;
+    }
     const std::string timestamp = overrides.timestampSeconds.value_or(nowUnixSeconds());
 
     params.emplace_back("oauth_consumer_key", consumerKey);
@@ -359,6 +379,54 @@ std::string pathFromUrl(std::string_view url) {
     return std::string{url.substr(pathStart, pathEnd - pathStart)};
 }
 
+/// Percent-decode a URL path. Unlike form decoding, `+` stays a literal plus. nullopt on a
+/// malformed escape.
+std::optional<std::string> percentDecodePath(std::string_view input) {
+    std::string out;
+    out.reserve(input.size());
+    const auto hexValue = [](char c) -> int {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'A' && c <= 'F') {
+            return c - 'A' + 10;
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        return -1;
+    };
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        if (input[i] != '%') {
+            out.push_back(input[i]);
+            continue;
+        }
+        if (i + 2 >= input.size()) {
+            return std::nullopt;
+        }
+        const int hi = hexValue(input[i + 1]);
+        const int lo = hexValue(input[i + 2]);
+        if (hi < 0 || lo < 0) {
+            return std::nullopt;
+        }
+        out.push_back(static_cast<char>((hi << 4) | lo));
+        i += 2;
+    }
+    return out;
+}
+
+// AWS SigV4 "Create a canonical request": path segments are URI-encoded twice, except for Amazon
+// S3, whose canonical URI is the path encoded once. The URL already holds the once-encoded path.
+std::string canonicalUriFor(std::string_view path, std::string_view service) {
+    if (service == "s3") {
+        if (const auto decoded = percentDecodePath(path)) {
+            return awsUriEncodePath(*decoded);
+        }
+        return std::string{path};
+    }
+    return awsUriEncodePath(path);
+}
+
 }  // namespace
 
 bool signSigV4Request(HttpRequest& req,
@@ -419,7 +487,7 @@ bool signSigV4Request(HttpRequest& req,
     const std::string dateStamp = amzDate.substr(0, 8);
 
     // 2. Canonical URI + query string
-    const std::string canonicalUri = awsUriEncodePath(pathFromUrl(req.url));
+    const std::string canonicalUri = canonicalUriFor(pathFromUrl(req.url), service);
 
     using Pair = std::pair<std::string, std::string>;
     auto rawQuery = parseQuery(urlParts->queryString);
@@ -460,15 +528,23 @@ bool signSigV4Request(HttpRequest& req,
         stagedHeaders["x-amz-security-token"] = sessionToken;
     }
 
-    // Payload hash: sha256(body) hex. Empty body has the well-known
-    // empty-string hash. The header is required by S3 and harmless for
-    // other services, so we always emit it.
-    const std::string body = req.body.value_or(std::string{});
-    const auto payloadHashRaw = crypto::sha256(body);
-    if (payloadHashRaw.empty()) {
-        return false;
+    // Payload hash: sha256(body) hex. The header is required by S3 and harmless for other
+    // services, so it is always emitted.
+    std::string payloadHashHex;
+    if (!req.multipart.empty()) {
+        // The HTTP client serialises a multipart body (and picks its boundary) after signing, so
+        // its hash is unknown here. Only S3 accepts UNSIGNED-PAYLOAD.
+        if (service != "s3") {
+            return false;
+        }
+        payloadHashHex = "UNSIGNED-PAYLOAD";
+    } else {
+        const auto payloadHashRaw = crypto::sha256(req.body.value_or(std::string{}));
+        if (payloadHashRaw.empty()) {
+            return false;
+        }
+        payloadHashHex = codecs::hexEncode(payloadHashRaw);
     }
-    const std::string payloadHashHex = codecs::hexEncode(payloadHashRaw);
     stagedHeaders["x-amz-content-sha256"] = payloadHashHex;
 
     // Build the sorted lowercased header list.
@@ -508,6 +584,9 @@ bool signSigV4Request(HttpRequest& req,
                                          "\n" + canonicalHeaders + "\n" + signedHeaders + "\n" +
                                          payloadHashHex;
 
+    if (overrides.canonicalRequestOut != nullptr) {
+        *overrides.canonicalRequestOut = canonicalRequest;
+    }
     const auto canonicalRequestHash = crypto::sha256(canonicalRequest);
     if (canonicalRequestHash.empty()) {
         return false;

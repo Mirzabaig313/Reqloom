@@ -36,9 +36,17 @@ inline constexpr std::size_t kMaxProjectIdLength = 128;
 
 class ProjectTrustStore;
 
+/// Windows spelling rule for two folder paths given as UTF-8 text: `/` and `\` are the same
+/// separator, trailing separators are ignored (except a drive root's) and ASCII letters
+/// compare case-insensitively; other bytes compare exactly. Used only when one of the folders
+/// no longer exists, so the file system cannot decide.
+[[nodiscard]] bool windowsFolderPathsEqual(std::string_view a, std::string_view b);
+
 /// Gate every secret read or write for `project`: it must have a valid id and a folder
-/// (`rootDir`), and that folder (symlinks resolved) must be the one `trust` records for the
-/// id. An id with no record is bound to this folder now (trust on first use).
+/// (`rootDir`), and that folder must be the one `trust` records for the id: the same
+/// directory on disk (links, letter case on a case-insensitive volume and other spellings
+/// resolve to it), or, when the recorded folder no longer exists, the same normalised path. An id
+/// with no record is bound to this folder now (trust on first use).
 ///
 /// @return void when secrets may be used; otherwise `ReqloomError`: `SchemaInvalid` for a
 ///         missing/invalid id, `SecretAccessFailed` for no folder, no store, a store failure,

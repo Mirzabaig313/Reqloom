@@ -37,6 +37,10 @@ int lintCommand(const QStringList& args) {
     // Run dry-run for every operation and treat resolution errors as lint failures.
     // A standalone validator helper in Factories.h would be cleaner — this works for now.
     auto& project = *projectResult;
+    // Load warnings (unknown keys, imports that matched nothing) never fail the lint.
+    for (const auto& warning : project.loadWarnings) {
+        std::println(stderr, "  WARNING: {}", warning);
+    }
     if (project.id.empty() && !ce::collectSecretReferences(project).empty()) {
         std::println(stderr,
                      "  WARNING: project uses secrets but has no id; runs will fail. Add "

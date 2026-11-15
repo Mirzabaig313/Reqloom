@@ -64,9 +64,56 @@ std::string generateProjectId() {
     return out;
 }
 
+bool windowsFolderPathsEqual(const std::string_view a, const std::string_view b) {
+    const auto normalised = [](std::string_view text) {
+        std::string out;
+        out.reserve(text.size());
+        for (char c : text) {
+            if (c == '/') {
+                c = '\\';
+            } else if (c >= 'A' && c <= 'Z') {
+                c = static_cast<char>(c - 'A' + 'a');
+            }
+            out.push_back(c);
+        }
+        // A drive root keeps its separator.
+        while (out.size() > 1 && out.back() == '\\' && !(out.size() == 3 && out[1] == ':')) {
+            out.pop_back();
+        }
+        return out;
+    };
+    return normalised(a) == normalised(b);
+}
+
 namespace {
 
 namespace fs = std::filesystem;
+
+/// The file system decides when both folders exist (letter case, 8.3 names, links); a missing
+/// folder (a moved project) falls back to comparing normalised paths.
+[[nodiscard]] bool sameFolder(const fs::path& recorded, const fs::path& current) {
+    std::error_code ec;
+    if (fs::exists(recorded, ec) && fs::exists(current, ec)) {
+        const bool same = fs::equivalent(recorded, current, ec);
+        return same && !ec;
+    }
+    const auto normal = [](const fs::path& p) {
+        auto out = p.lexically_normal();
+        if (!out.has_filename() && out.has_relative_path()) {
+            out = out.parent_path();
+        }
+        return out;
+    };
+#ifdef _WIN32
+    const auto text = [](const fs::path& p) {
+        const auto u8 = p.u8string();
+        return std::string{u8.begin(), u8.end()};
+    };
+    return windowsFolderPathsEqual(text(normal(recorded)), text(normal(current)));
+#else
+    return normal(recorded) == normal(current);
+#endif
+}
 
 [[nodiscard]] std::expected<void, ReqloomError> requireProjectId(const Project& project) {
     if (project.id.empty()) {
@@ -145,7 +192,7 @@ std::expected<void, ReqloomError> checkProjectFolder(ProjectTrustStore* trust,
     if (!owner) {
         return std::unexpected(owner.error());
     }
-    if (*owner != *folder) {
+    if (!sameFolder(*owner, *folder)) {
         return std::unexpected(conflictError(project, *owner, *folder));
     }
     return {};
@@ -161,7 +208,7 @@ std::optional<std::filesystem::path> projectFolderConflict(ProjectTrustStore& tr
         return std::nullopt;
     }
     auto owner = trust.folderFor(project.id);
-    if (!owner || !owner->has_value() || **owner == *folder) {
+    if (!owner || !owner->has_value() || sameFolder(**owner, *folder)) {
         return std::nullopt;
     }
     return **owner;

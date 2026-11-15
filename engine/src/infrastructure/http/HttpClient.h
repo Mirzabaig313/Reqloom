@@ -54,6 +54,9 @@ struct HttpRequest {
     /// no proxy, 5s connect timeout — so existing callers that don't
     /// populate this field keep their prior behavior verbatim.
     TransportConfig transport;
+
+    /// When false a 3xx response is returned as is instead of being followed.
+    bool followRedirects{true};
 };
 
 struct HttpResponse {

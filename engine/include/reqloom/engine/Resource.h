@@ -14,6 +14,9 @@ struct Resource {
     /// Operation map keyed by operation short name (e.g. "create", "publish").
     /// The fully qualified id is "<resource>.<op_name>".
     std::map<std::string, Operation> operations;
+
+    /// Where the resource was defined; see `SourceLocation`.
+    SourceLocation source;
 };
 
 }  // namespace reqloom::engine

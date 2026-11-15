@@ -428,7 +428,7 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         }
 
         Provenance prov;
-        prov.source = Provenance::Source::HandWritten;  // no HTTPie-specific enum value
+        prov.source = Provenance::Source::HttpieImport;
         prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
         prov.importedAt = importedAt;
         prov.evidence["imported_from"] = "httpie";

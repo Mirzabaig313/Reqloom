@@ -105,6 +105,18 @@ TEST(MultipartBuilder, multipart_when_header_routes_request) {
     EXPECT_TRUE(ce::wantsMultipart(headers, ce::literalFormFields(fields)));
 }
 
+TEST(MultipartBuilder, text_only_fields_without_multipart_header_are_url_encoded) {
+    const std::map<std::string, std::string> fields{{"note", "hello"}, {"sku", "abc"}};
+    const auto classified = ce::literalFormFields(fields);
+
+    const bool route = ce::wantsMultipart({}, classified);
+    auto body = ce::buildFormBody(classified, route, {});
+
+    EXPECT_FALSE(route);
+    ASSERT_TRUE(body.has_value());
+    EXPECT_NE(std::get_if<ce::UrlEncodedBody>(&*body), nullptr);
+}
+
 TEST(MultipartBuilder, multipart_when_value_starts_with_at) {
     std::map<std::string, std::string> headers{};
     std::map<std::string, std::string> fields{{"file", "@/tmp/x.txt"}};

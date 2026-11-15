@@ -348,3 +348,109 @@ TEST(ProjectTrustStore, empty_config_dir_override_is_ignored) {
     ASSERT_TRUE(path.has_value()) << path.error().detail;
     EXPECT_TRUE(path->is_absolute()) << path->string();
 }
+
+// ─── Same folder, different spelling ────────────────────────────────────────
+
+namespace {
+
+/// `path` with every ASCII letter's case flipped.
+[[nodiscard]] fs::path flippedCase(const fs::path& path) {
+    auto text = path.string();
+    for (auto& c : text) {
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - 'a' + 'A');
+        } else if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return text;
+}
+
+}  // namespace
+
+TEST(ProjectTrustStore, same_folder_in_a_different_letter_case_passes) {
+    Scratch scratch;
+    auto store = ce::makeFileProjectTrustStore(scratch.trustFile());
+    const auto folder = scratch.folder("Shop");
+    ASSERT_TRUE(ce::checkProjectFolder(store.get(), projectAt(folder)).has_value());
+
+    const auto other = flippedCase(folder);
+    std::error_code ec;
+    if (!fs::equivalent(folder, other, ec) || ec) {
+        GTEST_SKIP() << "this volume is case-sensitive";
+    }
+    auto check = ce::checkProjectFolder(store.get(), projectAt(other));
+    EXPECT_TRUE(check.has_value()) << check.error().detail;
+    EXPECT_FALSE(ce::projectFolderConflict(*store, projectAt(other)).has_value());
+    // The record keeps the spelling of first use.
+    auto recorded = store->folderFor("proj-a");
+    ASSERT_TRUE(recorded.has_value() && recorded->has_value());
+    EXPECT_EQ(**recorded, fs::canonical(folder));
+}
+
+TEST(ProjectTrustStore, same_folder_with_a_trailing_separator_or_dot_segments_passes) {
+    Scratch scratch;
+    auto store = ce::makeFileProjectTrustStore(scratch.trustFile());
+    const auto folder = scratch.folder("shop");
+    const auto sibling = scratch.folder("other");
+    ASSERT_TRUE(ce::checkProjectFolder(store.get(), projectAt(folder)).has_value());
+
+    auto trailing = ce::checkProjectFolder(store.get(), projectAt(folder / ""));
+    EXPECT_TRUE(trailing.has_value()) << trailing.error().detail;
+    auto detour =
+        ce::checkProjectFolder(store.get(), projectAt(sibling / ".." / "." / folder.filename()));
+    EXPECT_TRUE(detour.has_value()) << detour.error().detail;
+}
+
+TEST(ProjectTrustStore, symlink_to_the_bound_folder_passes) {
+    Scratch scratch;
+    auto store = ce::makeFileProjectTrustStore(scratch.trustFile());
+    const auto real = scratch.folder("real");
+    const auto link = real.parent_path() / "alias";
+    ASSERT_TRUE(ce::checkProjectFolder(store.get(), projectAt(real)).has_value());
+    std::error_code ec;
+    fs::create_directory_symlink(real, link, ec);
+    if (ec) {
+        GTEST_SKIP() << "symlinks unavailable here: " << ec.message();
+    }
+    auto check = ce::checkProjectFolder(store.get(), projectAt(link));
+    EXPECT_TRUE(check.has_value()) << check.error().detail;
+}
+
+TEST(ProjectTrustStore,
+     different_folder_differing_only_by_case_is_refused_on_case_sensitive_volumes) {
+    Scratch scratch;
+    auto store = ce::makeFileProjectTrustStore(scratch.trustFile());
+    const auto lower = scratch.folder("shop");
+    ASSERT_TRUE(ce::checkProjectFolder(store.get(), projectAt(lower)).has_value());
+    const auto upper = lower.parent_path() / "SHOP";
+    std::error_code ec;
+    if (!fs::create_directory(upper, ec) || ec) {
+        GTEST_SKIP() << "this volume is case-insensitive: SHOP and shop are one folder";
+    }
+    EXPECT_FALSE(ce::checkProjectFolder(store.get(), projectAt(upper)).has_value());
+}
+
+TEST(ProjectTrustStore, moved_project_is_refused_until_the_move_is_confirmed) {
+    Scratch scratch;
+    auto store = ce::makeFileProjectTrustStore(scratch.trustFile());
+    const auto oldFolder = scratch.folder("old");
+    const auto newFolder = scratch.folder("new");
+    ASSERT_TRUE(ce::checkProjectFolder(store.get(), projectAt(oldFolder)).has_value());
+    fs::remove_all(oldFolder);
+
+    EXPECT_FALSE(ce::checkProjectFolder(store.get(), projectAt(newFolder)).has_value());
+    ASSERT_TRUE(ce::rebindProjectFolder(*store, projectAt(newFolder)).has_value());
+    EXPECT_TRUE(ce::checkProjectFolder(store.get(), projectAt(newFolder)).has_value());
+}
+
+TEST(ProjectFolderText, windows_comparison_ignores_ascii_case_separators_and_trailing_slash) {
+    EXPECT_TRUE(ce::windowsFolderPathsEqual(R"(C:\Projects\Shop)", R"(c:\projects\shop)"));
+    EXPECT_TRUE(ce::windowsFolderPathsEqual(R"(C:\Projects\Shop\)", R"(C:\Projects\Shop)"));
+    EXPECT_TRUE(ce::windowsFolderPathsEqual("C:/Projects/Shop", R"(C:\Projects\Shop)"));
+    EXPECT_TRUE(ce::windowsFolderPathsEqual(R"(C:\)", "c:/"));
+    EXPECT_FALSE(ce::windowsFolderPathsEqual(R"(C:\Projects\Shop)", R"(C:\Projects\Shop2)"));
+    EXPECT_FALSE(ce::windowsFolderPathsEqual(R"(C:\Projects\Shop)", R"(D:\Projects\Shop)"));
+    // Non-ASCII bytes are compared exactly.
+    EXPECT_FALSE(ce::windowsFolderPathsEqual("C:\\\xC3\x84pfel", "C:\\\xC3\xA4pfel"));
+}

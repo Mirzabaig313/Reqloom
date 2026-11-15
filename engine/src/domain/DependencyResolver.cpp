@@ -12,6 +12,7 @@
 #include <map>
 #include <optional>
 #include <queue>
+#include <ranges>
 #include <regex>
 #include <set>
 #include <string>
@@ -101,10 +102,20 @@ std::vector<std::string_view> pollTemplates(const Operation& op) {
     return templates;
 }
 
+std::vector<std::string_view> assertionTemplates(const Operation& op) {
+    std::vector<std::string_view> templates;
+    templates.reserve(op.assertions.size());
+    for (const auto& assertion : op.assertions) {
+        templates.emplace_back(assertion.expr);
+    }
+    return templates;
+}
+
 std::vector<std::string_view> operationTemplates(const Operation& op, const Project& project) {
     auto templates = requestTemplates(op);
     std::ranges::copy(authTemplates(op, project), std::back_inserter(templates));
     std::ranges::copy(pollTemplates(op), std::back_inserter(templates));
+    std::ranges::copy(assertionTemplates(op), std::back_inserter(templates));
     return templates;
 }
 
@@ -192,7 +203,7 @@ std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templ
 }
 
 /// Reject a `$.env.NAME` builtin whose NAME is not in the project's `allowed_env`.
-std::expected<void, ReqloomError> checkEnvBuiltinAllowed(const OperationId& opId,
+std::expected<void, ReqloomError> checkEnvBuiltinAllowed(std::string_view owner,
                                                          const ParsedRef& ref,
                                                          const Project& project) {
     constexpr std::string_view kEnvPrefix{"env."};
@@ -207,11 +218,99 @@ std::expected<void, ReqloomError> checkEnvBuiltinAllowed(const OperationId& opId
     return std::unexpected(ReqloomError{
         ErrorCode::RefUndefined,
         ErrorClass::Schema,
-        std::format("Operation '{}' reads $.env.{}, but environment variable {} is not in "
+        std::format("{} reads $.env.{}, but environment variable {} is not in "
                     "allowed_env in reqloom.yaml; add it to the allowed_env list there",
-                    opId.value,
+                    owner,
                     name,
                     name)});
+}
+
+/// The templated strings on an actor's auth surfaces: config, login steps, refresh, injected
+/// headers. Views into `actor`.
+std::vector<std::string_view> actorTemplates(const Actor& actor) {
+    std::vector<std::string_view> templates;
+    for (const auto& [_, v] : actor.authConfig) {
+        templates.emplace_back(v);
+    }
+    for (const auto& [_, v] : actor.inject.headers) {
+        templates.emplace_back(v);
+    }
+    for (const auto& step : actor.authSteps) {
+        templates.emplace_back(step.pathTemplate);
+        if (step.bodyTemplate) {
+            templates.emplace_back(*step.bodyTemplate);
+        }
+        for (const auto& [_, v] : step.headers) {
+            templates.emplace_back(v);
+        }
+    }
+    if (actor.refresh) {
+        templates.emplace_back(actor.refresh->pathTemplate);
+        if (actor.refresh->bodyTemplate) {
+            templates.emplace_back(*actor.refresh->bodyTemplate);
+        }
+        for (const auto& [_, v] : actor.refresh->headers) {
+            templates.emplace_back(v);
+        }
+    }
+    return templates;
+}
+
+/// Prefix `error` with `file:line:` when the entity it names has a known source.
+ReqloomError withSource(const SourceLocation& at, ReqloomError error) {
+    if (!at.file.empty()) {
+        error.detail = at.line > 0 ? std::format("{}:{}: {}", at.file, at.line, error.detail)
+                                   : std::format("{}: {}", at.file, error.detail);
+    }
+    return error;
+}
+
+/// Actor ids, resource ids and environment names become file names when the project is saved.
+std::expected<void, ReqloomError> validateEntityNames(const Project& project) {
+    for (const auto& [id, actor] : project.actors) {
+        if (auto ok = checkEntityFileStem("actor id", id.value); !ok) {
+            return std::unexpected(withSource(actor.source, ok.error()));
+        }
+    }
+    for (const auto& [id, resource] : project.resources) {
+        if (auto ok = checkEntityFileStem("resource id", id.value); !ok) {
+            return std::unexpected(withSource(resource.source, ok.error()));
+        }
+    }
+    for (const auto& name : project.environments | std::views::keys) {
+        if (auto ok = checkEntityFileStem("environment name", name); !ok) {
+            const auto it = project.environmentSources.find(name);
+            return std::unexpected(
+                withSource(it == project.environmentSources.end() ? SourceLocation{} : it->second,
+                           ok.error()));
+        }
+    }
+    return {};
+}
+
+/// `$.env` reads in environment values and actor templates obey `allowed_env` like operations.
+std::expected<void, ReqloomError> validateEnvReadsOutsideOperations(const Project& project) {
+    for (const auto& [envName, vars] : project.environments) {
+        const auto it = project.environmentSources.find(envName);
+        const auto at = it == project.environmentSources.end() ? SourceLocation{} : it->second;
+        for (const auto& [key, value] : vars) {
+            const auto owner = std::format("Environment '{}' variable '{}'", envName, key);
+            for (const auto& ref : scanReferences({std::string_view{value}})) {
+                if (auto ok = checkEnvBuiltinAllowed(owner, ref, project); !ok) {
+                    return std::unexpected(withSource(at, ok.error()));
+                }
+            }
+        }
+    }
+    for (const auto& [id, actor] : project.actors) {
+        const auto owner = std::format("Actor '{}'", id.value);
+        for (const auto& ref : scanReferences(actorTemplates(actor))) {
+            if (auto ok = checkEnvBuiltinAllowed(owner, ref, project); !ok) {
+                return std::unexpected(withSource(actor.source, ok.error()));
+            }
+        }
+    }
+    return {};
 }
 
 /// The faker generators VariableResolver implements; any other name never resolves.
@@ -241,27 +340,6 @@ std::expected<void, ReqloomError> checkFakerBuiltinKnown(const OperationId& opId
                                  name)});
 }
 
-/// True when `expr` has a `{{` outside a quoted string; such a predicate is left to run time
-/// rather than rejected at load.
-[[nodiscard]] bool hasUnquotedTemplate(std::string_view expr) {
-    char quote = 0;
-    for (std::size_t i = 0; i < expr.size(); ++i) {
-        const char c = expr[i];
-        if (quote != 0) {
-            if (c == '\\') {
-                ++i;
-            } else if (c == quote) {
-                quote = 0;
-            }
-        } else if (c == '\'' || c == '"') {
-            quote = c;
-        } else if (c == '{' && i + 1 < expr.size() && expr[i + 1] == '{') {
-            return true;
-        }
-    }
-    return false;
-}
-
 /// Parse every predicate an operation declares and check every regex extraction pattern, so
 /// a malformed one is a load error instead of a run-time failure after a request has gone out.
 std::expected<void, ReqloomError> validateOperationExpressions(const OperationId& opId,
@@ -274,10 +352,7 @@ std::expected<void, ReqloomError> validateOperationExpressions(const OperationId
     };
     const auto check = [&](const std::string& field,
                            std::string_view expr) -> std::expected<void, ReqloomError> {
-        if (hasUnquotedTemplate(expr)) {
-            return {};
-        }
-        if (auto ok = validatePredicate(expr); !ok) {
+        if (auto ok = validateTemplatedPredicate(expr); !ok) {
             return reject(field, ok.error());
         }
         return {};
@@ -606,6 +681,12 @@ std::expected<ResolvedPlan, ReqloomError> DependencyResolver::resolvePlan(
 }
 
 std::expected<void, ReqloomError> DependencyResolver::validate(const Project& project) const {
+    if (auto names = validateEntityNames(project); !names) {
+        return names;
+    }
+    if (auto envReads = validateEnvReadsOutsideOperations(project); !envReads) {
+        return envReads;
+    }
     // A resolvable reference root: $ builtins, env, secret, or any
     // defined actor or resource.
     const auto isKnownScope = [&](const std::string& scope) -> bool {
@@ -628,78 +709,86 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
     for (const auto& [resId, resource] : project.resources) {
         for (const auto& [opName, op] : resource.operations) {
             const auto opId = OperationId{std::format("{}.{}", resId.value, opName)};
-
-            // AC-3.1.6: a reference whose scope isn't a known root can
-            // never resolve — reject at load.
-            // `poll_until` templates may also use `{{response.X}}`; everything else must be a known
-            // root.
-            auto strictTemplates = requestTemplates(op);
-            std::ranges::copy(authTemplates(op, project), std::back_inserter(strictTemplates));
-            auto refs = scanReferences(strictTemplates);
-            for (auto& ref : scanReferences(pollTemplates(op))) {
-                if (ref.scope != "response") {
-                    refs.push_back(std::move(ref));
-                }
-            }
-            for (const auto& ref : refs) {
-                if (!isKnownScope(ref.scope)) {
-                    return std::unexpected(ReqloomError{
-                        ErrorCode::RefUndefined,
-                        ErrorClass::Schema,
-                        std::format("Operation '{}' references undefined symbol '{}.{}': "
-                                    "no actor, resource, env, or secret named '{}'",
-                                    opId.value,
-                                    ref.scope,
-                                    ref.field,
-                                    ref.scope)});
-                }
-                if (auto denied = checkEnvBuiltinAllowed(opId, ref, project); !denied) {
-                    return denied;
-                }
-                if (auto unknown = checkFakerBuiltinKnown(opId, ref); !unknown) {
-                    return unknown;
-                }
-            }
-            if (auto exprs = validateOperationExpressions(opId, op); !exprs) {
-                return exprs;
-            }
-
-            // depends_on targets must name a real operation.
-            std::set<OperationId> allDeps;
-            for (const auto& dep : op.explicitDependencies) {
-                const auto dotPos = dep.value.find('.');
-                bool exists = false;
-                if (dotPos != std::string::npos) {
-                    const auto depRes = dep.value.substr(0, dotPos);
-                    const auto depOp = dep.value.substr(dotPos + 1);
-                    auto resIt = project.resources.find(ResourceId{depRes});
-                    if (resIt != project.resources.end()) {
-                        exists = resIt->second.operations.contains(depOp);
+            auto checked = [&]() -> std::expected<void, ReqloomError> {
+                // AC-3.1.6: a reference whose scope isn't a known root can
+                // never resolve — reject at load.
+                // `poll_until` templates may also use `{{response.X}}`; everything else must be a
+                // known root.
+                auto strictTemplates = requestTemplates(op);
+                std::ranges::copy(authTemplates(op, project), std::back_inserter(strictTemplates));
+                std::ranges::copy(assertionTemplates(op), std::back_inserter(strictTemplates));
+                auto refs = scanReferences(strictTemplates);
+                for (auto& ref : scanReferences(pollTemplates(op))) {
+                    if (ref.scope != "response") {
+                        refs.push_back(std::move(ref));
                     }
                 }
-                if (!exists) {
-                    return std::unexpected(
-                        ReqloomError{ErrorCode::RefUndefined,
-                                     ErrorClass::Schema,
-                                     std::format("Operation '{}' declares depends_on '{}', "
-                                                 "which is not a defined operation",
-                                                 opId.value,
-                                                 dep.value)});
+                for (const auto& ref : refs) {
+                    if (!isKnownScope(ref.scope)) {
+                        return std::unexpected(ReqloomError{
+                            ErrorCode::RefUndefined,
+                            ErrorClass::Schema,
+                            std::format("Operation '{}' references undefined symbol '{}.{}': "
+                                        "no actor, resource, env, or secret named '{}'",
+                                        opId.value,
+                                        ref.scope,
+                                        ref.field,
+                                        ref.scope)});
+                    }
+                    if (auto denied = checkEnvBuiltinAllowed(
+                            std::format("Operation '{}'", opId.value), ref, project);
+                        !denied) {
+                        return denied;
+                    }
+                    if (auto unknown = checkFakerBuiltinKnown(opId, ref); !unknown) {
+                        return unknown;
+                    }
                 }
-                allDeps.insert(dep);
-            }
+                if (auto exprs = validateOperationExpressions(opId, op); !exprs) {
+                    return exprs;
+                }
 
-            if (auto targets = validateOperationTargets(opId, op, project); !targets) {
-                return targets;
+                // depends_on targets must name a real operation.
+                std::set<OperationId> allDeps;
+                for (const auto& dep : op.explicitDependencies) {
+                    const auto dotPos = dep.value.find('.');
+                    bool exists = false;
+                    if (dotPos != std::string::npos) {
+                        const auto depRes = dep.value.substr(0, dotPos);
+                        const auto depOp = dep.value.substr(dotPos + 1);
+                        auto resIt = project.resources.find(ResourceId{depRes});
+                        if (resIt != project.resources.end()) {
+                            exists = resIt->second.operations.contains(depOp);
+                        }
+                    }
+                    if (!exists) {
+                        return std::unexpected(
+                            ReqloomError{ErrorCode::RefUndefined,
+                                         ErrorClass::Schema,
+                                         std::format("Operation '{}' declares depends_on '{}', "
+                                                     "which is not a defined operation",
+                                                     opId.value,
+                                                     dep.value)});
+                    }
+                    allDeps.insert(dep);
+                }
+
+                if (auto targets = validateOperationTargets(opId, op, project); !targets) {
+                    return targets;
+                }
+                const auto implicit = inferImplicitDepsDetailed(op, opId, project);
+                if (!implicit) {
+                    return std::unexpected(implicit.error());
+                }
+                for (const auto& [producer, _] : *implicit) {
+                    allDeps.insert(producer);
+                }
+                graph[opId] = {allDeps.begin(), allDeps.end()};
+                return {};
+            }();
+            if (!checked) {
+                return std::unexpected(withSource(op.source, checked.error()));
             }
-            const auto implicit = inferImplicitDepsDetailed(op, opId, project);
-            if (!implicit) {
-                return std::unexpected(implicit.error());
-            }
-            for (const auto& [producer, _] : *implicit) {
-                allDeps.insert(producer);
-            }
-            graph[opId] = {allDeps.begin(), allDeps.end()};
         }
     }
 
@@ -754,6 +843,22 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
     return {};
 }
 
+std::expected<void, ReqloomError> checkEntityFileStem(std::string_view kind,
+                                                      std::string_view name) {
+    // A colon covers Windows drive-letter and alternate-stream forms.
+    if (!name.empty() && name.front() != '.' &&
+        name.find_first_of(std::string_view{"/\\:\0", 4}) == std::string_view::npos) {
+        return {};
+    }
+    return std::unexpected(ReqloomError{
+        ErrorCode::SchemaInvalid,
+        ErrorClass::Schema,
+        std::format("unsafe {} '{}' (must be non-empty, not start with '.', and contain no '/', "
+                    "'\\', ':' or NUL)",
+                    kind,
+                    name)});
+}
+
 std::vector<std::string> DependencyResolver::collectSecretReferences(const Project& project) {
     std::set<std::string> names;
 
@@ -795,32 +900,7 @@ std::vector<std::string> DependencyResolver::collectSecretReferences(const Proje
     // api_key, oauth client secrets, signing keys, refresh bodies, and
     // injected headers like `Authorization: Bearer {{secret.TOKEN}}`).
     for (const auto& [_, actor] : project.actors) {
-        std::vector<std::string_view> actorTemplates;
-        for (const auto& [__, v] : actor.authConfig) {
-            actorTemplates.emplace_back(v);
-        }
-        for (const auto& [__, v] : actor.inject.headers) {
-            actorTemplates.emplace_back(v);
-        }
-        for (const auto& step : actor.authSteps) {
-            actorTemplates.emplace_back(step.pathTemplate);
-            if (step.bodyTemplate) {
-                actorTemplates.emplace_back(*step.bodyTemplate);
-            }
-            for (const auto& [__, v] : step.headers) {
-                actorTemplates.emplace_back(v);
-            }
-        }
-        if (actor.refresh) {
-            actorTemplates.emplace_back(actor.refresh->pathTemplate);
-            if (actor.refresh->bodyTemplate) {
-                actorTemplates.emplace_back(*actor.refresh->bodyTemplate);
-            }
-            for (const auto& [__, v] : actor.refresh->headers) {
-                actorTemplates.emplace_back(v);
-            }
-        }
-        scan(actorTemplates);
+        scan(actorTemplates(actor));
     }
 
     return {names.begin(), names.end()};

@@ -92,6 +92,9 @@ struct Actor {
     std::optional<SessionRefresh> refresh;
 
     ActorInjection inject;
+
+    /// Where the actor was defined; see `SourceLocation`.
+    SourceLocation source;
 };
 
 }  // namespace reqloom::engine

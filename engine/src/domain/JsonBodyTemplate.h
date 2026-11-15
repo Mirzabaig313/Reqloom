@@ -7,7 +7,9 @@
 
 #include "VariableResolver.h"
 
+#include <cstddef>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -16,6 +18,11 @@ namespace reqloom::engine {
 /// Escape `value` as JSON string content per RFC 8259 (no surrounding quotes); UTF-8
 /// multibyte sequences pass through unchanged.
 [[nodiscard]] std::string escapeJsonStringContent(std::string_view value);
+
+/// Index of the `}}` closing the placeholder whose `{{` is at `start`, or nullopt. Quote state
+/// is tracked because quoted builtin arguments may contain `}}`.
+[[nodiscard]] std::optional<std::size_t> findPlaceholderEnd(std::string_view input,
+                                                            std::size_t start) noexcept;
 
 /// True when the body is sent as JSON: the template starts with `{` or `[` and any
 /// Content-Type is `application/json` or a `+json` type.

@@ -2,9 +2,9 @@
 //
 // Gated on REQLOOM_HAS_QTKEYCHAIN: when QtKeychain is found at configure
 // time the real backend below is compiled (macOS Keychain, Windows
-// Credential Store, libsecret/KWallet on Linux). Otherwise a no-op
-// placeholder is compiled so the engine still links — `read` reports no
-// secret, writes are dropped. The no-op path exists for build
+// Credential Store, libsecret/KWallet on Linux). Otherwise a placeholder is
+// compiled so the engine still links — `read` reports no secret, `write` and
+// `remove` fail with SecretAccessFailed. The placeholder exists for build
 // environments without QtKeychain; it must never be the production path.
 #include "KeychainSecretStore.h"
 
@@ -126,7 +126,22 @@ std::expected<void, ReqloomError> KeychainSecretStore::remove(const std::string&
 
 #else  // REQLOOM_HAS_QTKEYCHAIN
 
+#include <string_view>
+
 namespace reqloom::engine {
+
+namespace {
+
+[[nodiscard]] ReqloomError noBackendError(std::string_view action) {
+    return ReqloomError{ErrorCode::SecretAccessFailed,
+                        ErrorClass::Auth,
+                        "secret not " + std::string{action} +
+                            ": this build has no OS keychain backend. Install a Reqloom build "
+                            "with keychain support, or pass the value through an allowed "
+                            "environment variable ({{$.env.NAME}}) instead."};
+}
+
+}  // namespace
 
 KeychainSecretStore::KeychainSecretStore() = default;
 KeychainSecretStore::~KeychainSecretStore() = default;
@@ -142,11 +157,11 @@ std::expected<std::optional<std::string>, ReqloomError> KeychainSecretStore::rea
 
 std::expected<void, ReqloomError> KeychainSecretStore::write(const std::string& /*name*/,
                                                              const std::string& /*value*/) {
-    return {};
+    return std::unexpected(noBackendError("saved"));
 }
 
 std::expected<void, ReqloomError> KeychainSecretStore::remove(const std::string& /*name*/) {
-    return {};
+    return std::unexpected(noBackendError("removed"));
 }
 
 }  // namespace reqloom::engine

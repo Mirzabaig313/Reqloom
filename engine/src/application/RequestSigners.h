@@ -27,6 +27,8 @@ struct OAuth1TestOverrides {
 /// (`YYYYMMDDTHHMMSSZ`); the date scope (`YYYYMMDD`) is derived from it.
 struct SigV4TestOverrides {
     std::optional<std::string> amzDate;  ///< e.g. "20150830T123600Z"
+    /// When set, receives the canonical request that was signed.
+    std::string* canonicalRequestOut{nullptr};
 };
 
 /// Sign `req` in-place using OAuth 1.0a HMAC-SHA1 (RFC 5849 §3.4).
@@ -60,11 +62,15 @@ bool signOAuth1Request(HttpRequest& req,
 ///
 /// `req.url` may carry a query string. The body (if present) is hashed
 /// with SHA-256 and folded into the canonical request; an empty body
-/// hashes to the well-known empty-string SHA-256.
+/// hashes to the well-known empty-string SHA-256. A multipart body is
+/// signed as `UNSIGNED-PAYLOAD` for service `s3` and refused otherwise.
+/// For `s3` the canonical URI is the path encoded once; other services
+/// encode it twice.
 ///
 /// Atomic on failure: when this returns false, `req` is left exactly as
 /// the caller passed it. Failure causes are missing required variable,
-/// malformed URL, or OpenSSL hash failure.
+/// malformed URL, a multipart body for a service other than `s3`, or
+/// OpenSSL hash failure.
 bool signSigV4Request(HttpRequest& req,
                       const ActorSession& session,
                       const SigV4TestOverrides& overrides = {});

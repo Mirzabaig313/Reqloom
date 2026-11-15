@@ -3,6 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cctype>
 #include <chrono>
 #include <string>
 #include <string_view>
@@ -30,6 +31,52 @@ std::string excerpt(const std::string& body) {
         return body;
     }
     return body.substr(0, kBodyExcerptBytes) + std::string{kBodyExcerptCap};
+}
+
+/// True for `https://…`, or `http://` to a loopback host (local model servers such as Ollama).
+bool endpointIsSafe(std::string_view endpoint) {
+    const auto lower = [](std::string_view text) {
+        std::string out{text};
+        for (auto& c : out) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return out;
+    };
+    const auto schemeEnd = endpoint.find("://");
+    if (schemeEnd == std::string_view::npos) {
+        return false;
+    }
+    const auto scheme = lower(endpoint.substr(0, schemeEnd));
+    if (scheme == "https") {
+        return true;
+    }
+    if (scheme != "http") {
+        return false;
+    }
+    auto authority = endpoint.substr(schemeEnd + 3);
+    authority = authority.substr(0, authority.find_first_of("/?#"));
+    if (authority.find('@') != std::string_view::npos) {
+        return false;
+    }
+    std::string_view host = authority;
+    if (host.starts_with('[')) {
+        host = host.substr(0, host.find(']') + 1);
+    } else {
+        host = host.substr(0, host.find(':'));
+    }
+    const auto h = lower(host);
+    return h == "localhost" || h == "127.0.0.1" || h == "[::1]";
+}
+
+/// An error detail with every occurrence of the API key masked.
+std::string withoutKey(std::string detail, const std::string& apiKey) {
+    if (apiKey.empty()) {
+        return detail;
+    }
+    for (auto at = detail.find(apiKey); at != std::string::npos; at = detail.find(apiKey, at)) {
+        detail.replace(at, apiKey.size(), "[REDACTED]");
+    }
+    return detail;
 }
 
 std::string_view roleAsString(LlmMessage::Role role) noexcept {
@@ -232,6 +279,11 @@ std::expected<LlmResponse, ReqloomError> HttpLlmClient::complete(const LlmReques
     if (request.messages.empty()) {
         return std::unexpected(requestFailed("messages list is empty"));
     }
+    // The API key must not cross the network in clear text.
+    if (!endpointIsSafe(request.config.endpoint)) {
+        return std::unexpected(
+            requestFailed("provider endpoint must use https (plain http only for localhost)"));
+    }
 
     std::expected<HttpRequest, ReqloomError> built;
     switch (request.config.provider) {
@@ -248,15 +300,20 @@ std::expected<LlmResponse, ReqloomError> HttpLlmClient::complete(const LlmReques
     if (!built) {
         return std::unexpected(built.error());
     }
+    // A redirect would forward the API key header to whichever host it names.
+    built->followRedirects = false;
 
+    const auto& apiKey = request.config.apiKey;
     const auto sendStart = std::chrono::steady_clock::now();
     auto response = transport_->send(*built);
     if (!response) {
-        return std::unexpected(requestFailed("transport: " + response.error().detail));
+        return std::unexpected(
+            requestFailed(withoutKey("transport: " + response.error().detail, apiKey)));
     }
     if (response->status < 200 || response->status >= 300) {
-        return std::unexpected(requestFailed("provider HTTP " + std::to_string(response->status) +
-                                             " — " + excerpt(response->body)));
+        return std::unexpected(requestFailed(withoutKey(
+            "provider HTTP " + std::to_string(response->status) + " — " + excerpt(response->body),
+            apiKey)));
     }
 
     json doc;

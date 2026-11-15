@@ -170,9 +170,10 @@ std::expected<std::filesystem::path, ReqloomError> writeProject(
     const std::filesystem::path& targetDir,
     const Project& project,
     bool overwrite,
-    bool pruneStale) {
+    bool pruneStale,
+    std::map<std::filesystem::path, std::size_t>* loadedFiles) {
     YamlSchemaWriter writer;
-    return writer.write(targetDir, project, overwrite, pruneStale);
+    return writer.write(targetDir, project, overwrite, pruneStale, loadedFiles);
 }
 
 std::expected<std::filesystem::path, ReqloomError> emitHookTypings(

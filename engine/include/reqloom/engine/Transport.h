@@ -54,7 +54,7 @@ struct TransportConfig {
     std::optional<std::string> clientCertType;
 
     /// Upper bound on the response body, counted after decompression; a larger body fails with
-    /// `E_NETWORK_POLICY`. Default 64 MiB. Not yet settable from YAML.
+    /// `E_NETWORK_POLICY`. Default 64 MiB. YAML `transport.max_response_size`.
     std::size_t maxResponseBytes{std::size_t{64} * 1024 * 1024};
 };
 

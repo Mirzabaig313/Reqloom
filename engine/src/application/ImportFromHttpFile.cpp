@@ -497,7 +497,7 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
         }
 
         Provenance prov;
-        prov.source = Provenance::Source::HandWritten;  // no .http-specific enum value
+        prov.source = Provenance::Source::HttpFileImport;
         prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
         prov.importedAt = importedAt;
         prov.evidence["imported_from"] = "http_file";
