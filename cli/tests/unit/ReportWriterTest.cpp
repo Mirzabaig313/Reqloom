@@ -47,7 +47,8 @@ TEST(ReportWriter, stream_write_failure_is_reported) {
 TEST(ReportWriter, stream_receives_the_document) {
     const TempDir dir;
     const auto path = dir.path() / "out.txt";
-    std::FILE* stream = std::fopen(path.string().c_str(), "w");
+    // Binary mode: a text-mode stream on Windows writes "\r\n".
+    std::FILE* stream = std::fopen(path.string().c_str(), "wb");
     ASSERT_NE(stream, nullptr);
     EXPECT_TRUE(cli::writeReportStream(stream, "document\n"));
     std::fclose(stream);

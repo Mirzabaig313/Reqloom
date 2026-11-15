@@ -128,7 +128,8 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
 // files.
 [[nodiscard]] bool fileHasContent(const fs::path& target, const std::string& content) {
     std::error_code ec;
-    if (!fs::exists(target, ec) || ec) {
+    // A directory opens as a stream on Linux and then throws on the first read.
+    if (!fs::is_regular_file(target, ec) || ec) {
         return false;
     }
     std::ifstream in{target, std::ios::binary};

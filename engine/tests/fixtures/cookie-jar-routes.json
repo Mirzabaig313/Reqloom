@@ -24,14 +24,14 @@
             }
         },
         {
-            "$comment": "Two Set-Cookie headers; same name 'session' appears twice — last (session=new) must win in the jar.",
+            "$comment": "Two Set-Cookie headers with the same name. Neither deletes the cookie: the mock server does not keep their order, so a deletion could arrive last.",
             "method": "POST",
             "path": "/api/v1/widgets",
             "status": 201,
             "headers": [
                 [
                     "Set-Cookie",
-                    "session=old; Path=/; Max-Age=0"
+                    "session=old; Path=/"
                 ],
                 [
                     "Set-Cookie",
