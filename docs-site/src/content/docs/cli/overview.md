@@ -26,15 +26,15 @@ reqloom --help
 
 ## Flags are per-command
 
-There is no shared flag set beyond `--project`. Each command parses its own
-arguments, and passing a flag to the wrong command either errors or is ignored:
+There is no shared flag set beyond `--project`. Each command has its own
+options, and an option a command doesn't know is exit code `2`:
 
 | Flag | `run` | `lint` | `import` |
 | --- | --- | --- | --- |
 | `--project <path>` | yes | yes | — |
 | `--env <name>` | yes | — | — |
 | `--var KEY=VALUE` | yes | — | — |
-| `--format <fmt>` | yes | — | — |
+| `--format <fmt>` | `text`, `json`, `junit` | `text`, `json` | — |
 | `--output <file>` | yes | — | — |
 | `--quiet` | yes | — | — |
 | `--failure-body-size <size>` | yes | — | — |
@@ -42,16 +42,10 @@ arguments, and passing a flag to the wrong command either errors or is ignored:
 | `--project-root <dir>` | — | — | yes |
 | `--force` | — | — | yes |
 | `--no-secrets` | — | — | yes |
-| `--help` / `-h` | yes | — | yes |
+| `--help` / `-h` | yes | yes | yes |
 
-Two things to know about that table:
-
-- **`lint` ignores unknown arguments silently.** `reqloom lint --format json`
-  does not error — it runs a normal lint and discards the flag. There is no
-  `lint --help` either; use `reqloom --help`.
-- **`run` and `import` require the positional argument first.**
-  `reqloom run --env staging order.create` fails, because the first argument is
-  always read as the operation id. Write `reqloom run order.create --env staging`.
+Options may come before or after the positional argument, and `--name=value`
+works as well as `--name value`. `reqloom --version` prints the version.
 
 ## Where the project comes from
 
@@ -63,7 +57,7 @@ cd my-api && reqloom lint              # uses ./reqloom.yaml
 reqloom lint --project ../my-api       # or point at it explicitly
 ```
 
-If there's no `reqloom.yaml` there, you get an error and exit code 1:
+If there's no `reqloom.yaml` there, you get an error and exit code `2`:
 
 ```ansi
 Error: reqloom.yaml not found in /Users/you/somewhere
@@ -71,15 +65,16 @@ Error: reqloom.yaml not found in /Users/you/somewhere
 
 ## Exit codes
 
-The same four codes across all three commands. They're designed so CI can tell
-a genuine test failure apart from a broken invocation.
+The same codes across all three commands. They're designed so CI can tell a
+genuine test failure apart from a broken invocation.
 
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. The chain passed, the schema is clean, or the import was written |
-| `1` | Ran correctly, result was bad — failing step, schema error, or write failure |
-| `2` | You invoked it wrong — unknown flag, missing operation, bad `--format` or `--failure-body-size` |
-| `3` | Reqloom crashed. Please [report it](https://github.com/Mirzabaig313/Reqloom/issues) |
+| `1` | Ran correctly, result was bad — a step or assertion failed, the project doesn't validate, the engine refused the run, or the import target already holds a project |
+| `2` | You invoked it wrong — unknown option, missing or invalid value, no `reqloom.yaml` at the project path, unknown operation or unknown `--env` |
+| `3` | File or system error — the report or the imported project couldn't be written, or an unexpected error. For the last, please [report it](https://github.com/Mirzabaig313/Reqloom/issues) |
+| `130` / `143` | `run` was interrupted by SIGINT (Ctrl-C) or SIGTERM. The run is cancelled and its report is still written |
 
 In a CI pipeline, treat `1` as "the API is broken" and `2` or `3` as "the
 pipeline is broken":
@@ -95,7 +90,8 @@ esac
 
 The exit code does **not** encode which error occurred. Every schema, network,
 and assertion failure is exit `1`; the specific `E_*` code appears in the
-output. See [error codes](/reference/error-codes/) for the full list.
+output. With `--format json` or `junit`, every outcome writes exactly one
+document, including an error before the first step. See [error codes](/reference/error-codes/) for the full list.
 
 ## stdout vs stderr
 

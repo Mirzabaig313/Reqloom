@@ -10,7 +10,7 @@ call — a direct structural translation.
 reqloom import <spec> [options]
 ```
 
-The spec path must come first, before any flags.
+Options may come before or after the spec path.
 
 ## Options
 
@@ -265,9 +265,11 @@ Importing into a directory that already has a `reqloom.yaml` fails rather than
 overwriting your edits:
 
 ```ansi
-Write error [E_SCHEMA_INVALID]: writer: reqloom.yaml exists in school-api (pass overwrite=true to replace)
-  (pass --force to overwrite an existing reqloom.yaml)
+reqloom import: school-api already has a reqloom.yaml (pass --force to overwrite it)
 ```
+
+The exit code is `1`. A project that couldn't be written to disk is exit code
+`3`, with `E_WRITE_FAILED`.
 
 Pass `--force` when you genuinely want to re-import. It replaces `reqloom.yaml`
 and every `actors/`, `resources/`, or `environments/` file with the same name as

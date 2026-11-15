@@ -14,8 +14,8 @@ The operation id is `<resource>.<operation>` — the resource name from your
 schema, not the filename. `resources/orders.yaml` declaring `name: order` gives
 you `order.create`, not `orders.create`.
 
-**The operation must come first.** Flags are parsed after it, so
-`reqloom run --env staging order.create` fails with `unknown argument`.
+Options may come before or after the operation, `--name=value` works as well as
+`--name value`, and `--` ends the options.
 
 ## Options
 
@@ -25,7 +25,7 @@ you `order.create`, not `orders.create`.
 | `--env <name>` | Environment to run against | the schema's `default_environment` |
 | `--var KEY=VALUE` | Override one environment variable. Repeatable | — |
 | `--format <fmt>` | `text`, `json`, or `junit` | `text` |
-| `--output <file>` | Write the rendered result to a file | stdout |
+| `--output <file>` | Write the report to a file. The file is replaced only by a complete new report | stdout |
 | `--quiet` | Suppress live progress | off |
 | `--failure-body-size <size>` | How much response text a failure message quotes: bytes, or a whole number with `KiB` or `MiB`; `0` for none; at most 1 MiB | `4KiB` |
 | `--help` / `-h` | Show usage | — |
@@ -112,6 +112,22 @@ rather than debug seven things.
 Exit code is `1`. The `E_*` code tells you the class of problem — see
 [error codes](/reference/error-codes/).
 
+### A failed assertion says why
+
+Under a failed assertion the summary prints what was compared: the value found
+and what was expected.
+
+```ansi
+$.status was "pending", expected == "paid"
+$.items was an array of 0 items, expected > 0
+$.code was "ab", which does not match "^[0-9]+$"
+$.order.id was missing, expected == 7
+```
+
+Values are masked like every other message, so an assertion against a secret
+reads `expected == "<redacted>"`, and a long value is cut to 200 bytes. For
+`&&` and `||` the line reports the sub-expression that decided the result.
+
 ### Failure messages quote the response
 
 When a status isn't in `expect_status`, the message includes the API's response,
@@ -164,6 +180,7 @@ reqloom run refund.approve --format json
 
 ```json
 {
+  "schema_version": 1,
   "run_id": 1,
   "target": "refund.approve",
   "environment": "local",
@@ -177,6 +194,7 @@ reqloom run refund.approve --format json
     "for_each_iterations": 0,
     "poll_attempts": 0
   },
+  "error": null,
   "steps": [
     {
       "op": "product.create",
@@ -198,6 +216,39 @@ reqloom run refund.approve --format json
 `for_each_iterations` are counted separately in `summary` and excluded from the
 status totals, so `succeeded + failed + skipped + blocked + cancelled` equals
 the number of real steps.
+
+Each entry of `assertions` is
+`{ "name", "expr", "passed", "detail" }`; `detail` is the
+[reason](#a-failed-assertion-says-why) for a failed assertion and empty for a
+passed one.
+
+`schema_version` is `1`. Fields may be added without changing it; it changes
+only if a field is renamed, removed or changes meaning.
+
+**A run that never starts still writes one document.** When the operation or
+environment is unknown, the project isn't found or doesn't load, or the engine
+refuses the run, `outcome` is `ERROR`, `steps` is empty, `run_id` is `null` and
+`error` holds the reason:
+
+```json
+{
+  "schema_version": 1,
+  "run_id": null,
+  "target": "nope.missing",
+  "environment": "local",
+  "outcome": "ERROR",
+  "summary": { "succeeded": 0, "failed": 0, "skipped": 0, "blocked": 0, "cancelled": 0, "for_each_iterations": 0, "poll_attempts": 0 },
+  "error": {
+    "code": "E_CLI_UNKNOWN_OPERATION",
+    "detail": "unknown operation 'nope.missing'; the project has: cart.add_item, …"
+  },
+  "steps": []
+}
+```
+
+`error.code` is an engine [error code](/reference/error-codes/) or one of the
+[command-line codes](/reference/error-codes/#command-line). The same message
+also goes to stderr.
 
 `detail` and every other text field pass through the engine's
 [masking](/schema/secrets-and-transport/#masking): secret values and token-like
@@ -233,7 +284,9 @@ reqloom run checkout.complete --format junit --output results.xml
 ```
 
 Note the mapping: a failed step becomes `<failure>`, while **blocked and
-cancelled steps become `<error>`**. Skipped steps become `<skipped>`. Polling
+cancelled steps become `<error>`**. A step whose assertions failed has one
+`<failure>` per failed assertion, with the reason and the expression in the
+element body. A run that never starts is a document with one `<error>`. Skipped steps become `<skipped>`. Polling
 attempts and for-each iterations fold into their parent `<testcase>` as
 `<system-out>` instead of inflating the test count.
 
@@ -273,12 +326,18 @@ reqloom run order.create --env staging
 With no `--env`, the schema's `default_environment` is used (itself `local` if
 unset).
 
-:::caution[A misspelled environment does not error]
-If `--env` names an environment your schema doesn't define, the run proceeds
-with **zero variables** rather than failing. Every `{{env.X}}` is then
-unresolved, which usually surfaces as a confusing URL or a 404 rather than a
-clear error. Check the `Env:` line in the summary if a run behaves oddly.
-:::
+An environment the project doesn't define is exit code `2`:
+
+```ansi
+Error: unknown environment 'nope'; the project has: local
+```
+
+## Interrupting a run
+
+Ctrl-C (SIGINT) or SIGTERM cancels the run. A request in flight is stopped
+within about a second, the remaining steps are marked `CANCEL`, and the report
+is still written in full, in every format. The exit code is `130` after SIGINT
+and `143` after SIGTERM. A second signal exits at once without a report.
 
 ## In CI
 
@@ -299,8 +358,9 @@ clear error. Check the `Env:` line in the summary if a run behaves oddly.
     path: results.xml
 ```
 
-Exit code `1` fails the step on a broken API. Codes `2` and `3` mean the
-invocation itself is wrong — see [exit codes](/cli/overview/#exit-codes).
+Exit code `1` fails the step on a broken API. Code `2` means the invocation is
+wrong and `3` that the report couldn't be written — see
+[exit codes](/cli/overview/#exit-codes).
 
 ## Troubleshooting
 
@@ -318,12 +378,12 @@ transport:
   connect_timeout: 100ms
 ```
 
-### `E_REF_UNDEFINED` naming an operation I'm sure exists
+### `unknown operation` for an operation I'm sure exists
 
 The resource id comes from `name:` inside the file, not the filename:
 
 ```ansi
-Engine error [E_REF_UNDEFINED]: Resource not found: nope (referenced by operation nope.missing)
+Error: unknown operation 'nope.missing'; the project has: cart.add_item, cart.view, order.create, …
 ```
 
 Run [`reqloom lint`](/cli/lint/) — it prints the actor, resource, and operation

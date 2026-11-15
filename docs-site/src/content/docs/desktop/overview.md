@@ -68,6 +68,11 @@ beneath it, and any saved response examples beneath those.
 - **Right-click** for Edit, Rename, Delete, New Endpoint, New Module, New Actor
 - **Search** filters operations by name and method across every open project
 
+A project whose folder can't be found when the app starts (an unmounted drive, a
+moved folder) stays in the list, greyed, with the reason and **Retry** and
+**Remove**. It is also listed under **Unavailable** in the toolbar's project
+switcher.
+
 Two status dots are worth knowing:
 
 - Next to an **actor** — whether its session is live, expiring, or absent

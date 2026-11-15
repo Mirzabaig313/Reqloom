@@ -189,18 +189,17 @@ operation, an environment value or an actor. Writing `{{env.NAME}}` where you
 meant the process variable lints clean and fails at run time with
 `E_VAR_UNRESOLVED`. See [variable syntax](/reference/variables/#env-vs-env).
 
-## A misspelled `--env` runs with no variables
+## A misspelled `--env` is refused
 
 ```bash
 reqloom run order.create --env stagng      # typo
 ```
 
-This does **not** fail. The environment isn't found, so the run proceeds with
-zero variables — every `{{env.X}}` unresolved, including `baseUrl`. Check the
-`Env:` line in the summary when a run behaves strangely:
+The run doesn't start. The message lists the environments the project has, and
+the exit code is `2`:
 
 ```ansi
-Target: order.create   Env: stagng   Outcome: FAILED
+Error: unknown environment 'stagng'; the project has: local, staging
 ```
 
 ## Polling needs the async status in `expect_status`

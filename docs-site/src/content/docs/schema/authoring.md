@@ -300,9 +300,8 @@ transport:
 reqloom run order.get --env staging
 ```
 
-A `--env` name that doesn't match any environment does **not** error — the run
-proceeds with zero variables, so every `{{env.X}}` is unresolved. Check the `Env:`
-line in the summary if a run behaves strangely.
+A `--env` name that doesn't match any environment is refused with exit code `2`,
+and the message lists the environments the project has.
 
 ## Verify as you go
 

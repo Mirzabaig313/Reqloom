@@ -116,7 +116,7 @@ a build with no keychain backend every secret is missing, and the
 | --- | --- | --- |
 | `E_RESPONSE_PARSE` | Response declared JSON but didn't parse, or nests deeper than 256 levels | Check the real `Content-Type`; an HTML error page is the usual culprit |
 | `E_EXTRACTION_FAILED` | A JSONPath or regex matched nothing, or the JSONPath uses syntax the engine doesn't support (such as `$..name`) | Verify the shape against a real response; see [supported JSONPath](/schema/advanced-operations/#jsonpath-in-extractions) |
-| `E_ASSERTION_FAILED` | An `assert:` predicate was false | The API changed, or the predicate is wrong. An unresolved `{{…}}` in an assertion is `E_VAR_UNRESOLVED` instead |
+| `E_ASSERTION_FAILED` | An `assert:` predicate was false; the output [says what was compared](/cli/run/#a-failed-assertion-says-why) | The API changed, or the predicate is wrong. An unresolved `{{…}}` in an assertion is `E_VAR_UNRESOLVED` instead |
 
 ## Polling
 
@@ -150,9 +150,29 @@ normal run.
 
 | Code | Cause |
 | --- | --- |
-| `E_CANCELLED` | You cancelled the run |
+| `E_CANCELLED` | You cancelled the run. A request in flight is stopped within about a second and is not retried |
 | `E_INTERNAL` | An engine invariant broke — please [report it](https://github.com/Mirzabaig313/Reqloom/issues) |
 | `E_UNKNOWN` | Fallback string for a code this build doesn't know; not expected in normal output |
+
+## Import
+
+| Code | Cause |
+| --- | --- |
+| `E_PROJECT_EXISTS` | The import target already has a `reqloom.yaml` and overwriting wasn't asked for |
+| `E_WRITE_FAILED` | The imported project couldn't be written to disk |
+
+## Command line
+
+Raised by the `reqloom` command itself, before the engine runs. They appear as
+`error.code` in [JSON output](/cli/run/#json) and in the JUnit `<error>`.
+
+| Code | Cause | Exit code |
+| --- | --- | --- |
+| `E_CLI_USAGE` | Unknown option, or a missing or invalid value | `2` |
+| `E_CLI_PROJECT_NOT_FOUND` | No `reqloom.yaml` at the project path | `2` |
+| `E_CLI_UNKNOWN_OPERATION` | The operation isn't in the project; the message lists the ones that are | `2` |
+| `E_CLI_UNKNOWN_ENVIRONMENT` | `--env` names an environment the project doesn't define | `2` |
+| `E_CLI_INTERNAL` | An unexpected error in the command | `3` |
 
 ## Which are retried
 

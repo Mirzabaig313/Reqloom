@@ -154,7 +154,7 @@ schema "doesn't work" while linting clean:
 | `imports:` pattern that matches nothing | Warning; lint passes |
 | File outside `actors/` `resources/` `environments/` | Warning; the file is ignored |
 | Misspelled key (`expect_stats:`) | Warning; the key is ignored |
-| `--env` naming a missing environment | Runs with zero variables |
+| `--env` naming a missing environment | Refused, exit code `2`; the message lists the environments |
 | Typo in an extracted name | Passes lint, fails at run with `E_VAR_UNRESOLVED` |
 | No `expect_status` | Every status passes, a `500` included |
 | An extract path that finds `null` | Step passes; a later reference is unresolved |
@@ -190,4 +190,3 @@ Frequently assumed, never implemented:
 | `for_each` alias or `limit` | Only `over` and `continue_on_error` |
 | `retry.max_backoff` | Fixed at 30s |
 | Duration strings for `timeout` / `retry.backoff` | Bare milliseconds |
-| `lint --format` / `lint --help` | Text output only; `reqloom --help` |

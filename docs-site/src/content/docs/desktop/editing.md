@@ -29,6 +29,14 @@ look at the response, change it again, and only Save once it works.
 Tab labels show dirty counts (`Params 3`, `Body ●`) so you can see what you've
 touched.
 
+Unsaved edits to an endpoint or an actor stay in their tab while you work in
+other tabs, and the tab is marked. Closing a tab, the window or the project, or switching to another
+project, asks **Save**, **Discard** or **Cancel** when there are unsaved edits.
+
+If an operation is renamed, its open tab follows the new name and keeps its
+edits. If it is deleted, its tab closes — or stays as a draft when it has
+unsaved edits.
+
 ## What you can edit
 
 | Tab | Covers |
@@ -134,8 +142,8 @@ says that no OS keychain is available.
 **Base URL** (`{{env.baseUrl}}`), and edit variables as a key/value table.
 
 The selector in the toolbar switches the active environment, and the choice is
-remembered. One caveat: switching rows inside the manager discards unsaved edits to
-the pane you were on — save before moving.
+remembered. Closing the manager, or opening another environment in it, asks
+**Save**, **Discard** or **Cancel** when the one on screen has unsaved changes.
 
 ## Hooks
 

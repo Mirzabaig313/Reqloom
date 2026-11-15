@@ -238,8 +238,8 @@ imports:
 reqloom run order.create --env staging
 ```
 
-A `--env` name with no matching environment doesn't error — the run proceeds with
-zero variables. See [pitfalls](/schema/pitfalls/#a-misspelled---env-runs-with-no-variables).
+A `--env` name with no matching environment is refused. See
+[pitfalls](/schema/pitfalls/#a-misspelled---env-is-refused).
 
 ## Root-level keys
 

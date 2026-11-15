@@ -7,13 +7,31 @@ Validates a project and dry-runs every operation. No HTTP requests are sent, no
 secrets are read from your keychain, so it's safe in CI and safe offline.
 
 ```bash
-reqloom lint [--project <path>]
+reqloom lint [<project-dir>] [--format text|json]
 ```
 
-`--project` defaults to the current directory. **It takes no other flags** —
-unknown arguments are silently ignored rather than rejected, and there is no
-`lint --help`. `reqloom lint --format json` runs a perfectly normal lint and
-throws the flag away.
+The project is the positional argument or `--project <path>` (one or the other),
+and defaults to the current directory. An unknown option is exit code `2`.
+`reqloom lint --help` lists the options.
+
+## JSON output
+
+`--format json` writes one document to stdout. Warnings still go to stderr as
+well.
+
+```json
+{
+  "schema_version": 1,
+  "ok": true,
+  "errors": [],
+  "warnings": [
+    "samples/marketplace/reqloom.yaml:8:1: unknown key 'description' in reqloom.yaml; ignored"
+  ]
+}
+```
+
+Each entry of `errors` is `{ "code", "detail", "operation" }`; `operation` is
+set when the error belongs to one operation's chain.
 
 ## A clean run
 
@@ -55,11 +73,10 @@ LINT OK — 1 actors, 1 resources, 1 operations. No errors.
 
 Warnings are printed only by `reqloom lint`, and only when the project loads; a
 load error is printed alone. `reqloom run` and the desktop app don't show them.
-To fail CI on warnings, check stderr:
+To fail CI on warnings, read them from the JSON document:
 
 ```bash
-reqloom lint --project api-tests 2> lint.err; status=$?
-grep -q 'WARNING:' lint.err && exit 1; exit $status
+reqloom lint api-tests --format json 2>/dev/null | jq -e '.ok and (.warnings | length == 0)'
 ```
 
 Messages give the file as Reqloom opened it: relative paths such as
@@ -151,7 +168,7 @@ LINT FAIL [E_SCHEMA_VERSION]: Unsupported schema version 9 (supported: 1–3). R
 The message suggests `reqloom migrate`, which is not a command in this release.
 Set `version:` to 1, 2 or 3.
 
-Any failure is exit code `1`. Per-operation failures are listed individually,
+A project that doesn't validate is exit code `1`. Per-operation failures are listed individually,
 then totalled:
 
 ```ansi
@@ -209,8 +226,8 @@ set -euo pipefail
 reqloom lint --project api-tests
 ```
 
-Because a broken invocation and a broken schema both exit non-zero here (lint
-can't return `2`), a failing hook always means the schema needs attention.
+Exit code `1` means the schema needs attention; `2` means the command itself is
+wrong (an unknown option, or no `reqloom.yaml` at that path).
 
 ## Next
 
