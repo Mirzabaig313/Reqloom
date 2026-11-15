@@ -392,4 +392,77 @@ TEST(Toast, stack_is_bounded_and_counts_the_rest) {
     EXPECT_EQ(toast->property("count").toInt(), 0);
 }
 
+namespace {
+
+const char* kUnsavedScene = R"(
+    UnsavedChangesDialog {
+        id: dlg
+        objectName: "dlg"
+        property int answered: 0
+        property int last: -1
+        onChoice: value => { dlg.last = value; dlg.answered += 1; }
+    }
+)";
+
+void askUnsaved(QObject* dialog) {
+    QMetaObject::invokeMethod(dialog,
+                              "ask",
+                              Q_ARG(QVariant, QStringLiteral("Unsaved changes")),
+                              Q_ARG(QVariant, QStringLiteral("2 tabs have unsaved changes: a, b.")),
+                              Q_ARG(QVariant, QStringLiteral("Save all")),
+                              Q_ARG(QVariant, QStringLiteral("Discard all")),
+                              Q_ARG(QVariant, QStringLiteral("Cancel")));
+    QmlScene::settle();
+}
+
+int answerWith(const char* button) {
+    QmlScene scene(QString::fromLatin1(kUnsavedScene));
+    if (!scene.ok()) {
+        ADD_FAILURE() << scene.error().toStdString();
+        return -2;
+    }
+    QObject* dialog = scene.find("dlg");
+    askUnsaved(dialog);
+    QObject* target = scene.find(button);
+    if (target == nullptr) {
+        ADD_FAILURE() << "no " << button;
+        return -2;
+    }
+    QMetaObject::invokeMethod(target, "click");
+    QmlScene::settle();
+    EXPECT_EQ(dialog->property("answered").toInt(), 1);
+    EXPECT_FALSE(dialog->property("visible").toBool());
+    return dialog->property("last").toInt();
+}
+
+}  // namespace
+
+TEST(UnsavedChangesDialog, shows_the_texts_it_is_asked_with) {
+    QmlScene scene(QString::fromLatin1(kUnsavedScene));
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    askUnsaved(scene.find("dlg"));
+    EXPECT_TRUE(scene.find("dlg")->property("visible").toBool());
+    EXPECT_EQ(text(scene.find("unsavedChangesMessage")),
+              QStringLiteral("2 tabs have unsaved changes: a, b."));
+    EXPECT_EQ(text(scene.find("unsavedSaveButton")), QStringLiteral("Save all"));
+    EXPECT_EQ(text(scene.find("unsavedDiscardButton")), QStringLiteral("Discard all"));
+    EXPECT_EQ(text(scene.find("unsavedCancelButton")), QStringLiteral("Cancel"));
+}
+
+TEST(UnsavedChangesDialog, each_button_answers_once_with_its_choice) {
+    EXPECT_EQ(answerWith("unsavedSaveButton"), 0);
+    EXPECT_EQ(answerWith("unsavedDiscardButton"), 1);
+    EXPECT_EQ(answerWith("unsavedCancelButton"), 2);
+}
+
+TEST(UnsavedChangesDialog, escape_answers_cancel) {
+    QmlScene scene(QString::fromLatin1(kUnsavedScene));
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    QObject* dialog = scene.find("dlg");
+    askUnsaved(dialog);
+    scene.key(Qt::Key_Escape);
+    EXPECT_EQ(dialog->property("answered").toInt(), 1);
+    EXPECT_EQ(dialog->property("last").toInt(), 2);
+}
+
 }  // namespace reqloom::desktop::tests

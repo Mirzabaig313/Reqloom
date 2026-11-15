@@ -272,6 +272,90 @@ Rectangle {
             }
         }
 
+        // Saved projects that could not be opened stay listed, greyed, until the
+        // user removes them, so an unmounted drive never makes one disappear.
+        Repeater {
+            model: AppController.unavailableProjects
+            delegate: Rectangle {
+                id: unavailableRow
+                required property var modelData
+                readonly property string path: unavailableRow.modelData.path
+                Layout.fillWidth: true
+                implicitHeight: unavailableColumn.implicitHeight + DesignTokens.spaceSm * 2
+                radius: DesignTokens.radiusSm
+                color: DesignTokens.surfaceSunken
+                border.width: 1
+                border.color: DesignTokens.borderSubtle
+
+                ColumnLayout {
+                    id: unavailableColumn
+                    anchors.fill: parent
+                    anchors.margins: DesignTokens.spaceSm
+                    spacing: DesignTokens.spaceXs
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: DesignTokens.spaceXs
+                        AppIcon {
+                            Layout.alignment: Qt.AlignVCenter
+                            name: "folder"
+                            size: 15
+                            opacity: 0.5
+                            color: DesignTokens.textSecondary
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: unavailableRow.modelData.name.length > 0 ? unavailableRow.modelData.name : unavailableRow.path
+                            color: DesignTokens.textSecondary
+                            font.pointSize: DesignTokens.fontBodyPointSize
+                            font.weight: DesignTokens.weightSemiBold
+                            elide: Text.ElideRight
+                            HoverHandler {
+                                id: unavailableHover
+                            }
+                            GlassToolTip {
+                                active: unavailableHover.hovered
+                                text: unavailableRow.path
+                            }
+                        }
+                        Label {
+                            text: qsTr("Unavailable")
+                            color: DesignTokens.textSecondary
+                            font.pointSize: DesignTokens.fontCaptionPointSize
+                        }
+                    }
+                    TextEdit {
+                        Layout.fillWidth: true
+                        text: unavailableRow.modelData.reason
+                        readOnly: true
+                        selectByMouse: true
+                        textFormat: TextEdit.PlainText
+                        wrapMode: TextEdit.Wrap
+                        color: DesignTokens.statusError
+                        selectionColor: DesignTokens.accentMuted
+                        selectedTextColor: DesignTokens.textPrimary
+                        font.pointSize: DesignTokens.fontCaptionPointSize
+                        font.family: DesignTokens.fontMono
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: DesignTokens.spaceXs
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                        GlassButton {
+                            text: qsTr("Retry")
+                            onClicked: AppController.retryUnavailableProject(unavailableRow.path)
+                        }
+                        GlassButton {
+                            text: qsTr("Remove from list")
+                            onClicked: AppController.removeUnavailableProject(unavailableRow.path)
+                        }
+                    }
+                }
+            }
+        }
+
         TreeView {
             id: tree
             Layout.fillWidth: true
@@ -766,8 +850,8 @@ Rectangle {
         function openFor(kind, id) {
             targetKind = kind;
             targetId = id;
-            // Seed with the short name (part after the last dot for ops).
-            const dot = id.lastIndexOf(".");
+            // Seed with the operation name: an id splits at its first dot.
+            const dot = id.indexOf(".");
             renameField.text = (kind === "operation" && dot >= 0) ? id.substring(dot + 1) : id;
             open();
             renameField.forceActiveFocus();
@@ -827,22 +911,34 @@ Rectangle {
 
         property string targetKind: ""
         property string targetId: ""
-        // Endpoints whose depends_on loses the deleted endpoint.
+        // Endpoints the delete changes: depends_on entries dropped for an
+        // endpoint or module, the actor cleared for an actor.
         property var dependents: []
 
         function openFor(kind, id) {
             targetKind = kind;
             targetId = id;
-            dependents = (kind === "operation" && typeof AppController.dependentsOf === "function") ? AppController.dependentsOf(kind, id) : [];
+            dependents = AppController.dependentsOf(kind, id);
             open();
         }
 
-        function endpointText() {
-            const head = qsTr("Delete endpoint “%1”?").arg(targetId);
+        function confirmationText() {
+            let head;
+            let affected;
+            if (targetKind === "resource") {
+                head = qsTr("Delete module “%1” and all its endpoints?").arg(targetId);
+                affected = qsTr("Its endpoints are also removed from depends_on in:");
+            } else if (targetKind === "actor") {
+                head = qsTr("Delete actor “%1”?").arg(targetId);
+                affected = qsTr("These endpoints use it and will become unauthenticated:");
+            } else {
+                head = qsTr("Delete endpoint “%1”?").arg(targetId);
+                affected = qsTr("It is also removed from depends_on in:");
+            }
             if (!dependents || dependents.length === 0) {
                 return head;
             }
-            return head + "\n\n" + qsTr("It is also removed from depends_on in:") + "\n• " + dependents.join("\n• ");
+            return head + "\n\n" + affected + "\n• " + dependents.join("\n• ");
         }
 
         background: Rectangle {
@@ -853,7 +949,7 @@ Rectangle {
         }
 
         contentItem: Label {
-            text: deleteDialog.targetKind === "resource" ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId) : (deleteDialog.targetKind === "actor" ? qsTr("Delete actor “%1”? Operations using it will become unauthenticated.").arg(deleteDialog.targetId) : deleteDialog.endpointText())
+            text: deleteDialog.confirmationText()
             color: DesignTokens.textPrimary
             font.pointSize: DesignTokens.fontBodyPointSize
             wrapMode: Text.WordWrap

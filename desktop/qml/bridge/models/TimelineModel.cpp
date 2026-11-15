@@ -27,6 +27,24 @@ namespace {
     return QStringLiteral("%1 MB").arg(QString::number(mb, 'f', mb < 10.0 ? 1 : 0));
 }
 
+/// Empty for the operation's own exchange (and an empty name); otherwise the row-title prefix.
+[[nodiscard]] QString exchangePrefix(const QString& exchange) {
+    if (exchange == QLatin1String("sign_in")) {
+        return QStringLiteral("Sign-in ");
+    }
+    if (exchange == QLatin1String("session_refresh")) {
+        return QStringLiteral("Refresh ");
+    }
+    if (exchange == QLatin1String("inline_auth_token")) {
+        return QStringLiteral("Token ");
+    }
+    return {};
+}
+
+[[nodiscard]] QString exchangeName(const QString& exchange) {
+    return exchange.isEmpty() ? QStringLiteral("operation") : exchange;
+}
+
 [[nodiscard]] QString nowClock() {
     return QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
 }
@@ -172,6 +190,10 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
             return row.blockedByStep;
         case RootFailureRole:
             return row.rootFailure;
+        case ExchangeRole:
+            return row.exchange;
+        case AssertionDetailRole:
+            return row.assertionDetail;
         default:
             return {};
     }
@@ -197,6 +219,8 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
         {DiagnosticsRole, "diagnostics"},
         {BlockedByStepRole, "blockedByStep"},
         {RootFailureRole, "rootFailure"},
+        {ExchangeRole, "exchange"},
+        {AssertionDetailRole, "assertionDetail"},
     };
 }
 
@@ -405,12 +429,15 @@ void TimelineModel::onStepSkipped(int index, QString op, QString reason) {
 }
 
 void TimelineModel::onRequestPrepared(
-    int index, QString method, QString url, QString maskedHeaders, int bodySize) {
+    int index, QString method, QString url, QString maskedHeaders, int bodySize, QString exchange) {
     Row row;
     row.kind = Kind::Request;
     row.stepIndex = index + 1;
     row.subLabel = QStringLiteral("%1.%2").arg(index + 1).arg(++stepChildSeq_[index]);
-    row.title = QStringLiteral("\u2192 Request");  // → Request
+    const QString prefix = exchangePrefix(exchange);
+    row.title = prefix.isEmpty() ? QStringLiteral("\u2192 Request")
+                                 : QStringLiteral("\u2192 %1request").arg(prefix);
+    row.exchange = exchangeName(exchange);
     // Keep the summary short so it never elides; the resolved URL is in the expansion.
     row.detail = QStringLiteral("%1  ·  %2 body bytes").arg(method).arg(bodySize);
     row.statusToken = QStringLiteral("neutral");
@@ -428,14 +455,20 @@ void TimelineModel::onRequestPrepared(
     appendRow(std::move(row));
 }
 
-void TimelineModel::onResponseReceived(
-    int index, int status, QString headers, int bodySize, qint64 elapsedMs, QString body) {
-    // Settle the parent step row to a terminal status by HTTP class and accumulate its response
-    // time.
+void TimelineModel::onResponseReceived(int index,
+                                       int status,
+                                       QString headers,
+                                       int bodySize,
+                                       qint64 elapsedMs,
+                                       QString body,
+                                       QString exchange) {
+    // Accumulate the step's response time; only the operation's own response settles its status,
+    // since a sign-in succeeding says nothing about the operation.
     stepMs_[index] += static_cast<double>(elapsedMs);
     runTotalMs_ += static_cast<double>(elapsedMs);
+    const QString prefix = exchangePrefix(exchange);
     const auto it = stepRowByIndex_.constFind(index);
-    if (it != stepRowByIndex_.constEnd()) {
+    if (it != stepRowByIndex_.constEnd() && prefix.isEmpty()) {
         Row& step = rows_[static_cast<std::size_t>(it.value())];
         step.statusToken = status >= 500   ? QStringLiteral("error")
                            : status >= 300 ? QStringLiteral("warning")
@@ -450,7 +483,9 @@ void TimelineModel::onResponseReceived(
     row.kind = Kind::Response;
     row.stepIndex = index + 1;
     row.subLabel = QStringLiteral("%1.%2").arg(index + 1).arg(++stepChildSeq_[index]);
-    row.title = QStringLiteral("\u2190 Response");  // ← Response
+    row.title = prefix.isEmpty() ? QStringLiteral("\u2190 Response")
+                                 : QStringLiteral("\u2190 %1response").arg(prefix);
+    row.exchange = exchangeName(exchange);
     row.detail =
         QStringLiteral("HTTP %1  ·  %2 bytes  ·  %3 ms").arg(status).arg(bodySize).arg(elapsedMs);
     row.statusToken = status >= 500   ? QStringLiteral("error")
@@ -516,7 +551,7 @@ void TimelineModel::onExtractionCompleted(int index,
 }
 
 void TimelineModel::onAssertionCompleted(
-    int index, QString /*op*/, QString name, QString expr, bool passed) {
+    int index, QString /*op*/, QString name, QString expr, bool passed, QString detail) {
     Row row;
     row.kind = Kind::Assertion;
     row.stepIndex = index + 1;
@@ -526,7 +561,8 @@ void TimelineModel::onAssertionCompleted(
     row.statusToken = passed ? QStringLiteral("success") : QStringLiteral("error");
     row.statusLabel = passed ? QStringLiteral("\u2713") : QStringLiteral("\u2717");
     row.detail = expr;
-    row.value = expr;
+    row.value = detail.isEmpty() ? expr : QStringLiteral("%1\n\n%2").arg(detail, expr);
+    row.assertionDetail = std::move(detail);
     appendRow(std::move(row));
 }
 

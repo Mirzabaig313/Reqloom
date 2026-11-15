@@ -73,6 +73,10 @@ struct AssertionResult {
     std::string name;  ///< Human label, or the expression when unnamed.
     std::string expr;  ///< The predicate that was evaluated.
     bool passed{false};
+
+    /// For a failure, what was compared: the value found and what was expected, e.g.
+    /// `$.status was "pending", expected == "paid"`. Value-redacted; empty when it passed.
+    std::string detail;
 };
 
 /// One step in a chain.

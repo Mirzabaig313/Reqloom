@@ -46,12 +46,15 @@ qt_add_executable(reqloom-desktop
     qml/bridge/models/ExampleListModel.h
     qml/bridge/models/TabModel.cpp
     qml/bridge/models/TabModel.h
+    qml/bridge/models/TabEdits.cpp
+    qml/bridge/models/TabEdits.h
     qml/bridge/appcontroller/AppController.cpp
     qml/bridge/appcontroller/AppController.h
     qml/bridge/appcontroller/AppControllerInternal.h
     qml/bridge/appcontroller/AppControllerChain.cpp
     qml/bridge/appcontroller/AppControllerEntities.cpp
     qml/bridge/appcontroller/AppControllerTabs.cpp
+    qml/bridge/appcontroller/AppControllerUnsaved.cpp
     qml/bridge/appcontroller/AppControllerRun.cpp
     qml/bridge/appcontroller/RunTabRouter.cpp
     qml/bridge/appcontroller/RunTabRouter.h
@@ -72,6 +75,8 @@ qt_add_executable(reqloom-desktop
     src/application/ExecutionPreview.h
     src/application/SavedResponseStore.cpp
     src/application/SavedResponseStore.h
+    src/application/ImportJob.cpp
+    src/application/ImportJob.h
     src/application/EnvironmentSettings.cpp
     src/application/EnvironmentSettings.h
     src/application/LayoutSettings.cpp
@@ -130,6 +135,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/EnvironmentSelector.qml
         qml/widgets/GlassMenuItem.qml
         qml/widgets/DialogButtons.qml
+        qml/widgets/UnsavedChangesDialog.qml
         qml/widgets/GlassTextField.qml
         qml/widgets/FieldLabel.qml
         qml/widgets/FieldError.qml
@@ -209,6 +215,8 @@ target_link_libraries(reqloom-desktop
         Qt6::Widgets
         # Response bodies are parsed with nlohmann so 64-bit integers keep their digits.
         nlohmann_json::nlohmann_json
+        # SavedResponseStore keeps examples in a per-user SQLite file (the engine's sqlite3).
+        SQLite3::SQLite3
 )
 
 target_include_directories(reqloom-desktop

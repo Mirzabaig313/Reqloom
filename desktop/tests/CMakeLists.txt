@@ -12,6 +12,9 @@ add_executable(reqloom-desktop-ui-tests
     unit/ContrastTest.cpp
     unit/DesignTokensTest.cpp
     unit/LayoutSettingsTest.cpp
+    unit/OAuth2AuthCodeFlowTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/OAuth2AuthCodeFlow.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/OAuth2AuthCodeFlow.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/theming/DesignTokens.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/theming/DesignTokens.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/controllers/ThemeController.cpp
@@ -59,9 +62,13 @@ target_link_libraries(reqloom-desktop-ui-tests
     PRIVATE
         Qt6::Core
         Qt6::Gui
+        # OAuth2AuthCodeFlowTest binds the loopback callback listener.
+        Qt6::Network
         Qt6::Qml
         Qt6::Widgets
         nlohmann_json::nlohmann_json
+        # SavedResponseStore's database.
+        SQLite3::SQLite3
         GTest::gtest
 )
 set_target_properties(reqloom-desktop-ui-tests PROPERTIES
@@ -90,11 +97,13 @@ gtest_discover_tests(reqloom-desktop-ui-tests
 # because it links reqloom::engine.
 add_executable(reqloom-desktop-secret-tests
     unit/SecretManagerTest.cpp
+    unit/ImportJobTest.cpp
     unit/ProjectModelTest.cpp
     unit/ProjectModelRenameTest.cpp
     unit/ProjectEditsTest.cpp
     unit/RequestOverrideTest.cpp
     unit/TabModelTest.cpp
+    unit/TabEditsTest.cpp
     unit/WorkspaceModelTest.cpp
     unit/ProjectTreeModelTest.cpp
     unit/PathEvalTest.cpp
@@ -116,10 +125,14 @@ add_executable(reqloom-desktop-secret-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/appcontroller/RunTabRouter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabModel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabEdits.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabEdits.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ImportJob.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ImportJob.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectEdits.cpp

@@ -93,7 +93,7 @@ void addAssertionFailures(CaseModel& model, const ce::StepResult& row, const std
             model.failures.push_back(
                 Problem{std::string{ce::toCodeString(ce::ErrorCode::AssertionFailed)},
                         prefix + firstLine(label, kMessageBytes),
-                        a.expr});
+                        a.detail.empty() ? a.expr : a.detail + "\n" + a.expr});
         }
     }
 }

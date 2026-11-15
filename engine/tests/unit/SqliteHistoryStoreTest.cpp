@@ -301,6 +301,89 @@ TEST(SqliteHistoryStore, request_response_extraction_events_round_trip) {
     EXPECT_EQ(extBack->variableNames[1], "ts");
 }
 
+TEST(SqliteHistoryStore, exchange_kind_and_assertion_detail_round_trip) {
+    TempDb tmp;
+    ce::SqliteHistoryStore store;
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+    const ce::RunId rid{11};
+    ce::RunStarted rs;
+    rs.runId = rid;
+    rs.target = ce::OperationId{"x.y"};
+    rs.at = someTimePoint();
+    store.append(rs);
+
+    ce::RequestPrepared req;
+    req.runId = rid;
+    req.at = someTimePoint();
+    req.exchange = ce::ExchangeKind::SignIn;
+    ASSERT_TRUE(store.append(req).has_value());
+    ce::ResponseReceived resp;
+    resp.runId = rid;
+    resp.at = someTimePoint();
+    resp.exchange = ce::ExchangeKind::SessionRefresh;
+    ASSERT_TRUE(store.append(resp).has_value());
+    ce::ResponseReceived own;
+    own.runId = rid;
+    own.at = someTimePoint();
+    ASSERT_TRUE(store.append(own).has_value());
+    ce::AssertionCompleted assertion;
+    assertion.runId = rid;
+    assertion.name = "paid";
+    assertion.expr = "$.status == \"paid\"";
+    assertion.at = someTimePoint();
+    assertion.detail = "$.status was \"pending\", expected == \"paid\"";
+    ASSERT_TRUE(store.append(assertion).has_value());
+
+    const auto replayed = store.eventsFor(rid);
+    ASSERT_TRUE(replayed.has_value());
+    ASSERT_EQ(replayed->size(), 5u);
+    EXPECT_EQ(std::get<ce::RequestPrepared>((*replayed)[1]).exchange, ce::ExchangeKind::SignIn);
+    EXPECT_EQ(std::get<ce::ResponseReceived>((*replayed)[2]).exchange,
+              ce::ExchangeKind::SessionRefresh);
+    EXPECT_EQ(std::get<ce::ResponseReceived>((*replayed)[3]).exchange, ce::ExchangeKind::Operation);
+    EXPECT_EQ(std::get<ce::AssertionCompleted>((*replayed)[4]).detail, assertion.detail);
+}
+
+TEST(SqliteHistoryStore, rows_written_before_exchange_kinds_read_as_the_operations_own) {
+    TempDb tmp;
+    {
+        ce::SqliteHistoryStore schemaCreator;
+        ASSERT_TRUE(schemaCreator.open(tmp.path()).has_value());
+        schemaCreator.close();
+    }
+    {
+        sqlite3* rawDatabase{};
+        ASSERT_EQ(sqlite3_open(tmp.path().string().c_str(), &rawDatabase), SQLITE_OK);
+        std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database{rawDatabase, &sqlite3_close};
+        constexpr const char* kSql = R"SQL(
+            INSERT INTO runs (run_id, target_op, started_at) VALUES
+                (24, 'old.get', '2025-05-27T12:00:00Z');
+            INSERT INTO run_events
+                (run_id, seq, event_type, step_index, op_id, payload, at) VALUES
+                (24, 0, 'RequestPrepared', 0, NULL,
+                 '{"method":"GET","url":"u","headers":[],"bodySize":0}', '2025-05-27T12:00:00Z'),
+                (24, 1, 'ResponseReceived', 0, NULL,
+                 '{"status":200,"headers":[],"bodySize":0,"elapsedMs":1}', '2025-05-27T12:00:00Z'),
+                (24, 2, 'ResponseReceived', 0, NULL,
+                 '{"status":200,"headers":[],"bodySize":0,"elapsedMs":1,"exchange":"from_the_future"}',
+                 '2025-05-27T12:00:00Z'),
+                (24, 3, 'AssertionCompleted', 0, 'old.get',
+                 '{"op":"old.get","name":"n","expr":"$.a","passed":false}', '2025-05-27T12:00:00Z');
+        )SQL";
+        ASSERT_EQ(sqlite3_exec(database.get(), kSql, nullptr, nullptr, nullptr), SQLITE_OK);
+    }
+
+    ce::SqliteHistoryStore store;
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+    const auto replayed = store.eventsFor(ce::RunId{24});
+    ASSERT_TRUE(replayed.has_value());
+    ASSERT_EQ(replayed->size(), 4u);
+    EXPECT_EQ(std::get<ce::RequestPrepared>((*replayed)[0]).exchange, ce::ExchangeKind::Operation);
+    EXPECT_EQ(std::get<ce::ResponseReceived>((*replayed)[1]).exchange, ce::ExchangeKind::Operation);
+    EXPECT_EQ(std::get<ce::ResponseReceived>((*replayed)[2]).exchange, ce::ExchangeKind::Operation);
+    EXPECT_TRUE(std::get<ce::AssertionCompleted>((*replayed)[3]).detail.empty());
+}
+
 TEST(SqliteHistoryStore, captured_response_body_round_trips) {
     // When a run opts into body capture, the body must survive a replay
     // so the desktop can show past responses in full (Postman-style

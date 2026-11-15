@@ -102,6 +102,10 @@ struct ImportWriteResult {
 /// credentials into secrets as `moveImportedCredentials` does. Refuses an existing reqloom.yaml
 /// without `overwrite` before storing anything; if the write fails, the secrets this import stored
 /// are removed again.
+///
+/// @return The result, or `ReqloomError`: `ProjectExists` (reqloom.yaml there, no `overwrite`),
+///         `SchemaInvalid` (an id that cannot be a file name), `WriteFailed` (I/O). A refused
+///         folder check is not an error: the credentials stay in the YAML and are listed in `kept`.
 [[nodiscard]] std::expected<ImportWriteResult, ReqloomError> writeImportedProject(
     const std::filesystem::path& targetDir,
     Project project,

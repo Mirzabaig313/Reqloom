@@ -56,6 +56,15 @@ int TabModel::indexOf(TabState::Kind kind, const QString& id) const {
     return -1;
 }
 
+int TabModel::indexOfUid(std::uint64_t uid) const {
+    const auto it = std::ranges::find(tabs_, uid, &TabState::uid);
+    return it == tabs_.end() ? -1 : static_cast<int>(it - tabs_.begin());
+}
+
+int TabModel::dirtyCount() const {
+    return static_cast<int>(std::ranges::count(tabs_, true, &TabState::dirty));
+}
+
 QString TabModel::displayTitle(int index) const {
     if (!valid(index)) {
         return {};
@@ -75,6 +84,9 @@ QString TabModel::displayTitle(int index) const {
 int TabModel::insert(int index, TabState state) {
     if (index < 0 || index > count()) {
         return -1;
+    }
+    if (state.uid == 0) {
+        state.uid = nextUid_++;
     }
     beginInsertRows({}, index, index);
     tabs_.insert(tabs_.begin() + static_cast<std::ptrdiff_t>(index), std::move(state));

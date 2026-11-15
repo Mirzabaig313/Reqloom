@@ -845,8 +845,14 @@ QStringList AppController::extractionConsumers(const QString& producerOperationI
 }
 
 QVariantMap AppController::chainStatus() const {
+    const RunTabRouter::TabKey& runTab = runRouter_.origin();
+    const QHash<QString, QString>& shown =
+        shownChainStatus(tabs_.valid(activeTabIndex_) ? &tabs_.stateAt(activeTabIndex_) : nullptr,
+                         runTab.valid() && runTab == activeTabKey(),
+                         runTab.valid(),
+                         chainStatus_);
     QVariantMap status;
-    for (auto it = chainStatus_.constBegin(); it != chainStatus_.constEnd(); ++it) {
+    for (auto it = shown.constBegin(); it != shown.constEnd(); ++it) {
         status.insert(it.key(), it.value());
     }
     return status;
@@ -1117,6 +1123,7 @@ bool AppController::saveChainEdits() {
     // Save doesn't clobber it.
     if (editing_) {
         seedEditChainFromProject();
+        rebaseChainEdits();
         emit editChanged();
         emit chainChanged();
     }

@@ -34,6 +34,11 @@ namespace ce = reqloom::engine;
     return out;
 }
 
+[[nodiscard]] QString exchangeName(ce::ExchangeKind kind) {
+    const std::string_view name = ce::exchangeKindName(kind);
+    return QString::fromUtf8(name.data(), static_cast<qsizetype>(name.size()));
+}
+
 }  // namespace
 
 RunController::RunController(ce::ExecutionEngine& engine,
@@ -452,7 +457,8 @@ void RunController::publishEvent(const ce::RunEvent& event) {
                                      format::method(e.method),
                                      QString::fromStdString(e.url),
                                      joinHeaders(e.maskedHeaders),
-                                     static_cast<int>(e.bodySize));
+                                     static_cast<int>(e.bodySize),
+                                     exchangeName(e.exchange));
             } else if constexpr (std::is_same_v<T, ce::ResponseReceived>) {
                 // Body is empty unless the run opted in; the panel renders that as "not captured".
                 emit responseReceived(format::boundedIndex(e.stepIndex),
@@ -460,7 +466,8 @@ void RunController::publishEvent(const ce::RunEvent& event) {
                                       joinHeaders(e.headers),
                                       static_cast<int>(e.bodySize),
                                       static_cast<qint64>(e.elapsed.count()),
-                                      e.body ? QString::fromStdString(*e.body) : QString{});
+                                      e.body ? QString::fromStdString(*e.body) : QString{},
+                                      exchangeName(e.exchange));
             } else if constexpr (std::is_same_v<T, ce::ExtractionCompleted>) {
                 emit extractionCompleted(format::boundedIndex(e.stepIndex),
                                          QString::fromStdString(e.op.value),
@@ -473,7 +480,8 @@ void RunController::publishEvent(const ce::RunEvent& event) {
                                         QString::fromStdString(e.op.value),
                                         QString::fromStdString(e.name),
                                         QString::fromStdString(e.expr),
-                                        e.passed);
+                                        e.passed,
+                                        QString::fromStdString(e.detail));
             } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
                 emit stepFailed(format::boundedIndex(e.stepIndex),
                                 QString::fromStdString(e.op.value),

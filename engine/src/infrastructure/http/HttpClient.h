@@ -6,7 +6,9 @@
 #include <reqloom/engine/Operation.h>
 #include <reqloom/engine/Transport.h>
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <expected>
 #include <map>
 #include <optional>
@@ -32,6 +34,17 @@ struct MultipartPart {
 /// the public `reqloom::engine::TransportConfig`.
 using TransportConfig = ::reqloom::engine::TransportConfig;
 
+/// Lets a transfer in flight see that its run was cancelled. Reads one atomic, takes no lock.
+struct CancelCheck {
+    const std::atomic<std::uint64_t>* cancelledRunId{nullptr};
+    std::uint64_t runId{0};
+
+    [[nodiscard]] bool requested() const noexcept {
+        return cancelledRunId != nullptr && runId != 0 &&
+               cancelledRunId->load(std::memory_order_acquire) == runId;
+    }
+};
+
 struct HttpRequest {
     HttpMethod method{HttpMethod::Get};
     std::string url;
@@ -50,6 +63,9 @@ struct HttpRequest {
 
     /// When false a 3xx response is returned as is instead of being followed.
     bool followRedirects{true};
+
+    /// When it reports a cancel, the transfer is aborted and `send` returns `ErrorCode::Cancelled`.
+    CancelCheck cancel;
 };
 
 struct HttpResponse {
@@ -69,7 +85,8 @@ public:
     virtual ~HttpClient() = default;
 
     /// Synchronous. Network failures are `ReqloomError` (NetworkTimeout / NetworkDns / NetworkTls);
-    /// HTTP status codes are the caller's concern.
+    /// a transfer stopped by `request.cancel` is `Cancelled`. HTTP status codes are the caller's
+    /// concern.
     virtual std::expected<HttpResponse, ReqloomError> send(const HttpRequest& request) = 0;
 };
 

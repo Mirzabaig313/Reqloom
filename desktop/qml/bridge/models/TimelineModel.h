@@ -69,6 +69,12 @@ public:
         DiagnosticsRole,    ///< QVariantList: ordered, value-free unresolved-variable evidence
         BlockedByStepRole,  ///< int: 1-based causal step for blocked rows; else 0
         RootFailureRole,    ///< bool: true only for the first causal failure row
+        /// QString: on request/response rows, what the exchange was for (engine
+        /// `exchangeKindName`: "operation", "sign_in", "session_refresh", "inline_auth_token",
+        /// "poll_attempt"); else empty.
+        ExchangeRole,
+        /// QString: on a failed assertion row, what was compared and found; else empty.
+        AssertionDetailRole,
     };
 
 private:
@@ -91,6 +97,8 @@ private:
         QVariantList diagnostics;
         int blockedByStep{0};
         bool rootFailure{false};
+        QString exchange;
+        QString assertionDetail;
     };
 
 public:
@@ -150,17 +158,28 @@ public slots:
     void onRunStarted(QString target, int chainSize, QString environment);
     void onStepStarted(int index, QString op, int attempt);
     void onStepSkipped(int index, QString op, QString reason);
-    void onRequestPrepared(
-        int index, QString method, QString url, QString maskedHeaders, int bodySize);
-    void onResponseReceived(
-        int index, int status, QString headers, int bodySize, qint64 elapsedMs, QString body);
+    /// `exchange` is the engine's `exchangeKindName`; empty means the operation's own request.
+    void onRequestPrepared(int index,
+                           QString method,
+                           QString url,
+                           QString maskedHeaders,
+                           int bodySize,
+                           QString exchange = {});
+    void onResponseReceived(int index,
+                            int status,
+                            QString headers,
+                            int bodySize,
+                            qint64 elapsedMs,
+                            QString body,
+                            QString exchange = {});
     void onExtractionCompleted(int index,
                                QString op,
                                QString variableName,
                                QString sourcePath,
                                QString outcome,
                                QString value);
-    void onAssertionCompleted(int index, QString op, QString name, QString expr, bool passed);
+    void onAssertionCompleted(
+        int index, QString op, QString name, QString expr, bool passed, QString detail = {});
     void onStepFailed(
         int index, QString op, QString code, QString detail, QVariantList diagnostics);
     void onStepBlocked(int index, QString op, int blockedByIndex);

@@ -3,10 +3,14 @@
 // `failed` exactly once.
 #pragma once
 
+#include <QtCore/QList>
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtNetwork/QHostAddress>
 
+#include <expected>
 #include <memory>
+#include <vector>
 
 class QTcpServer;
 class QNetworkAccessManager;
@@ -39,12 +43,22 @@ public:
     /// the browser. Errors (bad config, port in use) surface via `failed`.
     void start(const Config& config);
 
+    /// Loopback addresses a redirect host can resolve to: both families for `localhost`,
+    /// the literal itself for `127.0.0.1` or `::1`, and nothing for any other host.
+    [[nodiscard]] static QList<QHostAddress> loopbackAddressesFor(const QString& host);
+
+    /// Listen on every loopback address of `host` at `port`. An address family the
+    /// machine lacks is skipped; a port held by another process on any family fails.
+    [[nodiscard]] static std::expected<std::vector<std::unique_ptr<QTcpServer>>, QString>
+    listenLoopback(const QString& host, quint16 port);
+
 signals:
     void succeeded(const QString& accessToken);
     void failed(const QString& error);
 
 private:
-    void onCallbackConnection();
+    void onCallbackConnection(QTcpServer* server);
+    void closeServers();
     void exchangeCode(const QString& code);
     void finishOk(const QString& token);
     void finishErr(const QString& error);
@@ -55,7 +69,7 @@ private:
     Config config_;
     QString verifier_;
     QString state_;
-    std::unique_ptr<QTcpServer> server_;
+    std::vector<std::unique_ptr<QTcpServer>> servers_;
     QNetworkAccessManager* net_{nullptr};
     QTimer* timeout_{nullptr};
     bool done_{false};

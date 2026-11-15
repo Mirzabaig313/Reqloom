@@ -147,6 +147,9 @@ void TextRenderer::printAssertions(const ce::StepResult& row, std::string_view a
                        a.passed ? std::string{"\u2713"} : std::string{"\u2717"},
                        attribution,
                        a.name);
+        if (!a.passed && !a.detail.empty()) {
+            ostreamPrintln(summary_, "             {}", a.detail);
+        }
     }
 }
 

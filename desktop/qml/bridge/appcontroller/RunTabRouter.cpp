@@ -33,6 +33,12 @@ bool RunTabRouter::originIs(const TabKey& key) const {
     return inFlight_ && !discarded_ && origin_.valid() && origin_ == key;
 }
 
+void RunTabRouter::renameOrigin(const TabKey& from, const TabKey& to) {
+    if (inFlight_ && origin_.valid() && origin_ == from) {
+        origin_ = to;
+    }
+}
+
 TimelineModel* RunTabRouter::timeline(TimelineModel& visible,
                                       bool shown,
                                       const TimelineModel::Snapshot* stored) {
@@ -83,6 +89,15 @@ QString RunTabRouter::stepOperation(int index) const {
 
 bool RunTabRouter::isTargetStep(int index) const {
     return inFlight_ && !target_.isEmpty() && stepOps_.value(index) == target_;
+}
+
+bool RunTabRouter::isOwnExchange(const QString& exchange) {
+    return exchange.isEmpty() || exchange == QLatin1String("operation") ||
+           exchange == QLatin1String("poll_attempt");
+}
+
+bool RunTabRouter::showsResponse(int index, const QString& exchange) const {
+    return isOwnExchange(exchange) && isTargetStep(index);
 }
 
 }  // namespace reqloom::desktop::qml

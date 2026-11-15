@@ -132,6 +132,24 @@ TEST_F(Assertions, a_failing_assertion_fails_the_step) {
     EXPECT_EQ(*step->error, ce::ErrorCode::AssertionFailed);
 }
 
+TEST_F(Assertions, a_failed_assertion_says_what_was_compared) {
+    auto project =
+        load(projectYaml("        assert:\n"
+                         "          - $.status_code == 200\n"
+                         "          - $.data.status == 'shipped'\n"));
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"order.get"}, ctx);
+    ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+
+    const ce::StepResult* step = findStep(*result, "order.get");
+    ASSERT_NE(step, nullptr);
+    ASSERT_EQ(step->assertions.size(), 2u);
+    EXPECT_TRUE(step->assertions[0].detail.empty());
+    EXPECT_EQ(step->assertions[1].detail,
+              R"($.data.status was "confirmed", expected == "shipped")");
+}
+
 TEST_F(Assertions, records_each_result_even_when_a_later_one_fails) {
     auto project =
         load(projectYaml("        assert:\n"

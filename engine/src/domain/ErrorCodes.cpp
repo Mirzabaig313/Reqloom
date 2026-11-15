@@ -66,6 +66,10 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_LLM_RESPONSE_INVALID";
         case ErrorCode::Cancelled:
             return "E_CANCELLED";
+        case ErrorCode::ProjectExists:
+            return "E_PROJECT_EXISTS";
+        case ErrorCode::WriteFailed:
+            return "E_WRITE_FAILED";
         case ErrorCode::Internal:
             return "E_INTERNAL";
     }
@@ -132,6 +136,10 @@ std::string_view humanize(ErrorCode code) noexcept {
             return "AI response was invalid";
         case ErrorCode::Cancelled:
             return "Cancelled";
+        case ErrorCode::ProjectExists:
+            return "A project already exists there";
+        case ErrorCode::WriteFailed:
+            return "Could not write project files";
         case ErrorCode::Internal:
             return "Internal error";
     }
@@ -140,7 +148,7 @@ std::string_view humanize(ErrorCode code) noexcept {
 
 std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
     // Reverse of toCodeString; the drift guard below fails the build if this array lags the enum.
-    constexpr std::array<ErrorCode, 30> kAll = {
+    constexpr std::array<ErrorCode, 32> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,
         ErrorCode::Cycle,
@@ -170,6 +178,8 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::LlmRequestFailed,
         ErrorCode::LlmResponseInvalid,
         ErrorCode::Cancelled,
+        ErrorCode::ProjectExists,
+        ErrorCode::WriteFailed,
         ErrorCode::Internal,
     };
     // Internal is the last enumerator, so its value + 1 is the count.
@@ -247,6 +257,10 @@ ErrorClass classify(ErrorCode code) noexcept {
         case ErrorCode::LlmRequestFailed:
         case ErrorCode::LlmResponseInvalid:
             return ErrorClass::Llm;
+
+        case ErrorCode::ProjectExists:
+        case ErrorCode::WriteFailed:
+            return ErrorClass::Schema;
 
         case ErrorCode::Cancelled:
         case ErrorCode::Internal:

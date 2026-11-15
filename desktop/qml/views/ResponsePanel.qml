@@ -980,10 +980,18 @@ Rectangle {
 
                     EmptyState {
                         anchors.centerIn: parent
-                        visible: preRun.steps.length === 0 && !panel.runWithoutResponse
+                        visible: preRun.steps.length === 0 && !panel.runWithoutResponse && AppController.chainResolveError.length === 0
                         iconName: "zap"
                         heading: qsTr("No response yet")
                         body: qsTr("Press Send to run this endpoint's chain and the response will appear here.")
+                    }
+
+                    EmptyState {
+                        anchors.centerIn: parent
+                        visible: preRun.steps.length === 0 && !panel.runWithoutResponse && AppController.chainResolveError.length > 0
+                        iconName: "x"
+                        heading: qsTr("This chain can't be resolved")
+                        body: AppController.chainResolveError
                     }
 
                     // The last run ended without a response from the target: say how it ended

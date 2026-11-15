@@ -795,6 +795,10 @@ struct ExecutionEngine::Impl {
         return cancelled != 0 && cancelled == runId.value;
     }
 
+    [[nodiscard]] CancelCheck cancelCheck(RunId runId) const noexcept {
+        return CancelCheck{&cancelledRunId, runId.value};
+    }
+
     /// Sleep for `delay` unless the run is cancelled first; true when cancelled.
     [[nodiscard]] bool waitUnlessCancelled(RunId runId, std::chrono::milliseconds delay) {
         std::unique_lock lock(cancelMutex);
@@ -926,7 +930,9 @@ struct ExecutionEngine::Impl {
                                                    runId,
                                                    stepIndex,
                                                    captureResponseBodies,
-                                                   failureExcerptBytes};
+                                                   failureExcerptBytes,
+                                                   ExchangeKind::SessionRefresh,
+                                                   cancelCheck(runId)};
                 auto refreshed = runRefresh(actor, ctx, rctx, refreshDeps);
                 if (refreshed) {
                     ActorSession updated = *existing;
@@ -953,7 +959,9 @@ struct ExecutionEngine::Impl {
                                   runId,
                                   stepIndex,
                                   captureResponseBodies,
-                                  failureExcerptBytes};
+                                  failureExcerptBytes,
+                                  ExchangeKind::SignIn,
+                                  cancelCheck(runId)};
         auto authenticator = selectAuthenticator(actor, std::move(authDeps));
         if (!authenticator) {
             return ReqloomError{ErrorCode::SessionRefreshFailed,
@@ -1055,6 +1063,9 @@ struct ExecutionEngine::Impl {
 
         if (pollActor != nullptr) {
             if (auto authError = ensureSession(*pollActor, ctx, rctx, runId, stepIndex)) {
+                if (isCancelled(runId)) {
+                    authError->code = ErrorCode::Cancelled;
+                }
                 authError->detail = "poll_until: " + authError->detail;
                 return std::unexpected(std::move(*authError));
             }
@@ -1071,6 +1082,9 @@ struct ExecutionEngine::Impl {
         if (effAuth && effAuth->type == InlineAuthType::OAuth2) {
             HttpRequest scratch;
             if (auto oauth2Err = applyInlineOAuth2(scratch, effAuth, ctx, rctx, runId, stepIndex)) {
+                if (isCancelled(runId)) {
+                    oauth2Err->code = ErrorCode::Cancelled;
+                }
                 return std::unexpected(*oauth2Err);
             }
             inlineOAuth2Headers = std::move(scratch.headers);
@@ -1185,8 +1199,10 @@ struct ExecutionEngine::Impl {
                                  req.url,
                                  headersToVector(maskHeaders(req.headers)),
                                  requestBodySize(req),
-                                 std::chrono::system_clock::now()});
+                                 std::chrono::system_clock::now(),
+                                 ExchangeKind::PollAttempt});
 
+            req.cancel = cancelCheck(runId);
             auto resp = deps.http->send(req);
             if (!resp) {
                 return std::unexpected(resp.error());
@@ -1200,7 +1216,8 @@ struct ExecutionEngine::Impl {
                                   lastResponse.body.size(),
                                   lastResponse.elapsed,
                                   std::chrono::system_clock::now(),
-                                  capturedBody(lastResponse.body)});
+                                  capturedBody(lastResponse.body),
+                                  ExchangeKind::PollAttempt});
 
             // Absorb Set-Cookie from this poll so a follow-up op doesn't send a stale cookie.
             if (pollActor != nullptr) {
@@ -1561,7 +1578,9 @@ struct ExecutionEngine::Impl {
                                   runId,
                                   stepIndex,
                                   captureResponseBodies,
-                                  failureExcerptBytes};
+                                  failureExcerptBytes,
+                                  ExchangeKind::InlineAuthToken,
+                                  cancelCheck(runId)};
         auto authenticator = selectAuthenticator(actor, std::move(authDeps));
         if (!authenticator) {
             return ReqloomError{ErrorCode::SessionRefreshFailed,
@@ -1687,8 +1706,10 @@ struct ExecutionEngine::Impl {
 
         const std::optional<InlineAuth> effAuth = effectiveInlineAuth(op, project);
         const auto failPreparation = [&](const ErrorCode code, std::string detail) {
-            result.status = StepResult::Status::Failed;
-            result.error = code;
+            // A cancel stops a sign-in or token request in flight, which then fails preparation.
+            const bool cancelled = isCancelled(runId);
+            result.status = cancelled ? StepResult::Status::Cancelled : StepResult::Status::Failed;
+            result.error = cancelled ? ErrorCode::Cancelled : code;
             result.detail = std::move(detail);
             const auto elapsed = std::chrono::steady_clock::now() - startTime;
             result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
@@ -1995,8 +2016,10 @@ struct ExecutionEngine::Impl {
                                  req.url,
                                  headersToVector(maskHeaders(req.headers)),
                                  requestBodySize(req),
-                                 std::chrono::system_clock::now()});
+                                 std::chrono::system_clock::now(),
+                                 ExchangeKind::Operation});
 
+            req.cancel = cancelCheck(runId);
             auto resp = deps.http->send(req);
             if (resp) {
                 httpResp = std::move(*resp);
@@ -2007,7 +2030,8 @@ struct ExecutionEngine::Impl {
                                       httpResp->body.size(),
                                       httpResp->elapsed,
                                       std::chrono::system_clock::now(),
-                                      capturedBody(httpResp->body)});
+                                      capturedBody(httpResp->body),
+                                      ExchangeKind::Operation});
                 // Absorb Set-Cookie at receive time so a post_response hook sees the current jar.
                 if (!op.actor.value.empty()) {
                     cookies::absorbSetCookies(httpResp->headers, op.actor, ctx, req.url);
@@ -2023,6 +2047,12 @@ struct ExecutionEngine::Impl {
                 continue;
             }
             lastError = resp.error();
+            if (lastError.code == ErrorCode::Cancelled) {
+                result.status = StepResult::Status::Cancelled;
+                result.error = ErrorCode::Cancelled;
+                result.attempts = attemptCount;
+                return result;
+            }
             // POST/PATCH without `retry.non_idempotent` are re-sent only when the request provably
             // never reached the server.
             const bool safeToResend =
@@ -2108,8 +2138,10 @@ struct ExecutionEngine::Impl {
                                          req.url,
                                          headersToVector(maskHeaders(req.headers)),
                                          requestBodySize(req),
-                                         std::chrono::system_clock::now()});
+                                         std::chrono::system_clock::now(),
+                                         ExchangeKind::Operation});
 
+                    req.cancel = cancelCheck(runId);
                     auto retryResp = deps.http->send(req);
                     ++attemptCount;
                     result.attempts = attemptCount;
@@ -2122,11 +2154,14 @@ struct ExecutionEngine::Impl {
                                               httpResp->body.size(),
                                               httpResp->elapsed,
                                               std::chrono::system_clock::now(),
-                                              capturedBody(httpResp->body)});
+                                              capturedBody(httpResp->body),
+                                              ExchangeKind::Operation});
                         cookies::absorbSetCookies(httpResp->headers, op.actor, ctx, req.url);
                     } else {
                         // Surface the retry's network error rather than the original 401.
-                        result.status = StepResult::Status::Failed;
+                        result.status = retryResp.error().code == ErrorCode::Cancelled
+                                            ? StepResult::Status::Cancelled
+                                            : StepResult::Status::Failed;
                         result.error = retryResp.error().code;
                         result.detail = retryResp.error().detail;
                         auto elapsed = std::chrono::steady_clock::now() - startTime;
@@ -2441,14 +2476,21 @@ struct ExecutionEngine::Impl {
                 const auto parsed = substituted ? assertionEval.parse(*substituted)
                                                 : std::expected<ParsedPredicate, ReqloomError>{
                                                       std::unexpect, ReqloomError{}};
-                ar.passed =
-                    parsed && assertionEval.evaluate(*parsed, parsedBody, httpResp->status) ==
-                                  PredicateValue::True;
+                if (parsed) {
+                    auto explained = assertionEval.explain(
+                        *parsed, parsedBody, httpResp->status, &ctx.secretRegistry());
+                    ar.passed = explained.value == PredicateValue::True;
+                    ar.detail = std::move(explained.detail);
+                } else if (!substituted && firstUnresolved) {
+                    ar.detail =
+                        unresolvedVariableDetail(firstUnresolved->first, firstUnresolved->second);
+                } else if (substituted) {
+                    ar.detail = parsed.error().detail;
+                }
                 if (!ar.passed && !firstFail) {
                     firstFail = ar.name;
                     if (!substituted && firstUnresolved) {
-                        firstFailUnresolved = unresolvedVariableDetail(firstUnresolved->first,
-                                                                       firstUnresolved->second);
+                        firstFailUnresolved = ar.detail;
                     } else if (!parsed) {
                         firstFailParseError = parsed.error().detail;
                     }
@@ -2459,7 +2501,8 @@ struct ExecutionEngine::Impl {
                                         ar.name,
                                         ar.expr,
                                         ar.passed,
-                                        std::chrono::system_clock::now()});
+                                        std::chrono::system_clock::now(),
+                                        ar.detail});
                 result.assertions.push_back(std::move(ar));
             }
             if (firstFail && !firstFailUnresolved.empty()) {

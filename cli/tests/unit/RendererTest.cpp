@@ -626,3 +626,60 @@ TEST(JsonRenderer, error_document_keeps_the_run_shape) {
     EXPECT_EQ(error.value(QStringLiteral("detail")).toString(),
               QStringLiteral("no keychain backend"));
 }
+
+namespace {
+
+ce::RunResult buildExplainedAssertionRun() {
+    auto run = buildAssertionRun(ce::ErrorCode::AssertionFailed);
+    run.steps[0].assertions[1].detail = "$.id was null, expected != null";
+    return run;
+}
+
+}  // namespace
+
+TEST(JUnitRenderer, an_assertion_failure_body_says_why_then_gives_the_expression) {
+    std::ostringstream out;
+    cli::JUnitRenderer{out}.render(
+        ce::OperationId{"user.get"}, "local", buildExplainedAssertionRun());
+
+    const auto elements = xmlElements(out.str());
+    const auto& failure = firstNamed(elements, "failure");
+    EXPECT_EQ(failure.attributes.at("message"), "has id");
+    EXPECT_EQ(failure.text, "$.id was null, expected != null\n$.id != null") << out.str();
+}
+
+TEST(JsonRenderer, each_assertion_carries_its_detail) {
+    std::ostringstream out;
+    cli::JsonRenderer{out}.render(
+        ce::OperationId{"user.get"}, "local", buildExplainedAssertionRun());
+    const auto doc = QJsonDocument::fromJson(QByteArray::fromStdString(out.str())).object();
+    const auto assertions = doc.value(QStringLiteral("steps"))
+                                .toArray()
+                                .at(0)
+                                .toObject()
+                                .value(QStringLiteral("assertions"))
+                                .toArray();
+    ASSERT_EQ(assertions.size(), 3);
+    EXPECT_EQ(assertions.at(0).toObject().value(QStringLiteral("detail")).toString(), QString{});
+    EXPECT_EQ(assertions.at(1).toObject().value(QStringLiteral("detail")).toString(),
+              QStringLiteral("$.id was null, expected != null"));
+    EXPECT_EQ(assertions.at(1).toObject().value(QStringLiteral("expr")).toString(),
+              QStringLiteral("$.id != null"));
+}
+
+TEST(TextRenderer, a_failed_assertion_is_followed_by_why) {
+    std::ostringstream summary;
+    std::ostringstream progress;
+    std::ostringstream err;
+    cli::TextRenderer renderer{summary, progress, err, /*quiet=*/true};
+    renderer.render(ce::OperationId{"user.get"}, "local", buildExplainedAssertionRun());
+
+    const auto out = summary.str();
+    const auto assertLine = out.find("assert: has id");
+    ASSERT_NE(assertLine, std::string::npos) << out;
+    const auto why = out.find("$.id was null, expected != null", assertLine);
+    ASSERT_NE(why, std::string::npos) << out;
+    EXPECT_EQ(out.find('\n', assertLine), out.rfind('\n', why))
+        << "detail must be on the next line\n"
+        << out;
+}

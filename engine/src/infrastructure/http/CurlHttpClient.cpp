@@ -58,6 +58,15 @@ struct CurlEasyDeleter {
 };
 using CurlEasyHandle = std::unique_ptr<CURL, CurlEasyDeleter>;
 
+// libcurl calls this about once a second even while waiting; non-zero aborts the transfer.
+int cancelProgressCallback(void* clientp,
+                           curl_off_t /*dltotal*/,
+                           curl_off_t /*dlnow*/,
+                           curl_off_t /*ultotal*/,
+                           curl_off_t /*ulnow*/) noexcept {
+    return static_cast<const CancelCheck*>(clientp)->requested() ? 1 : 0;
+}
+
 struct CurlSlistDeleter {
     void operator()(curl_slist* p) const noexcept {
         if (p != nullptr) {
@@ -263,6 +272,11 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
         toCurlLongClamped(static_cast<std::int64_t>(request.transport.connectTimeout.count())));
 
     curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
+    if (request.cancel.cancelledRunId != nullptr) {
+        curl_easy_setopt(curl.get(), CURLOPT_XFERINFOFUNCTION, cancelProgressCallback);
+        curl_easy_setopt(curl.get(), CURLOPT_XFERINFODATA, &request.cancel);
+        curl_easy_setopt(curl.get(), CURLOPT_NOPROGRESS, 0L);
+    }
     curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, request.transport.tlsVerify ? 1L : 0L);
     curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, request.transport.tlsVerifyHost ? 2L : 0L);
     if (request.transport.caBundlePath) {
@@ -394,6 +408,10 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     CURLcode const res = curl_easy_perform(curl.get());
     auto elapsed = std::chrono::steady_clock::now() - startTime;
 
+    if (res == CURLE_ABORTED_BY_CALLBACK && request.cancel.requested()) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::Cancelled, ErrorClass::Run, "request cancelled in flight"});
+    }
     if (res != CURLE_OK) {
         long redirects = 0;
         long requestBytes = 0;

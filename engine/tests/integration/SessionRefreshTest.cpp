@@ -141,6 +141,31 @@ TEST_F(SessionRefreshFixture, ttl_expiry_uses_refresh_block_instead_of_full_re_a
     EXPECT_EQ(meCap["headers"]["authorization"].get<std::string>(), "Bearer tok-refreshed");
 }
 
+TEST_F(SessionRefreshFixture, a_refresh_exchange_is_named_a_session_refresh) {
+    auto project = loadProject(harness_->baseUrl());
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto first = engine.run(project, ce::OperationId{"me.get_first"}, ctx);
+    ASSERT_TRUE(first.has_value() && first->succeeded());
+
+    std::vector<ce::ExchangeKind> requests;
+    std::vector<ce::ExchangeKind> responses;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&ev)) {
+            requests.push_back(prepared->exchange);
+        } else if (const auto* received = std::get_if<ce::ResponseReceived>(&ev)) {
+            responses.push_back(received->exchange);
+        }
+    });
+    auto second = engine.run(project, ce::OperationId{"me.get_after_expiry"}, ctx);
+    ASSERT_TRUE(second.has_value() && second->succeeded());
+
+    const std::vector<ce::ExchangeKind> expected{ce::ExchangeKind::SessionRefresh,
+                                                 ce::ExchangeKind::Operation};
+    EXPECT_EQ(requests, expected);
+    EXPECT_EQ(responses, expected);
+}
+
 TEST_F(SessionRefreshFixture, http_401_triggers_one_shot_reauth_and_retry) {
     auto project = loadProject(harness_->baseUrl());
     ce::ExecutionEngine engine(ce::makeDefaultDependencies());

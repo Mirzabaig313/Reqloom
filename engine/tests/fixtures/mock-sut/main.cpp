@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -38,6 +39,7 @@
 #include <print>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -62,6 +64,9 @@ struct Route {
         std::vector<std::pair<std::string, std::string>> headers;
     };
     std::vector<Step> sequence;
+
+    /// Milliseconds the handler waits before answering, for tests that need a request in flight.
+    int delayMs{0};
 };
 
 /// Snapshot of the most recent request received on a captured route.
@@ -106,6 +111,7 @@ struct CaptureStore {
         route.method = r.value("method", "GET");
         route.path = r.value("path", "/");
         route.status = r.value("status", 200);
+        route.delayMs = r.value("delayMs", 0);
         if (r.contains("body")) {
             route.body = r["body"].is_string() ? r["body"].get<std::string>() : r["body"].dump();
         }
@@ -166,6 +172,9 @@ void registerRoute(httplib::Server& server, const Route& route, CaptureStore& ca
 
     auto handler = [route, callCount, &captures](const httplib::Request& req,
                                                  httplib::Response& res) {
+        if (route.delayMs > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{route.delayMs});
+        }
         // Capture every request so the integration tests can assert on
         // Content-Type, raw body, and multipart structure. The store is
         // keyed by path so a test can inspect the request to a specific

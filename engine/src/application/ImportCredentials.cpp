@@ -1,4 +1,6 @@
 // ImportCredentials — detect credentials in an imported project and move them into secrets.
+#include "../domain/DependencyResolver.h"
+
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/ImportCredentials.h>
 #include <reqloom/engine/ProjectIdentity.h>
@@ -9,6 +11,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <expected>
+#include <filesystem>
 #include <format>
 #include <map>
 #include <optional>
@@ -16,6 +20,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -299,6 +304,32 @@ void keepAll(CredentialMoveReport& report,
     }
 }
 
+/// The checks the writer makes before touching the disk, so a writer failure after them is an I/O
+/// failure.
+[[nodiscard]] std::expected<void, ReqloomError> checkWritable(const Project& project) {
+    if (!project.id.empty()) {
+        if (auto ok = validateProjectId(project.id); !ok) {
+            return ok;
+        }
+    }
+    for (const auto& id : project.actors | std::views::keys) {
+        if (auto ok = checkEntityFileStem("actor id", id.value); !ok) {
+            return ok;
+        }
+    }
+    for (const auto& id : project.resources | std::views::keys) {
+        if (auto ok = checkEntityFileStem("resource id", id.value); !ok) {
+            return ok;
+        }
+    }
+    for (const auto& name : project.environments | std::views::keys) {
+        if (auto ok = checkEntityFileStem("environment name", name); !ok) {
+            return ok;
+        }
+    }
+    return {};
+}
+
 /// The secret name in a `<project id>/<name>` store key.
 [[nodiscard]] std::string nameOfKey(const std::string& key) {
     const auto slash = key.find('/');
@@ -402,13 +433,19 @@ std::expected<ImportWriteResult, ReqloomError> writeImportedProject(
     const ImportWriteOptions& options) {
     std::error_code ec;
     if (!options.overwrite && fs::exists(targetDir / "reqloom.yaml", ec)) {
-        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+        return std::unexpected(ReqloomError{ErrorCode::ProjectExists,
                                             ErrorClass::Schema,
                                             "writer: reqloom.yaml exists in " + targetDir.string() +
                                                 " (pass overwrite=true to replace)"});
     }
     // The folder check resolves the folder on disk, so it must exist before the check binds it.
     fs::create_directories(targetDir, ec);
+    if (ec) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::WriteFailed,
+                         ErrorClass::Schema,
+                         "writer: cannot create " + targetDir.string() + ": " + ec.message()});
+    }
 
     ImportWriteResult result;
     if (options.moveCredentials) {
@@ -417,7 +454,15 @@ std::expected<ImportWriteResult, ReqloomError> writeImportedProject(
         keepAll(result.credentials, credentials, "moving credentials into secrets was turned off");
     }
 
-    auto written = writeProject(targetDir, project, options.overwrite, /*pruneStale=*/false);
+    std::expected<fs::path, ReqloomError> written = std::unexpected(ReqloomError{});
+    if (auto writable = checkWritable(project); !writable) {
+        written = std::unexpected(writable.error());
+    } else {
+        written = writeProject(targetDir, project, options.overwrite, /*pruneStale=*/false);
+        if (!written) {
+            written.error().code = ErrorCode::WriteFailed;
+        }
+    }
     if (!written) {
         auto error = written.error();
         const auto& stored = result.credentials.newlyStoredKeys;

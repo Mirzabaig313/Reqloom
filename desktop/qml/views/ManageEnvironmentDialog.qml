@@ -317,14 +317,26 @@ Dialog {
             anchors.margins: DesignTokens.spaceLg
             spacing: DesignTokens.spaceSm
 
-            GlassButton {
-                text: qsTr("Delete")
-                destructive: true
-                // Stay on the first line when the actions opposite it wrap.
+            // Wrapped so hovering the disabled button can still explain why.
+            Item {
                 Layout.alignment: Qt.AlignTop
-                // The project keeps at least one environment to run against.
-                enabled: dialog.editingOriginal.length > 0 && AppController.environments.length > 1
-                onClicked: envConfirmDelete.open()
+                implicitWidth: envDeleteButton.implicitWidth
+                implicitHeight: envDeleteButton.implicitHeight
+                GlassButton {
+                    id: envDeleteButton
+                    anchors.fill: parent
+                    text: qsTr("Delete")
+                    destructive: true
+                    enabled: dialog.editingOriginal.length > 0 && AppController.environments.length > 1
+                    onClicked: envConfirmDelete.open()
+                }
+                HoverHandler {
+                    id: envDeleteHover
+                }
+                GlassToolTip {
+                    active: envDeleteHover.hovered && dialog.editingOriginal.length > 0 && AppController.environments.length <= 1
+                    text: qsTr("A project needs at least one environment.")
+                }
             }
             // Right-to-left Flow so the three save/cancel actions wrap onto
             // further lines instead of clipping when the footer is narrow,

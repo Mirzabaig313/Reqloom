@@ -13,12 +13,12 @@ namespace reqloom::desktop::tests {
 namespace {
 
 /// Add an operation to `project`, creating its resource on first use. `id` is
-/// "<resource>.<name>".
+/// "<resource>.<name>", split at the first dot as the engine does.
 engine::Operation& addOperation(engine::Project& project,
                                 const std::string& id,
                                 engine::HttpMethod method,
                                 const std::string& pathTemplate) {
-    const std::size_t dot = id.rfind('.');
+    const std::size_t dot = id.find('.');
     const engine::ResourceId resourceId{id.substr(0, dot)};
     engine::Resource& resource = project.resources[resourceId];
     resource.id = resourceId;
@@ -142,6 +142,31 @@ TEST(ExecutionPreview, qualifies_produced_names_so_they_match_how_templates_refe
     ASSERT_EQ(steps[0].produces.size(), 1u);
     // Stored as "order_id"; must display as "orders.order_id".
     EXPECT_EQ(steps[0].produces[0].variable, QStringLiteral("orders.order_id"));
+}
+
+TEST(ExecutionPreview, splits_a_dotted_operation_name_at_the_first_dot_like_the_engine) {
+    engine::Project project;
+    engine::Operation& list =
+        addOperation(project, "users.v2.list", engine::HttpMethod::Get, "/v2/users");
+    list.actor = engine::ActorId{"admin"};
+    list.extractions.push_back(engine::Extraction{.variableName = "id", .sourcePath = "$.id"});
+    engine::ResolvedPlan plan;
+    plan.order = {engine::OperationId{"users.v2.list"}};
+    plan.edges.push_back(engine::DependencyEdge{.consumer = engine::OperationId{"orders.create"},
+                                                .producer = engine::OperationId{"users.v2.list"},
+                                                .implicit = true,
+                                                .variable = "users.id"});
+
+    const auto steps = buildExecutionPreview(plan, project);
+
+    ASSERT_EQ(steps.size(), 1u);
+    EXPECT_EQ(steps[0].method, QStringLiteral("GET"));
+    EXPECT_EQ(steps[0].pathTemplate, QStringLiteral("/v2/users"));
+    EXPECT_EQ(steps[0].actor, QStringLiteral("admin"));
+    ASSERT_EQ(steps[0].produces.size(), 1u);
+    EXPECT_EQ(steps[0].produces[0].variable, QStringLiteral("users.id"));
+    EXPECT_EQ(consumersOfVariable(plan, QStringLiteral("users.v2.list"), QStringLiteral("id")),
+              QStringList{QStringLiteral("orders.create")});
 }
 
 TEST(ExecutionPreview, names_the_steps_that_consume_a_produced_variable) {

@@ -53,6 +53,49 @@ struct StepSkipped {
     TimePoint at;
 };
 
+/// What a request / response pair was for. Auth exchanges carry the step index of the operation
+/// that needed the session, so only `Operation` and `PollAttempt` are that operation's own.
+enum class ExchangeKind : std::uint8_t {
+    Operation,        ///< The operation's own request (each retry included).
+    SignIn,           ///< One request of an actor's sign-in flow (login steps, token endpoint).
+    SessionRefresh,   ///< An actor's `session.refresh:` request.
+    InlineAuthToken,  ///< The token request of an operation's inline OAuth2 auth.
+    PollAttempt,      ///< One `poll_until` status request.
+};
+
+/// Stable name of `kind`, used in run history and by the UIs: "operation", "sign_in",
+/// "session_refresh", "inline_auth_token", "poll_attempt".
+[[nodiscard]] constexpr std::string_view exchangeKindName(ExchangeKind kind) noexcept {
+    switch (kind) {
+        case ExchangeKind::Operation:
+            return "operation";
+        case ExchangeKind::SignIn:
+            return "sign_in";
+        case ExchangeKind::SessionRefresh:
+            return "session_refresh";
+        case ExchangeKind::InlineAuthToken:
+            return "inline_auth_token";
+        case ExchangeKind::PollAttempt:
+            return "poll_attempt";
+    }
+    return "operation";
+}
+
+/// Inverse of `exchangeKindName`; nullopt for a name this build does not know.
+[[nodiscard]] constexpr std::optional<ExchangeKind> exchangeKindFromName(
+    std::string_view name) noexcept {
+    for (const auto kind : {ExchangeKind::Operation,
+                            ExchangeKind::SignIn,
+                            ExchangeKind::SessionRefresh,
+                            ExchangeKind::InlineAuthToken,
+                            ExchangeKind::PollAttempt}) {
+        if (exchangeKindName(kind) == name) {
+            return kind;
+        }
+    }
+    return std::nullopt;
+}
+
 struct RequestPrepared {
     RunId runId;
     std::size_t stepIndex{};
@@ -61,6 +104,7 @@ struct RequestPrepared {
     std::vector<std::pair<std::string, std::string>> maskedHeaders;
     std::size_t bodySize{};
     TimePoint at;
+    ExchangeKind exchange{ExchangeKind::Operation};
 };
 
 struct ResponseReceived {
@@ -77,6 +121,8 @@ struct ResponseReceived {
     /// run history as it was, tokens included. Agent-facing surfaces (CLI, AI tools) must
     /// print only `maskCapturedBody(*body, ctx)`. Capped at 5 MiB.
     std::optional<std::string> body{};
+
+    ExchangeKind exchange{ExchangeKind::Operation};
 };
 
 struct ExtractionApplied {
@@ -181,6 +227,9 @@ struct AssertionCompleted {
     std::string expr;
     bool passed{false};
     TimePoint at;
+
+    /// Why it failed (see `AssertionResult::detail`); empty when it passed.
+    std::string detail{};
 };
 
 struct StepCancelled {

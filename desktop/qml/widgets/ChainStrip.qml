@@ -23,10 +23,11 @@ Rectangle {
     property var steps: []
 
     readonly property bool hasChain: root.steps.length > 1
+    readonly property string resolveError: AppController.chainResolveError
 
-    // A one-step (or unresolvable) chain shows nothing at all.
-    visible: AppController.hasOperation && root.hasChain
-    implicitHeight: visible ? Math.max(32, Math.round(stripMetrics.height + DesignTokens.spaceSm * 2)) : 0
+    // A one-step chain shows nothing; an unresolvable one shows why instead of its steps.
+    visible: AppController.hasOperation && (root.hasChain || root.resolveError.length > 0)
+    implicitHeight: visible ? Math.max(32, Math.round((root.resolveError.length > 0 ? resolveErrorText.implicitHeight : stripMetrics.height) + DesignTokens.spaceSm * 2)) : 0
     color: DesignTokens.surfaceSunken
 
     function refresh() {
@@ -74,8 +75,27 @@ Rectangle {
 
         // Horizontal scroll rather than eliding: a long chain stays readable and
         // the strip's height never changes.
+        TextEdit {
+            id: resolveErrorText
+            visible: root.resolveError.length > 0
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
+            text: "\u2715 " + root.resolveError
+            readOnly: true
+            selectByMouse: true
+            textFormat: TextEdit.PlainText
+            wrapMode: TextEdit.Wrap
+            color: DesignTokens.statusError
+            selectionColor: DesignTokens.accentMuted
+            selectedTextColor: DesignTokens.textPrimary
+            font.pointSize: DesignTokens.fontLabelPointSize
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: qsTr("Chain can't be resolved: %1").arg(root.resolveError)
+        }
+
         ListView {
             id: stepsView
+            visible: root.resolveError.length === 0
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: ListView.Horizontal
@@ -177,6 +197,7 @@ Rectangle {
         // to run the chain from scratch belongs beside the chain itself.
         Button {
             id: cleanRunButton
+            visible: root.resolveError.length === 0
             Layout.alignment: Qt.AlignVCenter
             enabled: !AppController.running
             implicitHeight: Math.round(stripMetrics.height + 6)

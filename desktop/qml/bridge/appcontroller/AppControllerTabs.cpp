@@ -11,6 +11,7 @@
 #include <QtCore/QString>
 
 #include <algorithm>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
@@ -338,11 +339,9 @@ void AppController::captureActiveTab() {
             tab.title = trimmedName.isEmpty() ? tr("New endpoint") : trimmedName;
             tab.method = editMethod_;
             tab.subtitle = editPath_;
-            tab.dirty = true;
         } else {
             tab.method = opMethod_;
             tab.subtitle = opPath_;
-            tab.dirty = editing_;  // v1: "in edit mode" is the unsaved proxy
         }
         // Snapshot the chain editor so unsaved per-step wiring survives a switch (only once
         // seeded).
@@ -356,23 +355,10 @@ void AppController::captureActiveTab() {
         captureActorInto(tab);
         tab.title = selectedActorName_.isEmpty() ? tr("New actor") : selectedActorName_;
         tab.subtitle = selectedActorStrategy_;
-        tab.dirty = selectedActorId_.isEmpty();  // never-saved draft
     }
+    tab.dirty = hasUnsavedEdits(tab);
     tab.timeline = timeline_.takeSnapshot();
     tabs_.refreshRow(activeTabIndex_);
-}
-
-void AppController::updateActiveTabDirty() {
-    if (!tabs_.valid(activeTabIndex_)) {
-        return;
-    }
-    TabState& tab = tabs_.stateAt(activeTabIndex_);
-    const bool dirty = (tab.kind == TabState::Kind::Operation) ? (tab.operationDraft || editing_)
-                                                               : tab.id.isEmpty();
-    if (tab.dirty != dirty) {
-        tab.dirty = dirty;
-        tabs_.refreshRow(activeTabIndex_);
-    }
 }
 
 void AppController::restoreActiveTab() {
@@ -413,10 +399,14 @@ void AppController::restoreActiveTab() {
             hasOperation_ = true;
         } else {
             clearNewOperationDraftIdentity();
-            // Read fields come from the project; the edit/response snapshot is overlaid. A deleted
-            // or renamed op cannot stay the active tab.
+            // Read fields come from the project; the edit/response snapshot is overlaid. A tab
+            // whose op is gone closes, or keeps its unsaved edits as an endpoint draft.
             if (!loadOperationReadState(tab.module, tab.opName)) {
-                closeTabImmediately(activeTabIndex_);
+                if (tab.dirty) {
+                    detachTab(activeTabIndex_);
+                } else {
+                    closeTabImmediately(activeTabIndex_);
+                }
                 return;
             }
         }
@@ -614,18 +604,13 @@ void AppController::closeTab(int index) {
     if (!tabs_.valid(index)) {
         return;
     }
-    if (tabs_.stateAt(index).operationDraft) {
-        pendingDraftClose_ = PendingDraftClose::SingleTab;
-        pendingDraftCloseKeepTab_.reset();
-        emit newOperationDiscardRequested();
-        return;
-    }
-    closeTabImmediately(index);
-}
-
-void AppController::requestDiscardNewOperation() {
-    if (const int draftIndex = operationDraftIndex(); draftIndex >= 0) {
-        closeTab(draftIndex);
+    const auto close = [this, uid = tabs_.stateAt(index).uid]() {
+        if (const int current = tabs_.indexOfUid(uid); current >= 0) {
+            closeTabImmediately(current);
+        }
+    };
+    if (!askAboutUnsaved({index}, UnsavedReason::CloseTabs, close)) {
+        close();
     }
 }
 
@@ -663,6 +648,9 @@ void AppController::closeTabImmediately(int index) {
         syncActiveKindFlags();
         persistOpenTabs();
         emit activeTabChanged();
+        if (closingDraft) {
+            emit newOperationDraftDiscarded();
+        }
         return;
     }
 
@@ -675,23 +663,29 @@ void AppController::closeTabImmediately(int index) {
     }
     persistOpenTabs();
     emit activeTabChanged();
+    if (closingDraft) {
+        emit newOperationDraftDiscarded();
+    }
 }
 
 void AppController::closeOtherTabs(int index) {
     if (!tabs_.valid(index) || tabs_.count() <= 1) {
         return;
     }
-    const int draftIndex = operationDraftIndex();
-    if (draftIndex >= 0 && draftIndex != index) {
-        if (index == activeTabIndex_) {
-            captureActiveTab();
+    std::vector<int> closing;
+    for (int i = 0; i < tabs_.count(); ++i) {
+        if (i != index) {
+            closing.push_back(i);
         }
-        pendingDraftClose_ = PendingDraftClose::CloseOtherTabs;
-        pendingDraftCloseKeepTab_ = tabs_.stateAt(index);
-        emit newOperationDiscardRequested();
-        return;
     }
-    closeOtherTabsImmediately(index);
+    const auto close = [this, keep = tabs_.stateAt(index).uid]() {
+        if (const int current = tabs_.indexOfUid(keep); current >= 0) {
+            closeOtherTabsImmediately(current);
+        }
+    };
+    if (!askAboutUnsaved(closing, UnsavedReason::CloseTabs, close)) {
+        close();
+    }
 }
 
 void AppController::closeOtherTabsImmediately(int index) {
@@ -701,42 +695,24 @@ void AppController::closeOtherTabsImmediately(int index) {
     activateTab(index);  // make it active + live shows it
     captureActiveTab();  // ensure its buffer is current
     TabState keep = tabs_.stateAt(activeTabIndex_);
+    const bool closingDraft = std::ranges::any_of(
+        std::views::iota(0, tabs_.count()),
+        [this](int i) { return i != activeTabIndex_ && tabs_.stateAt(i).operationDraft; });
     tabs_.clearAll();
     activeTabIndex_ = tabs_.append(std::move(keep));
     cancelRunIfItsTabClosed();
     persistOpenTabs();
     emit activeTabChanged();
-}
-
-void AppController::confirmDiscardNewOperation() {
-    const PendingDraftClose action = pendingDraftClose_;
-    std::optional<TabState> keepTab = std::move(pendingDraftCloseKeepTab_);
-    keepEditingNewOperation();
-
-    if (action == PendingDraftClose::SingleTab) {
-        if (const int draftIndex = operationDraftIndex(); draftIndex >= 0) {
-            closeTabImmediately(draftIndex);
-            emit newOperationDraftDiscarded();
-        }
-        return;
-    }
-    if (action == PendingDraftClose::CloseOtherTabs && keepTab && operationDraftIndex() >= 0) {
-        tabs_.clearAll();
-        activeTabIndex_ = tabs_.append(std::move(*keepTab));
-        cancelRunIfItsTabClosed();
-        restoreActiveTab();
-        persistOpenTabs();
-        emit activeTabChanged();
+    if (closingDraft) {
         emit newOperationDraftDiscarded();
     }
 }
 
-void AppController::keepEditingNewOperation() {
-    pendingDraftClose_ = PendingDraftClose::None;
-    pendingDraftCloseKeepTab_.reset();
-}
-
 int AppController::operationDraftIndex() const {
+    // The active draft first: the save path promotes the draft being edited.
+    if (tabs_.valid(activeTabIndex_) && tabs_.stateAt(activeTabIndex_).operationDraft) {
+        return activeTabIndex_;
+    }
     for (int i = 0; i < tabs_.count(); ++i) {
         if (tabs_.stateAt(i).operationDraft) {
             return i;
@@ -826,11 +802,7 @@ void AppController::restoreOpenTabs(const QString& projectRoot) {
     }
     const QString key = sanitizeRoot(projectRoot);
 
-    struct Entry {
-        int kind{0};
-        QString id;
-    };
-    std::vector<Entry> entries;
+    std::vector<SavedTab> entries;
     int activeKind = -1;
     QString activeId;
     bool activeStatePersisted = false;
@@ -841,7 +813,7 @@ void AppController::restoreOpenTabs(const QString& projectRoot) {
         entries.reserve(static_cast<std::size_t>(count));
         for (int i = 0; i < count; ++i) {
             settings.setArrayIndex(i);
-            Entry entry;
+            SavedTab entry;
             entry.kind = settings.value(QStringLiteral("kind")).toInt();
             entry.id = settings.value(QStringLiteral("id")).toString();
             if (!entry.id.isEmpty()) {
@@ -859,24 +831,37 @@ void AppController::restoreOpenTabs(const QString& projectRoot) {
         return;
     }
 
-    // A since-deleted op fails its read-state load and is dropped, like stale recents.
+    // A project that did not load keeps its saved tabs for the next successful load.
+    if (!activeProject().hasProject()) {
+        return;
+    }
+    const engine::Project& project = activeProject().project();
+    const TabRestorePlan plan = planTabRestore(entries, [&project](const SavedTab& entry) {
+        if (entry.kind == static_cast<int>(TabState::Kind::Actor)) {
+            return project.actors.contains(engine::ActorId{entry.id.toStdString()});
+        }
+        const qsizetype dot = entry.id.indexOf(QLatin1Char('.'));
+        if (entry.kind != static_cast<int>(TabState::Kind::Operation) || dot <= 0) {
+            return false;
+        }
+        const auto resource =
+            project.resources.find(engine::ResourceId{entry.id.left(dot).toStdString()});
+        return resource != project.resources.end() &&
+               resource->second.operations.contains(entry.id.mid(dot + 1).toStdString());
+    });
     restoringTabs_ = true;
-    for (const Entry& entry : entries) {
+    for (const SavedTab& entry : plan.reopen) {
         if (entry.kind == static_cast<int>(TabState::Kind::Operation)) {
             const qsizetype dot = entry.id.indexOf(QLatin1Char('.'));
-            if (dot <= 0) {
-                continue;  // malformed id
-            }
             openOperationTab(projectRoot, entry.id.left(dot), entry.id.mid(dot + 1));
         } else {
-            if (activeProject().hasProject() && activeProject().project().actors.count(
-                                                    engine::ActorId{entry.id.toStdString()}) == 0) {
-                continue;
-            }
             openActorTab(projectRoot, entry.id, /*isNewDraft=*/false);
         }
     }
     restoringTabs_ = false;
+    if (plan.dropped > 0) {
+        emit notify(droppedTabsMessage(plan.dropped), true);
+    }
     // Activate by identity (kind + id); fall back to the last opened tab if the saved one is gone.
     if (activeStatePersisted && activeKind < 0) {
         activeTabIndex_ = -1;

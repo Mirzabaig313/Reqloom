@@ -23,13 +23,17 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <variant>
 
 namespace ce = reqloom::engine;
 
@@ -273,4 +277,91 @@ TEST_F(CurlTransportFixture, dns_failure_after_a_redirect_is_not_network_dns) {
     auto res = client_.send(req);
     ASSERT_FALSE(res.has_value()) << "redirect target answered with status " << res->status;
     EXPECT_EQ(res.error().code, ce::ErrorCode::NetworkTimeout) << res.error().detail;
+}
+
+namespace {
+
+[[nodiscard]] ce::Project slowProject(const std::string& baseUrl) {
+    ce::Project p;
+    p.name = "CancelInFlight";
+    p.defaultEnvironment = "local";
+    p.environments["local"] = {{"baseUrl", baseUrl}};
+    ce::Resource slow;
+    slow.id = ce::ResourceId{"slow"};
+    ce::Operation getOp;
+    getOp.id = ce::OperationId{"slow.get"};
+    getOp.resource = slow.id;
+    getOp.method = ce::HttpMethod::Get;
+    getOp.pathTemplate = "/slow";
+    getOp.expectStatus = 200;
+    slow.operations["get"] = std::move(getOp);
+    p.resources[slow.id] = std::move(slow);
+    return p;
+}
+
+}  // namespace
+
+TEST_F(CurlTransportFixture, cancel_interrupts_a_request_in_flight_and_is_not_retried) {
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    std::thread canceller;
+    int requestsPrepared = 0;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&ev)) {
+            if (++requestsPrepared == 1) {
+                canceller = std::thread([&engine, runId = prepared->runId] {
+                    std::this_thread::sleep_for(std::chrono::milliseconds{300});
+                    engine.cancel(runId);
+                });
+            }
+        }
+    });
+
+    ce::RunContext ctx;
+    const auto t0 = std::chrono::steady_clock::now();
+    auto result = engine.run(slowProject(harness_->baseUrl()), ce::OperationId{"slow.get"}, ctx);
+    const auto elapsedMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    if (canceller.joinable()) {
+        canceller.join();
+    }
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->outcome, ce::RunOutcome::Cancelled);
+    ASSERT_EQ(result->steps.size(), 1u);
+    EXPECT_EQ(result->steps[0].status, ce::StepResult::Status::Cancelled);
+    EXPECT_EQ(result->steps[0].error, ce::ErrorCode::Cancelled);
+    EXPECT_EQ(requestsPrepared, 1);
+    EXPECT_LT(elapsedMs, 2500) << "the run waited " << elapsedMs
+                               << "ms for a response the server delays by 5000ms";
+}
+
+TEST_F(CurlTransportFixture, cancel_aborts_the_transfer_as_cancelled_not_a_network_error) {
+    std::atomic<std::uint64_t> cancelledRunId{0};
+    auto req = makeRequest(ce::HttpMethod::Get, "/slow");
+    req.timeout = std::chrono::milliseconds{10'000};
+    req.cancel = ce::CancelCheck{&cancelledRunId, 7};
+    std::thread canceller([&cancelledRunId] {
+        std::this_thread::sleep_for(std::chrono::milliseconds{300});
+        cancelledRunId.store(7, std::memory_order_release);
+    });
+
+    const auto t0 = std::chrono::steady_clock::now();
+    auto res = client_.send(req);
+    const auto elapsedMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    canceller.join();
+
+    ASSERT_FALSE(res.has_value()) << "the delayed response arrived: status " << res->status;
+    EXPECT_EQ(res.error().code, ce::ErrorCode::Cancelled) << res.error().detail;
+    EXPECT_LT(elapsedMs, 2500);
+}
+
+TEST_F(CurlTransportFixture, a_cancel_of_another_run_leaves_the_transfer_alone) {
+    std::atomic<std::uint64_t> cancelledRunId{8};
+    auto req = makeRequest(ce::HttpMethod::Get, "/resource");
+    req.cancel = ce::CancelCheck{&cancelledRunId, 7};
+    auto res = client_.send(req);
+    ASSERT_TRUE(res.has_value()) << res.error().detail;
 }

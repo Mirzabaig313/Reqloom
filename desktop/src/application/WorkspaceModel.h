@@ -2,6 +2,7 @@
 // The active project is never null: the workspace always keeps at least one.
 #pragma once
 
+#include <QtCore/QList>
 #include <QtCore/QObject>
 #include <QtCore/QString>
 
@@ -16,6 +17,20 @@ class WorkspaceModel : public QObject {
     Q_OBJECT
 
 public:
+    /// A saved project that could not be opened (folder missing, load error). It stays in the
+    /// saved workspace until the user removes it or it opens.
+    struct UnavailableProject {
+        QString path;
+        QString name;
+        QString reason;
+    };
+
+    /// A project the saved workspace lists, open or not.
+    struct SavedProject {
+        QString path;
+        QString name;
+    };
+
     explicit WorkspaceModel(QObject* parent = nullptr);
     ~WorkspaceModel() override;
 
@@ -49,6 +64,21 @@ public:
     /// `activeChanged` if the active project changes.
     void removeProject(int index);
 
+    /// Record (or update the reason of) a saved project that could not be opened.
+    void markUnavailable(const QString& path, const QString& name, const QString& reason);
+
+    /// Drop `path` from the unavailable list; returns false when it was not listed.
+    bool forgetUnavailable(const QString& path);
+
+    [[nodiscard]] bool isUnavailable(const QString& path) const;
+    [[nodiscard]] const QList<UnavailableProject>& unavailable() const noexcept {
+        return unavailable_;
+    }
+
+    /// What the saved workspace must list: every loaded project, then every unavailable one
+    /// that is not also open.
+    [[nodiscard]] QList<SavedProject> savedProjects() const;
+
 signals:
     /// Emitted when the active project changes so consumers rebind their
     /// per-project views. Not fired on a no-op `setActiveIndex`.
@@ -56,6 +86,7 @@ signals:
 
 private:
     std::vector<std::unique_ptr<ProjectModel>> projects_;
+    QList<UnavailableProject> unavailable_;
     int activeIndex_{0};
 };
 

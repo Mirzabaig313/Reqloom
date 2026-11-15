@@ -91,10 +91,8 @@ ScrollView {
         fRefreshMethod = AppController.actorRefreshMethod;
         fRefreshPath = AppController.actorRefreshPath;
         fRefreshBody = AppController.actorRefreshBody;
-        const idx = strategyCombo.find(AppController.selectedActorStrategy);
-        if (idx >= 0) {
-            strategyCombo.currentIndex = idx;
-        }
+        // Never carry the previously edited actor's strategy into this one.
+        strategyCombo.currentIndex = Math.max(0, strategyCombo.find(AppController.selectedActorStrategy));
         editing = true;
     }
 

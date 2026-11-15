@@ -301,3 +301,16 @@ TEST(CapturedBody, agent_facing_mask_refuses_a_body_that_is_not_text) {
     const std::string binary{"\x89PNG\r\n\x1a\n\x00\x00\x00", 11};
     EXPECT_FALSE(ce::maskCapturedBody(binary, ctx).has_value());
 }
+
+TEST(SecretRedaction, assertion_details_are_value_redacted_in_events_and_step_results) {
+    ce::SecretRegistry registry;
+    registry.add("sk_live_abcdef123456");
+    ce::RunEvent event = ce::AssertionCompleted{.detail = R"($.k was "sk_live_abcdef123456")"};
+    ce::redactEvent(event, registry);
+    EXPECT_EQ(std::get<ce::AssertionCompleted>(event).detail, R"($.k was "<redacted>")");
+
+    ce::StepResult step;
+    step.assertions.push_back({"n", "e", false, R"(expected == "sk_live_abcdef123456")"});
+    ce::redactStepResult(step, registry);
+    EXPECT_EQ(step.assertions[0].detail, R"(expected == "<redacted>")");
+}

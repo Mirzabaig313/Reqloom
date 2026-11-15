@@ -5,6 +5,7 @@ import QtQuick
 
 QtObject {
     readonly property color accent: "#2bb3c0"
+    readonly property color accentHover: "#3cc4d1"
     readonly property color accentMuted: "#203a3d"
     readonly property color borderStrong: "#555555"
     readonly property color borderSubtle: "#333333"
@@ -14,6 +15,13 @@ QtObject {
     readonly property color surfaceSunken: "#111111"
     readonly property color textPrimary: "#eeeeee"
     readonly property color textSecondary: "#aaaaaa"
+    readonly property color textInverse: "#000000"
+    readonly property int controlHeightLg: 32
+    readonly property real fontBodyPointSize: 13
+    readonly property real fontSubtitlePointSize: 15
+    readonly property string fontSans: "Helvetica"
+    readonly property int weightSemiBold: Font.DemiBold
+    readonly property int radiusLg: 8
     readonly property int fontBody: 13
     readonly property int fontCaption: 11
     readonly property int fontLabel: 12

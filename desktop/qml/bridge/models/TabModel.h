@@ -13,6 +13,7 @@
 #include <QtCore/QStringList>
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,8 @@ struct TabState {
     enum class Kind : std::uint8_t { Operation, Actor };
 
     Kind kind{Kind::Operation};
+    /// Stable identity for the tab's lifetime, assigned by TabModel on insert; never reused.
+    std::uint64_t uid{0};
     /// Operation tabs: fully-qualified "module.op". Actor tabs: actor id.
     /// A never-saved new-actor draft has an empty id.
     QString id;
@@ -104,6 +107,10 @@ struct TabState {
     std::vector<ChainEditorModel::OpSeed> chainSeeds;
     bool chainSnapshotValid{false};
 
+    /// The edits as they were when editing began (or after the last chain save): the tab is dirty
+    /// while its edits differ from this. Null when not editing.
+    std::shared_ptr<const TabState> editBaseline;
+
     // ── Actor state ──
     QString actorId;
     QString actorName;
@@ -135,6 +142,8 @@ struct TabState {
     // ── Run timeline snapshot (per tab) ──
     // The live TimelineModel is a single instance; each tab parks its own timeline here.
     TimelineModel::Snapshot timeline;
+    /// operationId → status token of this tab's latest run, for the chain graph.
+    QHash<QString, QString> chainStatus;
 };
 
 /// List of open tabs. Owns the TabState buffers; exposes lightweight display
@@ -174,13 +183,18 @@ public:
     /// Index of the tab matching (kind, id), or -1. A blank-id actor draft is
     /// never matched (each "New actor" opens its own tab).
     [[nodiscard]] int indexOf(TabState::Kind kind, const QString& id) const;
+    /// Index of the tab with `uid`, or -1.
+    [[nodiscard]] int indexOfUid(std::uint64_t uid) const;
+    /// Number of tabs whose `dirty` flag is set.
+    [[nodiscard]] int dirtyCount() const;
 
     /// The label QML shows for `index`: `TabState::title`, or "<module>.<title>" when another open
     /// tab has the same bare title. Derived on read so the qualification disappears once the
     /// colliding tab closes.
     [[nodiscard]] QString displayTitle(int index) const;
 
-    /// Insert `state` at `index`; returns the inserted index, or -1 when invalid.
+    /// Insert `state` at `index`, giving it a fresh uid unless it already has one (a tab re-added
+    /// after `clearAll` keeps its identity); returns the inserted index, or -1 when invalid.
     int insert(int index, TabState state);
     /// Append `state` as a new tab; returns its index.
     int append(TabState state);
@@ -200,6 +214,7 @@ private:
     void refreshTitles();
 
     std::vector<TabState> tabs_;
+    std::uint64_t nextUid_{1};
 };
 
 }  // namespace reqloom::desktop::qml

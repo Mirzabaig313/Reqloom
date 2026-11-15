@@ -26,6 +26,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <variant>
+#include <vector>
 
 namespace ce = reqloom::engine;
 namespace ct = reqloom::tests;
@@ -674,4 +676,72 @@ resources:
     ASSERT_NE(failedAttempt, nullptr) << "no attempt row carried PollFailPredicate";
     EXPECT_EQ(failedAttempt->status, ce::StepResult::Status::Failed);
     EXPECT_NE(failedAttempt->detail.find("fail_when"), std::string::npos);
+}
+
+TEST_F(PollingFixture, events_name_the_sign_in_the_operation_and_each_poll_attempt) {
+    PollingScratchProject project(R"YAML(
+version: 1
+name: PollingSample
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+actors:
+  user:
+    auth:
+      method: POST
+      path: /api/v1/auth/login
+      body: { email: "u@example.test" }
+      extract: { token: $.data.accessToken }
+    inject:
+      headers: { Authorization: "Bearer {{user.token}}" }
+
+resources:
+  payment:
+    operations:
+      pay:
+        method: POST
+        path: /api/v1/payments
+        actor: user
+        body: { method: "card" }
+        expect_status: [200, 202]
+        poll_until:
+          method: GET
+          path: /api/v1/payments/pay-42/status
+          success_when: "$.status == 'COMPLETED'"
+          fail_when:    "$.status in ['FAILED', 'CANCELLED']"
+          interval: 50ms
+          timeout: 5s
+          max_attempts: 20
+        extract:
+          payment_id: $.id
+          settled_at: $.settled_at
+)YAML");
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    std::vector<ce::ExchangeKind> requests;
+    std::vector<ce::ExchangeKind> responses;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&ev)) {
+            requests.push_back(prepared->exchange);
+        } else if (const auto* received = std::get_if<ce::ResponseReceived>(&ev)) {
+            responses.push_back(received->exchange);
+        }
+    });
+    ce::RunContext ctx;
+    auto result = engine.run(*loaded, ce::OperationId{"payment.pay"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->succeeded());
+
+    ASSERT_GE(requests.size(), 3u);
+    EXPECT_EQ(requests[0], ce::ExchangeKind::SignIn);
+    EXPECT_EQ(requests[1], ce::ExchangeKind::Operation);
+    for (std::size_t i = 2; i < requests.size(); ++i) {
+        EXPECT_EQ(requests[i], ce::ExchangeKind::PollAttempt) << "request " << i;
+    }
+    EXPECT_EQ(responses, requests);
 }

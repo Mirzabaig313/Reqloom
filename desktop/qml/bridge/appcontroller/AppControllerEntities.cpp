@@ -588,11 +588,13 @@ void AppController::replayRun(qulonglong runId) {
                                             QString::fromStdString(e.op.value),
                                             format::skipReason(e.reason));
                 } else if constexpr (std::is_same_v<T, engine::RequestPrepared>) {
-                    timeline_.onRequestPrepared(format::boundedIndex(e.stepIndex),
-                                                format::method(e.method),
-                                                QString::fromStdString(e.url),
-                                                joinHeaders(e.maskedHeaders),
-                                                static_cast<int>(e.bodySize));
+                    timeline_.onRequestPrepared(
+                        format::boundedIndex(e.stepIndex),
+                        format::method(e.method),
+                        QString::fromStdString(e.url),
+                        joinHeaders(e.maskedHeaders),
+                        static_cast<int>(e.bodySize),
+                        QString::fromLatin1(engine::exchangeKindName(e.exchange).data()));
                 } else if constexpr (std::is_same_v<T, engine::ResponseReceived>) {
                     timeline_.onResponseReceived(
                         format::boundedIndex(e.stepIndex),
@@ -600,7 +602,8 @@ void AppController::replayRun(qulonglong runId) {
                         joinHeaders(e.headers),
                         static_cast<int>(e.bodySize),
                         static_cast<qint64>(e.elapsed.count()),
-                        e.body ? QString::fromStdString(*e.body) : QString{});
+                        e.body ? QString::fromStdString(*e.body) : QString{},
+                        QString::fromLatin1(engine::exchangeKindName(e.exchange).data()));
                 } else if constexpr (std::is_same_v<T, engine::ExtractionCompleted>) {
                     timeline_.onExtractionCompleted(format::boundedIndex(e.stepIndex),
                                                     QString::fromStdString(e.op.value),
@@ -613,7 +616,8 @@ void AppController::replayRun(qulonglong runId) {
                                                    QString::fromStdString(e.op.value),
                                                    QString::fromStdString(e.name),
                                                    QString::fromStdString(e.expr),
-                                                   e.passed);
+                                                   e.passed,
+                                                   QString::fromStdString(e.detail));
                 } else if constexpr (std::is_same_v<T, engine::StepFailed>) {
                     timeline_.onStepFailed(format::boundedIndex(e.stepIndex),
                                            QString::fromStdString(e.op.value),
@@ -734,7 +738,7 @@ void AppController::createProject(const QUrl& directory, const QString& name) {
         emit notify(tr("Finish the current run before creating another project."), true);
         return;
     }
-    if (!canLeaveActiveProject()) {
+    if (!canLeaveActiveProject([this, directory, name]() { createProject(directory, name); })) {
         return;
     }
     QString error;
@@ -866,7 +870,6 @@ void AppController::saveNewOperation() {
     const int draftIndex = operationDraftIndex();
     if (draftIndex < 0) {
         clearNewOperationDraftIdentity();
-        keepEditingNewOperation();
         openOperationTab(activeProject().rootPath(), targetModule, createdName);
         emit notify(QStringLiteral("Created endpoint “%1”").arg(createdId), false);
         return;
@@ -882,8 +885,8 @@ void AppController::saveNewOperation() {
     tab.chainFieldsLoaded = false;
     tab.chainSnapshotValid = false;
     tab.dirty = false;
+    tab.editBaseline.reset();
     clearNewOperationDraftIdentity();
-    keepEditingNewOperation();
     if (draftIsActive) {
         restoreActiveTab();
     }
@@ -1011,6 +1014,8 @@ void AppController::renameExample(const QString& operationId,
         refreshExamples();
         emit notify(QStringLiteral("Renamed example to \u201C%1\u201D").arg(newName.trimmed()),
                     false);
+    } else if (const QString failure = exampleStore_.lastError(); !failure.isEmpty()) {
+        emit notify(QStringLiteral("Couldn't rename example: %1").arg(failure), true);
     } else {
         emit notify(QStringLiteral("Couldn't rename example (empty or duplicate name)"), true);
     }
@@ -1029,6 +1034,10 @@ void AppController::duplicateExample(const QString& operationId, const QString& 
 void AppController::deleteExample(const QString& operationId, const QString& exampleName) {
     exampleStore_.remove(operationId, exampleName);
     refreshExamples();
+    if (const QString failure = exampleStore_.lastError(); !failure.isEmpty()) {
+        emit notify(QStringLiteral("Couldn't delete example: %1").arg(failure), true);
+        return;
+    }
     emit notify(QStringLiteral("Deleted example \u201C%1\u201D").arg(exampleName), false);
 }
 

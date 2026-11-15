@@ -116,7 +116,8 @@ void writeStep(std::ostream& out, const ce::StepResult& step) {
     for (const auto& a : step.assertions) {
         out << (first ? "" : ",") << "\n        { \"name\": " << jsonString(a.name)
             << ", \"expr\": " << jsonString(a.expr)
-            << ", \"passed\": " << (a.passed ? "true" : "false") << " }";
+            << ", \"passed\": " << (a.passed ? "true" : "false")
+            << ", \"detail\": " << jsonString(a.detail) << " }";
         first = false;
     }
     out << (step.assertions.empty() ? "" : "\n      ") << "]\n";

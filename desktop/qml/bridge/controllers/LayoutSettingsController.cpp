@@ -3,7 +3,6 @@
 
 #include "application/LayoutSettings.h"
 
-#include <QtCore/QMetaType>
 #include <QtCore/QSettings>
 #include <QtCore/QVariant>
 #include <QtQml/QQmlEngine>
@@ -27,8 +26,7 @@ constexpr auto kSplitterGroup = "splitterSizes";
 }
 
 [[nodiscard]] bool storedBool(const QSettings& settings, const char* key) {
-    const QVariant value{settings.value(QString::fromUtf8(key))};
-    return value.metaType().id() == QMetaType::Bool && value.toBool();
+    return LayoutSettings::storedBool(settings.value(QString::fromUtf8(key))).value_or(false);
 }
 
 }  // namespace
@@ -114,8 +112,7 @@ bool LayoutSettingsController::hasCurrentSchema() const {
     if (!settings_.contains(key)) {
         return true;
     }
-    const QVariant value{settings_.value(key)};
-    return value.metaType().id() == QMetaType::Int && value.toInt() == kSchemaVersion;
+    return LayoutSettings::storedInt(settings_.value(key)) == kSchemaVersion;
 }
 
 void LayoutSettingsController::ensureCurrentSchema() {

@@ -84,4 +84,43 @@ void WorkspaceModel::removeProject(int index) {
     }
 }
 
+void WorkspaceModel::markUnavailable(const QString& path,
+                                     const QString& name,
+                                     const QString& reason) {
+    for (UnavailableProject& entry : unavailable_) {
+        if (entry.path == path) {
+            entry.reason = reason;
+            if (!name.isEmpty()) {
+                entry.name = name;
+            }
+            return;
+        }
+    }
+    unavailable_.append(UnavailableProject{.path = path, .name = name, .reason = reason});
+}
+
+bool WorkspaceModel::forgetUnavailable(const QString& path) {
+    return unavailable_.removeIf([&](const UnavailableProject& e) { return e.path == path; }) > 0;
+}
+
+bool WorkspaceModel::isUnavailable(const QString& path) const {
+    return std::ranges::any_of(unavailable_,
+                               [&](const UnavailableProject& e) { return e.path == path; });
+}
+
+QList<WorkspaceModel::SavedProject> WorkspaceModel::savedProjects() const {
+    QList<SavedProject> saved;
+    for (const auto& project : projects_) {
+        if (project->hasProject()) {
+            saved.append(SavedProject{.path = project->rootPath(), .name = project->name()});
+        }
+    }
+    for (const UnavailableProject& entry : unavailable_) {
+        if (indexOfRoot(entry.path) < 0) {
+            saved.append(SavedProject{.path = entry.path, .name = entry.name});
+        }
+    }
+    return saved;
+}
+
 }  // namespace reqloom::desktop

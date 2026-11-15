@@ -16,6 +16,8 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <variant>
+#include <vector>
 
 namespace fs = std::filesystem;
 namespace ce = reqloom::engine;
@@ -234,6 +236,37 @@ TEST_F(InlineAuthFixture, oauth2_fetches_a_token_and_injects_bearer) {
     auto cap = fetchLastRequest(harness_->baseUrl(), "/oauth2");
     ASSERT_TRUE(cap["found"].get<bool>());
     EXPECT_EQ(cap["headers"]["authorization"].get<std::string>(), "Bearer oauth2-tok");
+}
+
+TEST_F(InlineAuthFixture, an_inline_oauth2_token_exchange_is_named_as_such) {
+    auto project = makeProject(harness_->baseUrl());
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["oauth2"] =
+        makeOp("oauth2",
+               "/oauth2",
+               ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                              .oauth2TokenUrl = harness_->baseUrl() + "/token",
+                              .oauth2ClientId = "cid",
+                              .oauth2ClientSecret = "csecret"});
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    std::vector<ce::ExchangeKind> requests;
+    std::vector<ce::ExchangeKind> responses;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&ev)) {
+            requests.push_back(prepared->exchange);
+        } else if (const auto* received = std::get_if<ce::ResponseReceived>(&ev)) {
+            responses.push_back(received->exchange);
+        }
+    });
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"echo.oauth2"}, ctx);
+    ASSERT_TRUE(result.has_value() && result->succeeded());
+
+    const std::vector<ce::ExchangeKind> expected{ce::ExchangeKind::InlineAuthToken,
+                                                 ce::ExchangeKind::Operation};
+    EXPECT_EQ(requests, expected);
+    EXPECT_EQ(responses, expected);
 }
 
 TEST_F(InlineAuthFixture, inherit_uses_the_project_default_auth) {

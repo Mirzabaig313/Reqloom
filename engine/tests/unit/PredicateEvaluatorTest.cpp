@@ -3,6 +3,7 @@
 // Each test fails on the parent commit (no PredicateEvaluator existed):
 // the include itself wouldn't resolve.
 #include "application/PredicateEvaluator.h"
+#include "domain/SecretRegistry.h"
 
 #include <reqloom/engine/ErrorCodes.h>
 
@@ -439,4 +440,90 @@ TEST(RegexGuard, matches_operator_rejects_guarded_or_invalid_literal_at_parse) {
     EXPECT_NE(nested.error().detail.find("(a+)+$"), std::string::npos) << nested.error().detail;
     EXPECT_FALSE(E.parse("$.id matches '(unclosed'").has_value());
     EXPECT_TRUE(eval("$.id matches '^ord_[a-z0-9]+$'", R"({"id":"ord_42"})"));
+}
+
+// ─── Failure detail ─────────────────────────────────────────────────────────
+
+namespace {
+
+std::string why(std::string_view expr,
+                std::string_view body,
+                int status = 0,
+                const ce::SecretRegistry* registry = nullptr) {
+    auto parsed = E.parse(expr);
+    EXPECT_TRUE(parsed.has_value()) << expr;
+    if (!parsed) {
+        return "<parse error>";
+    }
+    const auto explained = E.explain(*parsed, E.parseBody(body), status, registry);
+    EXPECT_EQ(explained.value, ce::PredicateValue::False) << expr;
+    return explained.detail;
+}
+
+}  // namespace
+
+TEST(PredicateExplain, equality_names_the_value_found_and_the_value_expected) {
+    EXPECT_EQ(why(R"($.status == "paid")", R"({"status":"pending"})"),
+              R"($.status was "pending", expected == "paid")");
+}
+
+TEST(PredicateExplain, a_missing_path_is_reported_as_missing) {
+    EXPECT_EQ(why(R"($.order.id == 7)", R"({"order":{}})"),
+              "$.order.id was missing, expected == 7");
+    EXPECT_EQ(why("$.flag", "{}"), "$.flag was missing");
+}
+
+TEST(PredicateExplain, non_text_values_are_described_by_type_and_size) {
+    EXPECT_EQ(why("$.items > 0", R"({"items":[]})"),
+              "$.items was an array of 0 items, expected > 0");
+    EXPECT_EQ(why("$.meta == 1", R"({"meta":{"a":1,"b":2}})"),
+              "$.meta was an object with 2 keys, expected == 1");
+}
+
+TEST(PredicateExplain, matches_reports_the_pattern_that_did_not_match) {
+    EXPECT_EQ(why(R"($.code matches "^[0-9]+$")", R"({"code":"ab"})"),
+              R"($.code was "ab", which does not match "^[0-9]+$")");
+}
+
+TEST(PredicateExplain, in_lists_the_allowed_values) {
+    EXPECT_EQ(why("$.s in ['a', 'b']", R"({"s":"c"})"), R"($.s was "c", expected in ["a", "b"])");
+}
+
+TEST(PredicateExplain, truthiness_and_status_code) {
+    EXPECT_EQ(why("$.ok", R"({"ok":false})"), "$.ok was false, expected a truthy value");
+    EXPECT_EQ(why("$.status_code == 200", "{}", 404), "$.status_code was 404, expected == 200");
+}
+
+TEST(PredicateExplain, a_compound_predicate_reports_the_sub_expression_that_decided_it) {
+    EXPECT_EQ(why("$.a == 1 && $.b == 2 && $.c == 3", R"({"a":1,"b":5,"c":9})"),
+              "$.b was 5, expected == 2");
+    EXPECT_EQ(why("($.a == 1 || $.a == 2) && $.b == 2", R"({"a":3,"b":2})"),
+              "$.a was 3, expected == 1");
+}
+
+TEST(PredicateExplain, a_passing_predicate_has_no_detail) {
+    auto parsed = E.parse("$.a == 1");
+    ASSERT_TRUE(parsed.has_value());
+    const auto explained = E.explain(*parsed, E.parseBody(R"({"a":1})"), 0, nullptr);
+    EXPECT_EQ(explained.value, ce::PredicateValue::True);
+    EXPECT_TRUE(explained.detail.empty());
+}
+
+TEST(PredicateExplain, long_values_are_cut_on_a_utf8_boundary_and_sized) {
+    std::string longText(199, 'x');
+    longText += "\u00e9tail";
+    const auto detail = why("$.s == 'short'", R"({"s":")" + longText + R"("})");
+    EXPECT_NE(detail.find(std::string(199, 'x') + "\u2026\""), std::string::npos) << detail;
+    EXPECT_NE(detail.find("(205 bytes)"), std::string::npos) << detail;
+}
+
+TEST(PredicateExplain, registered_secrets_never_appear_even_when_cut) {
+    ce::SecretRegistry registry;
+    const std::string secret = std::string(195, 's') + "SECRET-TAIL";
+    registry.add(secret);
+    const auto detail =
+        why("$.token == '" + secret + "'", R"({"token":"wrong-token"})", 0, &registry);
+    EXPECT_EQ(detail.find("sssss"), std::string::npos) << detail;
+    EXPECT_EQ(detail.find("SECRET-TAIL"), std::string::npos) << detail;
+    EXPECT_NE(detail.find("<redacted>"), std::string::npos) << detail;
 }

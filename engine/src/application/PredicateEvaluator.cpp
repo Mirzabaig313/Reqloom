@@ -1,6 +1,9 @@
 // PredicateEvaluator — recursive-descent parser with total evaluation (returns False on failure).
 #include "PredicateEvaluator.h"
 
+#include "../domain/Codecs.h"
+#include "../domain/SecretRegistry.h"
+
 #include <reqloom/engine/Predicate.h>
 
 #include <nlohmann/json.hpp>
@@ -10,6 +13,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <map>
 #include <memory>
@@ -803,6 +807,192 @@ bool evalNode(const ParsedPredicate::Node& node, const Json& body, int statusCod
         node.kind);
 }
 
+/// Builds the failure statement for `PredicateEvaluator::explain`.
+class Explainer {
+public:
+    Explainer(const Json& body, int statusCode, const SecretRegistry* registry)
+        : body_(body), statusCode_(statusCode), registry_(registry) {}
+
+    /// Called only for a node that evaluated false.
+    [[nodiscard]] std::string why(const ParsedPredicate::Node& node) const {
+        return std::visit(
+            [&](const auto& n) -> std::string {
+                using T = std::decay_t<decltype(n)>;
+                if constexpr (std::is_same_v<T, LogicNode>) {
+                    return whyLogic(n);
+                } else if constexpr (std::is_same_v<T, CompareNode>) {
+                    return whyCompare(n);
+                } else if constexpr (std::is_same_v<T, TruthyNode>) {
+                    return whyFalsy(*n.inner);
+                } else {
+                    return whyFalsy(node);
+                }
+            },
+            node.kind);
+    }
+
+private:
+    // `&&` fails at its first false operand; a failed `||` had every operand false, so the first
+    // one stands for them.
+    [[nodiscard]] std::string whyLogic(const LogicNode& n) const {
+        for (const auto& operand : n.operands) {
+            if (n.op == LogicOp::Or || !evalNode(*operand, body_, statusCode_)) {
+                return why(*operand);
+            }
+        }
+        return {};
+    }
+
+    [[nodiscard]] std::string whyFalsy(const ParsedPredicate::Node& term) const {
+        const auto v = evalTerm(term, body_, statusCode_);
+        if (!v) {
+            return label(term) + " was missing";
+        }
+        return label(term) + " was " + value(*v) + ", expected a truthy value";
+    }
+
+    [[nodiscard]] std::string whyCompare(const CompareNode& n) const {
+        const auto lhs = evalTerm(*n.lhs, body_, statusCode_);
+        const auto rhs = evalTerm(*n.rhs, body_, statusCode_);
+        const std::string op = opText(n.op);
+        if (!rhs) {
+            return label(*n.rhs) + " was missing (right-hand side of " + op + ")";
+        }
+        const std::string expected =
+            n.op == CompareOp::In && rhs->is_array() ? list(*rhs) : shown(*n.rhs, *rhs);
+        if (!lhs) {
+            return label(*n.lhs) + " was missing, expected " + op + " " + expected;
+        }
+        if (!isPath(*n.lhs)) {
+            return shown(*n.lhs, *lhs) + " " + op + " " + expected + " is false";
+        }
+        const std::string found = label(*n.lhs) + " was " + value(*lhs);
+        if (n.op != CompareOp::Matches) {
+            return found + ", expected " + op + " " + expected;
+        }
+        if (!lhs->is_string() || !rhs->is_string()) {
+            return found + ", expected a string matching " + expected;
+        }
+        const auto search = guardedRegexSearch(lhs->get_ref<const std::string&>(),
+                                               rhs->get_ref<const std::string&>());
+        if (search.outcome == RegexSearchResult::Outcome::Refused) {
+            return found + "; the pattern " + expected + " was refused: " + redact(search.reason);
+        }
+        return found + ", which does not match " + expected;
+    }
+
+    [[nodiscard]] static bool isPath(const ParsedPredicate::Node& node) {
+        return std::holds_alternative<JsonPathNode>(node.kind);
+    }
+
+    [[nodiscard]] static std::string opText(CompareOp op) {
+        switch (op) {
+            case CompareOp::Eq:
+                return "==";
+            case CompareOp::Neq:
+                return "!=";
+            case CompareOp::Lt:
+                return "<";
+            case CompareOp::Le:
+                return "<=";
+            case CompareOp::Gt:
+                return ">";
+            case CompareOp::Ge:
+                return ">=";
+            case CompareOp::In:
+                return "in";
+            case CompareOp::Matches:
+                return "matches";
+        }
+        return "?";
+    }
+
+    /// A path as written; any other term as its value.
+    [[nodiscard]] std::string label(const ParsedPredicate::Node& node) const {
+        const auto* path = std::get_if<JsonPathNode>(&node.kind);
+        if (path == nullptr) {
+            const auto v = evalTerm(node, body_, statusCode_);
+            return v ? value(*v) : std::string{"a value"};
+        }
+        std::string text = "$";
+        for (const auto& seg : path->segments) {
+            if (seg.kind == JsonPathNode::SegKind::Index) {
+                text += "[" + std::to_string(seg.index) + "]";
+            } else if (isIdentifier(seg.field)) {
+                text += "." + seg.field;
+            } else {
+                text += "[" + quote(seg.field) + "]";
+            }
+        }
+        return cut(redact(text));
+    }
+
+    /// A path followed by its value in parentheses; any other term as its value.
+    [[nodiscard]] std::string shown(const ParsedPredicate::Node& node, const Json& v) const {
+        return isPath(node) ? label(node) + " (" + value(v) + ")" : value(v);
+    }
+
+    [[nodiscard]] std::string value(const Json& v) const {
+        if (v.is_string()) {
+            return text(v.get_ref<const std::string&>());
+        }
+        if (v.is_array()) {
+            return std::format("an array of {} item{}", v.size(), v.size() == 1 ? "" : "s");
+        }
+        if (v.is_object()) {
+            return std::format("an object with {} key{}", v.size(), v.size() == 1 ? "" : "s");
+        }
+        return cut(redact(v.dump()));
+    }
+
+    [[nodiscard]] std::string list(const Json& items) const {
+        std::string out = "[";
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            if (out.size() > kMaxExplainedValueBytes) {
+                out += std::format(", … ({} items)", items.size());
+                break;
+            }
+            out += (i == 0 ? "" : ", ") + value(items[i]);
+        }
+        return out + "]";
+    }
+
+    /// Quoted; redacted before the cut so no part of a secret survives it.
+    [[nodiscard]] std::string text(const std::string& raw) const {
+        const std::string masked = redact(raw);
+        if (masked.size() <= kMaxExplainedValueBytes) {
+            return quote(masked);
+        }
+        return quote(codecs::truncateUtf8(masked, kMaxExplainedValueBytes) + "…") +
+               std::format(" ({} bytes)", masked.size());
+    }
+
+    [[nodiscard]] static std::string cut(const std::string& s) {
+        if (s.size() <= kMaxExplainedValueBytes) {
+            return s;
+        }
+        return codecs::truncateUtf8(s, kMaxExplainedValueBytes) + "…";
+    }
+
+    [[nodiscard]] static std::string quote(const std::string& s) {
+        return Json(s).dump(-1, ' ', false, Json::error_handler_t::replace);
+    }
+
+    [[nodiscard]] static bool isIdentifier(const std::string& s) {
+        return !s.empty() && std::ranges::all_of(s, [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+        });
+    }
+
+    [[nodiscard]] std::string redact(std::string_view s) const {
+        return registry_ != nullptr ? registry_->redact(s) : std::string{s};
+    }
+
+    const Json& body_;
+    int statusCode_;
+    const SecretRegistry* registry_;
+};
+
 }  // namespace
 
 ParsedPredicate::ParsedPredicate() = default;
@@ -1104,6 +1294,23 @@ PredicateValue PredicateEvaluator::evaluate(const ParsedPredicate& predicate,
     } catch (...) {
         return PredicateValue::False;
     }
+}
+
+PredicateExplanation PredicateEvaluator::explain(const ParsedPredicate& predicate,
+                                                 const ParsedBody& body,
+                                                 int statusCode,
+                                                 const SecretRegistry* registry) const noexcept {
+    PredicateExplanation out;
+    out.value = evaluate(predicate, body, statusCode);
+    if (out.value == PredicateValue::True || !predicate.root_ || !body.impl_) {
+        return out;
+    }
+    try {
+        out.detail = Explainer{body.impl_->body, statusCode, registry}.why(*predicate.root_);
+    } catch (...) {
+        out.detail.clear();
+    }
+    return out;
 }
 
 PredicateValue PredicateEvaluator::evaluate(const ParsedPredicate& predicate,

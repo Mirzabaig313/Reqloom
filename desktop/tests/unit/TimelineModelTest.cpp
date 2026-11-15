@@ -328,4 +328,69 @@ TEST(TimelineModel, snapshot_restores_diagnostics_blocker_and_root_failure) {
         1);
 }
 
+TEST(TimelineModel, labels_auth_exchanges_and_leaves_the_step_to_the_operations_own_response) {
+    TimelineModel model;
+    model.onRunStarted(QStringLiteral("orders.create"), 1, QStringLiteral("dev"));
+    model.onStepStarted(0, QStringLiteral("orders.create"), 1);
+    model.onRequestPrepared(0,
+                            QStringLiteral("POST"),
+                            QStringLiteral("http://h/login"),
+                            QString{},
+                            2,
+                            QStringLiteral("sign_in"));
+    model.onResponseReceived(0, 200, QString{}, 10, 5, QString{}, QStringLiteral("sign_in"));
+    const int stepRow = model.rowForStep(1);
+    EXPECT_EQ(roleAt(model, stepRow, TimelineModel::StatusLabelRole), QStringLiteral("running"))
+        << "a sign-in response must not settle the operation's step";
+    model.onRequestPrepared(0,
+                            QStringLiteral("POST"),
+                            QStringLiteral("http://h/token"),
+                            QString{},
+                            2,
+                            QStringLiteral("session_refresh"));
+    model.onResponseReceived(
+        0, 200, QString{}, 10, 5, QString{}, QStringLiteral("inline_auth_token"));
+    model.onResponseReceived(0, 201, QString{}, 10, 5, QString{});
+
+    const int last = model.rowCount() - 1;
+    EXPECT_EQ(roleAt(model, last - 3, TimelineModel::TitleRole),
+              QStringLiteral("\u2190 Sign-in response"));
+    EXPECT_EQ(roleAt(model, last - 4, TimelineModel::TitleRole),
+              QStringLiteral("\u2192 Sign-in request"));
+    EXPECT_EQ(roleAt(model, last - 2, TimelineModel::TitleRole),
+              QStringLiteral("\u2192 Refresh request"));
+    EXPECT_EQ(roleAt(model, last - 1, TimelineModel::TitleRole),
+              QStringLiteral("\u2190 Token response"));
+    EXPECT_EQ(roleAt(model, last, TimelineModel::TitleRole), QStringLiteral("\u2190 Response"));
+    EXPECT_EQ(roleAt(model, last - 3, TimelineModel::ExchangeRole), QStringLiteral("sign_in"));
+    EXPECT_EQ(roleAt(model, last, TimelineModel::ExchangeRole), QStringLiteral("operation"));
+    EXPECT_EQ(roleAt(model, stepRow, TimelineModel::StatusLabelRole), QStringLiteral("HTTP 201"));
+}
+
+TEST(TimelineModel, a_failed_assertion_row_carries_why) {
+    TimelineModel model;
+    model.onRunStarted(QStringLiteral("orders.get"), 1, QStringLiteral("dev"));
+    model.onStepStarted(0, QStringLiteral("orders.get"), 1);
+    model.onAssertionCompleted(0,
+                               QStringLiteral("orders.get"),
+                               QStringLiteral("paid"),
+                               QStringLiteral("$.status == \"paid\""),
+                               false,
+                               QStringLiteral("$.status was \"pending\", expected == \"paid\""));
+    model.onAssertionCompleted(0,
+                               QStringLiteral("orders.get"),
+                               QStringLiteral("ok"),
+                               QStringLiteral("$.status_code == 200"),
+                               true);
+
+    const int failed = model.rowCount() - 2;
+    EXPECT_EQ(roleAt(model, failed, TimelineModel::AssertionDetailRole),
+              QStringLiteral("$.status was \"pending\", expected == \"paid\""));
+    EXPECT_TRUE(roleAt(model, failed, TimelineModel::ValueRole).contains("was \"pending\""));
+    EXPECT_EQ(roleAt(model, failed + 1, TimelineModel::AssertionDetailRole), QString{});
+    EXPECT_EQ(model.roleNames().value(TimelineModel::AssertionDetailRole),
+              QByteArray("assertionDetail"));
+    EXPECT_EQ(model.roleNames().value(TimelineModel::ExchangeRole), QByteArray("exchange"));
+}
+
 }  // namespace reqloom::desktop::qml::tests

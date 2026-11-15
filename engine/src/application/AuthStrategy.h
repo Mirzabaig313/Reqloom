@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "../infrastructure/http/HttpClient.h"
+
 #include <reqloom/engine/Actor.h>
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/Events.h>
@@ -17,7 +19,6 @@
 
 namespace reqloom::engine {
 
-class HttpClient;        // forward — defined in infrastructure
 class VariableResolver;  // forward — defined in domain
 struct ResolveContext;   // forward — defined in domain (VariableResolver.h)
 
@@ -38,6 +39,12 @@ struct AuthDependencies {
 
     /// Mirrors `RunOptions::failureExcerptBytes` for login / token endpoint errors.
     std::size_t failureExcerptBytes{kDefaultFailureExcerptBytes};
+
+    /// Stamped on the flow's events; `runRefresh` always reports `SessionRefresh`.
+    ExchangeKind exchange{ExchangeKind::SignIn};
+
+    /// Stamped on the flow's requests so a cancelled run stops a sign-in in flight.
+    CancelCheck cancel{};
 };
 
 class Authenticator {

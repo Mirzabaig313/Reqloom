@@ -116,9 +116,10 @@ void AppController::wireRunResponses() {
                    const QString& method,
                    const QString& url,
                    const QString& headers,
-                   int bodySize) {
+                   int bodySize,
+                   const QString& exchange) {
                 if (TimelineModel* timeline = runTimeline()) {
-                    timeline->onRequestPrepared(index, method, url, headers, bodySize);
+                    timeline->onRequestPrepared(index, method, url, headers, bodySize, exchange);
                 }
             });
     connect(runs,
@@ -129,16 +130,23 @@ void AppController::wireRunResponses() {
                    const QString& headers,
                    int bodySize,
                    qint64 elapsedMs,
-                   const QString& body) {
+                   const QString& body,
+                   const QString& exchange) {
                 if (TimelineModel* timeline = runTimeline()) {
-                    timeline->onResponseReceived(index, status, headers, bodySize, elapsedMs, body);
+                    timeline->onResponseReceived(
+                        index, status, headers, bodySize, elapsedMs, body, exchange);
+                }
+                // A sign-in, refresh or token response carries the step of the operation that
+                // needed it; it is not that operation's response.
+                if (!RunTabRouter::isOwnExchange(exchange)) {
+                    return;
                 }
                 const QString op = runRouter_.stepOperation(index);
                 if (!op.isEmpty()) {
                     chainStatus_.insert(op, httpStatusToken(status));
                     emit chainStatusChanged();
                 }
-                if (runRouter_.isTargetStep(index)) {
+                if (runRouter_.showsResponse(index, exchange)) {
                     applyTargetResponse(status, headers, bodySize, elapsedMs, body);
                 }
                 saveCandidateExample(op, status, body);
@@ -161,16 +169,19 @@ void AppController::wireRunChecks() {
                         index, op, variable, sourcePath, outcome, value);
                 }
             });
-    connect(
-        runs,
-        &RunController::assertionCompleted,
-        this,
-        [this](
-            int index, const QString& op, const QString& name, const QString& expr, bool passed) {
-            if (TimelineModel* timeline = runTimeline()) {
-                timeline->onAssertionCompleted(index, op, name, expr, passed);
-            }
-        });
+    connect(runs,
+            &RunController::assertionCompleted,
+            this,
+            [this](int index,
+                   const QString& op,
+                   const QString& name,
+                   const QString& expr,
+                   bool passed,
+                   const QString& detail) {
+                if (TimelineModel* timeline = runTimeline()) {
+                    timeline->onAssertionCompleted(index, op, name, expr, passed, detail);
+                }
+            });
 }
 
 void AppController::saveCandidateExample(const QString& op, int status, const QString& body) {

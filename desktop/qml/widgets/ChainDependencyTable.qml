@@ -216,7 +216,6 @@ ColumnLayout {
                                         operationId: step.operationId
                                         onPicked: function (p) {
                                             step.extractModel.setValue(exRow.index, p);
-                                            pathField.text = p;
                                             exRow.pathEval = AppController.evaluateExtractionPath(step.operationId, p);
                                         }
                                     }

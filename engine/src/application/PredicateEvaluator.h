@@ -29,6 +29,8 @@
 
 namespace reqloom::engine {
 
+class SecretRegistry;
+
 /// Deepest array/object nesting accepted in a JSON response body; deeper input is rejected
 /// before parsing because the walkers recurse once per level.
 inline constexpr std::size_t kMaxJsonNestingDepth = 256;
@@ -64,6 +66,18 @@ struct RegexSearchResult {
 /// One evaluation outcome. Structurally invalid expressions or misses
 /// produce `False`, never an error.
 enum class PredicateValue : std::uint8_t { False, True };
+
+/// Longest value (bytes) quoted in a `PredicateExplanation::detail`; longer values are cut on a
+/// UTF-8 boundary and their size given.
+inline constexpr std::size_t kMaxExplainedValueBytes = 200;
+
+/// An evaluation outcome with, for `False`, a short statement of why.
+struct PredicateExplanation {
+    PredicateValue value{PredicateValue::False};
+    /// Empty for `True`. For `False`: the first sub-expression that decided the result, the value
+    /// found and what was expected, e.g. `$.status was "pending", expected == "paid"`.
+    std::string detail;
+};
 
 /// Compiled expression handle; opaque (keeps the AST out of the header) and move-only (unique_ptr
 /// nodes).
@@ -135,6 +149,14 @@ public:
     [[nodiscard]] PredicateValue evaluate(const ParsedPredicate& predicate,
                                           std::string_view jsonBody,
                                           int statusCode = 0) const noexcept;
+
+    /// Evaluate like `evaluate` and, for `False`, say why. Every value is value-redacted against
+    /// `registry` (when non-null) before it is cut to `kMaxExplainedValueBytes`, so a secret in the
+    /// expression or the body never shows, not even in part. Total.
+    [[nodiscard]] PredicateExplanation explain(const ParsedPredicate& predicate,
+                                               const ParsedBody& body,
+                                               int statusCode,
+                                               const SecretRegistry* registry) const noexcept;
 
     /// Convenience: parse and evaluate in one shot.
     [[nodiscard]] std::expected<PredicateValue, ReqloomError> eval(std::string_view expression,

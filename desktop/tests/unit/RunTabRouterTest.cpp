@@ -123,6 +123,37 @@ TEST(RunTabRouter, only_the_target_operations_step_is_the_target_step) {
     EXPECT_EQ(router.stepOperation(0), QStringLiteral("auth.login"));
 }
 
+TEST(RunTabRouter, the_panel_takes_only_the_target_operations_own_responses) {
+    RunTabRouter router;
+    router.begin(kOrders);
+    router.setTarget(QStringLiteral("orders.create"));
+    router.noteStep(0, QStringLiteral("auth.login"));
+    router.noteStep(1, QStringLiteral("orders.create"));
+
+    EXPECT_TRUE(router.showsResponse(1, QStringLiteral("operation")));
+    EXPECT_TRUE(router.showsResponse(1, QStringLiteral("poll_attempt")));
+    EXPECT_FALSE(router.showsResponse(1, QStringLiteral("sign_in")));
+    EXPECT_FALSE(router.showsResponse(1, QStringLiteral("session_refresh")));
+    EXPECT_FALSE(router.showsResponse(1, QStringLiteral("inline_auth_token")));
+    EXPECT_FALSE(router.showsResponse(0, QStringLiteral("operation")));
+}
+
+TEST(RunTabRouter, a_run_follows_its_tab_through_a_rename_of_the_operation) {
+    RunTabRouter router;
+    router.begin(kOrders);
+    router.setTarget(QStringLiteral("orders.create"));
+    router.noteStep(0, QStringLiteral("orders.create"));
+    const RunTabRouter::TabKey renamed{0, QStringLiteral("orders.place")};
+
+    router.renameOrigin(kUsers, RunTabRouter::TabKey{0, QStringLiteral("users.find")});
+    EXPECT_TRUE(router.originIs(kOrders));
+
+    router.renameOrigin(kOrders, renamed);
+    EXPECT_TRUE(router.originIs(renamed));
+    EXPECT_FALSE(router.originIs(kOrders));
+    EXPECT_TRUE(router.isTargetStep(0));
+}
+
 TEST(RunTabRouter, nothing_routes_once_the_run_has_ended) {
     RunTabRouter router;
     TimelineModel visible;

@@ -11,11 +11,11 @@ namespace reqloom::desktop {
 
 namespace {
 
-/// Locate an operation by its "<resource>.<op_name>" id. Returns nullptr when
-/// either half is unknown, which callers render as a missing step.
+/// Locate an operation by its "<resource>.<op_name>" id, split at the first dot as the engine
+/// does (an operation name may contain dots). Returns nullptr when either half is unknown.
 [[nodiscard]] const engine::Operation* findOperation(const engine::Project& project,
                                                      const std::string& id) {
-    const std::size_t dot = id.rfind('.');
+    const std::size_t dot = id.find('.');
     if (dot == std::string::npos || dot == 0 || dot + 1 >= id.size()) {
         return nullptr;
     }
@@ -30,7 +30,7 @@ namespace {
 /// Resource half of an operation id ("orders.create" → "orders"), also the namespace of its
 /// extracted variables. Empty if none.
 [[nodiscard]] QString resourceOf(const QString& operationId) {
-    const qsizetype dot = operationId.lastIndexOf(QLatin1Char('.'));
+    const qsizetype dot = operationId.indexOf(QLatin1Char('.'));
     return dot > 0 ? operationId.left(dot) : QString{};
 }
 

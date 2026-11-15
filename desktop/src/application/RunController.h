@@ -233,17 +233,29 @@ signals:
     void runStarted(QString target, int chainSize, QString environment);
     void stepStarted(int index, QString op, int attempt);
     void stepSkipped(int index, QString op, QString reason);
-    void requestPrepared(
-        int index, QString method, QString url, QString maskedHeaders, int bodySize);
-    void responseReceived(
-        int index, int status, QString headers, int bodySize, qint64 elapsedMs, QString body);
+    /// `exchange` is the engine's `exchangeKindName` ("operation", "sign_in", …).
+    void requestPrepared(int index,
+                         QString method,
+                         QString url,
+                         QString maskedHeaders,
+                         int bodySize,
+                         QString exchange);
+    void responseReceived(int index,
+                          int status,
+                          QString headers,
+                          int bodySize,
+                          qint64 elapsedMs,
+                          QString body,
+                          QString exchange);
     void extractionCompleted(int index,
                              QString op,
                              QString variableName,
                              QString sourcePath,
                              QString outcome,
                              QString value);
-    void assertionCompleted(int index, QString op, QString name, QString expr, bool passed);
+    /// `detail` says why a failed assertion failed; empty when it passed.
+    void assertionCompleted(
+        int index, QString op, QString name, QString expr, bool passed, QString detail);
     void stepFailed(int index, QString op, QString code, QString detail, QVariantList diagnostics);
     void stepBlocked(int index, QString op, int blockedByIndex);
     void runEnded(QString outcome);

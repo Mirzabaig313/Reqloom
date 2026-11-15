@@ -15,10 +15,12 @@
 #include "ResourceListModel.h"
 #include "ResponseBodyModel.h"
 #include "RunTabRouter.h"
+#include "TabEdits.h"
 #include "TabModel.h"
 #include "TimelineModel.h"
 #include "application/Bootstrapper.h"
 #include "application/EnvironmentSettings.h"
+#include "application/ImportJob.h"
 #include "application/ProjectEdits.h"
 #include "application/RunController.h"
 #include "application/SavedResponseStore.h"
@@ -30,6 +32,7 @@
 #include <QtCore/QFutureWatcher>
 #include <QtCore/QHash>
 #include <QtCore/QObject>
+#include <QtCore/QSet>
 #include <QtCore/QSettings>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
@@ -38,6 +41,7 @@
 #include <QtCore/QVariant>
 
 #include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -76,6 +80,8 @@ class AppController : public QObject {
     Q_PROPERTY(TabModel* tabModel READ tabModel CONSTANT)
     Q_PROPERTY(int activeTabIndex READ activeTabIndex NOTIFY activeTabChanged)
     Q_PROPERTY(int tabCount READ tabCount NOTIFY activeTabChanged)
+    // Open tabs with unsaved edits; the window shows the modified state while it is non-zero.
+    Q_PROPERTY(int unsavedTabCount READ unsavedTabCount NOTIFY unsavedTabsChanged)
 
     Q_PROPERTY(QAbstractItemModel* explorerModel READ explorerModel CONSTANT)
     // Live fuzzy filter for the sidebar search; empty shows everything.
@@ -272,6 +278,8 @@ class AppController : public QObject {
     // Why the target's chain can't be resolved (a cycle, an ambiguous producer), or empty; the
     // chain graph and execution preview are empty while it is set.
     Q_PROPERTY(QString chainResolveError READ chainResolveError NOTIFY chainChanged)
+    // Saved projects that could not be opened at startup or on retry; kept until removed.
+    Q_PROPERTY(QVariantList unavailableProjects READ unavailableProjects NOTIFY openProjectsChanged)
     // Non-fatal findings from loading the active project (unknown keys, empty imports), each
     // prefixed with `file:line:column:`.
     Q_PROPERTY(QStringList loadWarnings READ loadWarnings NOTIFY projectChanged)
@@ -306,20 +314,20 @@ public:
     [[nodiscard]] TabModel* tabModel() { return &tabs_; }
     [[nodiscard]] int activeTabIndex() const { return activeTabIndex_; }
     [[nodiscard]] int tabCount() const { return tabs_.count(); }
+    [[nodiscard]] int unsavedTabCount() const { return tabs_.dirtyCount(); }
     /// Make the tab at `index` active, swapping its buffer into the live models.
     Q_INVOKABLE void activateTab(int index);
     /// Move the tab at `from` to `to`; the active tab follows.
     Q_INVOKABLE void moveTab(int from, int to);
-    /// Request closing the tab; a transient endpoint draft asks QML to confirm discard.
+    /// Close the tab; with unsaved edits it first asks Save, Discard or Cancel.
     Q_INVOKABLE void closeTab(int index);
-    /// Close every tab except `index`, confirming first if that discards a transient draft.
+    /// Close every tab except `index`, asking first when that drops unsaved edits.
     Q_INVOKABLE void closeOtherTabs(int index);
-    /// Request discard confirmation for the transient endpoint draft, if any.
-    Q_INVOKABLE void requestDiscardNewOperation();
-    /// Complete the pending draft-close request after the user confirms discard.
-    Q_INVOKABLE void confirmDiscardNewOperation();
-    /// Cancel the pending draft-close request and keep the draft open.
-    Q_INVOKABLE void keepEditingNewOperation();
+    /// Answer the pending `unsavedChangesPrompt`: 0 saves, 1 discards, anything else cancels.
+    Q_INVOKABLE void resolveUnsavedChanges(int choice);
+    /// True when the window may close now; otherwise asks about the unsaved tabs and emits
+    /// `quitApproved` once they are saved or discarded.
+    Q_INVOKABLE bool requestQuit();
 
     [[nodiscard]] QAbstractItemModel* explorerModel() { return &treeFilter_; }
     [[nodiscard]] QString explorerFilter() const;
@@ -687,6 +695,14 @@ public:
     /// Open projects as {name, path, index, active} maps in workspace order.
     Q_INVOKABLE [[nodiscard]] QVariantList openProjects();
 
+    /// Saved projects that could not be opened, as {path, name, reason} maps.
+    [[nodiscard]] QVariantList unavailableProjects() const;
+    /// Try to open an unavailable saved project again; it stays listed with the new reason if
+    /// it still fails.
+    Q_INVOKABLE void retryUnavailableProject(const QString& path);
+    /// Remove an unavailable project from the saved workspace (does not touch disk).
+    Q_INVOKABLE void removeUnavailableProject(const QString& path);
+
     /// Switch the active project to the open one at `index`. No-op while a run is in flight.
     Q_INVOKABLE void activateProject(int index);
 
@@ -864,10 +880,15 @@ signals:
     void actorSelectionChanged();
     /// Fired when the active tab or the tab set changes.
     void activeTabChanged();
-    /// Fired when a close action would discard the transient endpoint draft.
-    void newOperationDiscardRequested();
-    /// Fired after the user confirms and the transient endpoint tab is removed.
+    /// Fired after an endpoint draft's tab closed.
     void newOperationDraftDiscarded();
+    /// Ask whether to save the unsaved edits an action would drop; answer with
+    /// `resolveUnsavedChanges`.
+    void unsavedChangesPrompt(
+        QString title, QString message, QString saveText, QString discardText, QString cancelText);
+    /// The unsaved tabs were saved or discarded after `requestQuit`; the window may close.
+    void quitApproved();
+    void unsavedTabsChanged();
     /// Fired when the inline actor panel should enter edit mode.
     void actorEditRequested();
 
@@ -959,9 +980,28 @@ private:
     void syncActiveKindFlags();
     /// Recompute the active tab's dirty flag and refresh its strip row if it changed.
     void updateActiveTabDirty();
+    /// Start or drop the active tab's edit baseline as edit mode starts or ends.
+    void onActiveTabEditingChanged();
+    /// The live edits of the active operation tab, with its baseline, for the dirty check.
+    [[nodiscard]] TabState liveOperationEdits() const;
+    /// The chain fields were reseeded from a save: take them into the active tab's baseline.
+    void rebaseChainEdits();
+    /// Connect tab bookkeeping (dirty count, renamed/deleted operations, per-tab chain status).
+    void wireTabTracking();
+    void renameOperationInTabs(const QString& oldId, const QString& newId);
+    void removeOperationFromTabs(const QString& operationId);
+    /// Ask about the unsaved tabs among `closing`; `proceed` runs once they are saved or
+    /// discarded. Returns false when none is unsaved (nothing was asked).
+    bool askAboutUnsaved(const std::vector<int>& closing,
+                         UnsavedReason reason,
+                         std::function<void()> proceed);
+    /// Activate and save the tab at `index` as the Save button would; false when it stays unsaved.
+    bool saveTabAt(int index);
+    /// Keep the unsaved edits of a tab whose operation no longer exists as an endpoint draft.
+    void detachTab(int index);
     /// Make the collection with `projectRoot` active (no tree repopulate, no auto-select). Returns
     /// false if it couldn't switch.
-    [[nodiscard]] bool activateForRow(const QString& projectRoot);
+    [[nodiscard]] bool activateForRow(const QString& projectRoot, std::function<void()> retry = {});
     /// Persist the open-project set and active project for restore on next launch.
     void persistOpenProjects();
     void persistActiveProject();
@@ -975,6 +1015,12 @@ private:
     /// Refresh only the open operation's example list; the explorer tree is untouched so selecting
     /// does not collapse it.
     void refreshOpenOpExamples();
+    /// Point `exampleStore_` at the active project and import its legacy examples file once.
+    void openExampleStore();
+    /// Open folders an import must not write into now (a run in flight, unsaved edits), and why.
+    [[nodiscard]] std::vector<BlockedFolder> importBlockedFolders() const;
+    /// Load the project a successful import wrote (reloading it when already open), then report.
+    void finishImport(const ImportOutcome& outcome);
     /// Push per-actor session state into the explorer tree and start/stop `sessionTicker_` so TTLs
     /// count down only while a session is live.
     void refreshActorSessions();
@@ -989,9 +1035,9 @@ private:
     [[nodiscard]] QString responseBodyFor(const QString& operationId) const;
     /// Fully-qualified id of the open operation ("<module>.<op>"), or empty.
     [[nodiscard]] QString currentOperationId() const;
-    /// Block a project transition while a transient endpoint draft is open, telling the user to
-    /// Save or Cancel.
-    [[nodiscard]] bool canLeaveActiveProject();
+    /// True when the active project's tabs may close now; otherwise asks about their unsaved
+    /// edits and runs `retry` once they are saved or discarded.
+    [[nodiscard]] bool canLeaveActiveProject(const std::function<void()>& retry);
     /// Clear the active transient creation identity without touching its tab row.
     void clearNewOperationDraftIdentity();
     /// Remove a tab without prompting; shared by ordinary closes and confirmed discard.
@@ -1046,23 +1092,11 @@ private:
     std::unique_ptr<Bootstrapper> bootstrapper_;
     std::unique_ptr<RunController> runController_;
 
-    /// Result of an off-thread OpenAPI import, handed back to the GUI thread by `importWatcher_`.
-    struct ImportOutcome {
-        enum class Status : std::uint8_t { Success, ImportFailed, WriteFailed, NeedsOverwrite };
-        Status status{Status::ImportFailed};
-        QString errorDetail;
-        int resources{0};
-        int operations{0};
-        int movedCredentials{0};
-        int keptCredentials{0};
-        QString notes;
-        QString loadDir;
-        /// Echoed back so a NeedsOverwrite outcome can re-invoke the import with overwrite=true.
-        QString specPath;
-        QString baseDir;
-    };
+    /// Delivers the off-thread import result (`runImportJob`) back to the GUI thread.
     QFutureWatcher<ImportOutcome> importWatcher_;
     SavedResponseStore exampleStore_;
+    /// Project roots whose unreadable legacy examples file was already reported this session.
+    QSet<QString> legacyExamplesReported_;
     ResourceListModel resources_;
     OperationListModel operations_;
     ProjectTreeModel tree_;
@@ -1116,12 +1150,21 @@ private:
     QString actorRefreshPath_;
     QString actorRefreshBody_;
     DependencyEditModel editDependencies_;
-    enum class PendingDraftClose : std::uint8_t { None, SingleTab, CloseOtherTabs };
+    /// An action waiting on the unsaved-changes prompt: the unsaved tabs it would drop, and what
+    /// to do once they are saved or discarded.
+    struct PendingUnsaved {
+        std::vector<std::uint64_t> uids;
+        std::function<void()> proceed;
+    };
+    std::optional<PendingUnsaved> pendingUnsaved_;
+    /// Set while a project transition the person already answered for runs.
+    bool leaveApproved_{false};
+    /// The tab that started the OAuth2 browser flow, which receives its token.
+    std::uint64_t oauthTabUid_{0};
+    bool dirtyUpdatePending_{false};
 
     bool editing_{false};
     bool creatingOperation_{false};
-    PendingDraftClose pendingDraftClose_{PendingDraftClose::None};
-    std::optional<TabState> pendingDraftCloseKeepTab_;
     QString newOperationModule_;
     QString newOperationDraftId_;
     QString newOperationName_;

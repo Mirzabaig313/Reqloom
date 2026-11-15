@@ -170,7 +170,7 @@ private:
     } else if (const auto* ex = std::get_if<ce::ExtractionCompleted>(&event)) {
         out += ex->variableName + "=" + ex->value + " (" + ex->sourcePath + ")";
     } else if (const auto* as = std::get_if<ce::AssertionCompleted>(&event)) {
-        out += as->name + " " + as->expr;
+        out += as->name + " " + as->expr + " " + as->detail;
     } else if (const auto* sf = std::get_if<ce::StepFailed>(&event)) {
         out += sf->detail;
         for (const auto& d : sf->diagnostics) {
@@ -233,6 +233,9 @@ struct Outcome {
         if (result) {
             for (const auto& s : result->steps) {
                 all += s.detail + "\n";
+                for (const auto& a : s.assertions) {
+                    all += a.name + " " + a.expr + " " + a.detail + "\n";
+                }
             }
         }
         return all;
@@ -350,6 +353,49 @@ TEST(ValueRedaction, secret_in_non_sensitive_header_never_reaches_events_or_hist
     for (const auto& body : bodies) {
         EXPECT_EQ(body, R"({"error":"key sk_live_9f8e7d6c5b4a is revoked"})");
     }
+}
+
+TEST(ValueRedaction, an_assertion_against_a_secret_explains_the_failure_without_revealing_it) {
+    constexpr const char* kYaml = R"YAML(
+version: 1
+name: AssertionRedaction
+id: value-redaction-test
+default_environment: local
+environment:
+  baseUrl: http://placeholder
+resources:
+  item:
+    operations:
+      read:
+        method: GET
+        path: /items
+        expect_status: 200
+        assert:
+          - $.echo == "{{secret.API_KEY}}"
+)YAML";
+    RunSetup setup;
+    setup.secrets["value-redaction-test/API_KEY"] = std::string{kApiKey};
+    setup.routes = [](RoutedHttpClient& http) {
+        http.route("/items", 200, R"({"echo":"wrong"})");
+    };
+    const auto out = runProject(kYaml, "item.read", setup);
+    ASSERT_TRUE(out.result.has_value()) << out.result.error().detail;
+
+    const auto* failed = out.failedStep();
+    ASSERT_NE(failed, nullptr);
+    ASSERT_EQ(failed->assertions.size(), 1U);
+    EXPECT_EQ(failed->assertions[0].detail, R"($.echo was "wrong", expected == "<redacted>")");
+    std::size_t explainedEvents = 0;
+    for (const auto* events : {&out.emitted, &out.stored}) {
+        for (const auto& e : *events) {
+            if (const auto* as = std::get_if<ce::AssertionCompleted>(&e)) {
+                EXPECT_EQ(as->detail, failed->assertions[0].detail);
+                ++explainedEvents;
+            }
+        }
+    }
+    EXPECT_EQ(explainedEvents, 2U) << "one emitted, one stored";
+    EXPECT_FALSE(contains(out.everything(), kApiKey)) << out.everything();
 }
 
 TEST(ValueRedaction, captured_body_is_unmasked_while_url_headers_and_extractions_stay_masked) {

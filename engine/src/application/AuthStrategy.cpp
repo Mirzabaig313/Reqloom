@@ -129,9 +129,11 @@ public:
                                            req.url,
                                            snapshotMaskedRequestHeaders(req),
                                            requestBodySize(req),
-                                           std::chrono::system_clock::now()});
+                                           std::chrono::system_clock::now(),
+                                           deps_.exchange});
             }
 
+            req.cancel = deps_.cancel;
             auto response = deps_.http->send(req);
             if (!response) {
                 return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
@@ -149,7 +151,8 @@ public:
                                      response->body.size(),
                                      response->elapsed,
                                      std::chrono::system_clock::now(),
-                                     capturedBody(response->body, deps_.captureResponseBodies)});
+                                     capturedBody(response->body, deps_.captureResponseBodies),
+                                     deps_.exchange});
             }
 
             // Absorb Set-Cookie so later operations as this actor carry session cookies (PHP/Rails
@@ -342,9 +345,11 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
                                   req.url,
                                   snapshotMaskedRequestHeaders(req),
                                   requestBodySize(req),
-                                  std::chrono::system_clock::now()});
+                                  std::chrono::system_clock::now(),
+                                  deps.exchange});
     }
 
+    req.cancel = deps.cancel;
     const auto response = http.send(req);
     if (!response) {
         return std::unexpected(ReqloomError{
@@ -362,7 +367,8 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
                                    response->body.size(),
                                    response->elapsed,
                                    std::chrono::system_clock::now(),
-                                   capturedBody(response->body, deps.captureResponseBodies)});
+                                   capturedBody(response->body, deps.captureResponseBodies),
+                                   deps.exchange});
     }
 
     if (response->status < 200 || response->status >= 300) {
@@ -1009,9 +1015,11 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
                                   req.url,
                                   snapshotMaskedRequestHeaders(req),
                                   requestBodySize(req),
-                                  std::chrono::system_clock::now()});
+                                  std::chrono::system_clock::now(),
+                                  ExchangeKind::SessionRefresh});
     }
 
+    req.cancel = deps.cancel;
     auto response = deps.http->send(req);
     if (!response) {
         return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
@@ -1027,7 +1035,8 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
                                    response->body.size(),
                                    response->elapsed,
                                    std::chrono::system_clock::now(),
-                                   capturedBody(response->body, deps.captureResponseBodies)});
+                                   capturedBody(response->body, deps.captureResponseBodies),
+                                   ExchangeKind::SessionRefresh});
     }
 
     // Absorb Set-Cookie from the refresh response; endpoints commonly rotate session cookies.

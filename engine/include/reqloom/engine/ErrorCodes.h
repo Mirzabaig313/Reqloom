@@ -72,6 +72,12 @@ enum class ErrorCode : std::uint8_t {
     // Run
     Cancelled,
 
+    // Project files
+    /// The target folder already holds a reqloom.yaml and overwriting was not allowed.
+    ProjectExists,
+    /// Project files could not be written (folder creation, temp file or rename failed).
+    WriteFailed,
+
     /// An engine-internal precondition was violated (e.g. a read API on an engine without a history
     /// store).
     Internal,

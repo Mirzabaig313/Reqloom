@@ -1,6 +1,13 @@
 {
   "routes": [
     {
+      "method": "GET",
+      "path": "/slow",
+      "status": 200,
+      "delayMs": 5000,
+      "body": { "ok": true }
+    },
+    {
       "method": "HEAD",
       "path": "/resource",
       "status": 200,

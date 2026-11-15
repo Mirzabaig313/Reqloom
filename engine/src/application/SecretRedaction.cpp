@@ -378,6 +378,7 @@ void redactEvent(RunEvent& event, const SecretRegistry& registry) {
     } else if (auto* assertion = std::get_if<AssertionCompleted>(&event)) {
         redactString(assertion->name, registry);
         redactString(assertion->expr, registry);
+        redactString(assertion->detail, registry);
     } else if (auto* failed = std::get_if<StepFailed>(&event)) {
         redactString(failed->detail, registry);
         for (auto& d : failed->diagnostics) {
@@ -399,6 +400,7 @@ void redactStepResult(StepResult& step, const SecretRegistry& registry) {
     for (auto& assertion : step.assertions) {
         redactString(assertion.name, registry);
         redactString(assertion.expr, registry);
+        redactString(assertion.detail, registry);
     }
 }
 

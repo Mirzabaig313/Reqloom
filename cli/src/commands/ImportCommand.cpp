@@ -194,7 +194,7 @@ int importCommand(const QStringList& args, ce::SecretStore* store, ce::ProjectTr
                      "Write error [{}]: {}",
                      ce::toCodeString(written.error().code),
                      written.error().detail);
-        return kExitSystem;
+        return written.error().code == ce::ErrorCode::ProjectExists ? kExitFailed : kExitSystem;
     }
 
     std::println("Imported {} resources, {} operations into {}",

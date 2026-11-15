@@ -289,6 +289,29 @@ Item {
         root._saveCenterPair("vertical");
     }
 
+    // SplitView keeps every pane at its minimum by overflowing past the edge when
+    // the panes no longer fit (window shrink, orientation switch); refit instead.
+    function _keepPaneMinimums() {
+        if (!root._restored || root._restoring) {
+            return;
+        }
+        if (explorerPane.width + root._handleSize + centerSplit.width > mainSplit.width + 1) {
+            root._fitMainPair([root._expandedExplorerWidth, root._expandedWorkbenchWidth]);
+            root._applyMainPreferredSizes();
+        }
+        Qt.callLater(root._keepCenterMinimum);
+    }
+
+    function _keepCenterMinimum() {
+        if (!responsePane.visible || root.responseCollapsed) {
+            return;
+        }
+        const overflow = root._responseStacked ? centerPane.height + root._handleSize + responsePane.height > centerSplit.height + 1 : centerPane.width + root._handleSize + responsePane.width > centerSplit.width + 1;
+        if (overflow) {
+            root._applyCenterPreferredSizes();
+        }
+    }
+
     function _changeEffectiveOrientation(next) {
         if (next === root._effectiveOrientation) {
             return;
@@ -299,6 +322,7 @@ Item {
         root._effectiveOrientation = next;
         Qt.callLater(function () {
             root._applyCenterPreferredSizes();
+            Qt.callLater(root._keepPaneMinimums);
         });
     }
 
@@ -383,11 +407,14 @@ Item {
             root._tryRestoreLayout();
         } else if (!root._restoring) {
             root._updateAutoOrientation(false);
+            Qt.callLater(root._keepPaneMinimums);
         }
     }
     onHeightChanged: {
         if (!root._restored) {
             root._tryRestoreLayout();
+        } else {
+            Qt.callLater(root._keepPaneMinimums);
         }
     }
     Component.onCompleted: Qt.callLater(root._tryRestoreLayout)
@@ -511,6 +538,7 @@ Item {
         SplitView {
             id: centerSplit
             SplitView.fillWidth: true
+            SplitView.minimumWidth: root._minimumWorkbenchWidth()
             orientation: root._responseStacked ? Qt.Vertical : Qt.Horizontal
             spacing: 0
             handle: Rectangle {
@@ -607,7 +635,7 @@ Item {
                             font.weight: DesignTokens.weightSemiBold
                         }
                         Label {
-                            id: epCountLabel
+                            text: endpointList.count === 1 ? qsTr("1 endpoint") : qsTr("%1 endpoints").arg(endpointList.count)
                             color: DesignTokens.textSecondary
                             font.pixelSize: DesignTokens.fontBody
                         }
@@ -619,7 +647,6 @@ Item {
                         clip: true
                         spacing: DesignTokens.spaceXs
                         model: AppController.operations
-                        onCountChanged: epCountLabel.text = count === 1 ? qsTr("1 endpoint") : qsTr("%1 endpoints").arg(count)
 
                         delegate: ItemDelegate {
                             id: opRow
@@ -696,7 +723,7 @@ Item {
 
                 ActorDetail {
                     id: actorDetail
-                    anchors.top: editorTabs.bottom
+                    anchors.top: editorTabs.visible ? editorTabs.bottom : parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom

@@ -351,6 +351,21 @@ struct EventEnvelope {
     json payload;
 };
 
+// Only a non-default kind is stored, so rows from builds before the field read the same.
+void putExchange(json& payload, ExchangeKind kind) {
+    if (kind != ExchangeKind::Operation) {
+        payload["exchange"] = std::string{exchangeKindName(kind)};
+    }
+}
+
+[[nodiscard]] ExchangeKind exchangeOf(const json& p) {
+    const auto it = p.find("exchange");
+    if (it == p.end() || !it->is_string()) {
+        return ExchangeKind::Operation;
+    }
+    return exchangeKindFromName(it->get<std::string>()).value_or(ExchangeKind::Operation);
+}
+
 [[nodiscard]] EventEnvelope envelopeOf(const RunEvent& ev) {
     EventEnvelope e;
     std::visit(
@@ -382,6 +397,7 @@ struct EventEnvelope {
                              {"url", v.url},
                              {"headers", headersToJson(v.maskedHeaders)},
                              {"bodySize", v.bodySize}};
+                putExchange(e.payload, v.exchange);
             } else if constexpr (std::is_same_v<T, ResponseReceived>) {
                 e.eventType = "ResponseReceived";
                 e.stepIndex = v.stepIndex;
@@ -389,6 +405,7 @@ struct EventEnvelope {
                              {"headers", headersToJson(v.headers)},
                              {"bodySize", v.bodySize},
                              {"elapsedMs", v.elapsed.count()}};
+                putExchange(e.payload, v.exchange);
                 // `body` exists only when the run captured bodies. Stored base64 (`bodyEnc` marker)
                 // because bodies are arbitrary bytes and nlohmann's strict dump() throws on
                 // non-UTF-8.
@@ -433,6 +450,9 @@ struct EventEnvelope {
                 e.opId = v.op.value;
                 e.payload = {
                     {"op", v.op.value}, {"name", v.name}, {"expr", v.expr}, {"passed", v.passed}};
+                if (!v.detail.empty()) {
+                    e.payload["detail"] = v.detail;
+                }
             } else if constexpr (std::is_same_v<T, StepFailed>) {
                 e.eventType = "StepFailed";
                 e.stepIndex = v.stepIndex;
@@ -513,6 +533,7 @@ struct EventEnvelope {
         ev.url = p.value("url", std::string{});
         ev.maskedHeaders = headersFromJson(p.value("headers", json::array()));
         ev.bodySize = p.value("bodySize", std::size_t{0});
+        ev.exchange = exchangeOf(p);
         ev.at = at;
         return ev;
     }
@@ -524,6 +545,7 @@ struct EventEnvelope {
         ev.headers = headersFromJson(p.value("headers", json::array()));
         ev.bodySize = p.value("bodySize", std::size_t{0});
         ev.elapsed = std::chrono::milliseconds{p.value("elapsedMs", std::int64_t{0})};
+        ev.exchange = exchangeOf(p);
         // Restored only for capture-era rows; a missing "body" leaves the optional empty, matching
         // the live event. A missing or unknown `bodyEnc` is read as a raw string; malformed base64
         // is dropped, not fatal.
@@ -584,6 +606,7 @@ struct EventEnvelope {
         ev.name = p.value("name", std::string{});
         ev.expr = p.value("expr", std::string{});
         ev.passed = p.value("passed", false);
+        ev.detail = p.value("detail", std::string{});
         ev.at = at;
         return ev;
     }

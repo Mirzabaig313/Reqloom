@@ -44,34 +44,6 @@ namespace reqloom::desktop::qml {
     return {};
 }
 
-/// Sniff a failed import's file head for Postman / Swagger 2.0 so the toast is actionable.
-/// Empty when nothing is recognized, so the caller falls back to the engine's detail.
-[[nodiscard]] inline QString importFailureHint(const std::filesystem::path& spec) {
-    std::ifstream in{spec, std::ios::binary};
-    if (!in) {
-        return {};
-    }
-    std::string head(8192, '\0');
-    in.read(head.data(), static_cast<std::streamsize>(head.size()));
-    head.resize(static_cast<std::size_t>(in.gcount()));
-
-    if (head.find("schema.getpostman.com") != std::string::npos ||
-        head.find("_postman_id") != std::string::npos) {
-        // Postman is supported, so a failure here likely means a malformed export or unsupported
-        // schema version.
-        return QStringLiteral(
-            "This Postman collection couldn't be imported. Re-export it as Collection v2.1 "
-            "and try again.");
-    }
-    if (head.find("\"swagger\"") != std::string::npos ||
-        head.find("swagger:") != std::string::npos) {
-        return QStringLiteral(
-            "This Swagger 2.0 document couldn't be imported. Check that it's valid and has a "
-            "non-empty `paths` section.");
-    }
-    return {};
-}
-
 /// Normalize a project path to a stable comparison key (strips a trailing separator, resolves
 /// `.`/`..`/symlinks). `weakly_canonical` keeps nonexistent paths working.
 [[nodiscard]] inline QString canonicalProjectPath(const QString& path) {
@@ -82,28 +54,6 @@ namespace reqloom::desktop::qml {
     const auto canon =
         std::filesystem::weakly_canonical(std::filesystem::path{path.toStdString()}, ec);
     return ec ? path : QString::fromStdString(canon.string());
-}
-
-/// Filesystem-safe folder name: lowercase, non-alphanumeric runs become '-', trimmed;
-/// "imported-project" if empty.
-[[nodiscard]] inline std::string projectFolderSlug(std::string_view name) {
-    std::string out;
-    out.reserve(name.size());
-    bool pendingDash = false;
-    for (const char c : name) {
-        const bool alnum =
-            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
-        if (alnum) {
-            if (pendingDash && !out.empty()) {
-                out.push_back('-');
-            }
-            pendingDash = false;
-            out.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c));
-        } else {
-            pendingDash = true;
-        }
-    }
-    return out.empty() ? std::string{"imported-project"} : out;
 }
 
 [[nodiscard]] inline QString decodeQueryComponent(const QString& component) {

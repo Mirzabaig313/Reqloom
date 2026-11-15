@@ -446,6 +446,40 @@ TEST(ImportCredentials, refuses_an_existing_project_without_overwrite_before_sto
     EXPECT_TRUE(store.writtenKeys.empty());
 }
 
+TEST(ImportCredentials, an_existing_project_without_overwrite_is_reported_as_project_exists) {
+    ScratchDir dir;
+    {
+        std::ofstream out{dir.path() / "reqloom.yaml"};
+        out << "version: 1\nname: x\n";
+    }
+    const auto project = sampleProject();
+    auto written = ce::writeImportedProject(dir.path(), project, {}, nullptr, nullptr, {});
+    ASSERT_FALSE(written.has_value());
+    EXPECT_EQ(written.error().code, ce::ErrorCode::ProjectExists);
+}
+
+TEST(ImportCredentials, a_folder_that_cannot_be_created_is_reported_as_a_write_failure) {
+    ScratchDir dir;
+    const fs::path blocker = dir.path() / "taken";
+    {
+        std::ofstream out{blocker};
+        out << "a file where the project folder should go";
+    }
+    auto written =
+        ce::writeImportedProject(blocker / "project", sampleProject(), {}, nullptr, nullptr, {});
+    ASSERT_FALSE(written.has_value());
+    EXPECT_EQ(written.error().code, ce::ErrorCode::WriteFailed);
+}
+
+TEST(ImportCredentials, an_unwritable_project_is_still_reported_as_a_schema_problem) {
+    ScratchDir dir;
+    auto project = sampleProject();
+    addOp(project, "bad/id", "op");
+    auto written = ce::writeImportedProject(dir.path(), project, {}, nullptr, nullptr, {});
+    ASSERT_FALSE(written.has_value());
+    EXPECT_EQ(written.error().code, ce::ErrorCode::SchemaInvalid);
+}
+
 TEST(ImportCredentials, turning_secrets_off_keeps_everything_with_warnings) {
     ScratchDir dir;
     FakeStore store;
