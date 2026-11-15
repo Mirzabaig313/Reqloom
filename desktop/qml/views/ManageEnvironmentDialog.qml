@@ -2,8 +2,9 @@
 // lists every environment (coloured initials badge + name) with a "New
 // Environment" action; the right pane edits the selected environment's name and
 // variable table. Reuses AppController's env editor state (prepareEditEnvironment
-// / editEnvVars / saveEnvironmentEdits / deleteEnvironment). Selecting a row in
-// the list loads it (unsaved edits in the pane are discarded — click Save first).
+// / editEnvVars / saveEnvironmentEdits / deleteEnvironment). Closing the dialog,
+// opening another environment or quitting with changed values first asks Save,
+// Discard or Cancel.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -20,6 +21,8 @@ Dialog {
     height: Math.min(640, Overlay.overlay ? Overlay.overlay.height - 64 : 640)
     padding: 0
     focus: true
+    // Escape and the close buttons go through requestClose so changes are asked about first.
+    closePolicy: Popup.NoAutoClose
     // Opened from the env picker nothing was focused, so Escape and Enter had
     // nothing to act on; put the caret in the name field like startNew() does.
     onOpened: nameField.forceActiveFocus()
@@ -54,6 +57,58 @@ Dialog {
         selectEnv("");
         nameField.forceActiveFocus();
     }
+
+    // Runs `action` at once when nothing changed; otherwise after the person
+    // saves (and the save succeeds) or discards. Cancel drops it.
+    property var pendingAction: null
+    function hasChanges() {
+        return AppController.environmentEditsChanged(nameField.text);
+    }
+    function confirmThen(reason, action) {
+        if (!hasChanges()) {
+            action();
+            return;
+        }
+        const name = editingOriginal.length > 0 ? editingOriginal : nameField.text.trim();
+        const prompt = AppController.environmentUnsavedPrompt(name.length > 0 ? name : qsTr("New environment"), reason);
+        pendingAction = action;
+        envUnsavedDialog.ask(prompt.title, prompt.message, prompt.saveText, prompt.discardText, prompt.cancelText);
+    }
+    function requestClose() {
+        confirmThen(0, function () {
+            dialog.reject();
+        });
+    }
+    function requestSelect(name) {
+        if (name === editingOriginal && name.length > 0) {
+            return;
+        }
+        confirmThen(1, function () {
+            if (name.length > 0) {
+                dialog.selectEnv(name);
+            } else {
+                dialog.startNew();
+            }
+        });
+    }
+    // For the window's close: true while the dialog holds the quit to ask
+    // about its changes; `retry` closes the window again once they are handled.
+    function holdsQuit(retry) {
+        if (!dialog.opened) {
+            return false;
+        }
+        if (envUnsavedDialog.visible) {
+            return true;
+        }
+        if (!hasChanges()) {
+            return false;
+        }
+        confirmThen(2, function () {
+            dialog.reject();
+            Qt.callLater(retry);
+        });
+        return true;
+    }
     function openManager(focusName) {
         const target = focusName && focusName.length > 0 ? focusName : (AppController.environment.length > 0 ? AppController.environment : (AppController.environments.length > 0 ? AppController.environments[0] : ""));
         selectEnv(target);
@@ -83,6 +138,7 @@ Dialog {
                 dialog.close();
             }
         }
+        return ok;
     }
 
     readonly property bool nameValid: AppController.isValidName(nameField.text)
@@ -111,7 +167,7 @@ Dialog {
                 id: closeBtn
                 implicitWidth: 28
                 implicitHeight: 28
-                onClicked: dialog.reject()
+                onClicked: dialog.requestClose()
                 background: Rectangle {
                     radius: DesignTokens.radiusSm
                     color: closeBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
@@ -166,7 +222,7 @@ Dialog {
                         width: ListView.view ? ListView.view.width : 0
                         implicitHeight: 36
                         highlighted: envRow.modelData === dialog.editingOriginal
-                        onClicked: dialog.selectEnv(envRow.modelData)
+                        onClicked: dialog.requestSelect(envRow.modelData)
                         background: Rectangle {
                             radius: DesignTokens.radiusSm
                             color: envRow.highlighted ? DesignTokens.accentMuted : (envRow.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent")
@@ -204,7 +260,7 @@ Dialog {
                     id: newEnvRow
                     Layout.fillWidth: true
                     implicitHeight: 34
-                    onClicked: dialog.startNew()
+                    onClicked: dialog.requestSelect("")
                     background: Rectangle {
                         radius: DesignTokens.radiusSm
                         color: newEnvRow.hovered ? Qt.rgba(1, 1, 1, 0.04) : "transparent"
@@ -359,9 +415,30 @@ Dialog {
                 }
                 GlassButton {
                     text: qsTr("Cancel")
-                    onClicked: dialog.reject()
+                    onClicked: dialog.requestClose()
                 }
             }
+        }
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        enabled: dialog.opened && !envUnsavedDialog.visible && !envConfirmDelete.visible
+        onActivated: dialog.requestClose()
+    }
+
+    UnsavedChangesDialog {
+        id: envUnsavedDialog
+        onChoice: value => {
+            const action = dialog.pendingAction;
+            dialog.pendingAction = null;
+            if (action === null || value === 2) {
+                return;
+            }
+            if (value === 0 && !dialog.persist(false)) {
+                return;
+            }
+            action();
         }
     }
 

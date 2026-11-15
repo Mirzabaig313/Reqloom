@@ -907,16 +907,20 @@ void AppController::onSaved() {
     environments_ = activeProject().environmentNames();
     ensureEnvironmentExists();
 
-    // Keep an open actor detail in sync; clear it if the actor was renamed or deleted.
-    if (hasActor_) {
+    // Keep an open actor detail in sync; clear it if the actor was renamed or deleted. A
+    // never-saved draft has nothing saved to follow.
+    if (hasActor_ && !selectedActorId_.isEmpty()) {
         const bool stillExists = activeProject().hasProject() &&
                                  activeProject().project().actors.count(
                                      engine::ActorId{selectedActorId_.toStdString()}) > 0;
         if (stillExists) {
-            prepareEditActor(selectedActorId_);
-            selectedActorDescription_ = actorDescription(selectedActorId_);
-            selectedActorStrategy_ = actorAuthLabel(selectedActorId_);
-            emit actorSelectionChanged();
+            // An edit in progress outlives saves of anything else; saveActorEdits ends it first.
+            if (!actorEditing_) {
+                prepareEditActor(selectedActorId_);
+                selectedActorDescription_ = actorDescription(selectedActorId_);
+                selectedActorStrategy_ = actorAuthLabel(selectedActorId_);
+                emit actorSelectionChanged();
+            }
         } else if (tabs_.valid(activeTabIndex_) &&
                    tabs_.stateAt(activeTabIndex_).kind == TabState::Kind::Actor) {
             closeTabImmediately(activeTabIndex_);

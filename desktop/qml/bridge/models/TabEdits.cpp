@@ -89,6 +89,17 @@ namespace {
     return std::ranges::equal(left, right, sameSeed);
 }
 
+[[nodiscard]] bool sameStep(const AuthStepListModel::StepSeed& a,
+                            const AuthStepListModel::StepSeed& b) {
+    return std::tie(a.id, a.method, a.path, a.body, a.expect, a.extractions) ==
+           std::tie(b.id, b.method, b.path, b.body, b.expect, b.extractions);
+}
+
+[[nodiscard]] TabKvPairs sortedPairs(TabKvPairs pairs) {
+    std::ranges::sort(pairs);
+    return pairs;
+}
+
 bool replaceIn(std::vector<QString>& ids, const QString& from, const QString& to) {
     bool changed = false;
     for (QString& id : ids) {
@@ -160,9 +171,27 @@ bool sameOperationEdits(const TabState& a, const TabState& b) {
            sameChain(a, b);
 }
 
+bool sameActorEdits(const TabState& a, const TabState& b) {
+    const auto refresh = [](const TabState& t) {
+        const bool on = t.actorEditRefreshEnabled;
+        return std::make_tuple(on,
+                               on ? t.actorEditRefreshMethod : QString{},
+                               on ? t.actorEditRefreshPath : QString{},
+                               on ? t.actorEditRefreshBody : QString{},
+                               on ? t.actorRefreshExtract : TabKvPairs{});
+    };
+    return a.actorEditName.trimmed() == b.actorEditName.trimmed() &&
+           a.actorEditDescription.trimmed() == b.actorEditDescription.trimmed() &&
+           a.actorEditStrategy == b.actorEditStrategy &&
+           sortedPairs(a.actorConfig) == sortedPairs(b.actorConfig) &&
+           std::ranges::equal(a.actorAuthSteps, b.actorAuthSteps, sameStep) &&
+           refresh(a) == refresh(b);
+}
+
 bool hasUnsavedEdits(const TabState& tab) {
     if (tab.kind == TabState::Kind::Actor) {
-        return tab.id.isEmpty();
+        return tab.id.isEmpty() ||
+               (tab.actorEditing && tab.editBaseline && !sameActorEdits(tab, *tab.editBaseline));
     }
     if (tab.operationDraft) {
         if (!tab.opName.trimmed().isEmpty() || !tab.editBaseline) {
@@ -256,6 +285,12 @@ UnsavedPrompt unsavedPrompt(const QStringList& titles, UnsavedReason reason, boo
             break;
         case UnsavedReason::Quit:
             question = tr("Save them before quitting?");
+            break;
+        case UnsavedReason::CloseEnvironment:
+            question = tr("Save them before closing?");
+            break;
+        case UnsavedReason::SwitchEnvironment:
+            question = tr("Save them before opening another environment?");
             break;
     }
     const QString subject =

@@ -59,6 +59,7 @@ void AuthStepListModel::rebuild(const std::vector<StepSeed>& seeds) {
         // Parented to this model so QML never deletes it with a delegate.
         row.extracts = std::make_unique<EditableKeyValueModel>(this);
         row.extracts->setPairs(seed.extractions);
+        watchExtracts(*row.extracts);
         rows_.push_back(std::move(row));
     }
     endResetModel();
@@ -71,6 +72,7 @@ void AuthStepListModel::setMethod(int row, const QString& method) {
     rows_[static_cast<std::size_t>(row)].method = method;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {MethodRole});
+    emit stepsEdited();
 }
 
 void AuthStepListModel::setPath(int row, const QString& path) {
@@ -80,6 +82,7 @@ void AuthStepListModel::setPath(int row, const QString& path) {
     rows_[static_cast<std::size_t>(row)].path = path;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {PathRole});
+    emit stepsEdited();
 }
 
 void AuthStepListModel::setBody(int row, const QString& body) {
@@ -89,6 +92,7 @@ void AuthStepListModel::setBody(int row, const QString& body) {
     rows_[static_cast<std::size_t>(row)].body = body;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {BodyRole});
+    emit stepsEdited();
 }
 
 void AuthStepListModel::setExpect(int row, const QString& expect) {
@@ -98,6 +102,7 @@ void AuthStepListModel::setExpect(int row, const QString& expect) {
     rows_[static_cast<std::size_t>(row)].expect = expect;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {ExpectRole});
+    emit stepsEdited();
 }
 
 int AuthStepListModel::addStep() {
@@ -106,8 +111,10 @@ int AuthStepListModel::addStep() {
     Row row;
     row.method = QStringLiteral("POST");
     row.extracts = std::make_unique<EditableKeyValueModel>(this);
+    watchExtracts(*row.extracts);
     rows_.push_back(std::move(row));
     endInsertRows();
+    emit stepsEdited();
     return at;
 }
 
@@ -118,6 +125,7 @@ void AuthStepListModel::removeStep(int row) {
     beginRemoveRows({}, row, row);
     rows_.erase(rows_.begin() + row);
     endRemoveRows();
+    emit stepsEdited();
 }
 
 void AuthStepListModel::moveStep(int row, int delta) {
@@ -134,6 +142,17 @@ void AuthStepListModel::moveStep(int row, int delta) {
     beginMoveRows({}, row, row, {}, destination);
     std::swap(rows_[static_cast<std::size_t>(row)], rows_[static_cast<std::size_t>(target)]);
     endMoveRows();
+    emit stepsEdited();
+}
+
+void AuthStepListModel::watchExtracts(EditableKeyValueModel& extracts) {
+    const auto edited = [this]() {
+        emit stepsEdited();
+    };
+    connect(&extracts, &QAbstractItemModel::dataChanged, this, edited);
+    connect(&extracts, &QAbstractItemModel::rowsInserted, this, edited);
+    connect(&extracts, &QAbstractItemModel::rowsRemoved, this, edited);
+    connect(&extracts, &QAbstractItemModel::modelReset, this, edited);
 }
 
 QString AuthStepListModel::methodAt(int row) const {

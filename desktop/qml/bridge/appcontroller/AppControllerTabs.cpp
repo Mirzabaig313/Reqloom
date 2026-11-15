@@ -291,6 +291,14 @@ void AppController::captureActorInto(TabState& tab) const {
     tab.actorRefreshMethod = actorRefreshMethod_;
     tab.actorRefreshPath = actorRefreshPath_;
     tab.actorRefreshBody = actorRefreshBody_;
+    tab.actorEditing = actorEditing_;
+    tab.actorEditName = actorEditName_;
+    tab.actorEditDescription = actorEditDescription_;
+    tab.actorEditStrategy = actorEditStrategy_;
+    tab.actorEditRefreshEnabled = actorEditRefreshEnabled_;
+    tab.actorEditRefreshMethod = actorEditRefreshMethod_;
+    tab.actorEditRefreshPath = actorEditRefreshPath_;
+    tab.actorEditRefreshBody = actorEditRefreshBody_;
 }
 
 void AppController::restoreActorFrom(const TabState& tab) {
@@ -303,6 +311,8 @@ void AppController::restoreActorFrom(const TabState& tab) {
         selectedActorName_ = tab.id;
         selectedActorDescription_ = actorDescription(tab.id);
         selectedActorStrategy_ = actorAuthLabel(tab.id);
+        seedActorEditFields();
+        actorEditing_ = false;
         return;
     }
 
@@ -322,6 +332,14 @@ void AppController::restoreActorFrom(const TabState& tab) {
     actorRefreshMethod_ = tab.actorRefreshMethod;
     actorRefreshPath_ = tab.actorRefreshPath;
     actorRefreshBody_ = tab.actorRefreshBody;
+    actorEditing_ = tab.actorEditing;
+    actorEditName_ = tab.actorEditName;
+    actorEditDescription_ = tab.actorEditDescription;
+    actorEditStrategy_ = tab.actorEditStrategy;
+    actorEditRefreshEnabled_ = tab.actorEditRefreshEnabled;
+    actorEditRefreshMethod_ = tab.actorEditRefreshMethod;
+    actorEditRefreshPath_ = tab.actorEditRefreshPath;
+    actorEditRefreshBody_ = tab.actorEditRefreshBody;
 }
 
 void AppController::captureActiveTab() {
@@ -433,6 +451,7 @@ void AppController::restoreActiveTab() {
     emit editChanged();
     emit actorSelectionChanged();
     emit actorEditChanged();
+    emit actorEditFieldsChanged();
     emit responseChanged();
     emit chainChanged();
     emit selectionChanged();
@@ -537,6 +556,8 @@ void AppController::openActorTab(const QString& projectRoot,
         selectedActorDescription_ = actorDescription(actorId);
         selectedActorStrategy_ = actorAuthLabel(actorId);
     }
+    seedActorEditFields();
+    actorEditing_ = isNewDraft;
     hasActor_ = true;
     hasOperation_ = false;
     hasResponse_ = false;
@@ -556,6 +577,7 @@ void AppController::openActorTab(const QString& projectRoot,
     emit editChanged();
     emit actorSelectionChanged();
     emit actorEditChanged();
+    emit actorEditFieldsChanged();
     emit responseChanged();
     emit chainChanged();
     emit activeTabChanged();

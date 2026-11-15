@@ -29,10 +29,14 @@ ApplicationWindow {
     readonly property bool endpointConfirmationActive: unsavedChangesDialog.opened || workbench.endpointSaveConfirmationActive
     readonly property bool globalShortcutBlocked: endpointConfirmationActive || workbench.editConfirmationActive
 
-    // Persist layout on every close attempt. Unsaved tabs hold the close until
-    // the person saves or discards them (AppController.quitApproved).
+    // Persist layout on every close attempt. Unsaved environment edits, then
+    // unsaved tabs, hold the close until the person saves or discards them.
     onClosing: event => {
         workbench.saveLayout();
+        if (!window.quitApproved && manageEnvironmentDialog.holdsQuit(window.close)) {
+            event.accepted = false;
+            return;
+        }
         if (window.quitApproved || AppController.requestQuit()) {
             return;
         }

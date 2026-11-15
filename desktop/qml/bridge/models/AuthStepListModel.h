@@ -70,6 +70,10 @@ public:
     [[nodiscard]] QString idAt(int row) const;
     [[nodiscard]] EditableKeyValueModel* extractModelAt(int row) const;
 
+signals:
+    /// A step or one of the steps' extraction tables was edited (not emitted by `rebuild`).
+    void stepsEdited();
+
 private:
     struct Row {
         QString id;
@@ -79,6 +83,8 @@ private:
         QString expect;
         std::unique_ptr<EditableKeyValueModel> extracts;
     };
+
+    void watchExtracts(EditableKeyValueModel& extracts);
 
     [[nodiscard]] bool valid(int row) const {
         return row >= 0 && row < static_cast<int>(rows_.size());

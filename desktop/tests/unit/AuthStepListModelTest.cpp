@@ -163,4 +163,32 @@ TEST(AuthStepListModel, move_step_swaps_adjacent_rows) {
     EXPECT_EQ(model.idAt(1), QStringLiteral("a"));
 }
 
+TEST(AuthStepListModel, every_edit_including_a_step_extraction_reports_steps_edited) {
+    AuthStepListModel model;
+    model.rebuild({makeSeed("a", "POST", "/a"), makeSeed("b", "GET", "/b")});
+    int edits = 0;
+    QObject::connect(&model, &AuthStepListModel::stepsEdited, &model, [&edits]() { ++edits; });
+    const auto reports = [&edits](auto action) {
+        const int before = edits;
+        action();
+        return edits > before;
+    };
+
+    EXPECT_TRUE(reports([&model]() { model.setPath(0, QStringLiteral("/a2")); }));
+    EXPECT_TRUE(reports([&model]() { model.setMethod(0, QStringLiteral("PUT")); }));
+    EXPECT_TRUE(reports([&model]() { model.setBody(0, QStringLiteral("{}")); }));
+    EXPECT_TRUE(reports([&model]() { model.setExpect(0, QStringLiteral("201")); }));
+    EXPECT_TRUE(reports([&model]() { model.moveStep(0, 1); }));
+    EXPECT_TRUE(reports([&model]() { model.extractModelAt(0)->setKey(0, QStringLiteral("id")); }));
+    int added = -1;
+    EXPECT_TRUE(reports([&model, &added]() { added = model.addStep(); }));
+    EXPECT_TRUE(reports(
+        [&model, added]() { model.extractModelAt(added)->setValue(0, QStringLiteral("x")); }));
+    EXPECT_TRUE(reports([&model, added]() { model.removeStep(added); }));
+
+    EXPECT_FALSE(reports([&model]() { model.setPath(0, model.pathAt(0)); }));
+    EXPECT_FALSE(reports([&model]() { model.rebuild({makeSeed("c", "POST", "/c")}); }));
+    EXPECT_TRUE(reports([&model]() { model.extractModelAt(0)->setKey(0, QStringLiteral("id")); }));
+}
+
 }  // namespace

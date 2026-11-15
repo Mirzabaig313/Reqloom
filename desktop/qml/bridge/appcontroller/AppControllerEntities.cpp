@@ -281,14 +281,8 @@ void AppController::newActor() {
 
 void AppController::requestActorEdit(const QString& projectRoot, const QString& actorId) {
     selectActor(projectRoot, actorId);
-    if (hasActor_) {
-        emit actorEditRequested();
-    }
-}
-
-void AppController::cancelActorDraft() {
-    if (tabModel()->valid(activeTabIndex())) {
-        closeTab(activeTabIndex());
+    if (hasActor_ && selectedActorId_ == actorId) {
+        beginActorEdit();
     }
 }
 
@@ -407,6 +401,7 @@ void AppController::deleteActor(const QString& actorId) {
 void AppController::prepareNewEnvironment() {
     envVars_.clearRows();
     editEnvBaseUrl_.clear();
+    envBaseline_ = {};
     emit editEnvBaseUrlChanged();
 }
 
@@ -435,6 +430,7 @@ void AppController::prepareEditEnvironment(const QString& name) {
             }
         }
     }
+    envBaseline_ = {name, editEnvBaseUrl_, pairs};
     envVars_.setPairs(std::move(pairs));
     emit editEnvBaseUrlChanged();
 }
@@ -458,6 +454,7 @@ bool AppController::saveEnvironmentEdits(const QString& originalName, const QStr
     const bool ok = activeProject().saveEnvironment(originalName, name, variables, error);
     environmentRenameTarget_.clear();
     if (ok) {
+        envBaseline_ = {name.trimmed(), editEnvBaseUrl_, envVars_.pairs()};
         emit notify(QStringLiteral("Saved environment “%1”").arg(name.trimmed()), false);
         return true;
     }

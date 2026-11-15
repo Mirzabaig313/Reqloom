@@ -6,6 +6,7 @@
 #include "ChainEditorModel.h"
 #include "DependencyEditModel.h"
 #include "EditableKeyValueModel.h"
+#include "EnvironmentEdits.h"
 #include "ExampleListModel.h"
 #include "HistoryModel.h"
 #include "KeyValueModel.h"
@@ -102,6 +103,22 @@ class AppController : public QObject {
         QString selectedActorDescription READ selectedActorDescription NOTIFY actorSelectionChanged)
     Q_PROPERTY(
         QString selectedActorStrategy READ selectedActorStrategy NOTIFY actorSelectionChanged)
+    // The actor panel's edit copies of the scalar fields, parked per tab with the edited tables.
+    Q_PROPERTY(bool actorEditing READ actorEditing NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditName READ actorEditName WRITE setActorEditName NOTIFY
+                   actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditDescription READ actorEditDescription WRITE setActorEditDescription
+                   NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditStrategy READ actorEditStrategy WRITE setActorEditStrategy NOTIFY
+                   actorEditFieldsChanged)
+    Q_PROPERTY(bool actorEditRefreshEnabled READ actorEditRefreshEnabled WRITE
+                   setActorEditRefreshEnabled NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditRefreshMethod READ actorEditRefreshMethod WRITE
+                   setActorEditRefreshMethod NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditRefreshPath READ actorEditRefreshPath WRITE setActorEditRefreshPath
+                   NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditRefreshBody READ actorEditRefreshBody WRITE setActorEditRefreshBody
+                   NOTIFY actorEditFieldsChanged)
 
     Q_PROPERTY(bool hasOperation READ hasOperation NOTIFY operationChanged)
     Q_PROPERTY(QString opName READ opName NOTIFY operationChanged)
@@ -355,8 +372,15 @@ public:
     Q_INVOKABLE void newActor();
     /// Select an existing actor and enter inline edit mode.
     Q_INVOKABLE void requestActorEdit(const QString& projectRoot, const QString& actorId);
-    /// Discard a never-saved new-actor draft, clearing the panel.
-    Q_INVOKABLE void cancelActorDraft();
+    /// Put the active actor tab in edit mode, seeding the edit copies from the actor; a no-op while
+    /// it is already editing, so its edits survive.
+    Q_INVOKABLE void beginActorEdit();
+    /// Drop the active actor tab's edits and return to the read view; a never-saved draft's tab
+    /// closes.
+    Q_INVOKABLE void discardActorEdits();
+    /// Save the active actor tab's edits with saveActorInline. Returns false, keeping the edits and
+    /// showing why, when the save is rejected.
+    Q_INVOKABLE bool saveActorEdits();
     /// Save an actor edited inline. `originalId` empty → create, else edit (rename when `name`
     /// differs). Returns true on success; the panel stays in edit mode on failure.
     Q_INVOKABLE bool saveActorInline(const QString& originalId,
@@ -380,6 +404,13 @@ public:
     Q_INVOKABLE bool saveEnvironmentEdits(const QString& originalName, const QString& name);
     /// Delete an environment.
     Q_INVOKABLE void deleteEnvironment(const QString& name);
+    /// Whether the environment editor, with its name field holding `name`, differs from what was
+    /// loaded by the last prepare or save.
+    Q_INVOKABLE [[nodiscard]] bool environmentEditsChanged(const QString& name) const;
+    /// The unsaved-changes dialog texts (title, message, saveText, discardText, cancelText) for the
+    /// environment `title`. `reason`: 0 closes the dialog, 1 opens another environment, 2 quits.
+    Q_INVOKABLE [[nodiscard]] QVariantMap environmentUnsavedPrompt(const QString& title,
+                                                                   int reason) const;
 
     /// Set the project's p95 latency SLO budget in ms; 0 clears it.
     Q_INVOKABLE void setLatencySlo(int ms);
@@ -418,6 +449,21 @@ public:
     [[nodiscard]] QString selectedActorName() const { return selectedActorName_; }
     [[nodiscard]] QString selectedActorDescription() const { return selectedActorDescription_; }
     [[nodiscard]] QString selectedActorStrategy() const { return selectedActorStrategy_; }
+    [[nodiscard]] bool actorEditing() const { return actorEditing_; }
+    [[nodiscard]] QString actorEditName() const { return actorEditName_; }
+    [[nodiscard]] QString actorEditDescription() const { return actorEditDescription_; }
+    [[nodiscard]] QString actorEditStrategy() const { return actorEditStrategy_; }
+    [[nodiscard]] bool actorEditRefreshEnabled() const { return actorEditRefreshEnabled_; }
+    [[nodiscard]] QString actorEditRefreshMethod() const { return actorEditRefreshMethod_; }
+    [[nodiscard]] QString actorEditRefreshPath() const { return actorEditRefreshPath_; }
+    [[nodiscard]] QString actorEditRefreshBody() const { return actorEditRefreshBody_; }
+    void setActorEditName(const QString& value);
+    void setActorEditDescription(const QString& value);
+    void setActorEditStrategy(const QString& value);
+    void setActorEditRefreshEnabled(bool value);
+    void setActorEditRefreshMethod(const QString& value);
+    void setActorEditRefreshPath(const QString& value);
+    void setActorEditRefreshBody(const QString& value);
 
     [[nodiscard]] bool hasOperation() const { return hasOperation_; }
     [[nodiscard]] QString opName() const { return opName_; }
@@ -878,6 +924,8 @@ signals:
     void actorEditChanged();
     /// Fired when the read-only actor detail selection changes.
     void actorSelectionChanged();
+    /// Fired when actor edit mode or one of its edit copies changes.
+    void actorEditFieldsChanged();
     /// Fired when the active tab or the tab set changes.
     void activeTabChanged();
     /// Fired after an endpoint draft's tab closed.
@@ -889,8 +937,6 @@ signals:
     /// The unsaved tabs were saved or discarded after `requestQuit`; the window may close.
     void quitApproved();
     void unsavedTabsChanged();
-    /// Fired when the inline actor panel should enter edit mode.
-    void actorEditRequested();
 
     /// Fired when the env editor's Base URL field is seeded programmatically.
     void editEnvBaseUrlChanged();
@@ -980,6 +1026,15 @@ private:
     void syncActiveKindFlags();
     /// Recompute the active tab's dirty flag and refresh its strip row if it changed.
     void updateActiveTabDirty();
+    /// Queue one updateActiveTabDirty for the next event-loop turn.
+    void scheduleActiveTabDirtyUpdate();
+    /// Seed the actor edit copies from the selected actor's saved values.
+    void seedActorEditFields();
+    /// Leave actor edit mode and drop the active actor tab's baseline.
+    void endActorEdit();
+    /// Assign `value` to the actor edit copy `field`, emitting when it changed.
+    template <typename T>
+    void setActorEditField(T& field, const T& value);
     /// Start or drop the active tab's edit baseline as edit mode starts or ends.
     void onActiveTabEditingChanged();
     /// The live edits of the active operation tab, with its baseline, for the dirty check.
@@ -1149,6 +1204,16 @@ private:
     QString actorRefreshMethod_;
     QString actorRefreshPath_;
     QString actorRefreshBody_;
+    bool actorEditing_{false};
+    QString actorEditName_;
+    QString actorEditDescription_;
+    QString actorEditStrategy_;
+    bool actorEditRefreshEnabled_{false};
+    QString actorEditRefreshMethod_{QStringLiteral("POST")};
+    QString actorEditRefreshPath_;
+    QString actorEditRefreshBody_;
+    /// The environment editor as last prepared or saved.
+    EnvironmentEdits envBaseline_;
     DependencyEditModel editDependencies_;
     /// An action waiting on the unsaved-changes prompt: the unsaved tabs it would drop, and what
     /// to do once they are saved or discarded.

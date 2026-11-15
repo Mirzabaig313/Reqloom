@@ -108,7 +108,7 @@ struct TabState {
     bool chainSnapshotValid{false};
 
     /// The edits as they were when editing began (or after the last chain save): the tab is dirty
-    /// while its edits differ from this. Null when not editing.
+    /// while its edits differ from this. Null when not editing. Actor tabs keep theirs here too.
     std::shared_ptr<const TabState> editBaseline;
 
     // ── Actor state ──
@@ -128,6 +128,18 @@ struct TabState {
     QString actorRefreshMethod{QStringLiteral("POST")};
     QString actorRefreshPath;
     QString actorRefreshBody;
+
+    // ── Actor edit state ──
+    // The actor* fields above are the persisted values (the config, step and refresh-extract tables
+    // are edited in place); these hold the panel's edit copies of the scalar fields.
+    bool actorEditing{false};
+    QString actorEditName;
+    QString actorEditDescription;
+    QString actorEditStrategy;
+    bool actorEditRefreshEnabled{false};
+    QString actorEditRefreshMethod{QStringLiteral("POST")};
+    QString actorEditRefreshPath;
+    QString actorEditRefreshBody;
 
     // ── Response snapshot (per tab) ──
     bool hasResponse{false};

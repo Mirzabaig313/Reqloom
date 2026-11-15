@@ -104,6 +104,7 @@ add_executable(reqloom-desktop-secret-tests
     unit/RequestOverrideTest.cpp
     unit/TabModelTest.cpp
     unit/TabEditsTest.cpp
+    unit/EnvironmentEditsTest.cpp
     unit/WorkspaceModelTest.cpp
     unit/ProjectTreeModelTest.cpp
     unit/PathEvalTest.cpp
@@ -127,6 +128,8 @@ add_executable(reqloom-desktop-secret-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabModel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabEdits.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/TabEdits.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/EnvironmentEdits.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../qml/bridge/models/EnvironmentEdits.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp

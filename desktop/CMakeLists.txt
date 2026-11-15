@@ -48,6 +48,8 @@ qt_add_executable(reqloom-desktop
     qml/bridge/models/TabModel.h
     qml/bridge/models/TabEdits.cpp
     qml/bridge/models/TabEdits.h
+    qml/bridge/models/EnvironmentEdits.cpp
+    qml/bridge/models/EnvironmentEdits.h
     qml/bridge/appcontroller/AppController.cpp
     qml/bridge/appcontroller/AppController.h
     qml/bridge/appcontroller/AppControllerInternal.h

@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace reqloom::desktop::tests {
@@ -46,6 +47,29 @@ TabState blankDraft() {
     tab.operationDraft = true;
     tab.editing = true;
     tab.editMethod = QStringLiteral("GET");
+    tab.editBaseline = std::make_shared<const TabState>(tab);
+    return tab;
+}
+
+TabState editingActor() {
+    TabState tab;
+    tab.kind = TabState::Kind::Actor;
+    tab.id = QStringLiteral("admin");
+    tab.actorId = tab.id;
+    tab.actorName = tab.id;
+    tab.actorStrategy = QStringLiteral("Multi-step login chain");
+    tab.actorConfig = {{QStringLiteral("username"), QStringLiteral("root")},
+                       {QStringLiteral("scope"), QStringLiteral("read")}};
+    qml::AuthStepListModel::StepSeed step;
+    step.id = QStringLiteral("login");
+    step.method = QStringLiteral("POST");
+    step.path = QStringLiteral("/login");
+    step.extractions = {{QStringLiteral("token"), QStringLiteral("data.token")}};
+    tab.actorAuthSteps = {step};
+    tab.actorEditing = true;
+    tab.actorEditName = tab.id;
+    tab.actorEditDescription = QStringLiteral("Back-office account");
+    tab.actorEditStrategy = tab.actorStrategy;
     tab.editBaseline = std::make_shared<const TabState>(tab);
     return tab;
 }
@@ -112,6 +136,58 @@ TEST(TabEdits, a_never_saved_actor_is_dirty_and_a_saved_one_is_not) {
     TabState saved = draft;
     saved.id = QStringLiteral("admin");
     EXPECT_FALSE(qml::hasUnsavedEdits(saved));
+}
+
+TEST(TabEdits, an_actor_in_edit_mode_without_changes_is_not_dirty) {
+    EXPECT_FALSE(qml::hasUnsavedEdits(editingActor()));
+}
+
+TEST(TabEdits, each_edited_actor_field_makes_the_tab_dirty) {
+    const auto dirtyAfter = [](auto change) {
+        TabState tab = editingActor();
+        change(tab);
+        return qml::hasUnsavedEdits(tab);
+    };
+    EXPECT_TRUE(dirtyAfter([](TabState& t) { t.actorEditName = QStringLiteral("root"); }));
+    EXPECT_TRUE(dirtyAfter([](TabState& t) { t.actorEditDescription.clear(); }));
+    EXPECT_TRUE(
+        dirtyAfter([](TabState& t) { t.actorEditStrategy = QStringLiteral("Bearer Token"); }));
+    EXPECT_TRUE(dirtyAfter([](TabState& t) { t.actorConfig[0].second = QStringLiteral("admin"); }));
+    EXPECT_TRUE(dirtyAfter([](TabState& t) { t.actorConfig.pop_back(); }));
+    EXPECT_TRUE(
+        dirtyAfter([](TabState& t) { t.actorAuthSteps[0].path = QStringLiteral("/signin"); }));
+    EXPECT_TRUE(dirtyAfter([](TabState& t) { t.actorAuthSteps[0].extractions.clear(); }));
+    EXPECT_TRUE(dirtyAfter([](TabState& t) { t.actorAuthSteps.push_back({}); }));
+    EXPECT_TRUE(dirtyAfter([](TabState& t) { t.actorEditRefreshEnabled = true; }));
+}
+
+TEST(TabEdits, an_actor_edit_changed_back_or_only_reordered_is_not_dirty) {
+    TabState tab = editingActor();
+    tab.actorEditName = QStringLiteral("root");
+    ASSERT_TRUE(qml::hasUnsavedEdits(tab));
+    tab.actorEditName = QStringLiteral(" admin ");
+    std::swap(tab.actorConfig[0], tab.actorConfig[1]);
+    EXPECT_FALSE(qml::hasUnsavedEdits(tab));
+}
+
+TEST(TabEdits, refresh_fields_count_only_while_refresh_is_on) {
+    TabState tab = editingActor();
+    tab.actorEditRefreshPath = QStringLiteral("/refresh");
+    tab.actorRefreshExtract = {{QStringLiteral("token"), QStringLiteral("data.token")}};
+    EXPECT_FALSE(qml::hasUnsavedEdits(tab));
+
+    tab.actorEditRefreshEnabled = true;
+    auto baseline = std::make_shared<TabState>(*tab.editBaseline);
+    baseline->actorEditRefreshEnabled = true;
+    tab.editBaseline = baseline;
+    EXPECT_TRUE(qml::hasUnsavedEdits(tab));
+}
+
+TEST(TabEdits, an_actor_out_of_edit_mode_is_not_dirty) {
+    TabState tab = editingActor();
+    tab.actorEditName = QStringLiteral("root");
+    tab.actorEditing = false;
+    EXPECT_FALSE(qml::hasUnsavedEdits(tab));
 }
 
 TEST(TabEdits, rename_repoints_the_operation_tab_and_keeps_its_edits) {
@@ -230,6 +306,20 @@ TEST(TabEdits, prompt_for_a_running_tab_says_the_run_is_cancelled) {
 
     EXPECT_TRUE(
         prompt.message.endsWith(QStringLiteral("Closing also cancels the run in progress.")));
+}
+
+TEST(TabEdits, prompt_for_an_environment_says_what_is_about_to_happen) {
+    EXPECT_EQ(qml::unsavedPrompt({QStringLiteral("staging")},
+                                 qml::UnsavedReason::CloseEnvironment,
+                                 /*cancelsRun=*/false)
+                  .message,
+              QStringLiteral("“staging” has unsaved changes. Save them before closing?"));
+    EXPECT_EQ(qml::unsavedPrompt({QStringLiteral("staging")},
+                                 qml::UnsavedReason::SwitchEnvironment,
+                                 /*cancelsRun=*/false)
+                  .message,
+              QStringLiteral(
+                  "“staging” has unsaved changes. Save them before opening another environment?"));
 }
 
 TEST(TabEdits, save_in_order_stops_at_the_first_failure) {

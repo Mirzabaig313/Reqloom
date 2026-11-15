@@ -19,9 +19,14 @@ namespace reqloom::desktop::qml {
 /// ephemeral OAuth2 access token and the chain editor's candidate lists are ignored.
 [[nodiscard]] bool sameOperationEdits(const TabState& a, const TabState& b);
 
-/// Whether closing `tab` would lose edits. An operation tab is dirty while its edits differ from
-/// the baseline taken when editing began; a never-saved endpoint draft is dirty once it is named
-/// or any field differs from the blank draft; a never-saved actor draft is always dirty.
+/// True when two actor snapshots hold the same savable edits: name, description, strategy, auth
+/// config, login steps and session refresh. Surrounding whitespace in the name and description,
+/// the order of config keys, and refresh fields while refresh is off are ignored, as the save does.
+[[nodiscard]] bool sameActorEdits(const TabState& a, const TabState& b);
+
+/// Whether closing `tab` would lose edits. An operation or actor tab is dirty while its edits
+/// differ from the baseline taken when editing began; a never-saved endpoint draft is dirty once it
+/// is named or any field differs from the blank draft; a never-saved actor draft is always dirty.
 [[nodiscard]] bool hasUnsavedEdits(const TabState& tab);
 
 /// Re-point `tab` from operation `oldId` to `newId`: the tab's own identity when it is that
@@ -58,7 +63,13 @@ struct TabRestorePlan {
 [[nodiscard]] QString droppedTabsMessage(int dropped);
 
 /// What is about to drop the tabs' edits; it words the prompt.
-enum class UnsavedReason : std::uint8_t { CloseTabs, LeaveProject, Quit };
+enum class UnsavedReason : std::uint8_t {
+    CloseTabs,
+    LeaveProject,
+    Quit,
+    CloseEnvironment,
+    SwitchEnvironment,
+};
 
 /// The texts of the unsaved-changes dialog.
 struct UnsavedPrompt {
