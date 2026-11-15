@@ -10,6 +10,11 @@
 //     "first wins"; the new behavior is "last wins" per RFC 6265 §5.3.
 
 #include "MockSutHarness.h"
+#include "infrastructure/hooks/HookRunner.h"
+#include "infrastructure/http/HttpClient.h"
+#include "infrastructure/schema/SchemaParser.h"
+#include "infrastructure/secrets/SecretStore.h"
+#include "infrastructure/storage/HistoryStore.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
@@ -19,9 +24,17 @@
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
+#include <support/TempPath.h>
+
+#include <expected>
 #include <filesystem>
+#include <fstream>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 namespace ce = reqloom::engine;
@@ -204,4 +217,166 @@ TEST_F(CookieJarFixture, user_set_cookie_survives_401_recovery) {
     EXPECT_EQ(cookieHeader, "manual=override")
         << "401-recovery clobbered user-set Cookie with jar contents; full Cookie: "
         << cookieHeader;
+}
+
+// ─── Cookie scope: host, Domain, Secure, Path, removal ──────────────────────
+
+namespace {
+
+/// Answers 200 by URL path; `/set` and `/logout` carry the Set-Cookie headers a test
+/// configures. Records every request.
+class CookieHttpClient final : public ce::HttpClient {
+public:
+    std::map<std::string, std::vector<std::string>> setCookies;
+
+    std::expected<ce::HttpResponse, ce::ReqloomError> send(
+        const ce::HttpRequest& request) override {
+        requests.push_back(request);
+        ce::HttpResponse response;
+        response.status = 200;
+        response.body = "{}";
+        const auto path = request.url.substr(request.url.find('/', request.url.find("://") + 3));
+        if (const auto it = setCookies.find(path); it != setCookies.end()) {
+            for (const auto& header : it->second) {
+                response.headers.emplace_back("Set-Cookie", header);
+            }
+        }
+        return response;
+    }
+
+    std::vector<ce::HttpRequest> requests;
+};
+
+constexpr const char* kCookieScopeYaml = R"YAML(
+version: 1
+name: CookieScope
+default_environment: api
+actors:
+  user:
+    auth:
+      strategy: simple
+      method: POST
+      path: /login
+      expect_status: 200
+resources:
+  w:
+    operations:
+      set: { method: GET, path: /set, actor: user, expect_status: 200 }
+      logout: { method: GET, path: /logout, actor: user, expect_status: 200 }
+      read: { method: GET, path: /read, actor: user, expect_status: 200 }
+      other: { method: GET, path: /other, actor: user, expect_status: 200 }
+)YAML";
+
+/// One engine and run context shared by every run of a test, so the jar carries over.
+class CookieScopeRig {
+public:
+    explicit CookieScopeRig(std::map<std::string, std::vector<std::string>> setCookies) {
+        dir_ = ct::uniqueTempPath("reqloom-cookie-scope");
+        fs::create_directories(dir_);
+        std::ofstream{dir_ / "reqloom.yaml"} << kCookieScopeYaml;
+        auto parsed = ce::parseProject(dir_ / "reqloom.yaml");
+        EXPECT_TRUE(parsed.has_value()) << (parsed ? "" : parsed.error().detail);
+        if (parsed) {
+            project_ = std::move(*parsed);
+        }
+        project_.environments["api"] = {{"baseUrl", "http://api.example.test"}};
+        project_.environments["www"] = {{"baseUrl", "http://www.example.test"}};
+        project_.environments["other"] = {{"baseUrl", "http://other.test"}};
+        project_.environments["tls"] = {{"baseUrl", "https://api.example.test"}};
+        auto http = std::make_unique<CookieHttpClient>();
+        http->setCookies = std::move(setCookies);
+        http_ = http.get();
+        engine_ = std::make_unique<ce::ExecutionEngine>(
+            ce::ExecutionEngine::Dependencies{std::move(http), nullptr, nullptr, nullptr, nullptr});
+    }
+    ~CookieScopeRig() {
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+    }
+    CookieScopeRig(const CookieScopeRig&) = delete;
+    CookieScopeRig& operator=(const CookieScopeRig&) = delete;
+    CookieScopeRig(CookieScopeRig&&) = delete;
+    CookieScopeRig& operator=(CookieScopeRig&&) = delete;
+
+    /// Run `op` against `env` and return the Cookie header its request carried.
+    std::optional<std::string> run(const std::string& op, const std::string& env) {
+        ce::RunOptions options;
+        options.environment = env;
+        const auto before = http_->requests.size();
+        auto result = engine_->run(project_, ce::OperationId{op}, ctx_, options);
+        EXPECT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+        EXPECT_TRUE(result && result->succeeded()) << op << " on " << env;
+        for (auto i = http_->requests.size(); i > before; --i) {
+            const auto& request = http_->requests[i - 1];
+            if (request.url.ends_with(op.substr(op.find('.') + 1))) {
+                const auto it = request.headers.find("Cookie");
+                return it == request.headers.end() ? std::nullopt
+                                                   : std::optional<std::string>{it->second};
+            }
+        }
+        ADD_FAILURE() << op << " sent no request";
+        return std::nullopt;
+    }
+
+    [[nodiscard]] const ce::RunContext& context() const { return ctx_; }
+
+private:
+    fs::path dir_;
+    ce::Project project_;
+    CookieHttpClient* http_{nullptr};
+    std::unique_ptr<ce::ExecutionEngine> engine_;
+    ce::RunContext ctx_;
+};
+
+}  // namespace
+
+TEST(CookieScope, cookie_set_by_one_host_is_not_sent_to_another) {
+    CookieScopeRig rig{{{"/set", {"sid=s-1"}}}};
+    rig.run("w.set", "api");
+    EXPECT_EQ(rig.run("w.read", "api"), "sid=s-1") << "the setting host still gets it";
+    EXPECT_EQ(rig.run("w.read", "other"), std::nullopt);
+    EXPECT_EQ(rig.run("w.read", "www"), std::nullopt) << "host-only: not to a sibling";
+}
+
+TEST(CookieScope, domain_cookie_is_sent_to_a_subdomain) {
+    CookieScopeRig rig{{{"/set", {"sid=s-1; Domain=example.test"}}}};
+    rig.run("w.set", "api");
+    EXPECT_EQ(rig.run("w.read", "www"), "sid=s-1");
+    EXPECT_EQ(rig.run("w.read", "other"), std::nullopt);
+}
+
+TEST(CookieScope, secure_cookie_is_not_sent_over_http) {
+    CookieScopeRig rig{{{"/set", {"sid=s-1; Secure"}}}};
+    rig.run("w.set", "tls");
+    EXPECT_EQ(rig.run("w.read", "tls"), "sid=s-1");
+    EXPECT_EQ(rig.run("w.read", "api"), std::nullopt);
+}
+
+TEST(CookieScope, max_age_zero_on_an_ordinary_response_removes_the_cookie) {
+    CookieScopeRig rig{{{"/set", {"sid=s-1", "keep=k-1"}}, {"/logout", {"sid=gone; Max-Age=0"}}}};
+    rig.run("w.set", "api");
+    rig.run("w.logout", "api");
+    EXPECT_EQ(rig.run("w.read", "api"), "keep=k-1");
+    EXPECT_FALSE(rig.context().cookies(ce::ActorId{"user"}).contains("sid"));
+}
+
+TEST(CookieScope, path_attribute_limits_where_the_cookie_goes) {
+    CookieScopeRig rig{{{"/set", {"sid=s-1; Path=/read"}}}};
+    rig.run("w.set", "api");
+    EXPECT_EQ(rig.run("w.read", "api"), "sid=s-1");
+    EXPECT_EQ(rig.run("w.other", "api"), std::nullopt);
+}
+
+TEST(CookieScope, jar_records_the_host_that_set_each_cookie) {
+    CookieScopeRig rig{{{"/set", {"sid=s-1; Domain=example.test; Path=/; Secure"}}}};
+    rig.run("w.set", "tls");
+    const auto jar = rig.context().jarCookies(ce::ActorId{"user"});
+    ASSERT_EQ(jar.size(), 1U);
+    EXPECT_EQ(jar.front().name, "sid");
+    EXPECT_EQ(jar.front().value, "s-1");
+    EXPECT_EQ(jar.front().setterHost, "api.example.test");
+    EXPECT_EQ(jar.front().domain, "example.test");
+    EXPECT_EQ(jar.front().path, "/");
+    EXPECT_TRUE(jar.front().secure);
+    EXPECT_EQ(rig.context().cookies(ce::ActorId{"user"}).at("sid"), "s-1");
 }

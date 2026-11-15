@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <format>
 #include <map>
+#include <ranges>
 #include <set>
 #include <string>
 #include <string_view>
@@ -251,6 +252,29 @@ inline bool warnDroppedAuth(std::vector<std::string>& warnings,
     warnings.push_back(std::format(
         "{}: `{}` auth was not imported — create an actor for it and attach it", where, type));
     return true;
+}
+
+// ── Bodies ───────────────────────────────────────────────────────────────────
+
+/// Keep a source multipart form multipart: the engine sends a form with no file field
+/// urlencoded unless the operation has `Content-Type: multipart/form-data`. An explicit
+/// source Content-Type is left alone.
+inline void keepMultipart(Operation& op) {
+    if (!op.bodyForm) {
+        return;
+    }
+    for (const auto& name : op.headers | std::views::keys) {
+        std::string lower{name};
+        for (auto& c : lower) {
+            if (c >= 'A' && c <= 'Z') {
+                c = static_cast<char>(c + ('a' - 'A'));
+            }
+        }
+        if (lower == "content-type") {
+            return;
+        }
+    }
+    op.headers["Content-Type"] = "multipart/form-data";
 }
 
 // ── Environments ─────────────────────────────────────────────────────────────

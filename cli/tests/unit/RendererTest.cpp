@@ -14,6 +14,8 @@
 
 #include <chrono>
 #include <sstream>
+#include <string>
+#include <vector>
 
 namespace ce = reqloom::engine;
 namespace cli = reqloom::cli;
@@ -264,4 +266,49 @@ TEST(JUnitRenderer, folds_poll_attempts_into_parent_testcase_systemout) {
     EXPECT_NE(xml.find("<system-out><![CDATA["), std::string::npos);
     EXPECT_NE(xml.find("poll #1"), std::string::npos);
     EXPECT_NE(xml.find("poll #2"), std::string::npos);
+}
+
+// ─── Captured bodies ─────────────────────────────────────────────────────────
+
+// Captured bodies are unmasked for the desktop. CLI output can be read by an AI
+// agent, so a body may only appear there through `ce::maskCapturedBody`.
+TEST(CliOutput, no_captured_body_text_appears_in_any_format) {
+    const std::string body =
+        R"({"access_token":"CAPTURED-BODY-TOKEN","note":"CAPTURED-BODY-TEXT"})";
+    const std::vector<ce::RunEvent> events{
+        ce::RunStarted{ce::RunId{7}, ce::OperationId{"order.pay"}, 2, "staging", {}},
+        ce::StepStarted{ce::RunId{7}, 0, ce::OperationId{"actor.login"}, 1, {}},
+        ce::ResponseReceived{ce::RunId{7}, 0, 200, {}, body.size(), {}, {}, body},
+        ce::ResponseReceived{ce::RunId{7}, 1, 422, {}, body.size(), {}, {}, body},
+        ce::StepFailed{ce::RunId{7},
+                       1,
+                       ce::OperationId{"order.pay"},
+                       ce::ErrorCode::Http4xx,
+                       ce::ErrorClass::Http,
+                       1,
+                       "HTTP 422 (expected 201)",
+                       {},
+                       {}},
+        ce::RunEnded{ce::RunId{7}, ce::RunOutcome::Failed, {}, {}},
+    };
+    const auto run = buildFailedRun();
+
+    std::ostringstream summary;
+    std::ostringstream progress;
+    std::ostringstream err;
+    cli::TextRenderer text{summary, progress, err, /*quiet=*/false};
+    for (const auto& event : events) {
+        text.onEvent(event);
+    }
+    text.render(ce::OperationId{"order.pay"}, "staging", run);
+
+    std::ostringstream json;
+    cli::JsonRenderer{json}.render(ce::OperationId{"order.pay"}, "staging", run);
+    std::ostringstream junit;
+    cli::JUnitRenderer{junit}.render(ce::OperationId{"order.pay"}, "staging", run);
+
+    for (const auto& out : {summary.str() + progress.str() + err.str(), json.str(), junit.str()}) {
+        EXPECT_EQ(out.find("CAPTURED-BODY"), std::string::npos) << out;
+    }
+    EXPECT_NE(err.str().find("HTTP 422"), std::string::npos) << "the failure itself is printed";
 }

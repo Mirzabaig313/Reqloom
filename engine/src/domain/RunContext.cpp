@@ -40,11 +40,8 @@ void registerSessionSecrets(SecretRegistry& registry, const ActorSession& sessio
 
 struct RunContext::Impl {
     std::map<ActorId, ActorSession> sessions;
-    /// Per-actor cookie jar. We intentionally treat the jar as simple
-    /// name→value pairs, not as full RFC 6265 cookies with attributes.
-    /// The engine isn't a browser; tracking domain / path / expiry
-    /// would invite bugs without buying real testing power.
-    std::map<ActorId, std::map<std::string, std::string>> cookieJars;
+    /// Per-actor cookie jar, oldest first.
+    std::map<ActorId, std::vector<JarCookie>> cookieJars;
     std::map<ResourceId, std::vector<ResourceInstance>> instances;
     std::map<ResourceId, std::size_t> iterations;
     std::vector<ResourceInstance> emptyInstances;
@@ -83,25 +80,65 @@ void RunContext::clearSessions() {
 }
 
 std::map<std::string, std::string> RunContext::cookies(const ActorId& actor) const {
-    const auto it = impl_->cookieJars.find(actor);
-    if (it == impl_->cookieJars.end()) {
-        return {};
+    std::map<std::string, std::string> out;
+    if (const auto it = impl_->cookieJars.find(actor); it != impl_->cookieJars.end()) {
+        for (const auto& cookie : it->second) {
+            out[cookie.name] = cookie.value;
+        }
     }
-    return it->second;
+    return out;
+}
+
+std::vector<JarCookie> RunContext::jarCookies(const ActorId& actor) const {
+    const auto it = impl_->cookieJars.find(actor);
+    return it == impl_->cookieJars.end() ? std::vector<JarCookie>{} : it->second;
 }
 
 void RunContext::setCookie(const ActorId& actor, std::string name, std::string value) {
-    if (name.empty()) {
+    storeCookie(actor, JarCookie{.name = std::move(name), .value = std::move(value)});
+}
+
+void RunContext::storeCookie(const ActorId& actor, JarCookie cookie) {
+    if (cookie.name.empty()) {
         return;
     }
-    impl_->secretRegistry->add(value);
-    impl_->cookieJars[actor][std::move(name)] = std::move(value);
+    impl_->secretRegistry->add(cookie.value);
+    auto& jar = impl_->cookieJars[actor];
+    std::erase_if(jar, [&](const JarCookie& held) {
+        return held.name == cookie.name && held.domain.has_value() == cookie.domain.has_value() &&
+               held.domain.value_or(held.setterHost) == cookie.domain.value_or(cookie.setterHost) &&
+               held.path == cookie.path;
+    });
+    jar.push_back(std::move(cookie));
 }
 
 void RunContext::removeCookie(const ActorId& actor, const std::string& name) {
     if (const auto it = impl_->cookieJars.find(actor); it != impl_->cookieJars.end()) {
-        it->second.erase(name);
+        std::erase_if(it->second, [&](const JarCookie& held) { return held.name == name; });
     }
+}
+
+void RunContext::removeCookie(const ActorId& actor,
+                              const std::string& name,
+                              const std::string_view host) {
+    const auto it = impl_->cookieJars.find(actor);
+    if (it == impl_->cookieJars.end()) {
+        return;
+    }
+    std::erase_if(it->second, [&](const JarCookie& held) {
+        if (held.name != name) {
+            return false;
+        }
+        if (held.setterHost.empty() || held.setterHost == host) {
+            return true;
+        }
+        if (!held.domain) {
+            return false;
+        }
+        const std::string_view domain{*held.domain};
+        return host == domain || (host.size() > domain.size() && host.ends_with(domain) &&
+                                  host[host.size() - domain.size() - 1] == '.');
+    });
 }
 
 void RunContext::clearCookies(const ActorId& actor) {

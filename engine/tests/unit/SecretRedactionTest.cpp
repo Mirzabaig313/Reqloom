@@ -6,10 +6,14 @@
 #include "domain/Codecs.h"
 #include "domain/SecretRegistry.h"
 
+#include <reqloom/engine/ExecutionEngine.h>
+#include <reqloom/engine/RunContext.h>
+
 #include <gtest/gtest.h>
 
 #include <string>
 #include <thread>
+#include <variant>
 #include <vector>
 
 namespace ce = reqloom::engine;
@@ -173,18 +177,85 @@ TEST(BodyFieldRedaction, binary_body_cannot_be_made_safe) {
     EXPECT_FALSE(ce::redactSensitiveBodyFields(binary).has_value());
 }
 
-TEST(BodyExcerpt, excerpt_is_capped_and_masked) {
+TEST(BodyExcerpt, long_body_is_quoted_whole_up_to_the_default_limit) {
     ce::SecretRegistry registry;
     registry.add("registered-secret-1");
-    const std::string body = R"({"message":"bad registered-secret-1","token":"tok-123456",)" +
-                             std::string(400, 'x') + "\"}";
+    const std::string body =
+        R"({"message":"bad registered-secret-1","token":"tok-123456","pad":")" +
+        std::string(3000, 'x') + "\",\"end\":\"LAST-FIELD\"}";
     const auto excerpt = ce::safeBodyExcerpt(body, &registry);
     ASSERT_TRUE(excerpt.has_value());
     EXPECT_FALSE(contains(*excerpt, "registered-secret-1")) << *excerpt;
     EXPECT_FALSE(contains(*excerpt, "tok-123456")) << *excerpt;
-    EXPECT_TRUE(contains(*excerpt, "bad")) << *excerpt;
-    EXPECT_TRUE(excerpt->ends_with("...")) << *excerpt;
-    EXPECT_LE(excerpt->size(), ce::kBodyExcerptBytes + 3);
+    EXPECT_TRUE(contains(*excerpt, "LAST-FIELD")) << "a 3 KB body is not cut";
+    EXPECT_FALSE(contains(*excerpt, "truncated")) << *excerpt;
+}
+
+TEST(BodyExcerpt, default_limit_is_four_kib) {
+    EXPECT_EQ(ce::kDefaultFailureExcerptBytes, 4096U);
+    EXPECT_EQ(ce::RunOptions{}.failureExcerptBytes, 4096U);
+}
+
+TEST(BodyExcerpt, body_over_the_limit_is_cut_and_states_its_total_size) {
+    // 2.3 MiB of text after a masked token.
+    const std::string body = "token=tok-123456 " + std::string(2411725, 'y');
+    const auto excerpt = ce::safeBodyExcerpt(body, nullptr);
+    ASSERT_TRUE(excerpt.has_value());
+    EXPECT_FALSE(contains(*excerpt, "tok-123456")) << excerpt->substr(0, 64);
+    const std::string marker = "… (truncated, 2.3 MiB total)";
+    EXPECT_TRUE(excerpt->ends_with(marker)) << excerpt->substr(excerpt->size() - 64);
+    EXPECT_EQ(excerpt->size(), ce::kDefaultFailureExcerptBytes + marker.size());
+}
+
+TEST(BodyExcerpt, cut_lands_on_a_utf8_boundary) {
+    std::string body{};
+    for (int i = 0; i < 3000; ++i) {
+        body += "é";
+    }
+    const auto excerpt = ce::safeBodyExcerpt(body, nullptr, 101);
+    ASSERT_TRUE(excerpt.has_value());
+    const auto cut = excerpt->substr(0, excerpt->find("… (truncated"));
+    EXPECT_EQ(cut.size(), 100U) << "two-byte characters: the 101st byte would split one";
+    EXPECT_TRUE(excerpt->ends_with("(truncated, 5.9 KiB total)")) << *excerpt;
+}
+
+TEST(BodyExcerpt, limit_is_adjustable_and_zero_gives_nothing) {
+    const std::string body = "error=" + std::string(6000, 'z');
+    const auto small = ce::safeBodyExcerpt(body, nullptr, 100);
+    ASSERT_TRUE(small.has_value());
+    EXPECT_TRUE(small->starts_with("error=zzz"));
+    EXPECT_TRUE(small->ends_with("… (truncated, 5.9 KiB total)")) << *small;
+    EXPECT_EQ(small->find("… (truncated"), 100U);
+
+    const auto large = ce::safeBodyExcerpt(body, nullptr, 8000);
+    ASSERT_TRUE(large.has_value());
+    EXPECT_EQ(*large, body);
+
+    EXPECT_FALSE(ce::safeBodyExcerpt(body, nullptr, 0).has_value());
+}
+
+TEST(BodyExcerpt, limit_above_the_bound_is_clamped) {
+    EXPECT_EQ(ce::kMaxFailureExcerptBytes, std::size_t{1024} * 1024);
+    const std::string body(std::size_t{1536} * 1024, 'q');
+    const auto excerpt = ce::safeBodyExcerpt(body, nullptr, std::size_t{4} * 1024 * 1024);
+    ASSERT_TRUE(excerpt.has_value());
+    EXPECT_EQ(excerpt->find("… (truncated"), ce::kMaxFailureExcerptBytes);
+    EXPECT_TRUE(excerpt->ends_with("(truncated, 1.5 MiB total)"));
+}
+
+TEST(BodyExcerpt, masking_applies_at_every_size) {
+    ce::SecretRegistry registry;
+    registry.add("registered-secret-1");
+    const std::string body = R"({"access_token":"tok-123456","note":"registered-secret-1",)"
+                             R"("pad":")" +
+                             std::string(10000, 'p') + "\"}";
+    for (const std::size_t limit :
+         {std::size_t{8}, std::size_t{40}, std::size_t{4096}, ce::kMaxFailureExcerptBytes}) {
+        const auto excerpt = ce::safeBodyExcerpt(body, &registry, limit);
+        ASSERT_TRUE(excerpt.has_value()) << limit;
+        EXPECT_FALSE(contains(*excerpt, "tok-123")) << limit << ": " << *excerpt;
+        EXPECT_FALSE(contains(*excerpt, "registered-sec")) << limit << ": " << *excerpt;
+    }
 }
 
 TEST(BodyExcerpt, short_body_is_returned_whole_and_empty_body_gives_nothing) {
@@ -192,4 +263,41 @@ TEST(BodyExcerpt, short_body_is_returned_whole_and_empty_body_gives_nothing) {
     ASSERT_TRUE(excerpt.has_value());
     EXPECT_EQ(*excerpt, R"({"error":"nope"})");
     EXPECT_FALSE(ce::safeBodyExcerpt("", nullptr).has_value());
+}
+
+// ─── Captured bodies ────────────────────────────────────────────────────────
+
+TEST(CapturedBody, redact_event_leaves_captured_body_as_it_was_and_masks_the_rest) {
+    ce::SecretRegistry registry;
+    registry.add("registered-secret-1");
+    const std::string body = R"({"access_token":"tok-123456","echo":"registered-secret-1"})";
+    ce::RunEvent event = ce::ResponseReceived{
+        {}, 0, 200, {{"X-Echo", "registered-secret-1"}}, body.size(), {}, {}, body};
+    ce::redactEvent(event, registry);
+    const auto& response = std::get<ce::ResponseReceived>(event);
+    ASSERT_TRUE(response.body.has_value());
+    EXPECT_EQ(*response.body, body);
+    EXPECT_EQ(response.headers.front().second, kMarker);
+
+    ce::RunEvent failed =
+        ce::StepFailed{{}, 0, {}, {}, {}, 1, "HTTP 400 — registered-secret-1", {}, {}};
+    ce::redactEvent(failed, registry);
+    EXPECT_FALSE(contains(std::get<ce::StepFailed>(failed).detail, "registered-secret-1"));
+}
+
+TEST(CapturedBody, agent_facing_mask_hides_token_fields_and_registered_values) {
+    ce::RunContext ctx;
+    ctx.secretRegistry().add("registered-secret-1");
+    const auto masked = ce::maskCapturedBody(
+        R"({"access_token":"tok-123456","echo":"registered-secret-1","user":"x"})", ctx);
+    ASSERT_TRUE(masked.has_value());
+    EXPECT_FALSE(contains(*masked, "tok-123456")) << *masked;
+    EXPECT_FALSE(contains(*masked, "registered-secret-1")) << *masked;
+    EXPECT_TRUE(contains(*masked, R"("user":"x")")) << *masked;
+}
+
+TEST(CapturedBody, agent_facing_mask_refuses_a_body_that_is_not_text) {
+    const ce::RunContext ctx;
+    const std::string binary{"\x89PNG\r\n\x1a\n\x00\x00\x00", 11};
+    EXPECT_FALSE(ce::maskCapturedBody(binary, ctx).has_value());
 }

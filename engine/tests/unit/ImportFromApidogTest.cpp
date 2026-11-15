@@ -289,3 +289,34 @@ TEST(ImportFromApidog, path_parameter_and_auth_are_handled_like_other_importers)
     EXPECT_EQ(countOf(w, "auth was not imported"), 1u) << w;
     EXPECT_EQ(countOf(w, "operation users.delete_user: `bearer` auth was not imported"), 1u) << w;
 }
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart.
+TEST(ImportFromApidog, text_only_multipart_form_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+{
+  "apidogProject": "1.0.0",
+  "info": { "name": "Forms" },
+  "apiCollection": [
+    { "name": "Root", "id": 1, "parentId": 0, "items": [
+      { "name": "Forms", "id": 2, "parentId": 0, "items": [
+        { "name": "Multi", "api": { "id": "10", "method": "post", "path": "/m",
+          "requestBody": { "type": "multipart/form-data", "parameters": [
+            { "name": "a", "type": "string", "example": "1", "enable": true } ] } } },
+        { "name": "Encoded", "api": { "id": "11", "method": "post", "path": "/e",
+          "requestBody": { "type": "application/x-www-form-urlencoded", "parameters": [
+            { "name": "a", "type": "string", "example": "1", "enable": true } ] } } }
+      ] }
+    ] }
+  ]
+}
+)JSON");
+    auto outcome = ce::importFromApidog(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
+}

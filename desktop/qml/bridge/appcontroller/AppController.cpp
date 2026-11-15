@@ -14,7 +14,10 @@
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/FormBody.h>
+#include <reqloom/engine/ImportCredentials.h>
 #include <reqloom/engine/Predicate.h>
+#include <reqloom/engine/ProjectTrustStore.h>
+#include <reqloom/engine/SecretStore.h>
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -71,6 +74,23 @@ constexpr int kSessionTickMs = 15'000;
     return QStringLiteral("none");
 }
 
+/// The credential part of the import review notes: secret names only, never values.
+[[nodiscard]] QString importCredentialNotes(const engine::CredentialMoveReport& report) {
+    QString notes;
+    if (!report.moved.empty()) {
+        QStringList names;
+        for (const auto& name : report.moved) {
+            names << QString::fromStdString(name);
+        }
+        notes += AppController::tr("Moved into the project's secrets: %1\n")
+                     .arg(names.join(QStringLiteral(", ")));
+    }
+    for (const auto& line : report.warnings()) {
+        notes += QString::fromStdString(line) + QLatin1Char('\n');
+    }
+    return notes;
+}
+
 }  // namespace
 
 AppController::AppController(QObject* parent)
@@ -103,9 +123,15 @@ AppController::AppController(QObject* parent)
                 break;
         }
         openProject(QUrl::fromLocalFile(out.loadDir));
-        emit notify(
-            tr("Imported %1 resources, %2 operations.").arg(out.resources).arg(out.operations),
-            false);
+        QString summary =
+            tr("Imported %1 resources, %2 operations.").arg(out.resources).arg(out.operations);
+        if (out.movedCredentials > 0) {
+            summary += tr(" %n credential(s) moved into secrets.", nullptr, out.movedCredentials);
+        }
+        if (out.keptCredentials > 0) {
+            summary += tr(" %n credential(s) left in plain text.", nullptr, out.keptCredentials);
+        }
+        emit notify(summary, false);
         if (!out.notes.isEmpty()) {
             emit importReviewNotes(out.notes);
         }
@@ -953,13 +979,16 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
             return out;
         }
 
-        // writeProject doesn't create the target directory, so ensure it exists.
-        std::error_code mkEc;
-        std::filesystem::create_directories(projectDir, mkEc);
-
-        // An import must never delete the user's other actors/resources/environments.
-        auto written =
-            engine::writeProject(projectDir, imported->project, overwrite, /*pruneStale=*/false);
+        // Credentials go into the same keychain and trust store the Manage Secrets dialog uses.
+        // The writer never deletes the user's other actors/resources/environments.
+        const auto store = engine::makeKeychainSecretStore();
+        const auto trust = engine::makeFileProjectTrustStore();
+        auto written = engine::writeImportedProject(projectDir,
+                                                    imported->project,
+                                                    imported->credentials,
+                                                    store.get(),
+                                                    trust.get(),
+                                                    {.overwrite = overwrite});
         if (!written) {
             out.status = ImportOutcome::Status::WriteFailed;
             out.errorDetail = QString::fromStdString(written.error().detail);
@@ -970,7 +999,10 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
         }
         out.status = ImportOutcome::Status::Success;
         out.resources = static_cast<int>(imported->project.resources.size());
-        out.notes = QString::fromStdString(imported->warnings);
+        out.notes = importCredentialNotes(written->credentials) +
+                    QString::fromStdString(imported->warnings);
+        out.movedCredentials = static_cast<int>(written->credentials.moved.size());
+        out.keptCredentials = static_cast<int>(written->credentials.kept.size());
         out.loadDir = QString::fromStdString(projectDir.string());
         return out;
     });

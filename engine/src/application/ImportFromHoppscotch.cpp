@@ -426,6 +426,9 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
                     }
                     if (!form.empty()) {
                         op.bodyForm = std::move(form);
+                        if (contentType.find("multipart/form-data") != std::string::npos) {
+                            is::keepMultipart(op);
+                        }
                     }
                 }
             }

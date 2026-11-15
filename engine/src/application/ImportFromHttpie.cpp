@@ -300,16 +300,23 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
     // Each HTTPie environment becomes an environment; `isDefault` (else the first) is the default.
     auto absorbEnvironment = [&](const json& e) {
         is::VarMap vars;
+        std::vector<std::string> secretKeys;
         if (e.contains("variables") && e["variables"].is_array()) {
             for (const auto& v : e["variables"]) {
                 const auto name = jsonStr(v, "name");
                 if (!name.empty()) {
                     vars[is::envKey(name)] = rewrite(jsonStr(v, "value"));
+                    if (import_json::boolOr(v, "isSecret", false)) {
+                        secretKeys.push_back(is::envKey(name));
+                    }
                 }
             }
         }
         const auto name = is::environmentName(jsonStr(e, "name"), envs);
         envs[name] = std::move(vars);
+        for (auto& key : secretKeys) {
+            outcome.secretVariables.push_back({name, std::move(key)});
+        }
         if (outcome.project.defaultEnvironment.empty() ||
             import_json::boolOr(e, "isDefault", false)) {
             outcome.project.defaultEnvironment = name;
@@ -419,6 +426,9 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
                 }
                 if (!form.empty()) {
                     op.bodyForm = std::move(form);
+                    if (import_json::boolOr(body["form"], "isMultipart", false)) {
+                        is::keepMultipart(op);
+                    }
                 }
             } else if (type == "file") {
                 warnings.push_back(std::format(

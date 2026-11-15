@@ -7,6 +7,7 @@
 
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/ExecutionEngine.h>
+#include <reqloom/engine/ImportCredentials.h>
 
 #include <cstddef>
 #include <expected>
@@ -110,9 +111,13 @@ class LlmClient;
 /// `writeProject(...)`. `warnings` is a multi-line string containing one
 /// human-readable note per imported operation that needs hand-editing
 /// (path parameters that must be linked to upstream extractions, etc.).
+///
+/// `credentials` lists the credentials found in the import (see `detectImportedCredentials`);
+/// `project` still holds their plain values until `writeImportedProject` moves them.
 struct OpenApiImportOutcome {
     Project project;
     std::string warnings;
+    std::vector<ImportedCredential> credentials;
 };
 
 /// Parse an OpenAPI 3.0.x or 3.1.x document (YAML or JSON) into a Project

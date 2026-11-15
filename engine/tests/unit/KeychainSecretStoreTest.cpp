@@ -30,3 +30,8 @@ TEST(KeychainSecretStore, placeholder_build_explains_that_no_backend_exists) {
     ASSERT_TRUE(read.has_value());
     EXPECT_FALSE(read->has_value());
 }
+
+TEST(KeychainSecretStore, available_reports_whether_a_backend_exists) {
+    const ce::KeychainSecretStore store;
+    EXPECT_EQ(store.available(), ce::KeychainSecretStore::backendAvailable());
+}

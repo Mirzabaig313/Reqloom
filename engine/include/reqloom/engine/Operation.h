@@ -293,6 +293,11 @@ struct Operation {
     /// final response. Any failing assertion fails the step (AssertionFailed).
     std::vector<Assertion> assertions;
 
+    /// `failure_message.show`: JSONPaths of the response parts a status-mismatch failure
+    /// quotes. Replaces `Project::failureMessageShow` when set; an empty list means the default
+    /// excerpt. nullopt inherits the project list.
+    std::optional<std::vector<std::string>> failureMessageShow;
+
     /// Explicit dependencies declared by the user.
     std::vector<OperationId> explicitDependencies;
 

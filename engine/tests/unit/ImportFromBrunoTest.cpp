@@ -284,3 +284,23 @@ TEST(ImportFromBruno, each_environment_file_is_kept_separately) {
     EXPECT_EQ(envs.at("local").at("baseUrl"), "http://localhost:3000");
     EXPECT_EQ(envs.at("prod").at("baseUrl"), "https://prod.example.com");
 }
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart.
+TEST(ImportFromBruno, text_only_multipart_form_stays_multipart) {
+    ScratchDir scratch;
+    scratch.write("bruno.json", R"({"version":"1","name":"Forms","type":"collection"})");
+    scratch.write("Forms/Multi.bru",
+                  "meta {\n  name: Multi\n}\n\npost {\n  url: https://api.example.com/m\n"
+                  "  body: multipartForm\n}\n\nbody:multipart-form {\n  a: 1\n}\n");
+    scratch.write("Forms/Encoded.bru",
+                  "meta {\n  name: Encoded\n}\n\npost {\n  url: https://api.example.com/e\n"
+                  "  body: formUrlEncoded\n}\n\nbody:form-urlencoded {\n  a: 1\n}\n");
+    auto outcome = ce::importFromBruno(scratch.path(), scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
+}

@@ -544,6 +544,9 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
                 }
                 if (!form.empty()) {
                     op.bodyForm = std::move(form);
+                    if (mime == "multipart/form-data") {
+                        is::keepMultipart(op);
+                    }
                 }
             }
         }

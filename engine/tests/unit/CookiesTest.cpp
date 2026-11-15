@@ -8,6 +8,8 @@
 
 #include "application/Cookies.h"
 
+#include "domain/SecretRegistry.h"
+
 #include <reqloom/engine/RunContext.h>
 
 #include <gtest/gtest.h>
@@ -16,6 +18,7 @@
 
 #include <map>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -173,8 +176,10 @@ TEST(Cookies, absorbing_a_logout_response_removes_the_jar_entry) {
     const ce::ActorId actor{"user"};
     ctx.setCookie(actor, "sid", "session-1");
     ctx.setCookie(actor, "keep", "k-1");
-    ce::cookies::absorbSetCookies(
-        {{"Set-Cookie", "sid=; Max-Age=0"}, {"Set-Cookie", "fresh=f-1"}}, actor, ctx);
+    ce::cookies::absorbSetCookies({{"Set-Cookie", "sid=; Max-Age=0"}, {"Set-Cookie", "fresh=f-1"}},
+                                  actor,
+                                  ctx,
+                                  "https://api.example.com/logout");
     const auto jar = ctx.cookies(actor);
     EXPECT_FALSE(jar.contains("sid"));
     EXPECT_EQ(jar.at("keep"), "k-1");
@@ -225,4 +230,90 @@ TEST(Cookies, host_comparison_ignores_case_and_port) {
     const auto c = parsed("sid=abc123");
     EXPECT_TRUE(ce::cookies::shouldSend(c, "Example.com", "https://EXAMPLE.com:8443/"));
     EXPECT_EQ(ce::cookies::hostOf("https://User@API.Example.com:8443/p?q"), "api.example.com");
+}
+
+// ─── Jar cookies with their scope ───────────────────────────────────────────
+
+namespace {
+
+[[nodiscard]] std::vector<ce::JarCookie> absorbed(
+    const std::vector<std::pair<std::string, std::string>>& headers, std::string_view url) {
+    ce::RunContext ctx;
+    const ce::ActorId actor{"user"};
+    ce::cookies::absorbSetCookies(headers, actor, ctx, url);
+    return ctx.jarCookies(actor);
+}
+
+}  // namespace
+
+TEST(CookieJar, absorbed_cookie_records_the_setting_host_and_attributes) {
+    const auto jar =
+        absorbed({{"Set-Cookie", "sid=abc123; Domain=.Example.com; Path=/api; Secure"}},
+                 "https://API.example.com:8443/login");
+    ASSERT_EQ(jar.size(), 1U);
+    EXPECT_EQ(jar.front().setterHost, "api.example.com");
+    EXPECT_EQ(jar.front().domain, "example.com");
+    EXPECT_EQ(jar.front().path, "/api");
+    EXPECT_TRUE(jar.front().secure);
+}
+
+TEST(CookieJar, request_header_holds_only_the_cookies_that_belong_to_the_request) {
+    const auto jar = absorbed({{"Set-Cookie", "host=h1"},
+                               {"Set-Cookie", "dom=d1; Domain=example.com"},
+                               {"Set-Cookie", "sec=s1; Secure"},
+                               {"Set-Cookie", "deep=p1; Path=/api"}},
+                              "https://a.example.com/login");
+    EXPECT_EQ(ce::cookies::requestHeaderFor(jar, "https://a.example.com/api/x"),
+              "deep=p1; dom=d1; host=h1; sec=s1");
+    EXPECT_EQ(ce::cookies::requestHeaderFor(jar, "http://a.example.com/"), "dom=d1; host=h1");
+    EXPECT_EQ(ce::cookies::requestHeaderFor(jar, "https://b.example.com/"), "dom=d1");
+    EXPECT_EQ(ce::cookies::requestHeaderFor(jar, "https://evil.test/"), "");
+}
+
+TEST(CookieJar, cookie_seeded_without_a_response_is_sent_to_any_host) {
+    ce::RunContext ctx;
+    const ce::ActorId actor{"user"};
+    ctx.setCookie(actor, "seeded", "v1");
+    EXPECT_EQ(ce::cookies::requestHeaderFor(ctx.jarCookies(actor), "https://any.test/"),
+              "seeded=v1");
+}
+
+TEST(CookieJar, expired_cookie_is_not_sent) {
+    const auto jar = absorbed({{"Set-Cookie", "brief=b1; Max-Age=60"}}, "https://a.test/");
+    ASSERT_EQ(jar.size(), 1U);
+    ASSERT_TRUE(jar.front().expiresAt.has_value());
+    const auto later = std::chrono::system_clock::now() + std::chrono::minutes{2};
+    EXPECT_EQ(ce::cookies::requestHeaderFor(jar, "https://a.test/"), "brief=b1");
+    EXPECT_EQ(ce::cookies::requestHeaderFor(jar, "https://a.test/", later), "");
+}
+
+TEST(CookieJar, removal_from_another_host_leaves_the_cookie_alone) {
+    ce::RunContext ctx;
+    const ce::ActorId actor{"user"};
+    ce::cookies::absorbSetCookies({{"Set-Cookie", "sid=a1"}}, actor, ctx, "https://a.test/");
+    ce::cookies::absorbSetCookies(
+        {{"Set-Cookie", "sid=gone; Max-Age=0"}}, actor, ctx, "https://b.test/");
+    EXPECT_EQ(ctx.cookies(actor).at("sid"), "a1");
+    ce::cookies::absorbSetCookies(
+        {{"Set-Cookie", "sid=gone; Max-Age=0"}}, actor, ctx, "https://a.test/");
+    EXPECT_FALSE(ctx.cookies(actor).contains("sid"));
+}
+
+TEST(CookieJar, same_name_from_two_hosts_keeps_both) {
+    ce::RunContext ctx;
+    const ce::ActorId actor{"user"};
+    ce::cookies::absorbSetCookies({{"Set-Cookie", "sid=a1"}}, actor, ctx, "https://a.test/");
+    ce::cookies::absorbSetCookies({{"Set-Cookie", "sid=b1"}}, actor, ctx, "https://b.test/");
+    const auto jar = ctx.jarCookies(actor);
+    EXPECT_EQ(ce::cookies::requestHeaderFor(jar, "https://a.test/"), "sid=a1");
+    EXPECT_EQ(ce::cookies::requestHeaderFor(jar, "https://b.test/"), "sid=b1");
+    EXPECT_EQ(ctx.cookies(actor).at("sid"), "b1") << "name view: the latest wins";
+}
+
+TEST(CookieJar, absorbed_cookie_value_is_registered_for_redaction) {
+    ce::RunContext ctx;
+    ce::cookies::absorbSetCookies(
+        {{"Set-Cookie", "sid=cookie-secret-123"}}, ce::ActorId{"user"}, ctx, "https://a.test/");
+    EXPECT_EQ(ctx.secretRegistry().redact("x cookie-secret-123 y").find("cookie-secret-123"),
+              std::string::npos);
 }

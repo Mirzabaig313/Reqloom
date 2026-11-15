@@ -4,10 +4,12 @@
 
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/ExecutionEngine.h>
+#include <reqloom/engine/ImportCredentials.h>
 
 #include <expected>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace reqloom::engine {
 
@@ -16,6 +18,9 @@ public:
     struct Outcome {
         Project project;
         std::string warnings;
+
+        /// Environment variables HTTPie marks `isSecret`.
+        std::vector<SourceSecretVariable> secretVariables;
     };
 
     /// Parse an HTTPie export into a Project.

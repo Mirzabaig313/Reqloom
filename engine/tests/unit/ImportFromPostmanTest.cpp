@@ -511,3 +511,35 @@ TEST(ImportFromPostman, auth_warnings_once_per_scope_and_none_for_noauth) {
     EXPECT_EQ(countOf(w, "operation auth.own: `apikey` auth was not imported"), 1u) << w;
     EXPECT_EQ(w.find("operation auth.open"), std::string::npos) << w;
 }
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart, so an
+// imported multipart form carries that header; an explicit source Content-Type is kept.
+TEST(ImportFromPostman, text_only_formdata_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+{
+  "info": { "name": "Forms", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  "item": [
+    { "name": "Multi", "request": { "method": "POST", "url": "https://api.example.com/m",
+      "body": { "mode": "formdata", "formdata": [ { "key": "a", "value": "1", "type": "text" } ] } } },
+    { "name": "Typed", "request": { "method": "POST", "url": "https://api.example.com/t",
+      "header": [ { "key": "content-type", "value": "multipart/mixed" } ],
+      "body": { "mode": "formdata", "formdata": [ { "key": "a", "value": "1", "type": "text" } ] } } },
+    { "name": "Encoded", "request": { "method": "POST", "url": "https://api.example.com/e",
+      "body": { "mode": "urlencoded", "urlencoded": [ { "key": "a", "value": "1" } ] } } }
+  ]
+}
+)JSON");
+    auto outcome = ce::importFromPostman(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* typed = findOp(outcome->project, "forms.typed");
+    ASSERT_NE(typed, nullptr);
+    EXPECT_EQ(typed->headers.size(), 1u);
+    EXPECT_EQ(typed->headers.at("content-type"), "multipart/mixed");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
+}

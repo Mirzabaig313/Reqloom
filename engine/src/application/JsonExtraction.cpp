@@ -5,6 +5,7 @@
 #include "PredicateEvaluator.h"
 
 #include <reqloom/engine/JsonValues.h>
+#include <reqloom/engine/Predicate.h>
 
 #include <nlohmann/json.hpp>
 
@@ -296,6 +297,28 @@ using PathSegments = std::vector<PathSegment>;
 }
 
 }  // namespace
+
+std::expected<void, ReqloomError> validateSingleValueJsonPath(std::string_view path) {
+    const auto reject = [&](const std::string& reason) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "unsupported JSONPath '" + std::string{path} + "': " + reason});
+    };
+    if (path.empty()) {
+        return reject("the path is empty");
+    }
+    const auto segments = parsePath(path);
+    if (!segments) {
+        return reject(segments.error());
+    }
+    if (std::ranges::any_of(*segments, [](const PathSegment& seg) {
+            return seg.kind == PathSegment::Kind::Wildcard;
+        })) {
+        return reject("[*] selects many values; select the array itself instead");
+    }
+    return {};
+}
 
 const json* walkJsonPath(const json& doc, std::string_view sourcePath) {
     const auto hit = walkJson(doc, sourcePath);

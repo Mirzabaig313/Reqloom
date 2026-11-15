@@ -429,6 +429,18 @@ std::string canonicalUriFor(std::string_view path, std::string_view service) {
 
 }  // namespace
 
+std::optional<std::string> sigV4Refusal(const HttpRequest& req, const ActorSession& session) {
+    const auto it = session.variables.find("service");
+    const std::string service = it == session.variables.end() ? std::string{} : it->second;
+    // The HTTP client serialises a multipart body (and picks its boundary) after signing, so
+    // its hash is unknown here. Only S3 accepts UNSIGNED-PAYLOAD.
+    if (req.multipart.empty() || service.empty() || service == "s3") {
+        return std::nullopt;
+    }
+    return "AWS SigV4 cannot sign a multipart upload for service '" + service +
+           "'; only s3 is supported";
+}
+
 bool signSigV4Request(HttpRequest& req,
                       const ActorSession& session,
                       const SigV4TestOverrides& overrides) {
@@ -532,9 +544,7 @@ bool signSigV4Request(HttpRequest& req,
     // services, so it is always emitted.
     std::string payloadHashHex;
     if (!req.multipart.empty()) {
-        // The HTTP client serialises a multipart body (and picks its boundary) after signing, so
-        // its hash is unknown here. Only S3 accepts UNSIGNED-PAYLOAD.
-        if (service != "s3") {
+        if (sigV4Refusal(req, session)) {
             return false;
         }
         payloadHashHex = "UNSIGNED-PAYLOAD";

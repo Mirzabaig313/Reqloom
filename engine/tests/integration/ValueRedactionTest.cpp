@@ -150,8 +150,9 @@ private:
     std::vector<ce::RunEvent>* sink_;
 };
 
-/// Every free-text field of an event, concatenated, so a test can assert a
-/// value appears nowhere in it.
+/// Every masked free-text field of an event, concatenated, so a test can
+/// assert a value appears nowhere in it. Captured bodies are excluded: they
+/// are the person's own view and stay as received (see `capturedBodies`).
 [[nodiscard]] std::string eventText(const ce::RunEvent& event) {
     std::string out{};
     const auto headers = [&](const std::vector<std::pair<std::string, std::string>>& hs) {
@@ -166,7 +167,6 @@ private:
         headers(pr->maskedHeaders);
     } else if (const auto* rr = std::get_if<ce::ResponseReceived>(&event)) {
         headers(rr->headers);
-        out += rr->body.value_or("");
     } else if (const auto* ex = std::get_if<ce::ExtractionCompleted>(&event)) {
         out += ex->variableName + "=" + ex->value + " (" + ex->sourcePath + ")";
     } else if (const auto* as = std::get_if<ce::AssertionCompleted>(&event)) {
@@ -207,6 +207,19 @@ struct Outcome {
     std::vector<ce::RunEvent> emitted;
     std::vector<ce::RunEvent> stored;
     std::vector<ce::HttpRequest> sent;
+
+    /// Captured response bodies, emitted and stored, in order.
+    [[nodiscard]] std::vector<std::string> capturedBodies() const {
+        std::vector<std::string> bodies{};
+        for (const auto* events : {&emitted, &stored}) {
+            for (const auto& e : *events) {
+                if (const auto* rr = std::get_if<ce::ResponseReceived>(&e); rr && rr->body) {
+                    bodies.push_back(*rr->body);
+                }
+            }
+        }
+        return bodies;
+    }
 
     /// Every event (emitted and stored) and every step detail as one string.
     [[nodiscard]] std::string everything() const {
@@ -330,6 +343,62 @@ TEST(ValueRedaction, secret_in_non_sensitive_header_never_reaches_events_or_hist
     ASSERT_NE(failed, nullptr);
     EXPECT_TRUE(contains(failed->detail, "is revoked")) << failed->detail;
     EXPECT_TRUE(contains(failed->detail, "<redacted>")) << failed->detail;
+
+    // The same run's captured body reaches the subscriber and history as received.
+    const auto bodies = out.capturedBodies();
+    ASSERT_EQ(bodies.size(), 2U);
+    for (const auto& body : bodies) {
+        EXPECT_EQ(body, R"({"error":"key sk_live_9f8e7d6c5b4a is revoked"})");
+    }
+}
+
+TEST(ValueRedaction, captured_body_is_unmasked_while_url_headers_and_extractions_stay_masked) {
+    constexpr const char* kYaml = R"YAML(
+version: 1
+name: CapturedBodyMasking
+id: value-redaction-test
+default_environment: local
+environment:
+  baseUrl: http://placeholder
+resources:
+  item:
+    operations:
+      read:
+        method: GET
+        path: /items?key={{secret.API_KEY}}
+        headers:
+          X-Custom: "{{secret.API_KEY}}"
+        expect_status: 200
+        extract:
+          echoed: $.echo
+)YAML";
+    constexpr std::string_view kBody =
+        R"({"access_token":"tok-abc123def456","echo":"sk_live_9f8e7d6c5b4a"})";
+    RunSetup setup;
+    setup.secrets["value-redaction-test/API_KEY"] = std::string{kApiKey};
+    setup.options.captureResponseBodies = true;
+    setup.routes = [&](RoutedHttpClient& http) {
+        http.route("/items", 200, std::string{kBody});
+    };
+    const auto out = runProject(kYaml, "item.read", setup);
+    ASSERT_TRUE(out.result.has_value()) << out.result.error().detail;
+
+    const auto bodies = out.capturedBodies();
+    ASSERT_EQ(bodies.size(), 2U) << "one emitted, one stored";
+    for (const auto& body : bodies) {
+        EXPECT_EQ(body, kBody);
+    }
+    bool sawExtraction = false;
+    for (const auto* events : {&out.emitted, &out.stored}) {
+        for (const auto& e : *events) {
+            if (std::holds_alternative<ce::ExtractionCompleted>(e)) {
+                sawExtraction = true;
+            }
+        }
+    }
+    EXPECT_TRUE(sawExtraction);
+    const auto all = out.everything();
+    EXPECT_FALSE(contains(all, kApiKey)) << all;
 }
 
 TEST(ValueRedaction, allowed_env_value_is_redacted_from_events) {
@@ -428,7 +497,7 @@ resources:
     EXPECT_FALSE(contains(afterExtraction, kToken)) << afterExtraction;
 }
 
-TEST(ValueRedaction, captured_login_bodies_mask_token_and_password_fields) {
+TEST(ValueRedaction, captured_login_body_reaches_events_and_history_as_received) {
     constexpr const char* kLoginYaml = R"YAML(
 version: 1
 name: CapturedLogin
@@ -458,10 +527,14 @@ resources:
     ASSERT_FALSE(out.sent.empty());
     EXPECT_TRUE(contains(out.sent.front().body.value_or(""), "hunter2hunter2"))
         << "the request sent must be unchanged";
+    const auto bodies = out.capturedBodies();
+    ASSERT_EQ(bodies.size(), 2U);
+    for (const auto& body : bodies) {
+        EXPECT_EQ(body, R"({"access_token":"abc123def456","user":"x"})");
+    }
     const auto all = out.everything();
     EXPECT_FALSE(contains(all, "abc123def456")) << all;
     EXPECT_FALSE(contains(all, "hunter2hunter2")) << all;
-    EXPECT_TRUE(contains(all, R"("user":"x")")) << all;
 }
 
 TEST(ValueRedaction, actor_session_variable_under_plain_name_is_redacted) {

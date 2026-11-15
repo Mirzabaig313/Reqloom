@@ -261,6 +261,46 @@ TEST(SchemaWriter, prunes_orphaned_files_on_overwrite) {
     EXPECT_FALSE(reloaded->resources.contains(ce::ResourceId{"payment"}));
 }
 
+TEST(SchemaWriter, failure_message_show_round_trips_at_both_levels) {
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    project.failureMessageShow = {"$.error.message", "$.errors"};
+    auto& pay = project.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    pay.failureMessageShow = std::vector<std::string>{"$.detail", "$.items[0].reason"};
+    ce::Operation refund;
+    refund.id = ce::OperationId{"payment.refund"};
+    refund.resource = ce::ResourceId{"payment"};
+    refund.method = ce::HttpMethod::Post;
+    refund.pathTemplate = "/api/v1/refunds";
+    refund.failureMessageShow = std::vector<std::string>{};
+    project.resources.at(ce::ResourceId{"payment"}).operations["refund"] = refund;
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    EXPECT_EQ(reloaded->failureMessageShow, project.failureMessageShow);
+    const auto& ops = reloaded->resources.at(ce::ResourceId{"payment"}).operations;
+    EXPECT_EQ(ops.at("pay").failureMessageShow, pay.failureMessageShow);
+    ASSERT_TRUE(ops.at("refund").failureMessageShow.has_value());
+    EXPECT_TRUE(ops.at("refund").failureMessageShow->empty());
+}
+
+TEST(SchemaWriter, failure_message_is_not_written_when_unset) {
+    ScratchDir scratch;
+    const auto project = makeRoundTripProject();
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    for (const auto& entry : fs::recursive_directory_iterator(scratch.path())) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        std::ifstream in{entry.path()};
+        const std::string text{std::istreambuf_iterator<char>{in}, {}};
+        EXPECT_EQ(text.find("failure_message"), std::string::npos) << entry.path();
+    }
+}
+
 TEST(SchemaWriter, retry_policy_round_trips) {
     ScratchDir scratch;
     auto project = makeRoundTripProject();
@@ -1479,6 +1519,22 @@ TEST(SchemaWriter, accepts_target_dir_with_trailing_separator) {
     auto written = ce::writeProject(target, makeRoundTripProject());
     ASSERT_TRUE(written.has_value()) << written.error().detail;
     EXPECT_TRUE(fs::exists(scratch.path() / "proj" / "resources" / "payment.yaml"));
+}
+
+TEST(SchemaWriter, project_without_actors_reloads_with_no_warnings) {
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    project.actors.clear();
+    for (auto& [resourceId, resource] : project.resources) {
+        for (auto& [opName, op] : resource.operations) {
+            op.actor = {};
+        }
+    }
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project).has_value());
+    auto loaded = ce::parseProject(scratch.path() / "reqloom.yaml");
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    EXPECT_TRUE(loaded->loadWarnings.empty())
+        << (loaded->loadWarnings.empty() ? "" : loaded->loadWarnings.front());
 }
 
 TEST(SchemaWriter, project_id_and_allowed_env_round_trip) {

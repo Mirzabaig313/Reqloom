@@ -75,4 +75,10 @@ bool signSigV4Request(HttpRequest& req,
                       const ActorSession& session,
                       const SigV4TestOverrides& overrides = {});
 
+/// The reason `signSigV4Request` refuses `req` for its shape rather than for missing
+/// credentials or a malformed URL: a multipart body for a service other than `s3`. nullopt
+/// when there is none.
+[[nodiscard]] std::optional<std::string> sigV4Refusal(const HttpRequest& req,
+                                                      const ActorSession& session);
+
 }  // namespace reqloom::engine

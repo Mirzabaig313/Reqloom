@@ -1,16 +1,20 @@
-// `reqloom import <spec>` — import an OpenAPI 3.x document into a Reqloom
-// project skeleton (reqloom.yaml + per-entity sub-files) via the engine's
-// importFromOpenApi() + writeProject().
+// `reqloom import <spec>` — import an API definition or client export into a Reqloom
+// project (reqloom.yaml + per-entity sub-files) via the engine's importAny() +
+// writeImportedProject(), which moves imported credentials into the project's secrets.
 
 #include "ImportCommand.h"
 
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/ImportCredentials.h>
+#include <reqloom/engine/ProjectTrustStore.h>
 #include <reqloom/engine/PublicApi.h>
+#include <reqloom/engine/SecretStore.h>
 
 #include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <print>
 #include <ranges>
 #include <string>
@@ -28,6 +32,7 @@ struct ImportArgs {
     fs::path outDir{fs::current_path()};
     fs::path projectRoot;  ///< empty → default to the spec's parent directory.
     bool force{false};
+    bool noSecrets{false};
 };
 
 void printUsage(std::FILE* stream) {
@@ -47,6 +52,10 @@ void printUsage(std::FILE* stream) {
                  "                        actors/, resources/, environments/ file with the\n"
                  "                        same name as an imported one. Never deletes\n"
                  "                        other files.\n"
+                 "  --no-secrets          Leave credentials found in the input (auth headers,\n"
+                 "                        variables the source marks secret) in the YAML in\n"
+                 "                        plain text instead of moving them into the\n"
+                 "                        project's secrets in the OS keychain.\n"
                  "Exit codes: 0 success, 1 import/write failure, 2 invalid arguments.");
 }
 
@@ -72,6 +81,8 @@ void printUsage(std::FILE* stream) {
             out.projectRoot = args[++i].toStdString();
         } else if (flag == QStringLiteral("--force")) {
             out.force = true;
+        } else if (flag == QStringLiteral("--no-secrets")) {
+            out.noSecrets = true;
         } else if (flag == QStringLiteral("--help") || flag == QStringLiteral("-h")) {
             printUsage(stdout);
             return std::unexpected(0);
@@ -96,9 +107,38 @@ void printUsage(std::FILE* stream) {
     return total;
 }
 
+/// Say where each credential went: names only, never values.
+void printCredentialSummary(const ce::CredentialMoveReport& report) {
+    if (!report.moved.empty()) {
+        std::string names;
+        for (const auto& name : report.moved) {
+            names += (names.empty() ? "" : ", ") + name;
+        }
+        std::println("Moved {} credential{} into the project's secrets: {}",
+                     report.moved.size(),
+                     report.moved.size() == 1 ? "" : "s",
+                     names);
+    }
+    if (!report.kept.empty()) {
+        std::println(stderr,
+                     "\nLeft {} credential{} in the YAML in plain text:",
+                     report.kept.size(),
+                     report.kept.size() == 1 ? "" : "s");
+        for (const auto& line : report.warnings()) {
+            std::println(stderr, "  - {}", line);
+        }
+    }
+}
+
 }  // namespace
 
 int importCommand(const QStringList& args) {
+    const auto store = ce::makeKeychainSecretStore();
+    const auto trust = ce::makeFileProjectTrustStore();
+    return importCommand(args, store.get(), trust.get());
+}
+
+int importCommand(const QStringList& args, ce::SecretStore* store, ce::ProjectTrustStore* trust) {
     auto parsed = parseArgs(args);
     if (!parsed) {
         return parsed.error();
@@ -124,8 +164,14 @@ int importCommand(const QStringList& args) {
         return 1;
     }
 
-    // Never prune other actors/resources/environments in <dir>: they may be hand-written.
-    auto written = ce::writeProject(cfg.outDir, imported->project, cfg.force, /*pruneStale=*/false);
+    // Never prunes other actors/resources/environments in <dir>: they may be hand-written.
+    auto written =
+        ce::writeImportedProject(cfg.outDir,
+                                 imported->project,
+                                 imported->credentials,
+                                 store,
+                                 trust,
+                                 {.overwrite = cfg.force, .moveCredentials = !cfg.noSecrets});
     if (!written) {
         std::println(stderr,
                      "Write error [{}]: {}",
@@ -140,7 +186,8 @@ int importCommand(const QStringList& args) {
     std::println("Imported {} resources, {} operations into {}",
                  imported->project.resources.size(),
                  operationCount(imported->project),
-                 written->string());
+                 written->reqloomYaml.string());
+    printCredentialSummary(written->credentials);
 
     // Per-operation notes (path params to wire to upstream extractions, etc.)
     // go to stderr so the success line on stdout stays machine-friendly.

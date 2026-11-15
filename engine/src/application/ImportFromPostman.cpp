@@ -340,6 +340,9 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
             const auto key = jsonStr(v, "key");
             if (!key.empty()) {
                 env[is::envKey(key)] = jsonStr(v, "value");
+                if (jsonStr(v, "type") == "secret") {
+                    outcome.secretVariables.push_back({"default", is::envKey(key)});
+                }
             }
         }
     }
@@ -518,6 +521,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                 }
                 if (!form.empty()) {
                     op.bodyForm = std::move(form);
+                    is::keepMultipart(op);
                 }
             } else if (mode == "graphql" && body.contains("graphql") &&
                        body["graphql"].is_object()) {

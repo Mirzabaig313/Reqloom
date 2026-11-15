@@ -1117,11 +1117,36 @@ Provenance parseProvenance(const ParseCtx& ctx, const YAML::Node& node) {
     return prov;
 }
 
-constexpr std::array<std::string_view, 20> kOperationKeys{
+constexpr std::array<std::string_view, 21> kOperationKeys{
     "method",        "path",    "actor",     "auth",          "headers",
     "query_params",  "body",    "body_form", "expect_status", "poll_until",
     "for_each",      "extract", "assert",    "depends_on",    "pre_request",
-    "post_response", "retry",   "timeout",   "force",         "_provenance"};
+    "post_response", "retry",   "timeout",   "force",         "failure_message",
+    "_provenance"};
+
+/// `failure_message: { show: [<JSONPath>, ...] }`; nullopt when the block or `show` is absent.
+/// Paths are validated with the rest of the project (DependencyResolver).
+std::optional<std::vector<std::string>> parseFailureMessage(const ParseCtx& ctx,
+                                                            const YAML::Node& parent) {
+    const auto node = mapAt(parent, "failure_message");
+    if (!present(node)) {
+        return std::nullopt;
+    }
+    warnUnknownKeys(ctx, node, {"show"}, "failure_message");
+    const auto show = seqAt(node, "show");
+    if (!present(show)) {
+        return std::nullopt;
+    }
+    std::vector<std::string> paths;
+    for (const auto& item : show) {
+        if (!item.IsScalar()) {
+            fault(item,
+                  "a failure_message.show entry must be a JSONPath string, got " + describe(item));
+        }
+        paths.push_back(item.Scalar());
+    }
+    return paths;
+}
 
 PollUntil parsePollUntil(const ParseCtx& ctx, const YAML::Node& p) {
     warnUnknownKeys(ctx,
@@ -1263,6 +1288,7 @@ Operation parseOperation(ParseCtx& ctx,
     readExpectStatus(opNode, op.expectStatus, op.expectStatusList);
     op.extractions = parseExtractions(ctx, opNode);
     op.assertions = parseAssertions(ctx, opNode);
+    op.failureMessageShow = parseFailureMessage(ctx, opNode);
     parseOperationFlow(ctx, op, opNode);
     parseHook(opNode, "pre_request", op.id, baseDir, op.preRequestScript, op.preRequestScriptRef);
     parseHook(
@@ -1437,7 +1463,7 @@ constexpr std::array<std::string_view, 5> kActorFields{
     "name", "description", "auth", "session", "inject"};
 constexpr std::array<std::string_view, 3> kResourceFields{"name", "description", "operations"};
 
-constexpr std::array<std::string_view, 12> kRootKeys{"version",
+constexpr std::array<std::string_view, 13> kRootKeys{"version",
                                                      "name",
                                                      "id",
                                                      "default_environment",
@@ -1448,7 +1474,8 @@ constexpr std::array<std::string_view, 12> kRootKeys{"version",
                                                      "actors",
                                                      "resources",
                                                      "environment",
-                                                     "transport"};
+                                                     "transport",
+                                                     "failure_message"};
 
 /// Builds a Project from reqloom.yaml and the files it imports, one file at a time.
 class ProjectLoader {
@@ -1682,6 +1709,8 @@ void ProjectLoader::readRootSettings(ParseCtx& ctx, const YAML::Node& root) {
         warnUnknownKeys(ctx, slo, {"p95_ms"}, "latency_slo");
         project_.latencySloP95Ms = std::max(0, readInt(slo, "p95_ms", 0));
     }
+    project_.failureMessageShow =
+        parseFailureMessage(ctx, root).value_or(std::vector<std::string>{});
 }
 
 void ProjectLoader::readInlineEntities(ParseCtx& ctx, const YAML::Node& root) {

@@ -27,6 +27,8 @@ void printUsage() {
         "    --format text|json|junit        Output format (default: text)\n"
         "    --output <file>                 Write rendered output to <file>\n"
         "    --quiet                         Suppress live progress on stdout\n"
+        "    --failure-body-size <size>      Response text in a failure message, e.g. 16KiB\n"
+        "                                    (default 4KiB, 0 = none, at most 1MiB)\n"
         "  reqloom lint                     Validate the schema in current project\n"
         "    --project <path>                Project directory (default: cwd)\n"
         "  reqloom import <file>            Import an external API spec\n"

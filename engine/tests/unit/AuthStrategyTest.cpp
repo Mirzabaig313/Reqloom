@@ -1996,6 +1996,19 @@ TEST(SigV4Signer, non_s3_multipart_body_is_refused_rather_than_signed_with_a_wro
     EXPECT_EQ(req.headers.at("X-Custom"), "preserved");
 }
 
+TEST(SigV4Signer, refusal_reason_names_the_service_for_a_non_s3_multipart_body) {
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Post;
+    req.url = "https://example.amazonaws.com/upload";
+    req.multipart.push_back(ce::MultipartPart{"field", "value", {}, {}, {}});
+    EXPECT_EQ(ce::sigV4Refusal(req, makeS3Session("execute-api")),
+              "AWS SigV4 cannot sign a multipart upload for service 'execute-api'; only s3 is "
+              "supported");
+    EXPECT_FALSE(ce::sigV4Refusal(req, makeS3Session()).has_value()) << "s3 is signed";
+    req.multipart.clear();
+    EXPECT_FALSE(ce::sigV4Refusal(req, makeS3Session("execute-api")).has_value());
+}
+
 // ─── Token lifetime, failure causes, response text in errors ────────────────
 
 TEST(AuthStrategy, oauth2_session_lifetime_honours_expires_in_minus_margin) {

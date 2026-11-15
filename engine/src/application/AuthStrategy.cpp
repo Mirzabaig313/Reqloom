@@ -163,10 +163,11 @@ public:
             // actor) carry the cookie. PHP / Rails apps that issue a
             // session cookie on /login depend on this; without it the
             // cookie disappears the moment authenticate() returns.
-            cookies::absorbSetCookies(response->headers, actor.id, ctx);
+            cookies::absorbSetCookies(response->headers, actor.id, ctx, req.url);
 
             if (step.expectStatus && response->status != *step.expectStatus) {
-                const auto excerpt = safeBodyExcerpt(response->body, &ctx.secretRegistry());
+                const auto excerpt = safeBodyExcerpt(
+                    response->body, &ctx.secretRegistry(), deps_.failureExcerptBytes);
                 return std::unexpected(
                     ReqloomError{ErrorCode::SessionRefreshFailed,
                                  ErrorClass::Auth,
@@ -391,7 +392,7 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     if (response->status < 200 || response->status >= 300) {
         // Show the endpoint's error text to debug credentials; sensitive fields are masked (a
         // failed token response may still carry a token).
-        const auto excerpt = safeBodyExcerpt(response->body, nullptr);
+        const auto excerpt = safeBodyExcerpt(response->body, nullptr, deps.failureExcerptBytes);
         return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
             ErrorClass::Auth,
@@ -1101,7 +1102,7 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     // contract as ChainAuthenticator. Refresh endpoints commonly
     // rotate session cookies (CSRF tokens, anti-replay nonces) and
     // the next operation as this actor needs the rotated value.
-    cookies::absorbSetCookies(response->headers, actor.id, ctx);
+    cookies::absorbSetCookies(response->headers, actor.id, ctx, req.url);
 
     // Honour the user's `expect_status:` when set, otherwise fall back
     // to "any 2xx is success". Both forms align with the operation-level

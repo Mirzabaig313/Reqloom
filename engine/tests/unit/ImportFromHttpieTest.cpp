@@ -310,3 +310,32 @@ TEST(ImportFromHttpie, collection_auth_is_reported_once) {
     EXPECT_EQ(countOf(w, "auth was not imported"), 1u) << w;
     EXPECT_EQ(countOf(w, "collection `Api`: `bearer` auth was not imported"), 1u) << w;
 }
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart.
+TEST(ImportFromHttpie, text_only_multipart_form_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+{
+  "meta": { "format": "httpie", "version": "1.0.0", "contentType": "collection" },
+  "entry": {
+    "name": "Forms",
+    "requests": [
+      { "name": "Multi", "method": "POST", "url": "https://api.example.com/m",
+        "body": { "type": "form", "form": { "isMultipart": true, "fields": [
+          { "name": "a", "type": "text", "value": "1" } ] } } },
+      { "name": "Encoded", "method": "POST", "url": "https://api.example.com/e",
+        "body": { "type": "form", "form": { "isMultipart": false, "fields": [
+          { "name": "a", "type": "text", "value": "1" } ] } } }
+    ]
+  }
+}
+)JSON");
+    auto outcome = ce::importFromHttpie(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
+}

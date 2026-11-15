@@ -4,10 +4,12 @@
 
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/ExecutionEngine.h>
+#include <reqloom/engine/ImportCredentials.h>
 
 #include <expected>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace reqloom::engine {
 
@@ -20,6 +22,9 @@ public:
         /// had nothing notable to flag. Surfaced by the CLI verbatim and by the
         /// desktop importer review UI line-by-line.
         std::string warnings;
+
+        /// Collection variables Postman marks `type: "secret"`.
+        std::vector<SourceSecretVariable> secretVariables;
     };
 
     /// Parse `collection` (a Postman Collection v2.1 JSON export) into a

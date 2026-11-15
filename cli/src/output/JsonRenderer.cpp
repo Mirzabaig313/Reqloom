@@ -25,9 +25,8 @@ namespace {
 namespace ce = reqloom::engine;
 
 /// Escape a UTF-8 byte sequence per RFC 8259 §7. Bytes ≤ 0x1F use the
-/// short escape forms; everything else passes through. Engine-emitted
-/// detail strings already enforce a 256-byte truncation, so we never
-/// need to worry about pathological inputs here.
+/// short escape forms; everything else passes through. Linear in the input,
+/// so a long detail (a failure excerpt can reach 1 MiB) is safe.
 std::string escape(std::string_view input) {
     std::string out;
     out.reserve(input.size() + 2);

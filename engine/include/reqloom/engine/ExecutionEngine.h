@@ -82,6 +82,10 @@ struct Project {
     /// latency chart: the p95 marker turns red when the run breaches it.
     int latencySloP95Ms{0};
 
+    /// Root `failure_message.show`: JSONPaths of the response parts a status-mismatch failure
+    /// quotes instead of the default excerpt. Empty means the default excerpt.
+    std::vector<std::string> failureMessageShow;
+
     /// Where each environment was defined, keyed like `environments`. Set by the parser,
     /// never written to YAML.
     std::map<std::string, SourceLocation> environmentSources;
@@ -96,6 +100,13 @@ struct Project {
     std::vector<std::string> loadWarnings;
 };
 
+/// Default bytes of response body quoted in a failure detail (4 KiB).
+inline constexpr std::size_t kDefaultFailureExcerptBytes = 4096;
+
+/// Largest accepted `RunOptions::failureExcerptBytes` (1 MiB), so one failure cannot store an
+/// enormous detail. A larger value is clamped.
+inline constexpr std::size_t kMaxFailureExcerptBytes = std::size_t{1024} * 1024;
+
 /// Per-run options.
 struct RunOptions {
     bool dryRun{false};
@@ -103,13 +114,16 @@ struct RunOptions {
     bool resetSessions{false};     ///< Invalidates all sessions before running.
     std::string environment;       ///< Empty → use project default.
 
-    /// Opt-in: include the raw response body on `ResponseReceived` events.
-    /// Off by default — bodies stay off the event surface to honor the
-    /// redaction-first contract. When on, every response is captured,
-    /// including auth responses, with sensitive fields and secrets masked. Bodies are capped
-    /// at `kMaxCapturedBodyBytes` and persisted to the history store, so
-    /// past responses can be replayed in full (Postman-style history).
+    /// Opt-in: include the response body on `ResponseReceived` events, including auth
+    /// responses. The body is the person's own view: it reaches subscribers and the history
+    /// store exactly as received (tokens included), capped at `kMaxCapturedBodyBytes`. A
+    /// surface an AI agent or the CLI can read must pass it through `maskCapturedBody` first.
     bool captureResponseBodies{false};
+
+    /// Most bytes of the (masked) response body quoted in a failed step's detail when the
+    /// status does not match, and in auth login / token endpoint errors. 0 quotes nothing;
+    /// values above `kMaxFailureExcerptBytes` are clamped.
+    std::size_t failureExcerptBytes{kDefaultFailureExcerptBytes};
 };
 
 /// Upper bound on a captured response body (5 MiB). Larger bodies are

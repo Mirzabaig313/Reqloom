@@ -386,6 +386,20 @@ std::expected<void, ReqloomError> validateOperationExpressions(const OperationId
     return {};
 }
 
+/// Every `failure_message.show` path must be one the extraction walker supports.
+std::expected<void, ReqloomError> validateFailureMessagePaths(
+    std::string_view owner, const std::vector<std::string>& paths) {
+    for (const auto& path : paths) {
+        if (auto ok = validateSingleValueJsonPath(path); !ok) {
+            return std::unexpected(
+                ReqloomError{ErrorCode::SchemaInvalid,
+                             ErrorClass::Schema,
+                             std::format("{} failure_message.show: {}", owner, ok.error().detail)});
+        }
+    }
+    return {};
+}
+
 using ImplicitDeps = std::vector<std::pair<OperationId, std::string>>;
 
 [[nodiscard]] bool consumesVariable(const Operation& op,
@@ -687,6 +701,10 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
     if (auto envReads = validateEnvReadsOutsideOperations(project); !envReads) {
         return envReads;
     }
+    if (auto paths = validateFailureMessagePaths("reqloom.yaml", project.failureMessageShow);
+        !paths) {
+        return paths;
+    }
     // A resolvable reference root: $ builtins, env, secret, or any
     // defined actor or resource.
     const auto isKnownScope = [&](const std::string& scope) -> bool {
@@ -746,6 +764,13 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
                 }
                 if (auto exprs = validateOperationExpressions(opId, op); !exprs) {
                     return exprs;
+                }
+                if (op.failureMessageShow) {
+                    if (auto paths = validateFailureMessagePaths(
+                            std::format("Operation '{}'", opId.value), *op.failureMessageShow);
+                        !paths) {
+                        return paths;
+                    }
                 }
 
                 // depends_on targets must name a real operation.

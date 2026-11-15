@@ -587,6 +587,7 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
         std::map<std::string, std::string> query;
         is::VarMap pathValues;
         std::vector<std::pair<std::string, std::string>> formPairs;
+        bool multipartForm{false};
         std::optional<std::string> rawBody;
         for (const auto& b : blocks) {
             if (const auto m = methodFromBlockName(b.name)) {
@@ -617,6 +618,7 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
                     rawBody = rewrite(trim(b.inner));
                 } else if (sub.find("form") != std::string::npos) {
                     std::ranges::move(parseDict(b.inner), std::back_inserter(formPairs));
+                    multipartForm = sub.find("multipart") != std::string::npos;
                 }
             }
         }
@@ -678,6 +680,9 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
         auto form = brunoForm(formPairs, op.id.value, warnings, rewrite);
         if (!form.empty()) {
             op.bodyForm = std::move(form);
+            if (multipartForm) {
+                is::keepMultipart(op);
+            }
         } else if (rawBody && !rawBody->empty()) {
             op.bodyTemplate = std::move(rawBody);
         }

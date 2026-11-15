@@ -280,6 +280,16 @@ struct ExtractionEvidence {
     return "The last " + producer + " response did not contain '" + field + "'.";
 }
 
+[[nodiscard]] std::optional<std::string> keychainUnavailableReason(const std::string_view token) {
+    const auto parts = parseVariableParts(token);
+    if (!parts || parts->rawScope != "secret") {
+        return std::nullopt;
+    }
+    return "no OS keychain is available on this machine; {{" + std::string{token} +
+           "}} cannot be read. Use a Reqloom build with keychain support, or pass the value "
+           "through an allowed environment variable ({{$.env.NAME}}) instead.";
+}
+
 [[nodiscard]] UnresolvedVariableDiagnostic makeUnresolvedDiagnostic(
     const VariableResolver::UnresolvedOccurrence& occurrence,
     const bool exposeToken,
@@ -764,6 +774,9 @@ struct ExecutionEngine::Impl {
     // instance (concurrent run() is unsupported in the MVP), so a plain
     // member is safe — no run overlaps another's read of this flag.
     bool captureResponseBodies{false};
+    std::size_t failureExcerptBytes{kDefaultFailureExcerptBytes};
+    // True for a run whose secret store has no backend on this machine.
+    bool secretStoreUnavailable{false};
 
     // Secret values of the run in progress; set for the duration of run(), and emit() redacts
     // every event against it.
@@ -824,21 +837,6 @@ struct ExecutionEngine::Impl {
             return codecs::truncateUtf8(body, kMaxCapturedBodyBytes);
         }
         return body;
-    }
-
-    /// Walk a response's Set-Cookie headers and update the actor's jar.
-    /// Order-preserving: when the same name appears twice in the same
-    /// response, the second one wins (RFC 6265 §5.3 step 11). The jar
-    /// is shared across operations performed AS this actor for the
-    /// remainder of the run.
-    static void absorbResponseCookies(
-        const std::vector<std::pair<std::string, std::string>>& headers,
-        const ActorId& actor,
-        RunContext& ctx) {
-        const auto fresh = cookies::collectFromResponse(headers);
-        for (const auto& [name, value] : fresh) {
-            ctx.setCookie(actor, name, value);
-        }
     }
 
     void emit(const RunEvent& event) {
@@ -947,8 +945,13 @@ struct ExecutionEngine::Impl {
             }
 
             if (actor.refresh) {
-                AuthDependencies const refreshDeps{
-                    deps.http.get(), &varResolver, sink, runId, stepIndex, captureResponseBodies};
+                AuthDependencies const refreshDeps{deps.http.get(),
+                                                   &varResolver,
+                                                   sink,
+                                                   runId,
+                                                   stepIndex,
+                                                   captureResponseBodies,
+                                                   failureExcerptBytes};
                 auto refreshed = runRefresh(actor, ctx, rctx, refreshDeps);
                 if (refreshed) {
                     ActorSession updated = *existing;
@@ -970,8 +973,13 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        AuthDependencies authDeps{
-            deps.http.get(), &varResolver, sink, runId, stepIndex, captureResponseBodies};
+        AuthDependencies authDeps{deps.http.get(),
+                                  &varResolver,
+                                  sink,
+                                  runId,
+                                  stepIndex,
+                                  captureResponseBodies,
+                                  failureExcerptBytes};
         auto authenticator = selectAuthenticator(actor, std::move(authDeps));
         if (!authenticator) {
             return ReqloomError{ErrorCode::SessionRefreshFailed,
@@ -1155,9 +1163,10 @@ struct ExecutionEngine::Impl {
                 // actor sees the jar that has accumulated through the
                 // initial response and any prior poll attempt.
                 if (!containsHeaderCaseInsensitive(req.headers, "Cookie")) {
-                    const auto jar = ctx.cookies(pollActor->id);
-                    if (!jar.empty()) {
-                        req.headers["Cookie"] = cookies::formatRequestHeader(jar);
+                    if (auto header =
+                            cookies::requestHeaderFor(ctx.jarCookies(pollActor->id), req.url);
+                        !header.empty()) {
+                        req.headers["Cookie"] = std::move(header);
                     }
                 }
             }
@@ -1189,20 +1198,19 @@ struct ExecutionEngine::Impl {
                             return std::unexpected(
                                 ReqloomError{ErrorCode::SessionRefreshFailed,
                                              ErrorClass::Auth,
-                                             "poll_until: aws_sigv4 signing failed "
-                                             "(missing access_key/secret_key/region/service "
-                                             "or malformed URL)"});
+                                             "poll_until: aws_sigv4 signing failed (" +
+                                                 sigV4FailureReason(req, *session) + ")"});
                         }
                     }
                 }
             }
 
             // Inline (actor-less) signing on the parent op also covers polls.
-            if (!signInlineAuth(req, effAuth, ctx, rctx)) {
-                return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
-                                                    ErrorClass::Auth,
-                                                    "poll_until: inline auth signing failed "
-                                                    "(missing credentials or malformed URL)"});
+            if (auto why = signInlineAuth(req, effAuth, ctx, rctx)) {
+                return std::unexpected(
+                    ReqloomError{ErrorCode::SessionRefreshFailed,
+                                 ErrorClass::Auth,
+                                 "poll_until: inline auth signing failed (" + *why + ")"});
             }
 
             emit(RequestPrepared{runId,
@@ -1233,7 +1241,7 @@ struct ExecutionEngine::Impl {
             // can rotate session cookies — without absorbing them here
             // a follow-up op would send a stale cookie.
             if (pollActor != nullptr) {
-                absorbResponseCookies(lastResponse.headers, pollActor->id, ctx);
+                cookies::absorbSetCookies(lastResponse.headers, pollActor->id, ctx, req.url);
             }
 
             // Each poll attempt is a timeline row alongside the parent step.
@@ -1414,14 +1422,14 @@ struct ExecutionEngine::Impl {
 
     // Per-request signing for inline (actor-less) AWS SigV4 / OAuth1. Reuses
     // the same tested signers as the actor path by feeding the inline
-    // credentials into a transient session. Returns false on signing failure
-    // (missing credential / malformed URL), leaving req untouched.
-    [[nodiscard]] bool signInlineAuth(HttpRequest& req,
-                                      const std::optional<InlineAuth>& auth,
-                                      const RunContext& ctx,
-                                      const ResolveContext& rctx) const {
+    // credentials into a transient session. Returns why signing failed, leaving req untouched,
+    // or nullopt on success.
+    [[nodiscard]] std::optional<std::string> signInlineAuth(HttpRequest& req,
+                                                            const std::optional<InlineAuth>& auth,
+                                                            const RunContext& ctx,
+                                                            const ResolveContext& rctx) const {
         if (!auth) {
-            return true;
+            return std::nullopt;
         }
         const auto resolve = [&](const std::string& value) {
             return varResolver.resolve(value, ctx, rctx).output;
@@ -1442,7 +1450,10 @@ struct ExecutionEngine::Impl {
                     session.variables["session_token"] = resolveSecret(auth->awsSessionToken);
                 }
                 eraseHeaderCaseInsensitive(req.headers, "Authorization");
-                return signSigV4Request(req, session);
+                if (signSigV4Request(req, session)) {
+                    return std::nullopt;
+                }
+                return sigV4FailureReason(req, session);
             }
             case InlineAuthType::OAuth1: {
                 ActorSession session;
@@ -1451,7 +1462,10 @@ struct ExecutionEngine::Impl {
                 session.variables["token"] = resolveSecret(auth->oauthToken);
                 session.variables["token_secret"] = resolveSecret(auth->oauthTokenSecret);
                 eraseHeaderCaseInsensitive(req.headers, "Authorization");
-                return signOAuth1Request(req, session);
+                if (signOAuth1Request(req, session)) {
+                    return std::nullopt;
+                }
+                return std::string{"missing credentials or malformed URL"};
             }
             case InlineAuthType::None:
             case InlineAuthType::Bearer:
@@ -1461,9 +1475,16 @@ struct ExecutionEngine::Impl {
             case InlineAuthType::Jwt:
             case InlineAuthType::Mtls:
             case InlineAuthType::Inherit:
-                return true;  // non-signing types handled elsewhere
+                return std::nullopt;  // non-signing types handled elsewhere
         }
-        return true;
+        return std::nullopt;
+    }
+
+    /// Why SigV4 signing of `req` failed: its own refusal reason, else the credential / URL causes.
+    [[nodiscard]] static std::string sigV4FailureReason(const HttpRequest& req,
+                                                        const ActorSession& session) {
+        return sigV4Refusal(req, session)
+            .value_or("missing access_key/secret_key/region/service or malformed URL");
     }
 
     // Resolve an operation's effective inline auth. Inherit resolves to the
@@ -1591,8 +1612,13 @@ struct ExecutionEngine::Impl {
         auto sink = [this](const RunEvent& ev) {
             this->emit(ev);
         };
-        AuthDependencies authDeps{
-            deps.http.get(), &varResolver, sink, runId, stepIndex, captureResponseBodies};
+        AuthDependencies authDeps{deps.http.get(),
+                                  &varResolver,
+                                  sink,
+                                  runId,
+                                  stepIndex,
+                                  captureResponseBodies,
+                                  failureExcerptBytes};
         auto authenticator = selectAuthenticator(actor, std::move(authDeps));
         if (!authenticator) {
             return ReqloomError{ErrorCode::SessionRefreshFailed,
@@ -1655,11 +1681,15 @@ struct ExecutionEngine::Impl {
         bool ignoreCurrentActorUnresolved{};
         std::optional<std::pair<std::string, std::string>> firstUnresolved{};
 
-        const auto unresolvedVariableDetail = [&rctx, &ctx](const std::string_view safeVariable,
-                                                            const std::string_view location) {
+        const auto unresolvedVariableDetail = [this, &rctx, &ctx](
+                                                  const std::string_view safeVariable,
+                                                  const std::string_view location) {
             auto reason = envBuiltinFailureReason(safeVariable, rctx);
             if (!reason) {
                 reason = unsetFieldReason(ctx, safeVariable);
+            }
+            if (!reason && secretStoreUnavailable) {
+                reason = keychainUnavailableReason(safeVariable);
             }
             return std::string{"Variable: {{"} + std::string{safeVariable} +
                    "}}\nLocation: " + std::string{location} + "\nCause: " +
@@ -1781,9 +1811,9 @@ struct ExecutionEngine::Impl {
                 }
 
                 if (!containsHeaderCaseInsensitive(req.headers, "Cookie")) {
-                    const auto jar = ctx.cookies(op.actor);
-                    if (!jar.empty()) {
-                        req.headers["Cookie"] = cookies::formatRequestHeader(jar);
+                    if (auto header = cookies::requestHeaderFor(ctx.jarCookies(op.actor), req.url);
+                        !header.empty()) {
+                        req.headers["Cookie"] = std::move(header);
                     }
                 }
             }
@@ -2007,10 +2037,8 @@ struct ExecutionEngine::Impl {
                         if (!signSigV4Request(req, *session)) {
                             result.status = StepResult::Status::Failed;
                             result.error = ErrorCode::SessionRefreshFailed;
-                            result.detail =
-                                "aws_sigv4 signing failed "
-                                "(missing access_key/secret_key/"
-                                "region/service or malformed URL)";
+                            result.detail = "aws_sigv4 signing failed (" +
+                                            sigV4FailureReason(req, *session) + ")";
                             result.attempts = attemptCount;
                             return result;
                         }
@@ -2020,10 +2048,10 @@ struct ExecutionEngine::Impl {
 
             // Inline (actor-less) AWS SigV4 / OAuth1 signing — per-attempt so
             // each retry gets a fresh nonce/timestamp, mirroring the actor path.
-            if (!signInlineAuth(req, effAuth, ctx, rctx)) {
+            if (auto why = signInlineAuth(req, effAuth, ctx, rctx)) {
                 result.status = StepResult::Status::Failed;
                 result.error = ErrorCode::SessionRefreshFailed;
-                result.detail = "inline auth signing failed (missing credentials or malformed URL)";
+                result.detail = "inline auth signing failed (" + *why + ")";
                 result.attempts = attemptCount;
                 return result;
             }
@@ -2054,7 +2082,7 @@ struct ExecutionEngine::Impl {
                 // clearer if absorption happens at receive time, not
                 // before send time).
                 if (!op.actor.value.empty()) {
-                    absorbResponseCookies(httpResp->headers, op.actor, ctx);
+                    cookies::absorbSetCookies(httpResp->headers, op.actor, ctx, req.url);
                 }
                 // An unexpected 5xx reached the server, so only safe-to-repeat methods are re-sent.
                 const bool retry5xx = httpResp->status >= 500 &&
@@ -2138,15 +2166,17 @@ struct ExecutionEngine::Impl {
                             if (!signSigV4Request(req, *session)) {
                                 result.status = StepResult::Status::Failed;
                                 result.error = ErrorCode::SessionRefreshFailed;
-                                result.detail = "aws_sigv4 signing failed after session refresh";
+                                result.detail = "aws_sigv4 signing failed after session refresh (" +
+                                                sigV4FailureReason(req, *session) + ")";
                                 return result;
                             }
                         }
                     }
-                    if (!signInlineAuth(req, effAuth, ctx, rctx)) {
+                    if (auto why = signInlineAuth(req, effAuth, ctx, rctx)) {
                         result.status = StepResult::Status::Failed;
                         result.error = ErrorCode::SessionRefreshFailed;
-                        result.detail = "inline auth signing failed after session refresh";
+                        result.detail =
+                            "inline auth signing failed after session refresh (" + *why + ")";
                         return result;
                     }
 
@@ -2171,7 +2201,7 @@ struct ExecutionEngine::Impl {
                                               httpResp->elapsed,
                                               std::chrono::system_clock::now(),
                                               capturedBody(httpResp->body)});
-                        absorbResponseCookies(httpResp->headers, op.actor, ctx);
+                        cookies::absorbSetCookies(httpResp->headers, op.actor, ctx, req.url);
                     } else {
                         // Network error on the retry — surface the new
                         // error rather than the original 401 so users
@@ -2208,7 +2238,14 @@ struct ExecutionEngine::Impl {
             // omitted if it cannot be made safe.
             result.detail =
                 "HTTP " + std::to_string(httpResp->status) + " (expected " + expected + ")";
-            if (const auto excerpt = safeBodyExcerpt(httpResp->body, &ctx.secretRegistry())) {
+            const auto& show = op.failureMessageShow.value_or(project.failureMessageShow);
+            auto excerpt = selectedBodyExcerpt(
+                httpResp->body, show, &ctx.secretRegistry(), failureExcerptBytes);
+            if (!excerpt) {
+                excerpt =
+                    safeBodyExcerpt(httpResp->body, &ctx.secretRegistry(), failureExcerptBytes);
+            }
+            if (excerpt) {
                 result.detail += " — " + *excerpt;
             }
             auto elapsed = std::chrono::steady_clock::now() - startTime;
@@ -2562,6 +2599,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     impl_->cancelledRunId.store(0, std::memory_order_release);
     impl_->producedThisRun.clear();
     impl_->captureResponseBodies = options.captureResponseBodies;
+    impl_->failureExcerptBytes = std::min(options.failureExcerptBytes, kMaxFailureExcerptBytes);
     const auto runStart = std::chrono::steady_clock::now();
     impl_->activeSecrets = &ctx.secretRegistry();
     struct ActiveSecretsReset {
@@ -2621,6 +2659,8 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
         emitRunEnded(RunOutcome::Failed);
         return std::unexpected(std::move(error));
     };
+    impl_->secretStoreUnavailable =
+        impl_->deps.secrets && !options.dryRun && !impl_->deps.secrets->available();
     if (impl_->deps.secrets && !options.dryRun) {
         auto secretNames = DependencyResolver::collectSecretReferences(project);
         appendHookScriptSecrets(project, chain, secretNames);

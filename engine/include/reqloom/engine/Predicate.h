@@ -44,4 +44,9 @@ namespace reqloom::engine {
 /// ECMAScript syntax. `ReqloomError{SchemaInvalid}` otherwise.
 [[nodiscard]] std::expected<void, ReqloomError> validateRegexPattern(std::string_view pattern);
 
+/// Check a JSONPath that selects one value, in the subset `extract` supports (`$.a.b`,
+/// `$.a[0]`, `$.a[?(@.k == 'v')]`). `[*]`, `$..x` and other unsupported syntax give
+/// `ReqloomError{SchemaInvalid}` naming the path and the reason.
+[[nodiscard]] std::expected<void, ReqloomError> validateSingleValueJsonPath(std::string_view path);
+
 }  // namespace reqloom::engine

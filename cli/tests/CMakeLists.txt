@@ -61,3 +61,35 @@ gtest_discover_tests(reqloom-cli-import-tests
     PROPERTIES LABELS "cli_unit"
     DISCOVERY_TIMEOUT 60
 )
+
+# Run command argument tests — compile the command directly, like the import tests.
+add_executable(reqloom-cli-run-tests
+    unit/RunCommandTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/RunCommand.cpp
+)
+target_include_directories(reqloom-cli-run-tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+target_link_libraries(reqloom-cli-run-tests
+    PRIVATE
+        reqloom-cli-renderers
+        reqloom::engine
+        Qt6::Core
+        GTest::gtest
+        GTest::gtest_main
+)
+reqloom_set_warnings(reqloom-cli-run-tests)
+reqloom_apply_sanitizers(reqloom-cli-run-tests)
+reqloom_isolate_test_config(reqloom-cli-run-tests)
+
+reqloom_forbid_dependencies(reqloom-cli-run-tests
+    Qt6::Widgets
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::QuickWidgets
+)
+
+gtest_discover_tests(reqloom-cli-run-tests
+    PROPERTIES LABELS "cli_unit"
+    DISCOVERY_TIMEOUT 60
+)

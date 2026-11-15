@@ -1140,8 +1140,7 @@ TEST_F(RunOptionsFixture, capture_response_bodies_off_by_default_leaves_body_emp
 
 TEST_F(RunOptionsFixture, capture_response_bodies_includes_auth_and_main_path_bodies) {
     // Opt-in capture: both the auth response (index 0) and the main-path
-    // response (index 1) carry their bodies, with sensitive-named fields
-    // (the login token) masked.
+    // response (index 1) carry their bodies exactly as received, login token included.
     RunOptionsScratchProject project(kSimpleProjectYaml);
     auto loaded = ce::parseProject(project.yaml());
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
@@ -1167,8 +1166,9 @@ TEST_F(RunOptionsFixture, capture_response_bodies_includes_auth_and_main_path_bo
     const auto& login = events[0];
     ASSERT_TRUE(login.body.has_value());
     EXPECT_NE(login.body->find("accessToken"), std::string::npos);
-    EXPECT_EQ(login.body->find("tok-1"), std::string::npos) << *login.body;
-    EXPECT_NE(login.body->find(ce::kRedactedHeaderValue), std::string::npos) << *login.body;
+    EXPECT_NE(login.body->find("tok-1"), std::string::npos) << *login.body;
+    EXPECT_EQ(login.body->find(ce::kRedactedHeaderValue), std::string::npos) << *login.body;
+    EXPECT_EQ(login.body->size(), login.bodySize);
 
     // Main-path response.
     const auto& ping = events[1];
@@ -1964,6 +1964,279 @@ resources:
     EXPECT_EQ(step->status, ce::StepResult::Status::Failed);
     EXPECT_NE(step->detail.find("LOGIN-BODY"), std::string::npos) << step->detail;
     EXPECT_EQ(step->detail.find("abc123def456"), std::string::npos) << step->detail;
+}
+
+TEST(FailureDetail, status_mismatch_detail_quotes_a_long_body_whole) {
+    const std::string body =
+        R"({"error":"API-ERROR-TEXT","pad":")" + std::string(1500, 'x') + R"(","end":"TAIL"})";
+    const auto run = runScripted(
+        kRetryProjectYaml, "item.read", [&](ScriptedHttpClient& http) { http.respond(400, body); });
+    ASSERT_TRUE(run.result.has_value());
+    const auto* step = finalStep(*run.result, "item.read");
+    ASSERT_NE(step, nullptr);
+    EXPECT_NE(step->detail.find("TAIL"), std::string::npos) << "a 1.5 KB body is not cut";
+    EXPECT_EQ(step->detail.find("truncated"), std::string::npos);
+}
+
+TEST(FailureDetail, status_mismatch_detail_cuts_a_huge_body_at_four_kib_with_its_size) {
+    const std::string body = "token=tok-123456 " + std::string(std::size_t{100} * 1024, 'y');
+    const auto run = runScripted(
+        kRetryProjectYaml, "item.read", [&](ScriptedHttpClient& http) { http.respond(400, body); });
+    ASSERT_TRUE(run.result.has_value());
+    const auto* step = finalStep(*run.result, "item.read");
+    ASSERT_NE(step, nullptr);
+    EXPECT_TRUE(step->detail.ends_with("… (truncated, 100.0 KiB total)")) << step->detail.size();
+    EXPECT_LT(step->detail.size(), ce::kDefaultFailureExcerptBytes + 100);
+    EXPECT_GT(step->detail.size(), ce::kDefaultFailureExcerptBytes);
+    EXPECT_EQ(step->detail.find("tok-123456"), std::string::npos);
+}
+
+TEST(FailureDetail, excerpt_size_option_takes_effect) {
+    const std::string body = R"({"access_token":"tok-123456","error":")" +
+                             std::string(std::size_t{8} * 1024, 'e') + R"("})";
+    const auto detailWith = [&](const std::size_t bytes) {
+        ce::RunOptions options;
+        options.failureExcerptBytes = bytes;
+        const auto run = runScripted(
+            kRetryProjectYaml,
+            "item.read",
+            [&](ScriptedHttpClient& http) { http.respond(400, body); },
+            {},
+            options);
+        EXPECT_TRUE(run.result.has_value());
+        const auto* step = run.result ? finalStep(*run.result, "item.read") : nullptr;
+        return step != nullptr ? step->detail : std::string{};
+    };
+    const std::string prefix = "HTTP 400 (expected 200)";
+    const std::size_t quoteStart = prefix.size() + std::string_view{" — "}.size();
+
+    const auto small = detailWith(64);
+    EXPECT_EQ(small.find("… (truncated"), quoteStart + 64) << small;
+    EXPECT_EQ(small.find("tok-123456"), std::string::npos) << small;
+
+    const auto large = detailWith(16 * 1024);
+    EXPECT_EQ(large.find("truncated"), std::string::npos);
+    EXPECT_TRUE(large.ends_with("eee\"}")) << large.substr(large.size() - 16);
+    EXPECT_EQ(large.find("tok-123456"), std::string::npos);
+
+    EXPECT_EQ(detailWith(0), prefix);
+
+    const std::string huge(std::size_t{1536} * 1024, 'h');
+    ce::RunOptions options;
+    options.failureExcerptBytes = std::size_t{4} * 1024 * 1024;
+    const auto run = runScripted(
+        kRetryProjectYaml,
+        "item.read",
+        [&](ScriptedHttpClient& http) { http.respond(400, huge); },
+        {},
+        options);
+    ASSERT_TRUE(run.result.has_value());
+    const auto* step = finalStep(*run.result, "item.read");
+    ASSERT_NE(step, nullptr);
+    EXPECT_EQ(step->detail.find("… (truncated"), quoteStart + ce::kMaxFailureExcerptBytes);
+}
+
+TEST(FailureDetail, login_error_uses_the_run_excerpt_size) {
+    constexpr const char* kActorYaml = R"YAML(
+version: 1
+name: LoginExcerpt
+default_environment: local
+environment:
+  baseUrl: http://placeholder
+actors:
+  user:
+    auth:
+      strategy: simple
+      method: POST
+      path: /auth/login
+      body: { email: "u@x.test" }
+      expect_status: 200
+      extract:
+        token: $.token
+resources:
+  item:
+    operations:
+      read:
+        method: GET
+        path: /items
+        actor: user
+        expect_status: 200
+)YAML";
+    ce::RunOptions options;
+    options.failureExcerptBytes = 32;
+    const auto run = runScripted(
+        kActorYaml,
+        "item.read",
+        [](ScriptedHttpClient& http) {
+            http.respond(400, R"({"hint":"LOGIN-HINT",)" + std::string(500, 'l') + "\"}");
+        },
+        {},
+        options);
+    ASSERT_TRUE(run.result.has_value());
+    const auto* step = finalStep(*run.result, "item.read");
+    ASSERT_NE(step, nullptr);
+    EXPECT_NE(step->detail.find("LOGIN-HINT"), std::string::npos) << step->detail;
+    EXPECT_NE(step->detail.find("… (truncated, "), std::string::npos) << step->detail;
+    EXPECT_EQ(step->detail.find(std::string(40, 'l')), std::string::npos) << step->detail;
+}
+
+constexpr const char* kShowYaml = R"YAML(
+version: 1
+name: FailureShow
+default_environment: local
+failure_message:
+  show: [$.error.message, $.errors, $.missing]
+environment:
+  baseUrl: http://placeholder
+resources:
+  item:
+    operations:
+      read:
+        method: GET
+        path: /items
+        expect_status: 200
+      own:
+        method: GET
+        path: /items/own
+        expect_status: 200
+        failure_message:
+          show: [$.code]
+      plain:
+        method: GET
+        path: /items/plain
+        expect_status: 200
+        failure_message:
+          show: []
+      token:
+        method: GET
+        path: /items/token
+        expect_status: 200
+        failure_message:
+          show: [$.access_token, $.data]
+)YAML";
+
+[[nodiscard]] std::string showDetail(const std::string& op,
+                                     const std::string& body,
+                                     const ce::RunOptions& options = {}) {
+    const auto run = runScripted(
+        kShowYaml, op, [&](ScriptedHttpClient& http) { http.respond(400, body); }, {}, options);
+    EXPECT_TRUE(run.result.has_value()) << (run.result ? "" : run.result.error().detail);
+    const auto* step = run.result ? finalStep(*run.result, op) : nullptr;
+    return step != nullptr ? step->detail : std::string{};
+}
+
+TEST(FailureDetail, project_show_list_selects_the_named_parts_in_order) {
+    const auto detail = showDetail(
+        "item.read",
+        R"({"noise":"NOISE","errors":[{"field":"name"}],"error":{"message":"Name is required"}})");
+    EXPECT_EQ(detail,
+              R"(HTTP 400 (expected 200) — $.error.message: Name is required; )"
+              R"($.errors: [{"field":"name"}])");
+}
+
+TEST(FailureDetail, operation_show_list_replaces_the_project_list) {
+    const auto detail =
+        showDetail("item.own", R"({"code":"E42","error":{"message":"PROJECT-LEVEL"}})");
+    EXPECT_EQ(detail, "HTTP 400 (expected 200) — $.code: E42");
+}
+
+TEST(FailureDetail, empty_operation_show_list_uses_the_default_excerpt) {
+    const std::string body = R"({"code":"E42","error":{"message":"m"}})";
+    EXPECT_EQ(showDetail("item.plain", body), "HTTP 400 (expected 200) — " + body);
+}
+
+TEST(FailureDetail, show_list_that_matches_nothing_falls_back_to_the_default_excerpt) {
+    const std::string body = R"({"unexpected":"shape"})";
+    EXPECT_EQ(showDetail("item.read", body), "HTTP 400 (expected 200) — " + body);
+}
+
+TEST(FailureDetail, show_list_is_ignored_for_a_body_that_is_not_json) {
+    EXPECT_EQ(showDetail("item.read", "Bad Gateway: upstream down"),
+              "HTTP 400 (expected 200) — Bad Gateway: upstream down");
+}
+
+TEST(FailureDetail, shown_object_is_compact_json_with_token_fields_masked) {
+    const auto detail = showDetail(
+        "item.token",
+        R"({"access_token":"tok-123456","data":{"user":"u","refresh_token":"rrr-999999"}})");
+    EXPECT_EQ(detail.find("tok-123456"), std::string::npos) << detail;
+    EXPECT_EQ(detail.find("rrr-999999"), std::string::npos) << detail;
+    EXPECT_NE(detail.find("$.access_token: <redacted>"), std::string::npos) << detail;
+    EXPECT_NE(detail.find(R"($.data: {"refresh_token":"<redacted>","user":"u"})"),
+              std::string::npos)
+        << detail;
+}
+
+TEST(FailureDetail, size_limit_applies_to_the_combined_selected_text) {
+    ce::RunOptions options;
+    options.failureExcerptBytes = 40;
+    const std::string body = R"({"errors":[")" + std::string(100, 'e') +
+                             R"("],"error":{"message":")" + std::string(100, 'm') + R"("}})";
+    const auto detail = showDetail("item.read", body, options);
+    const std::string head = "HTTP 400 (expected 200) — ";
+    ASSERT_TRUE(detail.starts_with(head + "$.error.message: mmm")) << detail;
+    EXPECT_EQ(detail.find("… (truncated, "), head.size() + 40) << detail;
+
+    options.failureExcerptBytes = 0;
+    EXPECT_EQ(showDetail("item.read", body, options), "HTTP 400 (expected 200)");
+}
+
+constexpr const char* kSigV4UploadYaml = R"YAML(
+version: 1
+name: SigV4Upload
+default_environment: local
+environment:
+  baseUrl: http://placeholder
+actors:
+  aws:
+    auth:
+      strategy: aws_sigv4
+      access_key: AKIDEXAMPLE
+      secret_key: wJalrXUtnFEMIK7MDENG
+      region: us-east-1
+      service: execute-api
+resources:
+  upload:
+    operations:
+      inline:
+        method: POST
+        path: /upload
+        auth:
+          type: aws_sigv4
+          access_key: AKIDEXAMPLE
+          secret_key: wJalrXUtnFEMIK7MDENG
+          region: us-east-1
+          service: execute-api
+        headers:
+          Content-Type: multipart/form-data
+        body_form:
+          note: hello
+        expect_status: 200
+      actor:
+        method: POST
+        path: /upload
+        actor: aws
+        headers:
+          Content-Type: multipart/form-data
+        body_form:
+          note: hello
+        expect_status: 200
+)YAML";
+
+TEST(SigV4Upload, multipart_refusal_names_the_service_in_the_step_detail) {
+    for (const std::string op : {"upload.inline", "upload.actor"}) {
+        const auto run =
+            runScripted(kSigV4UploadYaml, op, [](ScriptedHttpClient& http) { http.respond(200); });
+        ASSERT_TRUE(run.result.has_value()) << op << ": " << run.result.error().detail;
+        EXPECT_EQ(run.sends, 0U) << op;
+        const auto* step = finalStep(*run.result, op);
+        ASSERT_NE(step, nullptr) << op;
+        EXPECT_NE(step->detail.find("AWS SigV4 cannot sign a multipart upload for service "
+                                    "'execute-api'; only s3 is supported"),
+                  std::string::npos)
+            << op << ": " << step->detail;
+        EXPECT_EQ(step->detail.find("access_key"), std::string::npos) << op << ": " << step->detail;
+    }
 }
 
 TEST(UnknownActor, step_naming_undefined_actor_fails_before_sending) {

@@ -503,3 +503,88 @@ TEST(SchemaStrictness, placeholder_with_quoted_argument_survives_a_map_body) {
     ASSERT_TRUE(body.has_value());
     EXPECT_EQ(*body, R"({"a":"{{$.base64.encode("x")}}","b":"say \"hi\""})");
 }
+
+// ─── failure_message.show ───────────────────────────────────────────────────
+
+TEST(SchemaStrictness, failure_message_show_is_read_at_project_and_operation_level) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write(
+        "reqloom.yaml",
+        "version: 1\nname: Strict\nfailure_message:\n  show: [$.error.message, $.errors]\n"
+        "resources:\n  users:\n    operations:\n"
+        "      create:\n        method: POST\n        path: /users\n"
+        "        failure_message:\n          show: [$.detail]\n"
+        "      list:\n        method: GET\n        path: /users\n"
+        "        failure_message:\n          show: []\n"
+        "      read:\n        method: GET\n        path: /users/1\n");
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->failureMessageShow,
+              (std::vector<std::string>{"$.error.message", "$.errors"}));
+    const auto& ops = result->resources.at(ce::ResourceId{"users"}).operations;
+    ASSERT_TRUE(ops.at("create").failureMessageShow.has_value());
+    EXPECT_EQ(*ops.at("create").failureMessageShow, (std::vector<std::string>{"$.detail"}));
+    ASSERT_TRUE(ops.at("list").failureMessageShow.has_value());
+    EXPECT_TRUE(ops.at("list").failureMessageShow->empty());
+    EXPECT_FALSE(ops.at("read").failureMessageShow.has_value());
+}
+
+TEST(SchemaStrictness, failure_message_show_that_is_not_a_list_is_an_error_with_location) {
+    ScratchDir scratch;
+    const auto err =
+        loadError(scratch, rootWithResource("        failure_message:\n          show: $.x\n"));
+    EXPECT_NE(err.find("reqloom.yaml:"), std::string::npos) << err;
+    EXPECT_NE(err.find("'show'"), std::string::npos) << err;
+    EXPECT_NE(err.find("list"), std::string::npos) << err;
+}
+
+TEST(SchemaStrictness, failure_message_show_entry_that_is_not_a_string_is_an_error) {
+    ScratchDir scratch;
+    const auto err = loadError(
+        scratch, rootWithResource("        failure_message:\n          show: [{a: 1}]\n"));
+    EXPECT_NE(err.find("reqloom.yaml:"), std::string::npos) << err;
+    EXPECT_NE(err.find("failure_message.show"), std::string::npos) << err;
+}
+
+TEST(SchemaStrictness, failure_message_that_is_not_a_map_is_an_error) {
+    ScratchDir scratch;
+    const auto err = loadError(scratch, rootWithResource("        failure_message: [$.x]\n"));
+    EXPECT_NE(err.find("'failure_message' must be a map"), std::string::npos) << err;
+}
+
+TEST(SchemaStrictness, unknown_key_in_failure_message_is_a_warning) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write(
+        "reqloom.yaml",
+        rootWithResource(
+            "        failure_message:\n          show: [$.x]\n          hide: [$.y]\n"));
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_TRUE(anyContains(result->loadWarnings, "'hide'"));
+    EXPECT_TRUE(anyContains(result->loadWarnings, "failure_message"));
+}
+
+TEST(SchemaStrictness, unsupported_failure_message_path_names_operation_key_and_path) {
+    ScratchDir scratch;
+    const auto err = loadError(
+        scratch, rootWithResource("        failure_message:\n          show: [$.ok, $..x]\n"));
+    EXPECT_NE(err.find("users.create"), std::string::npos) << err;
+    EXPECT_NE(err.find("failure_message.show"), std::string::npos) << err;
+    EXPECT_NE(err.find("$..x"), std::string::npos) << err;
+
+    const auto wildcard = loadError(
+        scratch, rootWithResource("        failure_message:\n          show: ['$.a[*].b']\n"));
+    EXPECT_NE(wildcard.find("$.a[*].b"), std::string::npos) << wildcard;
+}
+
+TEST(SchemaStrictness, unsupported_project_failure_message_path_names_reqloom_yaml) {
+    ScratchDir scratch;
+    const auto err =
+        loadError(scratch,
+                  "version: 1\nname: Strict\nfailure_message:\n  show: ['$.a[']\n" +
+                      std::string{"resources:\n  users:\n    operations:\n      create:\n"
+                                  "        method: POST\n        path: /users\n"});
+    EXPECT_NE(err.find("reqloom.yaml"), std::string::npos) << err;
+    EXPECT_NE(err.find("failure_message.show"), std::string::npos) << err;
+    EXPECT_NE(err.find("$.a["), std::string::npos) << err;
+}

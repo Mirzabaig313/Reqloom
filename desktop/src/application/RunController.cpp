@@ -160,6 +160,14 @@ std::map<std::string, std::string> RunController::cookies(const ce::ActorId& act
     return ctx->cookies(actor);
 }
 
+std::vector<ce::JarCookie> RunController::jarCookies(const ce::ActorId& actor) const {
+    const auto* ctx = findActiveContext();
+    if (ctx == nullptr) {
+        return {};
+    }
+    return ctx->jarCookies(actor);
+}
+
 RunController::ActorSessionInfo RunController::sessionInfo(const ce::ActorId& actor) const {
     const auto* ctx = findActiveContext();
     if (ctx == nullptr) {

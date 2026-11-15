@@ -195,7 +195,13 @@ template <typename Importer>
         if (!inner) {
             return std::unexpected(inner.error());
         }
-        return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+        std::vector<SourceSecretVariable> flagged;
+        if constexpr (requires { inner->secretVariables; }) {
+            flagged = std::move(inner->secretVariables);
+        }
+        auto credentials = detectImportedCredentials(inner->project, flagged);
+        return OpenApiImportOutcome{
+            std::move(inner->project), std::move(inner->warnings), std::move(credentials)};
     } catch (const nlohmann::json::exception& e) {
         return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
                                             ErrorClass::Schema,

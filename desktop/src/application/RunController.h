@@ -193,6 +193,9 @@ public:
     /// Read-only view for a cookie inspector.
     [[nodiscard]] std::map<std::string, std::string> cookies(const engine::ActorId& actor) const;
 
+    /// The same jar with each cookie's setting host, Domain, Path, Secure and expiry.
+    [[nodiscard]] std::vector<engine::JarCookie> jarCookies(const engine::ActorId& actor) const;
+
     /// Read-only view of one actor's auth session in the active run context,
     /// for the explorer's per-actor status indicator (FR-5.1). Reuses the
     /// engine's state enum rather than mirroring it.

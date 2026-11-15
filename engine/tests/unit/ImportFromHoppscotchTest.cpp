@@ -226,3 +226,31 @@ TEST(ImportFromHoppscotch, auth_warnings_once_per_scope) {
     EXPECT_EQ(countOf(w, "collection `Users API`: `bearer` auth was not imported"), 1u) << w;
     EXPECT_EQ(countOf(w, "operation users_api.own: `api-key` auth was not imported"), 1u) << w;
 }
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart.
+TEST(ImportFromHoppscotch, text_only_multipart_form_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+{
+  "v": 1, "name": "Forms", "folders": [],
+  "requests": [
+    { "v": "1", "name": "Multi", "method": "POST", "endpoint": "https://api.example.com/m",
+      "headers": [], "params": [],
+      "body": { "contentType": "multipart/form-data",
+                "body": [ { "key": "a", "value": "1", "active": true, "isFile": false } ] } },
+    { "v": "1", "name": "Encoded", "method": "POST", "endpoint": "https://api.example.com/e",
+      "headers": [], "params": [],
+      "body": { "contentType": "application/x-www-form-urlencoded",
+                "body": [ { "key": "a", "value": "1", "active": true } ] } }
+  ]
+}
+)JSON");
+    auto outcome = ce::importFromHoppscotch(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
+}

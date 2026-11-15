@@ -5,9 +5,13 @@
 #include "../domain/Codecs.h"
 #include "../domain/SecretRegistry.h"
 #include "HeaderMasking.h"
+#include "JsonExtraction.h"
+#include "PredicateEvaluator.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -223,6 +227,56 @@ void redactHeaderValues(std::vector<std::pair<std::string, std::string>>& header
     }
 }
 
+/// "812 bytes", "5.9 KiB", "2.3 MiB".
+[[nodiscard]] std::string formatByteSize(const std::size_t bytes) {
+    constexpr double kKiB = 1024.0;
+    if (bytes < 1024) {
+        return std::to_string(bytes) + " bytes";
+    }
+    if (bytes < 1024 * 1024) {
+        return std::format("{:.1f} KiB", static_cast<double>(bytes) / kKiB);
+    }
+    return std::format("{:.1f} MiB", static_cast<double>(bytes) / (kKiB * kKiB));
+}
+
+/// `text` cut to `limit` bytes on a UTF-8 boundary plus a marker naming the response's
+/// `totalBytes`, or `text` unchanged when it fits.
+[[nodiscard]] std::string capExcerpt(std::string text,
+                                     const std::size_t limit,
+                                     const std::size_t totalBytes) {
+    if (text.size() <= limit) {
+        return text;
+    }
+    return codecs::truncateUtf8(text, limit) + "… (truncated, " + formatByteSize(totalBytes) +
+           " total)";
+}
+
+/// Field name a single-value path ends with (`$.data.access_token` → `access_token`); empty
+/// when it ends with an index or filter.
+[[nodiscard]] std::string_view lastFieldName(std::string_view path) {
+    if (path.ends_with(']')) {
+        return {};
+    }
+    const auto dot = path.rfind('.');
+    return dot == std::string_view::npos ? path : path.substr(dot + 1);
+}
+
+/// One selected value as failure text, masked like the default excerpt.
+[[nodiscard]] std::string maskedSelection(std::string_view path, const nlohmann::json& value) {
+    // Naming a credential field in `show` does not unmask it.
+    if (isSensitiveField(lastFieldName(path))) {
+        return std::string{kRedactedValueMarker};
+    }
+    if (value.is_string()) {
+        return redactKeyValueText(value.get_ref<const std::string&>());
+    }
+    const auto text = value.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    if (value.is_structured()) {
+        return redactSensitiveBodyFields(text).value_or(std::string{kRedactedValueMarker});
+    }
+    return text;
+}
+
 }  // namespace
 
 std::optional<std::string> redactSensitiveBodyFields(std::string_view body) {
@@ -239,8 +293,11 @@ std::optional<std::string> redactSensitiveBodyFields(std::string_view body) {
     return redactKeyValueText(body);
 }
 
-std::optional<std::string> safeBodyExcerpt(std::string_view body, const SecretRegistry* registry) {
-    if (body.empty()) {
+std::optional<std::string> safeBodyExcerpt(std::string_view body,
+                                           const SecretRegistry* registry,
+                                           const std::size_t maxBytes) {
+    const auto limit = std::min(maxBytes, kMaxFailureExcerptBytes);
+    if (body.empty() || limit == 0) {
         return std::nullopt;
     }
     std::optional<std::string> fields{};
@@ -256,20 +313,56 @@ std::optional<std::string> safeBodyExcerpt(std::string_view body, const SecretRe
     // Value-redact the whole text before cutting, so a secret straddling
     // the cut cannot leave a recognisable prefix behind.
     std::string masked = registry != nullptr ? registry->redact(*fields) : std::move(*fields);
-    if (masked.size() > kBodyExcerptBytes) {
-        return codecs::truncateUtf8(masked, kBodyExcerptBytes) + "...";
+    return capExcerpt(std::move(masked), limit, body.size());
+}
+
+std::optional<std::string> selectedBodyExcerpt(std::string_view body,
+                                               const std::vector<std::string>& paths,
+                                               const SecretRegistry* registry,
+                                               const std::size_t maxBytes) {
+    const auto limit = std::min(maxBytes, kMaxFailureExcerptBytes);
+    if (paths.empty() || limit == 0 || !looksLikeJson(body) || !isSafeText(body) ||
+        jsonNestingExceeds(body)) {
+        return std::nullopt;
     }
-    return masked;
+    const auto doc = nlohmann::json::parse(body, nullptr, /*allow_exceptions=*/false);
+    if (doc.is_discarded()) {
+        return std::nullopt;
+    }
+    std::string text{};
+    try {
+        for (const auto& path : paths) {
+            if (const auto* value = walkJsonPath(doc, path)) {
+                text += (text.empty() ? "" : "; ") + path + ": " + maskedSelection(path, *value);
+            }
+        }
+    } catch (...) {
+        // Fail closed: the caller falls back to the default excerpt.
+        return std::nullopt;
+    }
+    if (text.empty()) {
+        return std::nullopt;
+    }
+    if (registry != nullptr) {
+        text = registry->redact(text);
+    }
+    return capExcerpt(std::move(text), limit, body.size());
+}
+
+std::optional<std::string> maskCapturedBody(std::string_view body, const RunContext& ctx) {
+    std::optional<std::string> fields{};
+    try {
+        fields = redactSensitiveBodyFields(body);
+    } catch (...) {
+        return std::nullopt;
+    }
+    if (!fields) {
+        return std::nullopt;
+    }
+    return ctx.secretRegistry().redact(*fields);
 }
 
 void redactEvent(RunEvent& event, const SecretRegistry& registry) {
-    // A captured login body is emitted before its token is extracted and
-    // registered, so sensitive fields are masked by name first.
-    if (auto* response = std::get_if<ResponseReceived>(&event); response && response->body) {
-        if (auto masked = redactSensitiveBodyFields(*response->body)) {
-            *response->body = std::move(*masked);
-        }
-    }
     if (registry.empty()) {
         return;
     }
@@ -279,10 +372,8 @@ void redactEvent(RunEvent& event, const SecretRegistry& registry) {
         redactString(prepared->url, registry);
         redactHeaderValues(prepared->maskedHeaders, registry);
     } else if (auto* response = std::get_if<ResponseReceived>(&event)) {
+        // The captured body is the person's own view and stays as received.
         redactHeaderValues(response->headers, registry);
-        if (response->body) {
-            redactString(*response->body, registry);
-        }
     } else if (auto* extraction = std::get_if<ExtractionCompleted>(&event)) {
         redactString(extraction->value, registry);
         redactString(extraction->sourcePath, registry);

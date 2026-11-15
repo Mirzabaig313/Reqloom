@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace reqloom::engine {
@@ -134,6 +135,19 @@ struct ExtractionTrace {
     std::string value;
 };
 
+/// One cookie in an actor's jar, with what decides where it is sent (RFC 6265 §5.3).
+struct JarCookie {
+    std::string name;
+    std::string value;
+    /// Lowercase host of the response that set it. Empty for a cookie seeded with `setCookie`,
+    /// which is sent to any host.
+    std::string setterHost;
+    std::optional<std::string> domain;  ///< Domain attribute, lowercase, leading dot removed.
+    std::optional<std::string> path;    ///< Path attribute; nullopt sends on every path.
+    bool secure{false};
+    std::optional<std::chrono::system_clock::time_point> expiresAt;
+};
+
 /// The mutable state of a single run.
 
 class RunContext {
@@ -153,15 +167,27 @@ public:
     /// actor.
     void clearSessions();
 
-    /// Snapshot of the actor's current cookies. Empty when no jar.
+    /// Snapshot of the actor's current cookies by name. When two hosts set the same name, the
+    /// most recently stored value is shown. Empty when no jar.
     [[nodiscard]] std::map<std::string, std::string> cookies(const ActorId& actor) const;
 
-    /// Insert or replace a cookie. Mirrors RFC 6265 §5.3 step 11:
-    /// the latest Set-Cookie wins on name collision.
+    /// The actor's cookies with their scope, oldest first.
+    [[nodiscard]] std::vector<JarCookie> jarCookies(const ActorId& actor) const;
+
+    /// Insert or replace a cookie with no known setting host (sent to any host). The latest
+    /// value wins on name collision (RFC 6265 §5.3 step 11).
     void setCookie(const ActorId& actor, std::string name, std::string value);
 
-    /// Drop one cookie from the actor's jar (a `Set-Cookie` that expires it). No-op when absent.
+    /// Insert `cookie`, replacing one with the same name, domain-or-host and path. Its value is
+    /// registered for redaction.
+    void storeCookie(const ActorId& actor, JarCookie cookie);
+
+    /// Drop every cookie named `name` from the actor's jar. No-op when absent.
     void removeCookie(const ActorId& actor, const std::string& name);
+
+    /// Drop the cookies named `name` that a response from `host` may delete: ones it set, ones
+    /// whose Domain covers it, and ones with no known setting host.
+    void removeCookie(const ActorId& actor, const std::string& name, std::string_view host);
 
     /// Drop the actor's entire jar. Called by `invalidateSession`.
     void clearCookies(const ActorId& actor);
@@ -201,5 +227,12 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+/// Masked form of a captured body (`ResponseReceived::body`): token-like fields masked by name
+/// at any depth, then every secret value registered in `ctx` replaced by the marker. Every
+/// surface an AI agent or the CLI can read must call this before printing or returning a body.
+/// nullopt when the body is not text and so cannot be made safe; omit it then.
+[[nodiscard]] std::optional<std::string> maskCapturedBody(std::string_view body,
+                                                          const RunContext& ctx);
 
 }  // namespace reqloom::engine

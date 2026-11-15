@@ -2,10 +2,11 @@
 // response-time jar updates) and the extractor (resolving $.cookies.X from
 // Set-Cookie headers).
 //
-// The per-actor jar in RunContext holds name→value pairs. A Set-Cookie that
-// expires a cookie (Max-Age <= 0, a past Expires, an empty value) removes it
-// (`absorbSetCookies`). `shouldSend` decides host, Secure and Path scope for a
-// cookie whose setting host is known.
+// The per-actor jar in RunContext holds each cookie with the host that set it and
+// its Domain, Path, Secure and expiry. A Set-Cookie that expires a cookie
+// (Max-Age <= 0, a past Expires, an empty value) removes it (`absorbSetCookies`).
+// `shouldSend` / `requestHeaderFor` decide which cookies go on a request. A
+// cookie without Path is sent on every path (no RFC default-path).
 
 #pragma once
 
@@ -22,6 +23,7 @@
 
 namespace reqloom::engine {
 class RunContext;
+struct JarCookie;
 }  // namespace reqloom::engine
 
 namespace reqloom::engine::cookies {
@@ -60,11 +62,13 @@ struct SetCookie {
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> collectFromResponse(
     const std::vector<std::pair<std::string, std::string>>& headers);
 
-/// Apply every `Set-Cookie` in `headers`, in order, to `actor`'s jar: store the cookie, or
-/// remove it when the header expires it (`SetCookie::removes`).
+/// Apply every `Set-Cookie` in `headers` of the response to `requestUrl`, in order, to
+/// `actor`'s jar: store the cookie with its scope, or remove it when the header expires it
+/// (`SetCookie::removes`).
 void absorbSetCookies(const std::vector<std::pair<std::string, std::string>>& headers,
                       const ActorId& actor,
-                      RunContext& ctx);
+                      RunContext& ctx,
+                      std::string_view requestUrl);
 
 /// Lowercase host of `url` without userinfo or port; empty when the URL has no `://`.
 [[nodiscard]] std::string hostOf(std::string_view url);
@@ -80,6 +84,19 @@ void absorbSetCookies(const std::vector<std::pair<std::string, std::string>>& he
 [[nodiscard]] bool shouldSend(const SetCookie& cookie,
                               std::string_view setterHost,
                               std::string_view requestUrl);
+
+/// Whether a jar cookie goes on a request to `requestUrl` at `now`: unexpired, and in scope
+/// per `shouldSend` above. A cookie with no setting host is in scope for any host.
+[[nodiscard]] bool shouldSend(const JarCookie& cookie,
+                              std::string_view requestUrl,
+                              std::chrono::system_clock::time_point now);
+
+/// `Cookie:` header value for a request to `requestUrl`: the jar cookies `shouldSend` allows,
+/// by name (alphabetical; the newest wins a name clash). Empty when none apply.
+[[nodiscard]] std::string requestHeaderFor(
+    const std::vector<JarCookie>& jar,
+    std::string_view requestUrl,
+    std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
 
 /// Emit `name1=v1; name2=v2; ...` for a request `Cookie:` header.
 /// Returns empty when the jar is empty. Cookie order follows the

@@ -293,3 +293,31 @@ TEST(ImportFromInsomnia, auth_warnings_only_for_real_schemes) {
     EXPECT_EQ(countOf(w, "folder `Admin`: `basic` auth was not imported"), 1u) << w;
     EXPECT_EQ(countOf(w, "operation admin.bearer: `bearer` auth was not imported"), 1u) << w;
 }
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart.
+TEST(ImportFromInsomnia, text_only_multipart_form_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+{
+  "_type": "export", "__export_format": 4,
+  "resources": [
+    { "_id": "wrk_1", "_type": "workspace", "name": "Forms" },
+    { "_id": "req_1", "_type": "request", "parentId": "wrk_1", "name": "Multi",
+      "method": "POST", "url": "https://api.example.com/m",
+      "body": { "mimeType": "multipart/form-data", "params": [ { "name": "a", "value": "1" } ] } },
+    { "_id": "req_2", "_type": "request", "parentId": "wrk_1", "name": "Encoded",
+      "method": "POST", "url": "https://api.example.com/e",
+      "body": { "mimeType": "application/x-www-form-urlencoded",
+                "params": [ { "name": "a", "value": "1" } ] } }
+  ]
+}
+)JSON");
+    auto outcome = ce::importFromInsomnia(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
+}

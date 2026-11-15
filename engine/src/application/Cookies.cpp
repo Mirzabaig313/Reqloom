@@ -4,6 +4,7 @@
 
 #include <reqloom/engine/RunContext.h>
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <charconv>
@@ -287,8 +288,10 @@ std::vector<std::pair<std::string, std::string>> collectFromResponse(
 
 void absorbSetCookies(const std::vector<std::pair<std::string, std::string>>& headers,
                       const ActorId& actor,
-                      RunContext& ctx) {
+                      RunContext& ctx,
+                      std::string_view requestUrl) {
     const auto now = std::chrono::system_clock::now();
+    const auto host = hostOf(requestUrl);
     for (const auto& [k, v] : headers) {
         if (toLowerCopy(k) != "set-cookie") {
             continue;
@@ -298,10 +301,22 @@ void absorbSetCookies(const std::vector<std::pair<std::string, std::string>>& he
             continue;
         }
         if (cookie->removes(now)) {
-            ctx.removeCookie(actor, cookie->name);
-        } else {
-            ctx.setCookie(actor, std::move(cookie->name), std::move(cookie->value));
+            ctx.removeCookie(actor, cookie->name, host);
+            continue;
         }
+        JarCookie stored{.name = std::move(cookie->name),
+                         .value = std::move(cookie->value),
+                         .setterHost = host,
+                         .domain = std::move(cookie->domain),
+                         .path = std::move(cookie->path),
+                         .secure = cookie->secure};
+        if (cookie->maxAge) {
+            stored.expiresAt = now + std::chrono::seconds{std::min<std::int64_t>(
+                                         *cookie->maxAge, std::int64_t{10} * 365 * 24 * 3600)};
+        } else if (cookie->expires) {
+            stored.expiresAt = *cookie->expires;
+        }
+        ctx.storeCookie(actor, std::move(stored));
     }
 }
 
@@ -347,6 +362,33 @@ bool shouldSend(const SetCookie& cookie, std::string_view setterHost, std::strin
         return false;
     }
     return !cookie.path || pathMatches(pathOf(requestUrl), *cookie.path);
+}
+
+bool shouldSend(const JarCookie& cookie,
+                std::string_view requestUrl,
+                const std::chrono::system_clock::time_point now) {
+    if (cookie.expiresAt && *cookie.expiresAt <= now) {
+        return false;
+    }
+    const SetCookie scope{.name = cookie.name,
+                          .value = cookie.value,
+                          .domain = cookie.domain,
+                          .path = cookie.path,
+                          .secure = cookie.secure};
+    const std::string setter = cookie.setterHost.empty() ? hostOf(requestUrl) : cookie.setterHost;
+    return shouldSend(scope, setter, requestUrl);
+}
+
+std::string requestHeaderFor(const std::vector<JarCookie>& jar,
+                             std::string_view requestUrl,
+                             const std::chrono::system_clock::time_point now) {
+    std::map<std::string, std::string> sendable;
+    for (const auto& cookie : jar) {
+        if (shouldSend(cookie, requestUrl, now)) {
+            sendable[cookie.name] = cookie.value;
+        }
+    }
+    return formatRequestHeader(sendable);
 }
 
 std::string formatRequestHeader(const std::map<std::string, std::string>& jar) {

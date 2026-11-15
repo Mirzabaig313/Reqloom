@@ -72,13 +72,10 @@ struct ResponseReceived {
     std::chrono::milliseconds elapsed{};
     TimePoint at;
 
-    /// Raw response body, populated only when the run opted in via
-    /// `RunOptions::captureResponseBodies`. Empty by default — the
-    /// engine's redaction-first contract keeps bodies off the event
-    /// surface unless a caller explicitly asks for them. When opted in,
-    /// every response is captured with sensitive-named fields and registered secrets masked.
-    /// Capped at 5 MiB. Persisted to the history store when present, so
-    /// past responses replay in full (Postman-style history).
+    /// Response body as received, populated only when the run opted in via
+    /// `RunOptions::captureResponseBodies`. Not masked: it is shown to the person and stored in
+    /// run history as it was, tokens included. Agent-facing surfaces (CLI, AI tools) must
+    /// print only `maskCapturedBody(*body, ctx)`. Capped at 5 MiB.
     std::optional<std::string> body{};
 };
 

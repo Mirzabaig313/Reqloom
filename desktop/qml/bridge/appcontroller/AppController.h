@@ -1159,6 +1159,8 @@ private:
         QString errorDetail;
         int resources{0};
         int operations{0};
+        int movedCredentials{0};
+        int keptCredentials{0};
         QString notes;
         QString loadDir;
         /// Echoed back so a NeedsOverwrite outcome can re-invoke the import with

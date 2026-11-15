@@ -37,6 +37,10 @@ public:
 
     /// Remove a secret. Succeeds (no-op) if the key is already absent.
     [[nodiscard]] virtual std::expected<void, ReqloomError> remove(const std::string& name) = 0;
+
+    /// False when no backend exists on this machine, so `read` can only ever report a secret
+    /// as absent. The engine then says why a `{{secret.NAME}}` has no value.
+    [[nodiscard]] virtual bool available() const noexcept { return true; }
 };
 
 }  // namespace reqloom::engine

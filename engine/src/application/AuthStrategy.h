@@ -5,6 +5,7 @@
 #include <reqloom/engine/Actor.h>
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/Events.h>
+#include <reqloom/engine/ExecutionEngine.h>
 #include <reqloom/engine/RunContext.h>
 
 #include <chrono>
@@ -40,6 +41,9 @@ struct AuthDependencies {
     /// (which carry tokens) stay off the event surface unless the caller
     /// explicitly opts in.
     bool captureResponseBodies{false};
+
+    /// Mirrors `RunOptions::failureExcerptBytes` for login / token endpoint errors.
+    std::size_t failureExcerptBytes{kDefaultFailureExcerptBytes};
 };
 
 class Authenticator {

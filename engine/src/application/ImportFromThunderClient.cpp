@@ -448,7 +448,7 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                 const json& body = item["body"];
                 const auto type = jsonStr(body, "type");
                 const auto raw = jsonStr(body, "raw");
-                if (type == "formencoded" || type == "form") {
+                if (type == "formencoded" || type == "form" || type == "formdata") {
                     std::map<std::string, std::string> form;
                     if (body.contains("form") && body["form"].is_array()) {
                         for (const auto& f : body["form"]) {
@@ -475,6 +475,9 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                     }
                     if (!form.empty()) {
                         op.bodyForm = std::move(form);
+                        if (type == "formdata") {
+                            is::keepMultipart(op);
+                        }
                     }
                 } else if (!raw.empty()) {
                     // json / text / xml / graphql all carry the payload in `raw`.

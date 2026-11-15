@@ -26,6 +26,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace ce = reqloom::engine;
@@ -82,7 +83,10 @@ public:
         return {};
     }
 
+    [[nodiscard]] bool available() const noexcept override { return backendPresent; }
+
     int reads{0};
+    bool backendPresent{true};
 
 private:
     std::map<std::string, std::string> values_;
@@ -219,6 +223,56 @@ TEST(SecretLoading, missing_secret_leaves_reference_unresolved_without_crashing)
     // The run itself completes (no schema-time error); the unresolved
     // reference is a runtime concern handled on the request path.
     ASSERT_TRUE(result.has_value()) << result.error().detail;
+}
+
+[[nodiscard]] const ce::StepResult* failedStep(const ce::RunResult& result) {
+    for (const auto& step : result.steps) {
+        if (step.status == ce::StepResult::Status::Failed) {
+            return &step;
+        }
+    }
+    return nullptr;
+}
+
+TEST(SecretLoading, secret_without_a_keychain_says_no_keychain_is_available) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->backendPresent = false;
+
+    auto project = makeProjectWithSecretHeader();
+    ce::RunContext ctx;
+    std::vector<std::string> failures;
+    engine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* failed = std::get_if<ce::StepFailed>(&event)) {
+            failures.push_back(failed->detail);
+        }
+    });
+    auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_TRUE(fakes.http->requests().empty());
+    const auto* step = failedStep(*result);
+    ASSERT_NE(step, nullptr);
+    const std::string expected =
+        "no OS keychain is available on this machine; {{secret.API_KEY}} cannot be read";
+    EXPECT_NE(step->detail.find(expected), std::string::npos) << step->detail;
+    EXPECT_NE(step->detail.find("{{$.env.NAME}}"), std::string::npos) << step->detail;
+    ASSERT_EQ(failures.size(), 1U);
+    EXPECT_NE(failures.front().find(expected), std::string::npos) << failures.front();
+}
+
+TEST(SecretLoading, missing_secret_with_a_keychain_does_not_blame_the_keychain) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+
+    auto project = makeProjectWithSecretHeader();
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto* step = failedStep(*result);
+    ASSERT_NE(step, nullptr);
+    EXPECT_EQ(step->detail.find("keychain"), std::string::npos) << step->detail;
 }
 
 TEST(SecretLoading, dry_run_does_not_touch_the_secret_store) {

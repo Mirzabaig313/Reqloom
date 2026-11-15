@@ -340,6 +340,9 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
                 }
                 if (!form.empty()) {
                     op.bodyForm = std::move(form);
+                    if (type.find("x-www-form-urlencoded") == std::string::npos) {
+                        is::keepMultipart(op);
+                    }
                 }
             } else if (!exampleValue.empty()) {
                 op.bodyTemplate = rewrite(exampleValue);

@@ -3,6 +3,8 @@
 
 #include "RunCommand.h"
 
+#include "ByteSizeArgument.h"
+
 #include "../output/JUnitRenderer.h"
 #include "../output/JsonRenderer.h"
 #include "../output/TextRenderer.h"
@@ -10,6 +12,7 @@
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -17,6 +20,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <print>
 #include <string>
@@ -39,6 +43,7 @@ struct RunArgs {
     Format format{Format::Text};
     fs::path outputPath;  ///< empty = stdout
     bool quiet{false};
+    std::optional<std::size_t> failureExcerptBytes;
 };
 
 void printUsage(std::ostream& os) {
@@ -51,6 +56,10 @@ void printUsage(std::ostream& os) {
           "  --output <file>      Write rendered output to <file> (default: stdout)\n"
           "  --quiet              Suppress live progress on stdout (failures still go\n"
           "                       to stderr). Implied by --format json|junit.\n"
+          "  --failure-body-size <size>\n"
+          "                       Most of the response body quoted in a failure message,\n"
+          "                       as bytes or with KiB/MiB (default 4KiB; 0 = none;\n"
+          "                       capped at 1MiB). Secrets are masked at any size.\n"
           "Exit codes: 0 success, 1 run/schema failure, 2 invalid arguments.\n";
 }
 
@@ -104,6 +113,17 @@ void printUsage(std::ostream& os) {
             out.format = *parsed;
         } else if (flag == QStringLiteral("--output") && i + 1 < args.size()) {
             out.outputPath = args[++i].toStdString();
+        } else if (flag == QStringLiteral("--failure-body-size") && i + 1 < args.size()) {
+            const auto text = args[++i].toStdString();
+            const auto bytes = parseByteSizeArgument(text);
+            if (!bytes) {
+                std::println(stderr,
+                             "reqloom run: --failure-body-size must be a byte count or a size "
+                             "in KiB or MiB such as 16KiB, got '{}'",
+                             text);
+                return std::unexpected(2);
+            }
+            out.failureExcerptBytes = *bytes;
         } else if (flag == QStringLiteral("--quiet")) {
             out.quiet = true;
         } else if (flag == QStringLiteral("--help") || flag == QStringLiteral("-h")) {
@@ -195,6 +215,9 @@ int runCommand(const QStringList& args) {
     ce::RunOptions options;
     if (!cfg.envName.empty()) {
         options.environment = cfg.envName;
+    }
+    if (cfg.failureExcerptBytes) {
+        options.failureExcerptBytes = *cfg.failureExcerptBytes;
     }
 
     if (cfg.format == Format::Text) {

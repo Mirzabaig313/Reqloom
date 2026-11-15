@@ -434,6 +434,15 @@ void emitAssertions(YAML::Emitter& e, const std::vector<Assertion>& assertions) 
     e << YAML::EndSeq;
 }
 
+void emitFailureMessage(YAML::Emitter& e, const std::vector<std::string>& show) {
+    e << YAML::Key << "failure_message" << YAML::Value << YAML::BeginMap << YAML::Key << "show"
+      << YAML::Value << YAML::Flow << YAML::BeginSeq;
+    for (const auto& path : show) {
+        e << path;
+    }
+    e << YAML::EndSeq << YAML::EndMap;
+}
+
 void emitProvenance(YAML::Emitter& e, const Provenance& p) {
     e << YAML::Key << "_provenance" << YAML::Value << YAML::BeginMap;
     e << YAML::Key << "source" << YAML::Value
@@ -649,6 +658,9 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
     }
     emitExtractions(e, op.extractions);
     emitAssertions(e, op.assertions);
+    if (op.failureMessageShow) {
+        emitFailureMessage(e, *op.failureMessageShow);
+    }
     if (op.provenance) {
         emitProvenance(e, *op.provenance);
     }
@@ -926,13 +938,25 @@ std::string emitRoot(const Project& project, const std::string& projectId) {
         e << YAML::Key << "latency_slo" << YAML::Value << YAML::BeginMap << YAML::Key << "p95_ms"
           << YAML::Value << project.latencySloP95Ms << YAML::EndMap;
     }
+    if (!project.failureMessageShow.empty()) {
+        emitFailureMessage(e, project.failureMessageShow);
+    }
     if (project.defaultAuth && project.defaultAuth->type != InlineAuthType::None &&
         project.defaultAuth->type != InlineAuthType::Inherit) {
         emitInlineAuth(e, *project.defaultAuth);
     }
-    e << YAML::Key << "imports" << YAML::Value << YAML::BeginSeq << "actors/*.yaml"
-      << "resources/*.yaml"
-      << "environments/*.yaml" << YAML::EndSeq << YAML::EndMap;
+    // A pattern for a folder with no files would warn on every reload.
+    e << YAML::Key << "imports" << YAML::Value << YAML::BeginSeq;
+    if (!project.actors.empty()) {
+        e << "actors/*.yaml";
+    }
+    if (!project.resources.empty()) {
+        e << "resources/*.yaml";
+    }
+    if (!project.environments.empty()) {
+        e << "environments/*.yaml";
+    }
+    e << YAML::EndSeq << YAML::EndMap;
     return e.c_str();
 }
 

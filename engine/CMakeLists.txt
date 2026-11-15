@@ -85,6 +85,7 @@ add_library(reqloom-engine-application OBJECT
     src/application/ImportFromBruno.cpp
     src/application/ImportFromHttpie.cpp
     src/application/ImportFromApidog.cpp
+    src/application/ImportCredentials.cpp
     src/application/ExecutionEngine.cpp
     src/application/HookScope.cpp
     src/application/Factories.cpp

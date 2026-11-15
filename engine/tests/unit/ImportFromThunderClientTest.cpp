@@ -226,3 +226,34 @@ TEST(ImportFromThunderClient, path_parameter_and_auth_are_handled_like_other_imp
     EXPECT_EQ(countOf(w, "collection `Users API`: `bearer` auth was not imported"), 1u) << w;
     EXPECT_EQ(countOf(w, "operation users.own_auth: `basic` auth was not imported"), 1u) << w;
 }
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart. Thunder
+// Client names a multipart body `formdata` and an urlencoded one `formencoded`.
+TEST(ImportFromThunderClient, text_only_formdata_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+[
+  {
+    "_id": "col_1", "colName": "Forms",
+    "folders": [ { "_id": "fld_1", "name": "Forms", "containerId": "" } ],
+    "requests": [
+      { "_id": "req_1", "colId": "col_1", "containerId": "fld_1", "name": "Multi",
+        "method": "POST", "url": "https://api.example.com/m",
+        "body": { "type": "formdata", "form": [ { "name": "a", "value": "1" } ] } },
+      { "_id": "req_2", "colId": "col_1", "containerId": "fld_1", "name": "Encoded",
+        "method": "POST", "url": "https://api.example.com/e",
+        "body": { "type": "formencoded", "form": [ { "name": "a", "value": "1" } ] } }
+    ]
+  }
+]
+)JSON");
+    auto outcome = ce::importFromThunderClient(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    ASSERT_TRUE(multi->bodyForm.has_value());
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
+}
