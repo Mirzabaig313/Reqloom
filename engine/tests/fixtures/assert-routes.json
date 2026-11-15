@@ -11,6 +11,12 @@
                     "total": 42
                 }
             }
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/plain-text",
+            "status": 200,
+            "body": "this is not json"
         }
     ]
 }

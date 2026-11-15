@@ -20,6 +20,9 @@ ColumnLayout {
     property string valuePlaceholder: qsTr("value")
     // Show a per-row file-attach button (form-data body only).
     property bool allowFiles: false
+    // Values are `body_form` templates: a typed leading `@` is stored as `@@`
+    // so it stays text, and shown without the escape.
+    property bool formValues: false
     // Offer a Postman-style dropdown of common HTTP header names on the Key
     // field (headers tab only; off for query/form/config tables).
     property bool suggestHeaderNames: false
@@ -55,7 +58,7 @@ ColumnLayout {
     }
 
     function isFileValue(v) {
-        return typeof v === "string" && v.startsWith("@");
+        return typeof v === "string" && AppController.isFormFileValue(v);
     }
     function fileBaseName(v) {
         const path = v.substring(1);
@@ -154,9 +157,9 @@ ColumnLayout {
                 // stays one-line and usable down to ~270 DIP.
                 Layout.minimumWidth: 120
                 visible: !root.allowFiles || !root.isFileValue(row.value)
-                text: row.value
+                text: root.formValues && !root.isFileValue(row.value) ? AppController.formValueText(row.value) : row.value
                 placeholderText: root.valuePlaceholder
-                onTextEdited: root.kvModel.setValue(row.index, text)
+                onTextEdited: root.kvModel.setValue(row.index, root.formValues ? AppController.formTextValue(text) : text)
             }
             Rectangle {
                 Layout.fillWidth: true

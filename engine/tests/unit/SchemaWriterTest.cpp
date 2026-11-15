@@ -277,6 +277,42 @@ TEST(SchemaWriter, retry_policy_round_trips) {
     EXPECT_EQ(out.retry.baseBackoff, std::chrono::milliseconds{1234});
 }
 
+TEST(SchemaWriter, retry_non_idempotent_round_trips_with_default_max_and_backoff) {
+    // The flag alone must be enough to emit the retry block.
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& pay = project.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    pay.retry.nonIdempotent = true;
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    const auto& out = reloaded->resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    EXPECT_TRUE(out.retry.nonIdempotent);
+    EXPECT_EQ(out.retry.maxAttempts, ce::RetryPolicy{}.maxAttempts);
+    EXPECT_EQ(out.retry.baseBackoff, ce::RetryPolicy{}.baseBackoff);
+}
+
+TEST(SchemaWriter, retry_non_idempotent_is_not_emitted_when_false) {
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    auto& pay = project.resources.at(ce::ResourceId{"payment"}).operations.at("pay");
+    pay.retry.maxAttempts = 7;  // forces a retry block
+    pay.retry.nonIdempotent = false;
+
+    auto written = ce::writeProject(scratch.path(), project, /*overwrite=*/true);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    std::string content;
+    {
+        std::ifstream in(scratch.path() / "resources" / "payment.yaml", std::ios::binary);
+        ASSERT_TRUE(in.good());
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    EXPECT_NE(content.find("retry"), std::string::npos) << content;
+    EXPECT_EQ(content.find("non_idempotent"), std::string::npos) << content;
+}
+
 TEST(SchemaWriter, provenance_round_trips_through_parser) {
     // makeRoundTripProject stamps the pay op with AI-import provenance. A save
     // must not strip it — the parser now reads `_provenance` back.

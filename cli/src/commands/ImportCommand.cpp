@@ -34,9 +34,10 @@ void printUsage(std::FILE* stream) {
     std::println(stream,
                  "Usage: reqloom import <spec> [options]\n"
                  "Import an API definition into a project. Supported formats,\n"
-                 "auto-detected: OpenAPI 3.x (YAML/JSON), Postman v2.1, Insomnia v4,\n"
-                 "Thunder Client, Hoppscotch, REST Client (.http/.rest), and Bruno\n"
-                 "(a collection directory, its bruno.json, or a .bru file).\n"
+                 "auto-detected: OpenAPI 3.x and Swagger 2.0 (YAML/JSON), Postman v2.1,\n"
+                 "Insomnia v4, Thunder Client, Hoppscotch, HTTPie, Apidog, REST Client\n"
+                 "(.http/.rest), and Bruno (a collection directory, its bruno.json, or a\n"
+                 ".bru file).\n"
                  "Options:\n"
                  "  --out <dir>           Directory to write the project into (default: cwd)\n"
                  "  --project-root <dir>  Containment root the spec must resolve under\n"
@@ -123,8 +124,7 @@ int importCommand(const QStringList& args) {
         return 1;
     }
 
-    // --force overwrites the files this import writes but never prunes other
-    // actors/resources/environments already in <dir> (hand-written files).
+    // Never prune other actors/resources/environments in <dir>: they may be hand-written.
     auto written = ce::writeProject(cfg.outDir, imported->project, cfg.force, /*pruneStale=*/false);
     if (!written) {
         std::println(stderr,

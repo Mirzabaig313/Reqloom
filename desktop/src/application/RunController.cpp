@@ -80,8 +80,7 @@ void RunController::setProject(const ProjectModel& project) noexcept {
 }
 
 RunController::ContextKey RunController::activeKey() const {
-    // Same rule the engine applies to RunOptions::environment: empty means the
-    // project's default, so both spellings share one context.
+    // Empty means the project's default, as in RunOptions::environment.
     std::string env = environment_;
     if (env.empty() && project_->hasProject()) {
         env = project_->project().defaultEnvironment;
@@ -335,8 +334,6 @@ void RunController::runWithOverride(const QString& target,
     const std::shared_ptr<const ce::Project> project =
         requestOverride.active ? patchedProject(project_->project(), targetId, requestOverride)
                                : project_->projectPtr();
-    // The run's environment keys its context, so a token or cached id from
-    // another environment can never reach this run.
     setEnvironment(environment);
     ce::RunContext& ctx = contextForActive();
     runningRoot_ = project_->rootPath().toStdString();

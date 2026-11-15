@@ -435,7 +435,14 @@ QVariantMap AppController::previewFormBody() const {
         }
     }
 
-    auto preview = engine::previewFormBody(fields, headers);
+    // Relative `@file` paths must resolve against the project folder, as a run does.
+    const auto& project = activeProject();
+    std::filesystem::path root =
+        project.hasProject() ? project.project().rootDir : std::filesystem::path{};
+    if (root.empty()) {
+        root = project.rootPath().toStdString();
+    }
+    auto preview = engine::previewFormBody(fields, headers, root);
     if (!preview) {
         out.insert(QStringLiteral("valid"), false);
         out.insert(QStringLiteral("error"), QString::fromStdString(preview.error().detail));

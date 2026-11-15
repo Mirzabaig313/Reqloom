@@ -19,9 +19,11 @@
 
 #include <reqloom/engine/JsonValues.h>
 #include <reqloom/engine/ProjectIdentity.h>
+#include "../domain/SecretRegistry.h"
 #include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
 #include "RequestSigners.h"
+#include "SecretRedaction.h"
 
 #include <algorithm>
 #include <atomic>
@@ -29,6 +31,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <map>
 #include <mutex>
@@ -244,7 +247,8 @@ struct ExtractionEvidence {
     const std::vector<OperationId>& chain,
     const std::size_t currentStepIndex) {
     UnresolvedVariableDiagnostic diagnostic{};
-    diagnostic.token = exposeToken ? safeDiagnosticText(occurrence.token) : "<redacted>";
+    diagnostic.token =
+        exposeToken ? safeDiagnosticText(occurrence.token) : std::string{kRedactedValueMarker};
     diagnostic.useKind = useKind;
     diagnostic.useName = safeDiagnosticText(useName);
     const auto parts = exposeToken ? parseVariableParts(occurrence.token) : std::nullopt;
@@ -520,7 +524,7 @@ void setQueryParameter(std::string& url, const std::string_view key, const std::
 }
 
 [[nodiscard]] std::string sanitizeEventUrl(const std::string_view url) {
-    const std::string redacted = urlEncode("<redacted>");
+    const std::string redacted = urlEncode(kRedactedValueMarker);
     const auto fragmentStart = url.find('#');
     const auto queryCandidate = url.find('?');
     const auto queryStart =
@@ -592,8 +596,8 @@ void setQueryParameter(std::string& url, const std::string_view key, const std::
     return sanitized;
 }
 
-/// Does the operation accept this status? With no expectation, any status
-/// does. `expectStatusList` takes precedence over the legacy single value.
+/// `expectStatusList` takes precedence over the legacy single value; with no expectation any
+/// status is accepted.
 [[nodiscard]] bool expectsStatus(const Operation& op, const int status) {
     if (!op.expectStatusList.empty()) {
         return std::ranges::find(op.expectStatusList, status) != op.expectStatusList.end();
@@ -604,7 +608,6 @@ void setQueryParameter(std::string& url, const std::string_view key, const std::
     return true;
 }
 
-/// Methods that may be re-sent after the server might have processed them.
 [[nodiscard]] bool isIdempotentMethod(const HttpMethod method) noexcept {
     switch (method) {
         case HttpMethod::Get:
@@ -620,22 +623,40 @@ void setQueryParameter(std::string& url, const std::string_view key, const std::
     return false;
 }
 
-/// Login-like steps carry credentials in their response, so their body is
-/// never quoted in a failure detail even when body capture is on: the op
-/// extracts a secret-looking variable or its path names auth / login.
-[[nodiscard]] bool isCredentialStep(const Operation& op) {
-    if (std::ranges::any_of(op.extractions, [](const Extraction& ext) {
-            return isSensitiveName(ext.variableName);
-        })) {
-        return true;
+/// Idempotent methods, or a POST/PATCH with `retry.non_idempotent`. See RetryPolicy.
+[[nodiscard]] bool mayRepeatAfterDelivery(const Operation& op) noexcept {
+    return isIdempotentMethod(op.method) || op.retry.nonIdempotent;
+}
+
+[[nodiscard]] bool requestNeverReachedServer(const ErrorCode code) noexcept {
+    return code == ErrorCode::NetworkDns || code == ErrorCode::NetworkConnect;
+}
+
+/// Register every loaded `{{secret.X}}` value and allowed `{{$.env.NAME}}` value for redaction.
+void registerResolveSecrets(const ResolveContext& rctx, SecretRegistry& registry) {
+    for (const auto& [name, value] : rctx.secrets) {
+        registry.add(value);
     }
-    std::string path{};
-    path.reserve(op.pathTemplate.size());
-    for (const char c : op.pathTemplate) {
-        path.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    for (const auto& name : rctx.allowedEnv) {
+        // NOLINTNEXTLINE(concurrency-mt-unsafe) — same read VariableResolver makes.
+        if (const char* value = std::getenv(name.c_str()); value != nullptr) {
+            registry.add(value);
+        }
     }
-    return path.find("auth") != std::string::npos || path.find("login") != std::string::npos ||
-           path.find("token") != std::string::npos;
+}
+
+/// Last field name of an extraction source (`$.data.access_token` → `access_token`).
+[[nodiscard]] std::string_view sourceFieldName(std::string_view path) {
+    while (!path.empty() && (path.back() == ']' || path.back() == '\'' || path.back() == '"')) {
+        path.remove_suffix(1);
+    }
+    const auto cut = path.find_last_of(".['\"$");
+    return cut == std::string_view::npos ? path : path.substr(cut + 1);
+}
+
+/// Secret when the variable name or its source field matches the sensitive-name policy.
+[[nodiscard]] bool isSecretExtraction(const Extraction& ext) {
+    return isSensitiveName(ext.variableName) || isSensitiveHeader(sourceFieldName(ext.sourcePath));
 }
 
 }  // namespace
@@ -655,13 +676,15 @@ struct ExecutionEngine::Impl {
     // member is safe — no run overlaps another's read of this flag.
     bool captureResponseBodies{false};
 
+    // Secret values of the run in progress; set for the duration of run(), and emit() redacts
+    // every event against it.
+    const SecretRegistry* activeSecrets{nullptr};
+
     explicit Impl(Dependencies d) : deps(std::move(d)) {}
 
-    /// Run ids come from the open history store, which keeps them unique
-    /// across processes and restarts for its database. Without a store (or
-    /// before openHistory()), nothing is persisted and a process-local
-    /// counter is enough; the store refuses a RunStarted whose id already
-    /// belongs to a stored run, so a fallback id can never merge two runs.
+    /// Ids come from the open history store, unique across processes. Without a store a
+    /// process-local counter suffices: the store refuses a RunStarted whose id belongs to a
+    /// stored run.
     [[nodiscard]] RunId allocateRunId() {
         if (deps.history) {
             try {
@@ -718,6 +741,11 @@ struct ExecutionEngine::Impl {
             // templates and hooks can source any of them from secrets.
             prepared->url = sanitizeEventUrl(prepared->url);
         }
+        // Value redaction: every registered secret, in any string field of any event; name-based
+        // masking at the emit sites is a second layer.
+        if (activeSecrets != nullptr) {
+            redactEvent(safeEvent, *activeSecrets);
+        }
         // Persist before fanning out — the event survives a subscriber
         // that crashes the process. Best-effort: a persistence failure
         // must never break the run. append() returns errors via
@@ -754,14 +782,10 @@ struct ExecutionEngine::Impl {
         }
     }
 
-    /// After a refresh, rebuild the credential the authenticator pre-resolved
-    /// into the session's inject maps at login. Those values are not
-    /// re-resolved per request and override the actor's own inject, so
-    /// leaving them alone would keep sending the pre-refresh credential.
-    /// Keys mirror the variable names each authenticator stores
-    /// (AuthStrategy.cpp): oauth2 → access_token, bearer → token,
-    /// api_key → key. A refresh that doesn't extract that name leaves the
-    /// credential as it was.
+    /// After a refresh, rebuild the credential the authenticator pre-resolved into the session's
+    /// inject maps at login; otherwise requests keep sending the pre-refresh credential. Keys
+    /// mirror AuthStrategy.cpp: oauth2 → access_token, bearer → token, api_key → key. A refresh
+    /// that doesn't extract that name leaves the credential as it was.
     static void refreshInjectedCredentials(const Actor& actor,
                                            const std::map<std::string, std::string>& refreshed,
                                            ActorSession& session) {
@@ -898,7 +922,6 @@ struct ExecutionEngine::Impl {
         if (!pollActorId.value.empty()) {
             auto it = project.actors.find(pollActorId);
             if (it == project.actors.end()) {
-                // Never poll unauthenticated when an actor was asked for.
                 return std::unexpected(
                     ReqloomError{ErrorCode::RefUndefined,
                                  ErrorClass::Schema,
@@ -956,7 +979,7 @@ struct ExecutionEngine::Impl {
                         const auto token =
                             canExposeDiagnosticToken(resolved.output, occurrence.token)
                                 ? safeDiagnosticText(occurrence.token)
-                                : std::string{"<redacted>"};
+                                : std::string{kRedactedValueMarker};
                         return std::unexpected(ReqloomError{
                             ErrorCode::VarUnresolved,
                             ErrorClass::Resolution,
@@ -1166,6 +1189,7 @@ struct ExecutionEngine::Impl {
         switch (auth->type) {
             case InlineAuthType::Bearer: {
                 const auto token = varResolver.resolve(auth->token, ctx, rctx).output;
+                ctx.secretRegistry().add(token);
                 eraseHeaderCaseInsensitive(req.headers, "Authorization");
                 req.headers["Authorization"] = "Bearer " + token;
                 break;
@@ -1173,6 +1197,8 @@ struct ExecutionEngine::Impl {
             case InlineAuthType::Basic: {
                 const auto user = varResolver.resolve(auth->username, ctx, rctx).output;
                 const auto pass = varResolver.resolve(auth->password, ctx, rctx).output;
+                ctx.secretRegistry().add(pass);
+                ctx.secretRegistry().add(user + ":" + pass);
                 eraseHeaderCaseInsensitive(req.headers, "Authorization");
                 req.headers["Authorization"] = "Basic " + base64Encode(user + ":" + pass);
                 break;
@@ -1185,6 +1211,7 @@ struct ExecutionEngine::Impl {
                                         "api key: resolved name is empty"};
                 }
                 const auto value = varResolver.resolve(auth->apiKeyValue, ctx, rctx).output;
+                ctx.secretRegistry().add(value);
                 if (auth->apiKeyInQuery) {
                     setQueryParameter(req.url, key, value);
                 } else {
@@ -1195,6 +1222,7 @@ struct ExecutionEngine::Impl {
             }
             case InlineAuthType::Jwt: {
                 const auto secret = varResolver.resolve(auth->jwtSecret, ctx, rctx).output;
+                ctx.secretRegistry().add(secret);
                 const auto payload = varResolver.resolve(auth->jwtPayload, ctx, rctx).output;
                 // Only HS256/HS512 are supported (crypto has no RS/ES). Empty
                 // algorithm defaults to HS256; anything else fails the step
@@ -1219,6 +1247,7 @@ struct ExecutionEngine::Impl {
                                         ErrorClass::Auth,
                                         "jwt: signing failed (empty secret or crypto error)"};
                 }
+                ctx.secretRegistry().add(jwt);
                 eraseHeaderCaseInsensitive(req.headers, "Authorization");
                 req.headers["Authorization"] = "Bearer " + jwt;
                 break;
@@ -1251,25 +1280,30 @@ struct ExecutionEngine::Impl {
         const auto resolve = [&](const std::string& value) {
             return varResolver.resolve(value, ctx, rctx).output;
         };
+        const auto resolveSecret = [&](const std::string& value) {
+            auto resolved = resolve(value);
+            ctx.secretRegistry().add(resolved);
+            return resolved;
+        };
         switch (auth->type) {
             case InlineAuthType::AwsSigV4: {
                 ActorSession session;
-                session.variables["access_key"] = resolve(auth->awsAccessKey);
-                session.variables["secret_key"] = resolve(auth->awsSecretKey);
+                session.variables["access_key"] = resolveSecret(auth->awsAccessKey);
+                session.variables["secret_key"] = resolveSecret(auth->awsSecretKey);
                 session.variables["region"] = resolve(auth->awsRegion);
                 session.variables["service"] = resolve(auth->awsService);
                 if (!auth->awsSessionToken.empty()) {
-                    session.variables["session_token"] = resolve(auth->awsSessionToken);
+                    session.variables["session_token"] = resolveSecret(auth->awsSessionToken);
                 }
                 eraseHeaderCaseInsensitive(req.headers, "Authorization");
                 return signSigV4Request(req, session);
             }
             case InlineAuthType::OAuth1: {
                 ActorSession session;
-                session.variables["consumer_key"] = resolve(auth->oauthConsumerKey);
-                session.variables["consumer_secret"] = resolve(auth->oauthConsumerSecret);
-                session.variables["token"] = resolve(auth->oauthToken);
-                session.variables["token_secret"] = resolve(auth->oauthTokenSecret);
+                session.variables["consumer_key"] = resolveSecret(auth->oauthConsumerKey);
+                session.variables["consumer_secret"] = resolveSecret(auth->oauthConsumerSecret);
+                session.variables["token"] = resolveSecret(auth->oauthToken);
+                session.variables["token_secret"] = resolveSecret(auth->oauthTokenSecret);
                 eraseHeaderCaseInsensitive(req.headers, "Authorization");
                 return signOAuth1Request(req, session);
             }
@@ -1324,6 +1358,7 @@ struct ExecutionEngine::Impl {
         if (!auth->mtlsKeyPassword.empty()) {
             req.transport.clientKeyPassword =
                 varResolver.resolve(auth->mtlsKeyPassword, ctx, rctx).output;
+            ctx.secretRegistry().add(*req.transport.clientKeyPassword);
         }
         if (!auth->mtlsCaCertPath.empty()) {
             req.transport.caBundlePath =
@@ -1356,6 +1391,7 @@ struct ExecutionEngine::Impl {
         // can't acquire one headlessly.
         if (auth->oauth2GrantType == "authorization_code") {
             const auto token = varResolver.resolve(auth->oauth2AccessToken, ctx, rctx).output;
+            ctx.secretRegistry().add(token);
             if (token.empty()) {
                 return ReqloomError{ErrorCode::SessionRefreshFailed,
                                     ErrorClass::Auth,
@@ -1482,13 +1518,12 @@ struct ExecutionEngine::Impl {
             foundUnresolved = true;
             const bool exposeToken = canExposeDiagnosticToken(resolvedOutput, occurrence.token);
             if (!firstUnresolved) {
-                // A `$.env.NAME` token names a variable, never a value, so it
-                // is shown with its cause (envBuiltinFailureReason vets NAME).
+                // A `$.env.NAME` token names a variable, never a value, so showing it is safe.
                 const bool showToken =
                     exposeToken || envBuiltinFailureReason(occurrence.token, rctx).has_value();
-                firstUnresolved = std::pair{
-                    showToken ? safeDiagnosticText(occurrence.token) : std::string{"<redacted>"},
-                    std::string{location}};
+                firstUnresolved = std::pair{showToken ? safeDiagnosticText(occurrence.token)
+                                                      : std::string{kRedactedValueMarker},
+                                            std::string{location}};
             }
             // ponytail: Bound untrusted template amplification. If richer bulk
             // diagnostics are needed, index sources once before raising this cap.
@@ -1652,7 +1687,7 @@ struct ExecutionEngine::Impl {
                 appendQueryString(req.url, query);
             }
 
-            std::map<std::string, std::string> resolvedFormFields{};
+            FormFields resolvedFormFields{};
             if (op.bodyTemplate) {
                 auto resolved =
                     resolveRequestBody(varResolver, *op.bodyTemplate, req.headers, ctx, rctx);
@@ -1660,13 +1695,15 @@ struct ExecutionEngine::Impl {
                 req.body = resolved.output;
             } else if (op.bodyForm) {
                 for (const auto& [key, value] : *op.bodyForm) {
-                    auto resolved = varResolver.resolve(value, ctx, rctx);
+                    // File or text is decided from the template, never from the substituted value.
+                    const auto field = classifyFormTemplate(value);
+                    auto resolved = varResolver.resolve(field.rest, ctx, rctx);
                     addValueDiagnostics(
                         resolved,
                         VariableUseKind::FormField,
                         key,
                         std::string{"Form field \""} + safeDiagnosticText(key) + '"');
-                    resolvedFormFields[key] = resolved.output;
+                    resolvedFormFields[key] = FormField{field.kind, resolved.output};
                 }
             }
 
@@ -1694,7 +1731,7 @@ struct ExecutionEngine::Impl {
                 }
             } else if (op.bodyForm) {
                 const bool routeMultipart = wantsMultipart(op.headers, resolvedFormFields);
-                auto formBody = buildFormBody(resolvedFormFields, routeMultipart);
+                auto formBody = buildFormBody(resolvedFormFields, routeMultipart, project.rootDir);
                 if (!formBody) {
                     return failPreparation(formBody.error().code, formBody.error().detail);
                 }
@@ -1748,8 +1785,6 @@ struct ExecutionEngine::Impl {
         if (!op.actor.value.empty()) {
             const auto actorIt = project.actors.find(op.actor);
             if (actorIt == project.actors.end()) {
-                // Never fall through and send the request without the
-                // credentials the operation asked for.
                 failPreparation(ErrorCode::RefUndefined,
                                 "Operation '" + op.id.value + "' names actor '" + op.actor.value +
                                     "', which is not defined");
@@ -1766,14 +1801,12 @@ struct ExecutionEngine::Impl {
             return result;
         }
 
-        // `retry.maxAttempts` is the total number of sends (at least one).
         const int maxAttempts = std::max(op.retry.maxAttempts, 1);
         std::optional<HttpResponse> httpResp;
         ReqloomError lastError{};
         int attemptCount = 0;
         const auto backoff = [&](const int attempt) {
-            // Exponential backoff. Cap the shift at 20 to avoid signed-overflow
-            // UB on large maxAttempts values.
+            // Exponential backoff; the shift is capped at 20 to avoid signed-overflow UB.
             const auto shift = std::min(attempt, 20);
             auto delay = op.retry.baseBackoff * (std::uint32_t{1} << shift);
             if (delay > op.retry.maxBackoff) {
@@ -1859,12 +1892,10 @@ struct ExecutionEngine::Impl {
                 if (!op.actor.value.empty()) {
                     absorbResponseCookies(httpResp->headers, op.actor, ctx);
                 }
-                // An unexpected 5xx reached the server, so only methods that
-                // are safe to repeat are re-sent; the final 5xx falls through
-                // to the status check below.
+                // An unexpected 5xx reached the server, so only safe-to-repeat methods are re-sent.
                 const bool retry5xx = httpResp->status >= 500 &&
                                       !expectsStatus(op, httpResp->status) &&
-                                      isIdempotentMethod(op.method) && attempt + 1 < maxAttempts;
+                                      mayRepeatAfterDelivery(op) && attempt + 1 < maxAttempts;
                 if (!retry5xx) {
                     break;
                 }
@@ -1872,12 +1903,10 @@ struct ExecutionEngine::Impl {
                 continue;
             }
             lastError = resp.error();
-            // Non-idempotent methods (POST, PATCH) are re-sent only when the
-            // error proves the request never reached the server. Of the
-            // transport's codes only NetworkDns proves that: connection
-            // refused and timeouts share NetworkTimeout.
+            // POST/PATCH without `retry.non_idempotent` are re-sent only when the request provably
+            // never reached the server.
             const bool safeToResend =
-                isIdempotentMethod(op.method) || lastError.code == ErrorCode::NetworkDns;
+                mayRepeatAfterDelivery(op) || requestNeverReachedServer(lastError.code);
             if (!isRetryable(lastError.code) || !safeToResend || attempt + 1 >= maxAttempts) {
                 result.status = StepResult::Status::Failed;
                 result.error = lastError.code;
@@ -2000,16 +2029,12 @@ struct ExecutionEngine::Impl {
             } else if (op.expectStatus) {
                 expected = std::to_string(*op.expectStatus);
             }
-            // Detail reaches StepFailed, history, UI and CLI. The body may
-            // carry secrets, so quote it only when the run opted into body
-            // capture, and never for a login-like step.
+            // The detail reaches events, history, UI and CLI: the quoted body is masked, and
+            // omitted if it cannot be made safe.
             result.detail =
                 "HTTP " + std::to_string(httpResp->status) + " (expected " + expected + ")";
-            if (captureResponseBodies && !isCredentialStep(op)) {
-                constexpr std::size_t kBodyExcerpt = 200;
-                result.detail += " — " + (httpResp->body.size() > kBodyExcerpt
-                                              ? httpResp->body.substr(0, kBodyExcerpt) + "..."
-                                              : httpResp->body);
+            if (const auto excerpt = safeBodyExcerpt(httpResp->body, &ctx.secretRegistry())) {
+                result.detail += " — " + *excerpt;
             }
             auto elapsed = std::chrono::steady_clock::now() - startTime;
             result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
@@ -2086,9 +2111,18 @@ struct ExecutionEngine::Impl {
                 if (!detailed) {
                     result.status = StepResult::Status::Failed;
                     result.error = detailed.error().code;
+                    result.detail = detailed.error().detail;
                     auto elapsed = std::chrono::steady_clock::now() - startTime;
                     result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
                     return result;
+                }
+                // Register secret-looking extractions (full values) before any event can carry
+                // them.
+                for (const auto& ext : scalarExts) {
+                    const auto found = detailed->values.find(ext.variableName);
+                    if (found != detailed->values.end() && isSecretExtraction(ext)) {
+                        ctx.secretRegistry().add(found->second);
+                    }
                 }
 
                 // Trace every extraction outcome — including misses — so the
@@ -2173,6 +2207,11 @@ struct ExecutionEngine::Impl {
                 std::optional<std::string> emptyList;
                 for (const auto& ext : listExts) {
                     auto values = extractValues(httpResp->body, ext.sourcePath);
+                    if (isSecretExtraction(ext)) {
+                        for (const auto& value : values) {
+                            ctx.secretRegistry().add(value);
+                        }
+                    }
                     count = std::max(count, values.size());
                     if (values.empty() && !emptyList) {
                         emptyList = ext.variableName;
@@ -2236,6 +2275,7 @@ struct ExecutionEngine::Impl {
             const PredicateEvaluator assertionEval;
             const auto parsedBody = assertionEval.parseBody(httpResp->body);
             std::optional<std::string> firstFail;
+            std::string firstFailParseError;
             for (const auto& assertion : op.assertions) {
                 AssertionResult ar;
                 ar.expr = assertion.expr;
@@ -2246,6 +2286,9 @@ struct ExecutionEngine::Impl {
                                   PredicateValue::True;
                 if (!ar.passed && !firstFail) {
                     firstFail = ar.name;
+                    if (!parsed) {
+                        firstFailParseError = parsed.error().detail;
+                    }
                 }
                 emit(AssertionCompleted{runId,
                                         stepIndex,
@@ -2259,7 +2302,11 @@ struct ExecutionEngine::Impl {
             if (firstFail) {
                 result.status = StepResult::Status::Failed;
                 result.error = ErrorCode::AssertionFailed;
-                result.detail = "assertion failed: " + *firstFail + " for " + op.id.value;
+                result.detail = firstFailParseError.empty()
+                                    ? "assertion failed: " + *firstFail + " for " + op.id.value
+                                    : "assertion '" + *firstFail +
+                                          "' is not a valid predicate for " + op.id.value + ": " +
+                                          firstFailParseError;
                 auto elapsed = std::chrono::steady_clock::now() - startTime;
                 result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
                 return result;
@@ -2289,14 +2336,18 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     impl_->cancelledRunId.store(0, std::memory_order_release);
     impl_->captureResponseBodies = options.captureResponseBodies;
     const auto runStart = std::chrono::steady_clock::now();
+    impl_->activeSecrets = &ctx.secretRegistry();
+    struct ActiveSecretsReset {
+        const SecretRegistry*& slot;
+        ~ActiveSecretsReset() { slot = nullptr; }
+    } const activeSecretsReset{impl_->activeSecrets};
 
     if (options.resetExtractions) {
         ctx.clearExtractions();
     }
     const std::size_t extractionTraceStart{ctx.extractionTrace().size()};
     if (options.resetSessions) {
-        // All sessions, not only declared actors': cached inline-OAuth2 tokens
-        // live under synthetic `__inline_oauth2:` ids and must not survive.
+        // Inline-OAuth2 token caches live under synthetic `__inline_oauth2:` ids, so clear all.
         ctx.clearSessions();
     }
 
@@ -2331,9 +2382,14 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     // can pop an interactive unlock/authorization prompt. Unresolved
     // `{{secret.X}}` markers in the previewed chain are expected.
     if (impl_->deps.secrets && !options.dryRun) {
-        for (const auto& name : DependencyResolver::collectSecretReferences(project)) {
-            // Keys are namespaced `<project id>/<name>` so a project can only
-            // read its own secrets; a project without an id fails here.
+        const auto secretNames = DependencyResolver::collectSecretReferences(project);
+        // A copied or hostile project may claim another project's id; refuse before any read.
+        if (!secretNames.empty()) {
+            if (auto trusted = checkProjectFolder(impl_->deps.trust.get(), project); !trusted) {
+                return std::unexpected(trusted.error());
+            }
+        }
+        for (const auto& name : secretNames) {
             auto key = projectSecretKey(project, name);
             if (!key) {
                 return std::unexpected(key.error());
@@ -2351,6 +2407,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
         }
     }
 
+    registerResolveSecrets(rctx, ctx.secretRegistry());
     const auto runId = impl_->allocateRunId();
     impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});
 
@@ -2456,7 +2513,9 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
                                                    envName,
                                                    iterPollRows,
                                                    iterDiagnostics);
+                    redactStepResult(iter, ctx.secretRegistry());
                     for (auto& row : iterPollRows) {
+                        redactStepResult(row, ctx.secretRegistry());
                         row.forEachIndex = static_cast<int>(k + 1);
                         result.steps.push_back(std::move(row));
                     }
@@ -2517,9 +2576,11 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
                                             envName,
                                             pollAttemptRows,
                                             stepDiagnostics);
+            redactStepResult(stepResult, ctx.secretRegistry());
             // Per-attempt rows precede the parent step row so renderers can
             // group them under the operation that owned the poll loop.
             for (auto& row : pollAttemptRows) {
+                redactStepResult(row, ctx.secretRegistry());
                 result.steps.push_back(std::move(row));
             }
             result.steps.push_back(stepResult);

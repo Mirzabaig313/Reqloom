@@ -24,14 +24,12 @@ public:
 
     /// Write `project` into `targetDir`. Creates the directory if needed,
     /// refuses to overwrite existing files unless `overwrite` is set.
-    /// When `overwrite` and `pruneStale` are both set (the in-place project
-    /// save), `*.yaml` files in actors/, resources/ and environments/ that
-    /// are not part of `project` are deleted. With `pruneStale` false the
-    /// writer only replaces the files it writes and never deletes anything.
+    /// When `overwrite` and `pruneStale` are both set (the in-place project save), `*.yaml` files
+    /// in actors/, resources/ and environments/ that are not part of `project` are deleted; with
+    /// `pruneStale` false nothing is deleted.
     ///
-    /// Actor ids, resource ids and environment names become file names, so
-    /// an unsafe one (empty, leading dot, `/`, `\`, `:`, NUL) is rejected and
-    /// nothing is written.
+    /// Actor ids, resource ids and environment names become file names, so an unsafe one (empty,
+    /// leading dot, `/`, `\`, `:`, NUL) is rejected and nothing is written.
     ///
     /// Layout produced:
     ///   targetDir/reqloom.yaml

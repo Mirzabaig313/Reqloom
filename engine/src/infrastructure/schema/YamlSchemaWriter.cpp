@@ -153,17 +153,13 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
     return temp;
 }
 
-// ─── Path safety ─────────────────────────────────────────────────────────────
-
-// IDs become file stems. Reject anything that could name a different
-// directory: empty, leading dot (covers `.`, `..`, hidden files), path
-// separators, NUL, or a colon (Windows drive-letter / stream forms).
+// IDs become file stems: reject empty, leading dot, path separators, NUL, and a colon
+// (Windows drive-letter / stream forms).
 [[nodiscard]] bool isSafeFileStem(std::string_view stem) {
     return !stem.empty() && stem.front() != '.' &&
            stem.find_first_of(std::string_view{"/\\:\0", 4}) == std::string_view::npos;
 }
 
-// True when `path`, once normalised, lies strictly under `root`.
 [[nodiscard]] bool isUnder(const fs::path& root, const fs::path& path) {
     std::error_code baseEc;
     std::error_code fullEc;
@@ -485,13 +481,17 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
         e << YAML::Key << "force" << YAML::Value << true;
     }
     // Emit `retry` only when it diverges from the defaults (max 3, backoff
-    // 500ms), so a default-retry op doesn't acquire a stray block. The parser
-    // reads `max` + `backoff`; emit both so the policy round-trips.
+    // 500ms, non_idempotent false), so a default-retry op gets no stray block. `max` and
+    // `backoff` are emitted together so the policy round-trips; `non_idempotent` only when true.
     if (op.retry.maxAttempts != RetryPolicy{}.maxAttempts ||
-        op.retry.baseBackoff != RetryPolicy{}.baseBackoff) {
+        op.retry.baseBackoff != RetryPolicy{}.baseBackoff || op.retry.nonIdempotent) {
         e << YAML::Key << "retry" << YAML::Value << YAML::BeginMap << YAML::Key << "max"
           << YAML::Value << op.retry.maxAttempts << YAML::Key << "backoff" << YAML::Value
-          << static_cast<int>(op.retry.baseBackoff.count()) << YAML::EndMap;
+          << static_cast<int>(op.retry.baseBackoff.count());
+        if (op.retry.nonIdempotent) {
+            e << YAML::Key << "non_idempotent" << YAML::Value << true;
+        }
+        e << YAML::EndMap;
     }
     if (op.pollUntil) {
         const auto& p = *op.pollUntil;
@@ -803,8 +803,8 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
                                           const Project& project,
                                           bool overwrite,
                                           bool pruneStale) {
-    // Validate every id-derived file stem before touching the filesystem, so
-    // a bad id can't write (or prune) outside targetDir and nothing is written.
+    // Validate every id-derived file stem first, so a bad id writes (or prunes) nothing outside
+    // targetDir.
     if (!project.id.empty()) {
         if (auto ok = validateProjectId(project.id); !ok) {
             return std::unexpected(ok.error());
@@ -917,8 +917,7 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
     // stale actor/resource/environment .yaml doesn't reload as a ghost. Gated
     // on overwrite — the in-place "save the project" path — so the slot-into-
     // an-existing-directory case (overwrite=false) never deletes pre-existing
-    // files the writer didn't create this run. `pruneStale=false` (the
-    // `reqloom import --force` path) overwrites but never deletes.
+    // files the writer didn't create. `pruneStale=false` (`reqloom import --force`) never deletes.
     if (overwrite && pruneStale) {
         std::set<std::string> actorStems;
         for (const auto& [id, _] : project.actors) {

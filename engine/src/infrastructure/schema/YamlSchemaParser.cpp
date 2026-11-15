@@ -418,8 +418,6 @@ std::chrono::seconds parseDuration(const std::string& s) {
         }
         return fallback;
     }
-    // Fall through to second-grained parser. A bare number (no unit) is
-    // whole seconds, matching parseDuration.
     if (parseNonNegativeLong(literal)) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(parseDuration(literal));
     }
@@ -1013,6 +1011,19 @@ std::expected<Resource, ReqloomError> parseResource(const std::string& resourceI
             if (retryNode["backoff"]) {
                 op.retry.baseBackoff = std::chrono::milliseconds{retryNode["backoff"].as<int>(500)};
             }
+            if (const auto flag = retryNode["non_idempotent"]) {
+                // Opting a POST/PATCH into re-sends is a safety decision, so
+                // a typo must fail the load rather than silently mean false.
+                bool value = false;
+                if (!flag.IsScalar() || flag.Scalar().empty() ||
+                    !YAML::convert<bool>::decode(flag, value)) {
+                    return std::unexpected(
+                        ReqloomError{ErrorCode::SchemaInvalid,
+                                     ErrorClass::Schema,
+                                     op.id.value + ": retry.non_idempotent must be true or false"});
+                }
+                op.retry.nonIdempotent = value;
+            }
         }
 
         if (opNode["timeout"]) {
@@ -1127,8 +1138,6 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         project.name = root["name"].as<std::string>("Unnamed Project");
         project.defaultEnvironment = root["default_environment"].as<std::string>("local");
 
-        // Optional stable id (namespaces keychain secrets) and the
-        // process environment variables `{{$.env.NAME}}` may read.
         if (root["id"]) {
             project.id = root["id"].as<std::string>();
             if (auto ok = validateProjectId(project.id); !ok) {

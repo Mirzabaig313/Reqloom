@@ -5,14 +5,15 @@
 //      insensitive), the request is multipart regardless of values.
 //      This matches what users wrote in their YAML — they explicitly
 //      asked for multipart, so we honour it.
-//   2. Otherwise, if any resolved value starts with `@`, we route to
-//      multipart. The `@` prefix is the curl convention for file
-//      fields; users mixing file uploads with form fields don't have
-//      to set the Content-Type header by hand.
+//   2. Otherwise, if any field is a FILE field, we route to multipart. A field is a file when
+//      its TEMPLATE (before `{{var}}` substitution) starts with a single `@` (the curl
+//      convention), so users needn't set the Content-Type header by hand. `@@` escapes a
+//      literal leading `@`, and a substituted value never turns text into a file.
 //
-// File path resolution is conservative: paths must exist, be regular
-// files, and fit under a 50 MiB per-part cap; the file parts of one request
-// together must fit under a 256 MiB total cap (see `UploadLimits`). We do NOT enforce project-root
+// A relative file path resolves against the project folder, or the working directory for an
+// in-memory project. Resolution is conservative: paths must exist, be regular files, and
+// fit under a 50 MiB per-part cap and a 256 MiB per-request total (see `UploadLimits`). We do
+// NOT enforce project-root
 // containment — the user's own YAML legitimately references files in
 // `~/Documents`, `/tmp`, etc. The threat model for `body_form` is "the
 // person editing the YAML is the operator", same as for shell scripts.
@@ -48,7 +49,6 @@ namespace {
 
 constexpr std::uintmax_t kMiB = 1024ULL * 1024;
 
-/// "50 MiB" for whole mebibytes, "N bytes" otherwise.
 [[nodiscard]] std::string formatLimit(std::uintmax_t bytes) {
     if (bytes != 0 && bytes % kMiB == 0) {
         return std::format("{} MiB", bytes / kMiB);
@@ -56,9 +56,8 @@ constexpr std::uintmax_t kMiB = 1024ULL * 1024;
     return std::format("{} bytes", bytes);
 }
 
-/// Per-part and request-total size gates, applied to a file's measured
-/// size before its bytes are read. `filesSoFar` is the sum of the file
-/// parts already accepted in this request.
+/// Per-part and request-total size gates, applied to a file's measured size before its bytes
+/// are read; `filesSoFar` sums the file parts already accepted.
 [[nodiscard]] std::optional<ReqloomError> checkUploadSize(const std::string& field,
                                                           const std::string& rawPath,
                                                           std::uintmax_t size,
@@ -104,43 +103,84 @@ constexpr std::uintmax_t kMiB = 1024ULL * 1024;
     });
 }
 
-[[nodiscard]] bool anyValueIsFileRef(const std::map<std::string, std::string>& resolvedFormFields) {
-    return std::ranges::any_of(resolvedFormFields,
-                               [](const auto& kv) { return kv.second.starts_with("@"); });
+[[nodiscard]] bool anyFileField(const FormFields& fields) {
+    return std::ranges::any_of(
+        fields, [](const auto& kv) { return kv.second.kind == FormFieldKind::File; });
+}
+
+/// Where a file field's path is looked up: as written when absolute, else under the project
+/// root (or the working directory when unknown). `~` is not expanded.
+[[nodiscard]] fs::path uploadPath(const std::string& rawPath, const fs::path& projectRoot) {
+    fs::path p{rawPath};
+    if (p.is_relative() && !projectRoot.empty()) {
+        p = projectRoot / p;
+    }
+    return p;
 }
 
 }  // namespace
 
-bool wantsMultipart(const std::map<std::string, std::string>& headers,
-                    const std::map<std::string, std::string>& resolvedFormFields) {
-    return headerSaysMultipart(headers) || anyValueIsFileRef(resolvedFormFields);
+FormFieldTemplate classifyFormTemplate(std::string_view tmpl) noexcept {
+    if (tmpl.starts_with("@@")) {
+        return FormFieldTemplate{FormFieldKind::Text, tmpl.substr(1)};
+    }
+    if (tmpl.starts_with('@')) {
+        return FormFieldTemplate{FormFieldKind::File, tmpl.substr(1)};
+    }
+    return FormFieldTemplate{FormFieldKind::Text, tmpl};
 }
 
-std::expected<FormBody, ReqloomError> buildFormBody(
-    const std::map<std::string, std::string>& resolvedFormFields,
-    bool routeMultipart,
-    const UploadLimits& limits) {
+bool isFormFileTemplate(std::string_view tmpl) noexcept {
+    return classifyFormTemplate(tmpl).kind == FormFieldKind::File;
+}
+
+std::string formTextTemplate(std::string_view text) {
+    return text.starts_with('@') ? "@" + std::string{text} : std::string{text};
+}
+
+std::string formTemplateText(std::string_view tmpl) {
+    const auto t = classifyFormTemplate(tmpl);
+    return t.kind == FormFieldKind::File ? std::string{tmpl} : std::string{t.rest};
+}
+
+FormFields literalFormFields(const std::map<std::string, std::string>& templates) {
+    FormFields out;
+    for (const auto& [k, v] : templates) {
+        const auto t = classifyFormTemplate(v);
+        out.emplace(k, FormField{t.kind, std::string{t.rest}});
+    }
+    return out;
+}
+
+bool wantsMultipart(const std::map<std::string, std::string>& headers, const FormFields& fields) {
+    return headerSaysMultipart(headers) || anyFileField(fields);
+}
+
+std::expected<FormBody, ReqloomError> buildFormBody(const FormFields& fields,
+                                                    bool routeMultipart,
+                                                    const fs::path& projectRoot,
+                                                    const UploadLimits& limits) {
     if (!routeMultipart) {
         std::string urlEncoded;
-        for (const auto& [k, v] : resolvedFormFields) {
+        for (const auto& [k, field] : fields) {
             if (!urlEncoded.empty()) {
                 urlEncoded += "&";
             }
-            urlEncoded += codecs::urlEncode(k) + "=" + codecs::urlEncode(v);
+            urlEncoded += codecs::urlEncode(k) + "=" + codecs::urlEncode(field.value);
         }
         return FormBody{UrlEncodedBody{std::move(urlEncoded)}};
     }
 
     MultipartBody mb;
-    mb.parts.reserve(resolvedFormFields.size());
+    mb.parts.reserve(fields.size());
     std::uintmax_t fileBytes{0};  // sum of accepted file parts, for the total cap
 
-    for (const auto& [k, v] : resolvedFormFields) {
+    for (const auto& [k, field] : fields) {
         MultipartPart part;
         part.name = k;
 
-        if (!v.starts_with("@")) {
-            part.value = v;
+        if (field.kind == FormFieldKind::Text) {
+            part.value = field.value;
             mb.parts.push_back(std::move(part));
             continue;
         }
@@ -148,17 +188,18 @@ std::expected<FormBody, ReqloomError> buildFormBody(
         // File reference. Validate-then-open-then-read; the bytes load
         // through an open fd so size and content cannot be swapped out
         // from under us between the stat and the read.
-        const std::string rawPath = v.substr(1);  // drop leading '@'
-        if (rawPath.empty()) {
+        if (field.value.empty()) {
             return std::unexpected(
                 ReqloomError{ErrorCode::UploadFileUnreadable,
                              ErrorClass::Resolution,
                              "body_form field '" + k + "': empty file path after '@'"});
         }
 
+        const auto lookup = uploadPath(field.value, projectRoot);
+        const std::string rawPath = lookup.string();  // the path looked up, for messages
         std::error_code ec;
-        const auto canonical = fs::weakly_canonical(fs::path{rawPath}, ec);
-        const auto& effective = ec ? fs::path{rawPath} : canonical;
+        const auto canonical = fs::weakly_canonical(lookup, ec);
+        const auto& effective = ec ? lookup : canonical;
 
         // Cosmetic gates first: nicer error messages for the common
         // "you typoed the path" / "you pointed at a directory" cases.
@@ -229,9 +270,11 @@ std::expected<FormBody, ReqloomError> buildFormBody(
 
 std::expected<FormBodyPreview, ReqloomError> previewFormBody(
     const std::map<std::string, std::string>& formFields,
-    const std::map<std::string, std::string>& headers) {
-    const bool route = wantsMultipart(headers, formFields);
-    auto built = buildFormBody(formFields, route);
+    const std::map<std::string, std::string>& headers,
+    const fs::path& projectRoot) {
+    const auto fields = literalFormFields(formFields);
+    const bool route = wantsMultipart(headers, fields);
+    auto built = buildFormBody(fields, route, projectRoot);
     if (!built) {
         return std::unexpected(built.error());
     }

@@ -12,8 +12,10 @@
 
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace reqloom::engine {
@@ -45,16 +47,31 @@ struct FormBodyPreview {
                                   ///< multipart boundary/header framing).
 };
 
-/// Preview how `formFields` (already `{{var}}`-substituted, or literal) would
-/// be encoded. `headers` is consulted only for a `Content-Type:
-/// multipart/form-data` opt-in. Returns `ReqloomError{UploadFileUnreadable}`
-/// when an `@path` field names a missing file, a non-regular file, or one over
-/// the 50 MiB upload cap — the same checks applied at run time.
+/// Preview how `formFields` would be encoded. Each value is a `body_form` template as
+/// written; `{{var}}` is not substituted. A field is a file upload only when its template
+/// starts with a single `@`; `@@` sends text with one `@` removed. `headers` is consulted
+/// only for a `Content-Type: multipart/form-data` opt-in.
+///
+/// A relative file path resolves against `projectRoot` (else the working directory), as a
+/// run does. Returns `ReqloomError{UploadFileUnreadable}` for a missing file, a non-regular
+/// file, or one over the 50 MiB upload cap.
 ///
 /// Reads each referenced file once to validate it; intended for an on-demand
 /// preview, not per-keystroke. Pure aside from those reads; never mutates.
 [[nodiscard]] std::expected<FormBodyPreview, ReqloomError> previewFormBody(
     const std::map<std::string, std::string>& formFields,
-    const std::map<std::string, std::string>& headers = {});
+    const std::map<std::string, std::string>& headers = {},
+    const std::filesystem::path& projectRoot = {});
+
+/// True when a `body_form` template is a file upload (one leading `@`, not `@@`).
+[[nodiscard]] bool isFormFileTemplate(std::string_view tmpl) noexcept;
+
+/// The `body_form` template that sends `text` literally: a leading `@` is
+/// escaped as `@@`. Inverse of `formTemplateText`.
+[[nodiscard]] std::string formTextTemplate(std::string_view text);
+
+/// The text a non-file template sends (`@@mirza` -> `@mirza`). A file
+/// template is returned unchanged.
+[[nodiscard]] std::string formTemplateText(std::string_view tmpl);
 
 }  // namespace reqloom::engine

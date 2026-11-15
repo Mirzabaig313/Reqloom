@@ -4,6 +4,7 @@
 #include "application/ProjectModel.h"
 #include "application/SecretManager.h"
 
+#include <reqloom/engine/ProjectTrustStore.h>
 #include <reqloom/engine/SecretStore.h>
 
 #include <gtest/gtest.h>
@@ -12,6 +13,7 @@
 #include <QtCore/QString>
 #include <QtCore/QTemporaryDir>
 
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -52,6 +54,32 @@ private:
     std::map<std::string, std::string> values_;
 };
 
+/// In-memory ProjectTrustStore standing in for the per-user trust file.
+class FakeTrustStore final : public ce::ProjectTrustStore {
+public:
+    std::expected<std::optional<std::filesystem::path>, ce::ReqloomError> folderFor(
+        const std::string& projectId) override {
+        if (auto it = folders_.find(projectId); it != folders_.end()) {
+            return std::optional<std::filesystem::path>{it->second};
+        }
+        return std::optional<std::filesystem::path>{};
+    }
+
+    std::expected<std::filesystem::path, ce::ReqloomError> recordIfAbsent(
+        const std::string& projectId, const std::filesystem::path& folder) override {
+        return folders_.try_emplace(projectId, folder).first->second;
+    }
+
+    std::expected<void, ce::ReqloomError> rebind(const std::string& projectId,
+                                                 const std::filesystem::path& folder) override {
+        folders_[projectId] = folder;
+        return {};
+    }
+
+private:
+    std::map<std::string, std::filesystem::path> folders_;
+};
+
 /// Build a SecretManager wrapping a FakeSecretStore we retain a handle to.
 struct ManagerWithFake {
     FakeSecretStore* fake{nullptr};
@@ -61,7 +89,9 @@ struct ManagerWithFake {
 [[nodiscard]] ManagerWithFake makeManager() {
     auto store = std::make_unique<FakeSecretStore>();
     auto* raw = store.get();
-    return ManagerWithFake{raw, std::make_unique<SecretManager>(std::move(store), nullptr)};
+    return ManagerWithFake{raw,
+                           std::make_unique<SecretManager>(
+                               std::move(store), std::make_unique<FakeTrustStore>(), nullptr)};
 }
 
 // A minimal valid project whose operation references two secrets via

@@ -5,6 +5,7 @@
 #include "MockSutHarness.h"
 
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/Predicate.h>
 #include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
@@ -146,4 +147,42 @@ TEST_F(Assertions, records_each_result_even_when_a_later_one_fails) {
     ASSERT_EQ(step->assertions.size(), 2u);
     EXPECT_TRUE(step->assertions[0].passed);   // $.data.id is truthy
     EXPECT_FALSE(step->assertions[1].passed);  // total > 1000 is false
+}
+
+TEST_F(Assertions, an_unparsable_assertion_reports_the_parser_message) {
+    auto project =
+        load(projectYaml("        assert:\n"
+                         "          - $.data.id\n"));
+    const std::string bad = "$.data.total >";
+    auto& op = project.resources.at(ce::ResourceId{"order"}).operations.at("get");
+    op.assertions.front().expr = bad;
+    const auto parserError = ce::evaluatePredicate(bad, "{}", 200);
+    ASSERT_FALSE(parserError.has_value());
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+
+    auto result = engine.run(project, ce::OperationId{"order.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+    const ce::StepResult* step = findStep(*result, "order.get");
+    ASSERT_NE(step, nullptr);
+    EXPECT_EQ(step->status, ce::StepResult::Status::Failed);
+    EXPECT_NE(step->detail.find(parserError.error().detail), std::string::npos) << step->detail;
+}
+
+TEST_F(Assertions, extraction_from_a_non_json_body_reports_why) {
+    auto project = load(projectYaml(""));
+    auto& op = project.resources.at(ce::ResourceId{"order"}).operations.at("get");
+    op.pathTemplate = "/api/v1/plain-text";
+    op.extractions.push_back({"token", "$.token", ce::Extraction::Source::JsonPath});
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+
+    auto result = engine.run(project, ce::OperationId{"order.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+    const ce::StepResult* step = findStep(*result, "order.get");
+    ASSERT_NE(step, nullptr);
+    EXPECT_EQ(step->status, ce::StepResult::Status::Failed);
+    EXPECT_NE(step->detail.find("not valid JSON"), std::string::npos) << step->detail;
 }

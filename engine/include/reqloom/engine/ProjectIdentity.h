@@ -6,6 +6,8 @@
 
 #include <cstddef>
 #include <expected>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -31,5 +33,37 @@ inline constexpr std::size_t kMaxProjectIdLength = 128;
 ///         no valid id; the detail tells the user to add `id:` to reqloom.yaml.
 [[nodiscard]] std::expected<std::string, ReqloomError> projectSecretKey(const Project& project,
                                                                         std::string_view name);
+
+class ProjectTrustStore;
+
+/// Gate every secret read or write for `project`: it must have a valid id and a folder
+/// (`rootDir`), and that folder (symlinks resolved) must be the one `trust` records for the
+/// id. An id with no record is bound to this folder now (trust on first use).
+///
+/// @return void when secrets may be used; otherwise `ReqloomError`: `SchemaInvalid` for a
+///         missing/invalid id, `SecretAccessFailed` for no folder, no store, a store failure,
+///         or an id recorded for a different folder.
+[[nodiscard]] std::expected<void, ReqloomError> checkProjectFolder(ProjectTrustStore* trust,
+                                                                   const Project& project);
+
+/// The other folder `trust` records for `project`'s id when it differs from the project's
+/// own, else an empty optional. Read-only.
+[[nodiscard]] std::optional<std::filesystem::path> projectFolderConflict(ProjectTrustStore& trust,
+                                                                         const Project& project);
+
+/// Explicit user action after moving a project: bind its id to its current
+/// folder, replacing any earlier record.
+[[nodiscard]] std::expected<void, ReqloomError> rebindProjectFolder(ProjectTrustStore& trust,
+                                                                    const Project& project);
+
+/// Insert one top-level `id: <id>` line into reqloom.yaml text, touching nothing else: after
+/// the top-level `name:` entry if any, else before the first top-level key. Keeps line
+/// endings, trailing newline and a UTF-8 BOM.
+///
+/// @return The edited text; an empty optional when the root already has an `id:` key; or
+///         `ReqloomError` (`SchemaInvalid`) when the text cannot be edited safely (flow-style
+///         or non-mapping root, several documents, no top-level key, or a non-scalar id).
+[[nodiscard]] std::expected<std::optional<std::string>, ReqloomError> insertProjectIdLine(
+    std::string_view yamlText, std::string_view id);
 
 }  // namespace reqloom::engine

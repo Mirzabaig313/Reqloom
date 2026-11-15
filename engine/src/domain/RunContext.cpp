@@ -1,9 +1,42 @@
 #include <reqloom/engine/RunContext.h>
 
+#include "SecretRegistry.h"
+
+#include <algorithm>
+#include <array>
 #include <map>
+#include <memory>
+#include <string_view>
 #include <vector>
 
 namespace reqloom::engine {
+
+namespace {
+
+/// Session variables that describe a credential rather than being one.
+/// Registering them would redact ordinary words ("Bearer", "us-east-1").
+constexpr std::array<std::string_view, 6> kSessionMetadataKeys = {
+    "token_type", "expires_in", "scope", "region", "service", "realm"};
+
+void registerSessionSecrets(SecretRegistry& registry, const ActorSession& session) {
+    for (const auto& [name, value] : session.variables) {
+        if (std::ranges::find(kSessionMetadataKeys, std::string_view{name}) ==
+            kSessionMetadataKeys.end()) {
+            registry.add(value);
+        }
+    }
+    for (const auto& [name, value] : session.injectHeaders) {
+        registry.add(value);
+    }
+    for (const auto& [name, value] : session.injectQueryParams) {
+        registry.add(value);
+    }
+    if (session.transport && session.transport->clientKeyPassword) {
+        registry.add(*session.transport->clientKeyPassword);
+    }
+}
+
+}  // namespace
 
 struct RunContext::Impl {
     std::map<ActorId, ActorSession> sessions;
@@ -17,6 +50,8 @@ struct RunContext::Impl {
     std::vector<ResourceInstance> emptyInstances;
     std::vector<StepResult> steps;
     std::vector<ExtractionTrace> extractionTrace;
+    /// Heap-held: the registry owns a mutex and is not movable.
+    std::unique_ptr<SecretRegistry> secretRegistry{std::make_unique<SecretRegistry>()};
 };
 
 RunContext::RunContext() : impl_(std::make_unique<Impl>()) {}
@@ -30,6 +65,7 @@ const ActorSession* RunContext::session(const ActorId& actor) const noexcept {
 }
 
 void RunContext::putSession(const ActorId& actor, ActorSession session) {
+    registerSessionSecrets(*impl_->secretRegistry, session);
     impl_->sessions[actor] = std::move(session);
 }
 
@@ -58,6 +94,7 @@ void RunContext::setCookie(const ActorId& actor, std::string name, std::string v
     if (name.empty()) {
         return;
     }
+    impl_->secretRegistry->add(value);
     impl_->cookieJars[actor][std::move(name)] = std::move(value);
 }
 
@@ -109,6 +146,10 @@ void RunContext::recordExtraction(ExtractionTrace trace) {
 
 const std::vector<ExtractionTrace>& RunContext::extractionTrace() const noexcept {
     return impl_->extractionTrace;
+}
+
+SecretRegistry& RunContext::secretRegistry() const noexcept {
+    return *impl_->secretRegistry;
 }
 
 }  // namespace reqloom::engine

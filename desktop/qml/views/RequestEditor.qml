@@ -1284,6 +1284,7 @@ ColumnLayout {
                                 width: formScroll.availableWidth
                                 kvModel: AppController.editForm
                                 allowFiles: AppController.editBodyType === "form-data"
+                                formValues: true
                                 keyPlaceholder: qsTr("field")
                                 valuePlaceholder: AppController.editBodyType === "form-data" ? qsTr("value  (or attach a file)") : qsTr("value")
                             }

@@ -8,6 +8,7 @@
 
 #include "ImportFromBruno.h"
 #include "ImportFromFileRefs.h"
+#include "ImportSupport.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -35,6 +36,7 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 using json = nlohmann::json;
 
 constexpr std::uintmax_t kMaxFileBytes = std::uintmax_t{8} * 1024 * 1024;
@@ -161,7 +163,9 @@ std::string_view trim(std::string_view s) {
     return s;
 }
 
-std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced) {
+/// Rewrite Bruno `{{var}}` references to `{{env.<key>}}`. A dotted name is
+/// one Bruno variable and is sanitised to an environment key.
+std::string rewriteTokens(std::string_view in, is::VarRefs& referenced) {
     std::string out;
     out.reserve(in.size());
     std::size_t i = 0;
@@ -180,11 +184,8 @@ std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced
         std::string_view inner = trim(in.substr(open + 2, close - (open + 2)));
         if (inner.empty()) {
             out.append("{{}}");
-        } else if (inner.find('.') != std::string_view::npos) {
-            out.append("{{").append(inner).append("}}");
         } else {
-            referenced.emplace(inner);
-            out.append("{{env.").append(inner).append("}}");
+            out.append(is::envRef(inner, referenced));
         }
         i = close + 2;
     }
@@ -194,6 +195,7 @@ std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced
 struct SplitUrl {
     std::string base;
     std::string path;
+    std::string baseVar;  ///< environment key of a leading `{{var}}` base, if any
 };
 
 SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::string>& vars) {
@@ -204,8 +206,8 @@ SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::stri
     if (noQuery.starts_with("{{")) {
         const auto close = noQuery.find("}}");
         if (close != std::string_view::npos) {
-            const std::string_view name = trim(noQuery.substr(2, close - 2));
-            if (const auto it = vars.find(std::string{name}); it != vars.end()) {
+            out.baseVar = is::envKey(trim(noQuery.substr(2, close - 2)));
+            if (const auto it = vars.find(out.baseVar); it != vars.end()) {
                 out.base = it->second;
             }
             std::string_view rest = noQuery.substr(close + 2);
@@ -306,6 +308,7 @@ std::vector<BruBlock> parseBlocks(std::string_view text) {
 }
 
 /// Parse a dictionary block ("key: value" per line) into ordered pairs.
+/// Bruno marks a disabled entry with a leading `~`; it is skipped.
 std::vector<std::pair<std::string, std::string>> parseDict(std::string_view inner) {
     std::vector<std::pair<std::string, std::string>> out;
     std::size_t start = 0;
@@ -318,7 +321,7 @@ std::vector<std::pair<std::string, std::string>> parseDict(std::string_view inne
             if (colon != std::string_view::npos) {
                 const std::string key{trim(line.substr(0, colon))};
                 const std::string value{trim(line.substr(colon + 1))};
-                if (!key.empty()) {
+                if (!key.empty() && !key.starts_with('~')) {
                     out.emplace_back(key, value);
                 }
             }
@@ -343,9 +346,7 @@ std::optional<std::string_view> brunoFileRefInner(std::string_view v) {
     return v;
 }
 
-/// `body_form` map from a Bruno form block. File fields keep only the base
-/// name of their (first) path and text fields starting with `@` are flagged,
-/// via the shared import_files helpers.
+/// `body_form` map from a Bruno form block, using the shared import_files helpers.
 template <typename Rewrite>
 std::map<std::string, std::string> brunoForm(
     const std::vector<std::pair<std::string, std::string>>& pairs,
@@ -391,6 +392,80 @@ std::string readFile(const fs::path& p, std::error_code& ec) {
     return ss.str();
 }
 
+/// One `.bru` file read from the collection.
+struct BruFile {
+    fs::path rel;                ///< path relative to the collection root
+    std::string firstComponent;  ///< first directory of `rel` (or its file name)
+    std::string contents;
+};
+
+/// Read every regular, non-symlink `.bru` file under `root` within the count and size
+/// budgets, sorted by relative path.
+[[nodiscard]] std::expected<std::vector<BruFile>, ReqloomError> collectBruFiles(
+    const fs::path& root, std::vector<std::string>& warnings) {
+    std::vector<BruFile> files;
+    std::uintmax_t totalBytes = 0;
+    int fileCount = 0;
+    std::error_code ec;
+    fs::recursive_directory_iterator it(root, fs::directory_options::none, ec);
+    if (ec) {
+        return std::unexpected(invalid("bruno import: cannot walk collection: " + ec.message()));
+    }
+    for (const fs::recursive_directory_iterator end; it != end; it.increment(ec)) {
+        if (ec) {
+            break;
+        }
+        if (++fileCount > kMaxFiles) {
+            warnings.push_back("collection has too many files; some were skipped");
+            break;
+        }
+        const fs::path& entry = it->path();
+        // Skip symlinks: reading one could pull content from outside the collection root.
+        if (fs::is_symlink(entry, ec)) {
+            continue;
+        }
+        if (!it->is_regular_file(ec) || entry.extension() != ".bru") {
+            continue;
+        }
+        const auto fsize = fs::file_size(entry, ec);
+        if (ec || fsize > kMaxFileBytes) {
+            continue;
+        }
+        totalBytes += fsize;
+        if (totalBytes > kMaxTotalBytes) {
+            warnings.push_back(
+                "collection exceeded the total size budget; some files were skipped");
+            break;
+        }
+        auto rel = fs::relative(entry, root, ec);
+        if (ec) {
+            continue;
+        }
+        auto contents = readFile(entry, ec);
+        if (ec) {
+            continue;
+        }
+        auto first = rel.begin() != rel.end() ? rel.begin()->string() : std::string{};
+        files.push_back(BruFile{std::move(rel), std::move(first), std::move(contents)});
+    }
+    std::ranges::sort(files, {}, &BruFile::rel);
+    return files;
+}
+
+/// The `mode` of a collection.bru / folder.bru `auth { mode: ... }` block.
+std::string containerAuthMode(const std::vector<BruBlock>& blocks) {
+    for (const auto& b : blocks) {
+        if (b.name == "auth" && b.subtype.empty()) {
+            for (const auto& [k, v] : parseDict(b.inner)) {
+                if (k == "mode") {
+                    return v;
+                }
+            }
+        }
+    }
+    return {};
+}
+
 }  // namespace
 
 std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
@@ -414,7 +489,7 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
 
     Outcome outcome;
     std::vector<std::string> warnings;
-    std::set<std::string> referencedVars;
+    is::VarRefs referencedVars;
     auto rewrite = [&](std::string_view s) {
         return rewriteTokens(s, referencedVars);
     };
@@ -438,81 +513,69 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
         collectionName = collectionRoot.filename().string();
     }
     outcome.project.name = collectionName.empty() ? "Imported Collection" : collectionName;
-    outcome.project.defaultEnvironment = "default";
-    auto& env = outcome.project.environments["default"];
+
+    const auto filesOr = collectBruFiles(collectionRoot, warnings);
+    if (!filesOr) {
+        return std::unexpected(filesOr.error());
+    }
+    const auto& files = *filesOr;
+
+    // Each environments/<name>.bru becomes an environment; the first by file name is the default.
+    auto& envs = outcome.project.environments;
+    for (const auto& f : files) {
+        if (f.firstComponent != "environments") {
+            continue;
+        }
+        is::VarMap vars;
+        for (const auto& b : parseBlocks(f.contents)) {
+            if (b.name == "vars" && b.subtype.empty()) {
+                for (const auto& [k, v] : parseDict(b.inner)) {
+                    vars[is::envKey(k)] = rewrite(v);
+                }
+            }
+        }
+        const auto name = is::environmentName(f.rel.stem().string(), envs);
+        envs[name] = std::move(vars);
+        if (outcome.project.defaultEnvironment.empty()) {
+            outcome.project.defaultEnvironment = name;
+        }
+    }
+    if (envs.empty()) {
+        outcome.project.defaultEnvironment = "default";
+        envs["default"];
+    } else if (envs.size() > 1) {
+        std::vector<std::string> names;
+        for (const auto& [name, _] : envs) {
+            names.push_back(name);
+        }
+        warnings.push_back(std::format(
+            "Bruno environments {} were imported as separate environments; `{}` is the default",
+            is::joinKeys(names),
+            outcome.project.defaultEnvironment));
+    }
+    const auto& env = envs.at(outcome.project.defaultEnvironment);
 
     const std::string defaultResource = sanitizeId(collectionName, "requests");
     const auto importedAt = nowIso8601Utc();
     std::set<std::string> seenOpIds;
     std::string projectBase;
+    std::string projectBaseVar;
     bool multipleBasesWarned = false;
 
-    // Walk the tree. `.bru` files under `environments/` seed environments; other
-    // request `.bru` files become operations. The top-level sub-directory of a
-    // request file is its resource.
-    std::uintmax_t totalBytes = 0;
-    int fileCount = 0;
-    fs::recursive_directory_iterator it(collectionRoot, fs::directory_options::none, ec);
-    if (ec) {
-        return std::unexpected(invalid("bruno import: cannot walk collection: " + ec.message()));
-    }
-    for (const fs::recursive_directory_iterator end; it != end; it.increment(ec)) {
-        if (ec) {
-            break;
-        }
-        if (++fileCount > kMaxFiles) {
-            warnings.push_back("collection has too many files; some were skipped");
-            break;
-        }
-        const fs::path& entry = it->path();
-        // Skip symlinks: recursive_directory_iterator doesn't descend into
-        // symlinked dirs by default, but it still yields file symlinks, and
-        // reading one could pull content from outside the collection root
-        // (e.g. `x.bru -> /etc/passwd`). Only import real files under the root.
-        if (fs::is_symlink(entry, ec)) {
+    // Request `.bru` files become operations (top-level subdirectory = resource);
+    // collection.bru / folder.bru contribute only auth.
+    for (const auto& f : files) {
+        if (f.firstComponent == "environments") {
             continue;
         }
-        if (!it->is_regular_file(ec) || entry.extension() != ".bru") {
-            continue;
-        }
-
-        const auto fsize = fs::file_size(entry, ec);
-        if (ec || fsize > kMaxFileBytes) {
-            continue;
-        }
-        totalBytes += fsize;
-        if (totalBytes > kMaxTotalBytes) {
-            warnings.push_back(
-                "collection exceeded the total size budget; some files were skipped");
-            break;
-        }
-
-        // Path of this file relative to the collection root.
-        const auto rel = fs::relative(entry, collectionRoot, ec);
-        if (ec) {
-            continue;
-        }
-        // Environments live under environments/.
-        const auto firstComponent =
-            rel.begin() != rel.end() ? rel.begin()->string() : std::string{};
-        const auto contents = readFile(entry, ec);
-        if (ec) {
-            continue;
-        }
-        const auto blocks = parseBlocks(contents);
-
-        if (firstComponent == "environments") {
-            for (const auto& b : blocks) {
-                if (b.name == "vars") {
-                    for (const auto& [k, v] : parseDict(b.inner)) {
-                        env[k] = rewrite(v);
-                    }
-                }
-            }
-            continue;
-        }
-        // Skip folder.bru meta files (they describe a folder, not a request).
-        if (entry.filename() == "folder.bru") {
+        const auto blocks = parseBlocks(f.contents);
+        const auto fileName = f.rel.filename().string();
+        if (fileName == "collection.bru" || fileName == "folder.bru") {
+            const auto where =
+                fileName == "collection.bru"
+                    ? std::format("collection `{}`", outcome.project.name)
+                    : std::format("folder `{}`", f.rel.parent_path().filename().string());
+            is::warnDroppedAuth(warnings, where, containerAuthMode(blocks));
             continue;
         }
 
@@ -520,9 +583,9 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
         const BruBlock* methodBlock = nullptr;
         HttpMethod method = HttpMethod::Get;
         std::string reqName;
-        std::string bodyType;
         std::map<std::string, std::string> headers;
         std::map<std::string, std::string> query;
+        is::VarMap pathValues;
         std::vector<std::pair<std::string, std::string>> formPairs;
         std::optional<std::string> rawBody;
         for (const auto& b : blocks) {
@@ -538,6 +601,10 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
             } else if (b.name == "headers") {
                 for (const auto& [k, v] : parseDict(b.inner)) {
                     headers[k] = rewrite(v);
+                }
+            } else if (b.name == "params" && b.subtype == "path") {
+                for (const auto& [k, v] : parseDict(b.inner)) {
+                    pathValues[is::identifier(k, "param")] = v;
                 }
             } else if (b.name == "query" || b.name == "params") {
                 for (const auto& [k, v] : parseDict(b.inner)) {
@@ -559,24 +626,24 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
 
         // The method block is a dictionary carrying url / body / auth.
         std::string rawUrl;
+        std::string authMode;
         for (const auto& [k, v] : parseDict(methodBlock->inner)) {
             if (k == "url") {
                 rawUrl = v;
-            } else if (k == "body") {
-                bodyType = v;
+            } else if (k == "auth") {
+                authMode = v;
             }
         }
 
-        const std::string resourceId =
-            firstComponent.empty() || firstComponent == rel.filename().string()
-                ? defaultResource
-                : sanitizeId(firstComponent, defaultResource);
+        const std::string resourceId = f.firstComponent.empty() || f.firstComponent == fileName
+                                           ? defaultResource
+                                           : sanitizeId(f.firstComponent, defaultResource);
         auto& resource = outcome.project.resources[ResourceId{resourceId}];
         if (resource.id.value.empty()) {
             resource.id = ResourceId{resourceId};
         }
 
-        const std::string displayName = reqName.empty() ? entry.stem().string() : reqName;
+        const std::string displayName = reqName.empty() ? f.rel.stem().string() : reqName;
         std::string opName = sanitizeId(displayName, "request");
         std::string unique = opName;
         int suffix = 2;
@@ -595,6 +662,7 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
         if (!split.base.empty()) {
             if (projectBase.empty()) {
                 projectBase = split.base;
+                projectBaseVar = split.baseVar;
             } else if (projectBase != split.base && !multipleBasesWarned) {
                 warnings.push_back(std::format(
                     "requests target more than one host; the project baseUrl was set to `{}` — "
@@ -603,7 +671,8 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
                 multipleBasesWarned = true;
             }
         }
-        op.pathTemplate = rewrite(split.path);
+        const auto pathParams = is::convertPathParams(rewrite(split.path), resourceId);
+        op.pathTemplate = pathParams.path;
         op.headers = std::move(headers);
         op.queryParams = std::move(query);
         auto form = brunoForm(formPairs, op.id.value, warnings, rewrite);
@@ -620,6 +689,8 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
         if (!reqName.empty()) {
             prov.evidence["bruno_name"] = reqName;
         }
+        is::notePathParams(pathParams, op.id.value, resourceId, pathValues, prov, warnings);
+        is::warnDroppedAuth(warnings, "operation " + op.id.value, authMode);
         op.provenance = std::move(prov);
 
         resource.operations.emplace(unique, std::move(op));
@@ -631,15 +702,15 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
     }
 
     if (!projectBase.empty()) {
-        env["baseUrl"] = projectBase;
+        is::applyBaseUrl(envs, projectBase, projectBaseVar);
     } else if (!env.contains("baseUrl")) {
         warnings.push_back(
             "no host could be derived from the requests — set `baseUrl` in the environment");
     }
 
-    for (const auto& ref : referencedVars) {
-        if (!env.contains(ref)) {
-            env[ref] = "";
+    is::warnRenamedVars(referencedVars, warnings);
+    for (const auto& ref : referencedVars.referenced) {
+        if (is::seedMissing(envs, ref)) {
             warnings.push_back(std::format(
                 "variable `{{{{{}}}}}` is referenced but was not defined — set it in the "
                 "environment",

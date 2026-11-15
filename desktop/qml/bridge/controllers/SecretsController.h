@@ -50,6 +50,9 @@ class SecretsController : public QObject {
 
     Q_PROPERTY(SecretListModel* secrets READ secrets CONSTANT)
     Q_PROPERTY(bool backendAvailable READ backendAvailable CONSTANT)
+    /// The folder this machine records for the open project's id when the
+    /// project now lives elsewhere (moved or copied). Empty = no conflict.
+    Q_PROPERTY(QString folderConflict READ folderConflict NOTIFY folderConflictChanged)
 
 public:
     explicit SecretsController(QObject* parent = nullptr);
@@ -70,6 +73,7 @@ public:
 
     [[nodiscard]] SecretListModel* secrets() { return &list_; }
     [[nodiscard]] bool backendAvailable() const noexcept { return manager_.backendAvailable(); }
+    [[nodiscard]] QString folderConflict() const { return folderConflict_; }
 
     /// Refresh the list against `project`. Call when a project loads or the
     /// dialog opens.
@@ -78,14 +82,21 @@ public:
     Q_INVOKABLE bool store(const QString& name, const QString& value);
     /// Clear a secret. Emits notify on result.
     Q_INVOKABLE bool clear(const QString& name);
+    /// The user confirms the open project was moved here: bind its id to
+    /// this folder so its secrets work here. Emits notify on result.
+    Q_INVOKABLE bool confirmMove();
 
 signals:
     void notify(QString message, bool isError);
+    void folderConflictChanged();
 
 private:
     SecretManager manager_;
     SecretListModel list_;
     const ProjectModel* project_{nullptr};
+    QString folderConflict_;
+
+    void reloadList();
 };
 
 }  // namespace reqloom::desktop::qml

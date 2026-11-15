@@ -862,6 +862,11 @@ public:
     /// with the engine's `@<path>` upload convention.
     Q_INVOKABLE [[nodiscard]] QString localFileFromUrl(const QUrl& url) const;
 
+    /// Form-field `@` rules, delegated to the engine (FormBody.h).
+    Q_INVOKABLE [[nodiscard]] bool isFormFileValue(const QString& value) const;
+    Q_INVOKABLE [[nodiscard]] QString formValueText(const QString& value) const;
+    Q_INVOKABLE [[nodiscard]] QString formTextValue(const QString& text) const;
+
     // ── Explorer selection / activation by fully-qualified id ──────────────
     /// Select an operation row ("<resource>.<op>") and open it in the editor
     /// (select-to-preview). Resolves the module + endpoint.

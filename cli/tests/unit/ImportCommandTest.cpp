@@ -12,9 +12,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -89,6 +91,26 @@ TEST(ImportCommand, missing_spec_argument_returns_usage_error) {
 
 TEST(ImportCommand, help_flag_returns_success) {
     EXPECT_EQ(importCommand(toArgs({"--help"})), 0);
+}
+
+TEST(ImportCommand, help_lists_every_detected_format) {
+    testing::internal::CaptureStdout();
+    std::ignore = importCommand(toArgs({"--help"}));
+    std::fflush(stdout);
+    const std::string help = testing::internal::GetCapturedStdout();
+
+    for (const char* format : {"OpenAPI 3.x",
+                               "Swagger 2.0",
+                               "Postman",
+                               "Insomnia",
+                               "Thunder Client",
+                               "Hoppscotch",
+                               "HTTPie",
+                               "Apidog",
+                               ".http",
+                               "Bruno"}) {
+        EXPECT_NE(help.find(format), std::string::npos) << format << '\n' << help;
+    }
 }
 
 TEST(ImportCommand, unknown_flag_returns_usage_error) {

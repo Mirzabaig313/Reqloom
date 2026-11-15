@@ -101,8 +101,7 @@ void ensureCurlGlobalInit() {
 // unwinding through them is undefined behaviour. Both are noexcept and
 // signal failure to libcurl by returning a short count, which surfaces as
 // CURLE_WRITE_ERROR on curl_easy_perform.
-// Response body accumulator with a hard cap on the decompressed size, so a
-// hostile or broken server cannot grow memory without bound.
+// Response body accumulator with a hard cap on the decompressed size.
 struct BodySink {
     std::string body;
     std::size_t limit{0};
@@ -133,8 +132,8 @@ std::size_t headerCallback(char* ptr,
     auto* headers = static_cast<std::vector<std::pair<std::string, std::string>>*>(userdata);
     try {
         std::string const line(ptr, total);
-        // A status line starts each response (redirect hops, 100 Continue,
-        // proxy CONNECT). Keep only the final response's headers.
+        // A status line starts each response (redirects, 100 Continue, CONNECT); keep only the
+        // final response's headers.
         if (line.starts_with("HTTP/")) {
             headers->clear();
             return total;
@@ -179,17 +178,22 @@ std::size_t headerCallback(char* ptr,
     return "GET";
 }
 
-[[nodiscard]] ErrorCode classifyCurlError(CURLcode res) noexcept {
+// `requestSent` is true when request bytes may already have reached a server (an earlier
+// redirect hop, or a non-zero CURLINFO_REQUEST_SIZE).
+[[nodiscard]] ErrorCode classifyCurlError(CURLcode res, bool requestSent) noexcept {
     switch (res) {
         case CURLE_COULDNT_RESOLVE_HOST:
-            return ErrorCode::NetworkDns;
+        case CURLE_COULDNT_RESOLVE_PROXY:
+            return requestSent ? ErrorCode::NetworkTimeout : ErrorCode::NetworkDns;
+        case CURLE_COULDNT_CONNECT:
+            // Nothing reached the origin, unless an earlier redirect hop already delivered the
+            // request.
+            return requestSent ? ErrorCode::NetworkTimeout : ErrorCode::NetworkConnect;
         case CURLE_SSL_CONNECT_ERROR:
         case CURLE_PEER_FAILED_VERIFICATION:
             return ErrorCode::NetworkTls;
-        // CURLE_OPERATION_TIMEDOUT and every other libcurl error map to
-        // NetworkTimeout for now. ErrorCodes.h only models DNS / TLS /
-        // Timeout for the network class; refining the taxonomy (separate
-        // generic-network, connection-refused, etc.) is tracked separately.
+        // Every other libcurl error (timeouts, send/receive errors, empty reply) maps to
+        // NetworkTimeout: the request may have reached the server.
         default:
             return ErrorCode::NetworkTimeout;
     }
@@ -197,9 +201,11 @@ std::size_t headerCallback(char* ptr,
 
 constexpr long kMaxRedirects = 10;
 
-// Map a failed transfer to a ReqloomError. Transport-policy refusals get
-// their own code (not retryable) instead of the NetworkTimeout catch-all.
-[[nodiscard]] ReqloomError describeCurlFailure(CURLcode res, const BodySink& sink) {
+// Map a failed transfer to a ReqloomError; transport-policy refusals get their own
+// non-retryable code.
+[[nodiscard]] ReqloomError describeCurlFailure(CURLcode res,
+                                               const BodySink& sink,
+                                               bool requestSent) {
     const std::string curlText = curl_easy_strerror(res);
     if (res == CURLE_WRITE_ERROR && sink.limitExceeded) {
         return ReqloomError{ErrorCode::NetworkPolicy,
@@ -222,7 +228,8 @@ constexpr long kMaxRedirects = 10;
             std::format(
                 "too many redirects: stopped after {} (curl: {})", kMaxRedirects, curlText)};
     }
-    return ReqloomError{classifyCurlError(res), ErrorClass::Network, "curl error: " + curlText};
+    return ReqloomError{
+        classifyCurlError(res, requestSent), ErrorClass::Network, "curl error: " + curlText};
 }
 
 }  // namespace
@@ -248,15 +255,15 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     std::vector<std::pair<std::string, std::string>> responseHeaders;
 
     curl_easy_setopt(curl.get(), CURLOPT_URL, request.url.c_str());
-    // HEAD must go through CURLOPT_NOBODY: as a custom request libcurl
-    // still waits for the Content-Length body that never arrives.
+    // HEAD goes through CURLOPT_NOBODY: as a custom request libcurl waits for a body that never
+    // arrives.
     if (request.method == HttpMethod::Head) {
         curl_easy_setopt(curl.get(), CURLOPT_NOBODY, 1L);
     } else {
         curl_easy_setopt(curl.get(), CURLOPT_CUSTOMREQUEST, methodString(request.method));
     }
-    // Only http(s), for the request and for every redirect hop: no file://,
-    // dict://, gopher:// etc. from a project URL or a Location header.
+    // Only http(s), for every redirect hop too: no file://, gopher:// etc. from a project URL
+    // or a Location header.
     curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, writeCallback);
@@ -429,7 +436,12 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     auto elapsed = std::chrono::steady_clock::now() - startTime;
 
     if (res != CURLE_OK) {
-        return std::unexpected(describeCurlFailure(res, responseBody));
+        long redirects = 0;
+        long requestBytes = 0;
+        curl_easy_getinfo(curl.get(), CURLINFO_REDIRECT_COUNT, &redirects);
+        curl_easy_getinfo(curl.get(), CURLINFO_REQUEST_SIZE, &requestBytes);
+        return std::unexpected(
+            describeCurlFailure(res, responseBody, redirects > 0 || requestBytes > 0));
     }
 
     long httpStatus = 0;

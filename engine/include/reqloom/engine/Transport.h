@@ -53,10 +53,8 @@ struct TransportConfig {
     /// is unused (the key lives inside the bundle).
     std::optional<std::string> clientCertType;
 
-    /// Upper bound on the response body, counted after transparent
-    /// decompression. A larger body fails the request with
-    /// `E_NETWORK_POLICY` instead of growing memory without limit.
-    /// Default 64 MiB. Not yet settable from YAML.
+    /// Upper bound on the response body, counted after decompression; a larger body fails with
+    /// `E_NETWORK_POLICY`. Default 64 MiB. Not yet settable from YAML.
     std::size_t maxResponseBytes{std::size_t{64} * 1024 * 1024};
 };
 

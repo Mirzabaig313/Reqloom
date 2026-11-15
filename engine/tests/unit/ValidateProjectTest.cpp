@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -187,4 +188,93 @@ TEST(ValidateProject, unknown_for_each_resource_is_rejected) {
     EXPECT_EQ(result.error().code, ce::ErrorCode::RefUndefined);
     EXPECT_NE(result.error().detail.find("item.check"), std::string::npos) << result.error().detail;
     EXPECT_NE(result.error().detail.find("nowhere"), std::string::npos) << result.error().detail;
+}
+
+// ─── Load-time predicate / regex / faker checks (items 3, 7, 10) ───────────
+
+namespace {
+
+ce::Project projectWith(ce::Operation op) {
+    return makeProject({{"item", {{"check", std::move(op)}}}});
+}
+
+}  // namespace
+
+TEST(ValidateProject, malformed_assertion_is_a_load_error_naming_op_field_and_reason) {
+    auto op = makeOp("item", "check");
+    op.assertions.push_back({"$.status_code == 200", std::nullopt});
+    op.assertions.push_back({"$.total >", std::string{"total positive"}});
+    auto result = ce::validateProject(projectWith(std::move(op)));
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
+    const auto& d = result.error().detail;
+    EXPECT_NE(d.find("item.check"), std::string::npos) << d;
+    EXPECT_NE(d.find("assert[1]"), std::string::npos) << d;
+    EXPECT_NE(d.find("total positive"), std::string::npos) << d;
+    EXPECT_NE(d.find("expected term"), std::string::npos) << d;
+}
+
+TEST(ValidateProject, malformed_poll_conditions_are_load_errors) {
+    auto op = makeOp("item", "check");
+    op.pollUntil = ce::PollUntil{};
+    op.pollUntil->successWhen = "$.state == 'done' &&";
+    auto bad = ce::validateProject(projectWith(op));
+    ASSERT_FALSE(bad.has_value());
+    EXPECT_NE(bad.error().detail.find("poll_until.success_when"), std::string::npos)
+        << bad.error().detail;
+
+    op.pollUntil->successWhen = "$.state == 'done'";
+    op.pollUntil->failWhen = "$.state = 'failed'";
+    auto badFail = ce::validateProject(projectWith(op));
+    ASSERT_FALSE(badFail.has_value());
+    EXPECT_NE(badFail.error().detail.find("poll_until.fail_when"), std::string::npos)
+        << badFail.error().detail;
+
+    op.pollUntil->failWhen = "($.state == 'failed' || $.state == 'cancelled')";
+    auto good = ce::validateProject(projectWith(op));
+    EXPECT_TRUE(good.has_value()) << good.error().detail;
+}
+
+TEST(ValidateProject, predicates_with_templates_are_not_falsely_rejected) {
+    auto op = makeOp("item", "check");
+    op.assertions.push_back({"$.owner == '{{secret.API_KEY}}'", std::nullopt});
+    op.assertions.push_back({"$.count == {{env.baseUrl}}", std::nullopt});
+    auto result = ce::validateProject(projectWith(std::move(op)));
+    EXPECT_TRUE(result.has_value()) << result.error().detail;
+}
+
+TEST(ValidateProject, guarded_regex_is_rejected_at_load_in_matches_and_extraction) {
+    auto matchesOp = makeOp("item", "check");
+    matchesOp.assertions.push_back({"$.id matches '(a+)+$'", std::nullopt});
+    auto m = ce::validateProject(projectWith(std::move(matchesOp)));
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().detail.find("(a+)+$"), std::string::npos) << m.error().detail;
+
+    auto extractOp = makeOp("item", "check");
+    extractOp.extractions.push_back({"tok", "(\\w+\\s*)*end", ce::Extraction::Source::Regex});
+    auto e = ce::validateProject(projectWith(std::move(extractOp)));
+    ASSERT_FALSE(e.has_value());
+    EXPECT_NE(e.error().detail.find("extract 'tok'"), std::string::npos) << e.error().detail;
+    EXPECT_NE(e.error().detail.find("item.check"), std::string::npos) << e.error().detail;
+
+    auto safeOp = makeOp("item", "check");
+    safeOp.extractions.push_back(
+        {"tok", R"re("token":"([^"]+)")re", ce::Extraction::Source::Regex});
+    auto ok = ce::validateProject(projectWith(std::move(safeOp)));
+    EXPECT_TRUE(ok.has_value()) << ok.error().detail;
+}
+
+TEST(ValidateProject, unknown_faker_name_is_a_load_error_listing_valid_names) {
+    auto op = makeOp("item", "check");
+    op.bodyTemplate = R"({"email":"{{$.faker.emial}}"})";
+    auto result = ce::validateProject(projectWith(op));
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::RefUndefined);
+    EXPECT_NE(result.error().detail.find("emial"), std::string::npos) << result.error().detail;
+    EXPECT_NE(result.error().detail.find("email, phone"), std::string::npos)
+        << result.error().detail;
+
+    op.bodyTemplate = R"({"email":"{{$.faker.email}}","p":"{{ $.faker.phone }}"})";
+    auto ok = ce::validateProject(projectWith(op));
+    EXPECT_TRUE(ok.has_value()) << ok.error().detail;
 }

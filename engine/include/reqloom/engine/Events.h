@@ -25,9 +25,9 @@ using TimePoint = std::chrono::system_clock::time_point;
 
 enum class SkipReason : std::uint8_t { SessionValid, ExtractionCached };
 
-/// Replaces redacted header and extraction values in events. Stable
-/// across releases so renderers, persistence, and tests can match on it.
-inline constexpr std::string_view kRedactedHeaderValue = "***REDACTED***";
+/// Replaces every redacted value in events, details and history. Stable so renderers,
+/// persistence and tests can match on it.
+inline constexpr std::string_view kRedactedHeaderValue = "<redacted>";
 
 struct RunStarted {
     RunId runId;
@@ -76,8 +76,7 @@ struct ResponseReceived {
     /// `RunOptions::captureResponseBodies`. Empty by default — the
     /// engine's redaction-first contract keeps bodies off the event
     /// surface unless a caller explicitly asks for them. When opted in,
-    /// every response is captured, including auth/login/refresh bodies
-    /// (which carry tokens), so a developer can fully debug each call.
+    /// every response is captured with sensitive-named fields and registered secrets masked.
     /// Capped at 5 MiB. Persisted to the history store when present, so
     /// past responses replay in full (Postman-style history).
     std::optional<std::string> body{};

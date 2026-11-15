@@ -17,6 +17,7 @@ add_library(reqloom-engine-domain OBJECT
     src/domain/Topology.cpp
     src/domain/VariableResolver.cpp
     src/domain/RunContext.cpp
+    src/domain/SecretRegistry.cpp
     src/domain/ErrorCodes.cpp
     src/domain/Codecs.cpp
     src/domain/ProjectIdentity.cpp
@@ -37,10 +38,10 @@ add_library(reqloom-engine-infrastructure OBJECT
     src/infrastructure/http/CurlHttpClient.cpp
     src/infrastructure/storage/SqliteHistoryStore.cpp
     src/infrastructure/secrets/KeychainSecretStore.cpp
+    src/infrastructure/secrets/FileProjectTrustStore.cpp
     src/infrastructure/schema/YamlSchemaParser.cpp
     src/infrastructure/schema/YamlSchemaWriter.cpp
     src/infrastructure/hooks/QuickJsHookRunner.cpp
-    src/infrastructure/extraction/JsonPathEvaluator.cpp
     src/infrastructure/util/Crypto.cpp
     src/infrastructure/typings/StaticHookTypingsEmitter.cpp
     src/infrastructure/llm/HttpLlmClient.cpp
@@ -94,6 +95,7 @@ add_library(reqloom-engine-application OBJECT
     src/application/MultipartBuilder.cpp
     src/application/RequestSigners.cpp
     src/application/HeaderMasking.cpp
+    src/application/SecretRedaction.cpp
 )
 target_include_directories(reqloom-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

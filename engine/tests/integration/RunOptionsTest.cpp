@@ -987,6 +987,9 @@ resources:
         std::move(history),
         std::make_unique<FixedSecretStore>("wire-secret.example"),
         std::make_unique<SecretHostnameHookRunner>()};
+    // Secrets need the folder check; a scratch trust file keeps it hermetic.
+    dependencies.trust =
+        ce::makeFileProjectTrustStore(ct::uniqueTempPath("reqloom-trust-hook-url", ".json"));
     ce::ExecutionEngine engine{std::move(dependencies)};
 
     std::vector<ce::RequestPrepared> emitted;
@@ -1136,10 +1139,9 @@ TEST_F(RunOptionsFixture, capture_response_bodies_off_by_default_leaves_body_emp
 }
 
 TEST_F(RunOptionsFixture, capture_response_bodies_includes_auth_and_main_path_bodies) {
-    // Opt-in capture: a developer wants to see every raw body, including
-    // the auth/login response (which carries the token). Both the auth
-    // response (index 0) and the main-path response (index 1) must carry
-    // their bodies verbatim.
+    // Opt-in capture: both the auth response (index 0) and the main-path
+    // response (index 1) carry their bodies, with sensitive-named fields
+    // (the login token) masked.
     RunOptionsScratchProject project(kSimpleProjectYaml);
     auto loaded = ce::parseProject(project.yaml());
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
@@ -1162,11 +1164,11 @@ TEST_F(RunOptionsFixture, capture_response_bodies_includes_auth_and_main_path_bo
 
     ASSERT_EQ(events.size(), 2u);
 
-    // Auth/login response — the token must be visible in the captured body.
     const auto& login = events[0];
     ASSERT_TRUE(login.body.has_value());
     EXPECT_NE(login.body->find("accessToken"), std::string::npos);
-    EXPECT_NE(login.body->find("tok-1"), std::string::npos);
+    EXPECT_EQ(login.body->find("tok-1"), std::string::npos) << *login.body;
+    EXPECT_NE(login.body->find(ce::kRedactedHeaderValue), std::string::npos) << *login.body;
 
     // Main-path response.
     const auto& ping = events[1];
@@ -1774,9 +1776,136 @@ TEST(RetrySemantics, post_retries_when_request_never_left_the_client) {
     EXPECT_TRUE(run.result->succeeded());
 }
 
-TEST(FailureDetail, status_mismatch_detail_omits_response_body_by_default) {
+namespace {
+
+// POST and PATCH declared safe to repeat via `retry.non_idempotent`, next to
+// a plain POST without the flag.
+constexpr const char* kRepeatableRetryYaml = R"YAML(
+version: 1
+name: RetryNonIdempotent
+default_environment: local
+
+environment:
+  baseUrl: http://placeholder
+
+resources:
+  item:
+    operations:
+      create_repeatable:
+        method: POST
+        path: /items
+        body: { name: "x" }
+        expect_status: 201
+        retry: { max: 3, backoff: 1, non_idempotent: true }
+      patch_repeatable:
+        method: PATCH
+        path: /items/1
+        body: { name: "y" }
+        expect_status: 200
+        retry: { max: 3, backoff: 1, non_idempotent: true }
+      create:
+        method: POST
+        path: /items
+        body: { name: "x" }
+        expect_status: 201
+        retry: { max: 3, backoff: 1 }
+      read:
+        method: GET
+        path: /items
+        expect_status: 200
+        retry: { max: 3, backoff: 1 }
+)YAML";
+
+}  // namespace
+
+TEST(RetrySemantics, non_idempotent_flag_retries_post_on_5xx_up_to_max_attempts) {
+    const auto run = runScripted(kRepeatableRetryYaml,
+                                 "item.create_repeatable",
+                                 [](ScriptedHttpClient& http) { http.respond(503); });
+    ASSERT_TRUE(run.result.has_value()) << run.result.error().detail;
+    EXPECT_EQ(run.sends, 3u);
+    const auto* step = finalStep(*run.result, "item.create_repeatable");
+    ASSERT_NE(step, nullptr);
+    EXPECT_EQ(step->error, ce::ErrorCode::Http5xx);
+    EXPECT_EQ(step->attempts, 3);
+}
+
+TEST(RetrySemantics, non_idempotent_flag_retries_post_on_timeout_up_to_max_attempts) {
+    const auto run =
+        runScripted(kRepeatableRetryYaml, "item.create_repeatable", [](ScriptedHttpClient& http) {
+            http.fail(ce::ErrorCode::NetworkTimeout);
+        });
+    ASSERT_TRUE(run.result.has_value()) << run.result.error().detail;
+    EXPECT_EQ(run.sends, 3u);
+    const auto* step = finalStep(*run.result, "item.create_repeatable");
+    ASSERT_NE(step, nullptr);
+    EXPECT_EQ(step->error, ce::ErrorCode::NetworkTimeout);
+    EXPECT_EQ(step->attempts, 3);
+}
+
+TEST(RetrySemantics, non_idempotent_flag_retries_patch_and_stops_on_success) {
+    const auto run =
+        runScripted(kRepeatableRetryYaml, "item.patch_repeatable", [](ScriptedHttpClient& http) {
+            http.respond(502);
+            http.respond(200);
+        });
+    ASSERT_TRUE(run.result.has_value()) << run.result.error().detail;
+    EXPECT_EQ(run.sends, 2u);
+    EXPECT_TRUE(run.result->succeeded());
+}
+
+TEST(RetrySemantics, post_without_flag_is_not_resent_on_5xx_or_timeout) {
+    const auto on5xx = runScripted(
+        kRepeatableRetryYaml, "item.create", [](ScriptedHttpClient& http) { http.respond(503); });
+    ASSERT_TRUE(on5xx.result.has_value());
+    EXPECT_EQ(on5xx.sends, 1u);
+    const auto onTimeout =
+        runScripted(kRepeatableRetryYaml, "item.create", [](ScriptedHttpClient& http) {
+            http.fail(ce::ErrorCode::NetworkTimeout);
+        });
+    ASSERT_TRUE(onTimeout.result.has_value());
+    EXPECT_EQ(onTimeout.sends, 1u);
+}
+
+TEST(RetrySemantics, post_without_flag_is_resent_after_connection_failure) {
+    // NetworkConnect means no request bytes reached the server.
+    const auto run = runScripted(kRepeatableRetryYaml, "item.create", [](ScriptedHttpClient& http) {
+        http.fail(ce::ErrorCode::NetworkConnect);
+        http.fail(ce::ErrorCode::NetworkConnect);
+        http.respond(201);
+    });
+    ASSERT_TRUE(run.result.has_value()) << run.result.error().detail;
+    EXPECT_EQ(run.sends, 3u);
+    EXPECT_TRUE(run.result->succeeded());
+}
+
+TEST(RetrySemantics, persistent_connection_failure_fails_with_network_connect) {
+    const auto run = runScripted(kRepeatableRetryYaml, "item.create", [](ScriptedHttpClient& http) {
+        http.fail(ce::ErrorCode::NetworkConnect);
+    });
+    ASSERT_TRUE(run.result.has_value()) << run.result.error().detail;
+    EXPECT_EQ(run.sends, 3u);
+    const auto* step = finalStep(*run.result, "item.create");
+    ASSERT_NE(step, nullptr);
+    EXPECT_EQ(step->error, ce::ErrorCode::NetworkConnect);
+}
+
+TEST(RetrySemantics, get_retries_connection_failure_like_other_transport_errors) {
+    const auto run = runScripted(kRepeatableRetryYaml, "item.read", [](ScriptedHttpClient& http) {
+        http.fail(ce::ErrorCode::NetworkConnect);
+        http.fail(ce::ErrorCode::NetworkTimeout);
+        http.respond(200);
+    });
+    ASSERT_TRUE(run.result.has_value()) << run.result.error().detail;
+    EXPECT_EQ(run.sends, 3u);
+    EXPECT_TRUE(run.result->succeeded());
+}
+
+// Decided behaviour: the API's error text is quoted for every step, with or
+// without body capture, but sensitive fields and secret values are masked.
+TEST(FailureDetail, status_mismatch_detail_includes_masked_excerpt_by_default) {
     const auto run = runScripted(kRetryProjectYaml, "item.read", [](ScriptedHttpClient& http) {
-        http.respond(400, R"({"error":"SECRET-BODY-VALUE"})");
+        http.respond(400, R"({"error":"API-ERROR-TEXT","token":"SECRET-BODY-VALUE"})");
     });
     ASSERT_TRUE(run.result.has_value());
     const auto* step = finalStep(*run.result, "item.read");
@@ -1784,8 +1913,10 @@ TEST(FailureDetail, status_mismatch_detail_omits_response_body_by_default) {
     EXPECT_EQ(step->error, ce::ErrorCode::Http4xx);
     EXPECT_NE(step->detail.find("HTTP 400"), std::string::npos) << step->detail;
     EXPECT_NE(step->detail.find("200"), std::string::npos) << "expected status missing";
+    EXPECT_NE(step->detail.find("API-ERROR-TEXT"), std::string::npos) << step->detail;
     EXPECT_EQ(step->detail.find("SECRET-BODY-VALUE"), std::string::npos) << step->detail;
     ASSERT_EQ(run.failures.size(), 1u);
+    EXPECT_NE(run.failures.front().detail.find("API-ERROR-TEXT"), std::string::npos);
     EXPECT_EQ(run.failures.front().detail.find("SECRET-BODY-VALUE"), std::string::npos);
 }
 
@@ -1804,7 +1935,7 @@ TEST(FailureDetail, status_mismatch_detail_includes_excerpt_when_capture_enabled
     EXPECT_NE(step->detail.find("visible-body"), std::string::npos) << step->detail;
 }
 
-TEST(FailureDetail, login_step_detail_never_includes_body_even_with_capture) {
+TEST(FailureDetail, login_step_detail_shows_error_text_with_token_masked) {
     constexpr const char* kLoginYaml = R"YAML(
 version: 1
 name: LoginDetail
@@ -1824,19 +1955,15 @@ resources:
         extract:
           access_token: $.access_token
 )YAML";
-    ce::RunOptions options;
-    options.captureResponseBodies = true;
-    const auto run = runScripted(
-        kLoginYaml,
-        "session.login",
-        [](ScriptedHttpClient& http) { http.respond(400, R"({"hint":"LOGIN-BODY"})"); },
-        {},
-        options);
+    const auto run = runScripted(kLoginYaml, "session.login", [](ScriptedHttpClient& http) {
+        http.respond(400, R"({"hint":"LOGIN-BODY","access_token":"abc123def456"})");
+    });
     ASSERT_TRUE(run.result.has_value());
     const auto* step = finalStep(*run.result, "session.login");
     ASSERT_NE(step, nullptr);
     EXPECT_EQ(step->status, ce::StepResult::Status::Failed);
-    EXPECT_EQ(step->detail.find("LOGIN-BODY"), std::string::npos) << step->detail;
+    EXPECT_NE(step->detail.find("LOGIN-BODY"), std::string::npos) << step->detail;
+    EXPECT_EQ(step->detail.find("abc123def456"), std::string::npos) << step->detail;
 }
 
 TEST(UnknownActor, step_naming_undefined_actor_fails_before_sending) {

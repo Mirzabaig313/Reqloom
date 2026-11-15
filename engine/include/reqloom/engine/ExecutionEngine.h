@@ -32,6 +32,7 @@ class SchemaParser;
 class HistoryStore;
 class SecretStore;
 class HookRunner;
+class ProjectTrustStore;
 
 /// Result of a run.
 struct RunResult {
@@ -49,15 +50,16 @@ struct Project {
     std::string name;
     std::string defaultEnvironment;
 
-    /// Stable project identifier (`id:` in reqloom.yaml). Namespaces the
-    /// project's keychain secrets as `<id>/<name>`, so one project cannot
-    /// read another's. Empty means unset; a run that needs secrets then
-    /// fails before any request. The schema writer generates one on save.
+    /// Folder holding reqloom.yaml, as an absolute path. Set by `parseProject`, never in the
+    /// YAML; empty for an in-memory project.
+    std::filesystem::path rootDir;
+
+    /// Stable project identifier (`id:` in reqloom.yaml); namespaces the project's keychain
+    /// secrets. Empty means unset: a run that needs secrets then fails.
     std::string id;
 
-    /// Process environment variables `{{$.env.NAME}}` may read
-    /// (`allowed_env:` in reqloom.yaml). Any other name stays unresolved,
-    /// so a project file cannot exfiltrate arbitrary environment values.
+    /// Process environment variables `{{$.env.NAME}}` may read (`allowed_env:`); other names
+    /// stay unresolved so a project file cannot exfiltrate them.
     std::vector<std::string> allowedEnv;
 
     /// Project-wide default auth. Operations whose inline auth is
@@ -91,8 +93,7 @@ struct RunOptions {
     /// Opt-in: include the raw response body on `ResponseReceived` events.
     /// Off by default — bodies stay off the event surface to honor the
     /// redaction-first contract. When on, every response is captured,
-    /// including auth/login/refresh responses (which carry tokens) so a
-    /// developer can fully inspect and debug each call. Bodies are capped
+    /// including auth responses, with sensitive fields and secrets masked. Bodies are capped
     /// at `kMaxCapturedBodyBytes` and persisted to the history store, so
     /// past responses can be replayed in full (Postman-style history).
     bool captureResponseBodies{false};
@@ -142,6 +143,10 @@ public:
         std::unique_ptr<HistoryStore> history;
         std::unique_ptr<SecretStore> secrets;
         std::unique_ptr<HookRunner> hooks;
+        /// Which folder each project id belongs to, checked before any secret. With `secrets` set
+        /// and no `trust`, a run that references secrets fails. `makeDefaultDependencies()` sets
+        /// it.
+        std::unique_ptr<ProjectTrustStore> trust;
     };
 
     explicit ExecutionEngine(Dependencies deps);

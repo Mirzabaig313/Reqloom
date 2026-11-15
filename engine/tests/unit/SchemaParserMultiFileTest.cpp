@@ -490,6 +490,72 @@ resources:
     EXPECT_EQ(get.retry.baseBackoff, std::chrono::milliseconds{500});
 }
 
+namespace {
+
+// A one-operation project whose retry block is `retryBlock` (YAML lines
+// indented for the operation level).
+[[nodiscard]] std::string retryProjectYaml(const std::string& retryBlock) {
+    return R"YAML(
+version: 1
+name: RetryNonIdempotent
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  payment:
+    operations:
+      charge:
+        method: POST
+        path: /api/v1/charge
+        expect_status: 200
+)YAML" + retryBlock;
+}
+
+}  // namespace
+
+TEST(SchemaParserOperationFields, retry_non_idempotent_true_is_parsed) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml",
+                                    retryProjectYaml("        retry:\n"
+                                                     "          max: 4\n"
+                                                     "          non_idempotent: true\n"));
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& charge = result->resources.at(ce::ResourceId{"payment"}).operations.at("charge");
+    EXPECT_TRUE(charge.retry.nonIdempotent);
+    EXPECT_EQ(charge.retry.maxAttempts, 4);
+}
+
+TEST(SchemaParserOperationFields, retry_non_idempotent_defaults_to_false) {
+    ScratchDir scratch;
+    const auto withBlock = scratch.write("reqloom.yaml",
+                                         retryProjectYaml("        retry:\n"
+                                                          "          max: 4\n"));
+    auto result = ce::parseProject(withBlock);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->resources.at(ce::ResourceId{"payment"})
+                     .operations.at("charge")
+                     .retry.nonIdempotent);
+    EXPECT_FALSE(ce::RetryPolicy{}.nonIdempotent);
+}
+
+TEST(SchemaParserOperationFields, retry_non_idempotent_rejects_non_boolean_values) {
+    for (const std::string value : {"maybe", "1", "[true]", "{ on: true }", "\"\""}) {
+        ScratchDir scratch;
+        const auto yaml = scratch.write("reqloom.yaml",
+                                        retryProjectYaml("        retry:\n"
+                                                         "          non_idempotent: " +
+                                                         value + "\n"));
+        auto result = ce::parseProject(yaml);
+        ASSERT_FALSE(result.has_value()) << "non_idempotent: " << value << " was accepted";
+        EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid) << value;
+        EXPECT_NE(result.error().detail.find("non_idempotent"), std::string::npos)
+            << result.error().detail;
+    }
+}
+
 // ─── timeout: field ──────────────────────────────────────────────────────────
 
 TEST(SchemaParserOperationFields, operation_timeout_is_parsed_in_milliseconds) {

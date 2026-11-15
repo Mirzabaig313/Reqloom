@@ -6,6 +6,7 @@
 // across all importers becomes worth removing.
 
 #include "ImportFromHttpFile.h"
+#include "ImportSupport.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -28,6 +29,7 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 
 constexpr std::uintmax_t kMaxFileBytes = std::uintmax_t{16} * 1024 * 1024;
 
@@ -148,9 +150,9 @@ std::string_view trim(std::string_view s) {
     return s;
 }
 
-/// Rewrite `{{var}}` references to `{{env.var}}`; already-scoped names pass
-/// through. REST Client dynamic values like `{{$guid}}` are left verbatim.
-std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced) {
+/// Rewrite `{{var}}` to `{{env.<key>}}`; a dotted name is sanitised, and REST Client dynamic
+/// values like `{{$guid}}` stay verbatim.
+std::string rewriteTokens(std::string_view in, is::VarRefs& referenced) {
     std::string out;
     out.reserve(in.size());
     std::size_t i = 0;
@@ -171,11 +173,8 @@ std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced
             out.append("{{}}");
         } else if (inner.front() == '$') {
             out.append("{{").append(inner).append("}}");  // dynamic, leave as-is
-        } else if (inner.find('.') != std::string_view::npos) {
-            out.append("{{").append(inner).append("}}");
         } else {
-            referenced.emplace(inner);
-            out.append("{{env.").append(inner).append("}}");
+            out.append(is::envRef(inner, referenced));
         }
         i = close + 2;
     }
@@ -195,8 +194,8 @@ SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::stri
     if (noQuery.starts_with("{{")) {
         const auto close = noQuery.find("}}");
         if (close != std::string_view::npos) {
-            const std::string_view name = trim(noQuery.substr(2, close - 2));
-            if (const auto it = vars.find(std::string{name}); it != vars.end()) {
+            const auto key = is::envKey(trim(noQuery.substr(2, close - 2)));
+            if (const auto it = vars.find(key); it != vars.end()) {
                 out.base = it->second;
             }
             std::string_view rest = noQuery.substr(close + 2);
@@ -222,6 +221,16 @@ SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::stri
         out.path.insert(out.path.begin(), '/');
     }
     return out;
+}
+
+/// True for a REST Client request-chaining reference (`<request>.response.body.$.token`).
+bool isRequestChainRef(std::string_view name) {
+    const auto dot = name.find('.');
+    if (dot == std::string_view::npos) {
+        return false;
+    }
+    const auto rest = name.substr(dot + 1);
+    return rest.starts_with("response.") || rest.starts_with("request.");
 }
 
 /// One parsed request block.
@@ -283,7 +292,7 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
     // ends headers) vs body phase.
     enum class Phase : std::uint8_t { BeforeRequest, Headers, Body };
     Phase phase = Phase::BeforeRequest;
-    std::set<std::string> referencedVars;
+    is::VarRefs referencedVars;
 
     auto finalizeBlock = [&]() {
         if (current.hasRequestLine) {
@@ -385,7 +394,7 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
 
     // Seed the environment from @vars (rewriting nested references).
     for (const auto& [key, value] : fileVars) {
-        env[key] = rewrite(value);
+        env[is::envKey(key)] = rewrite(value);
     }
 
     const std::string resourceId = sanitizeId(stem, "requests");
@@ -507,8 +516,29 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
             "no host could be derived from the requests — set `baseUrl` in the environment");
     }
 
-    for (const auto& ref : referencedVars) {
-        if (!env.contains(ref)) {
+    // Request chaining: Reqloom extracts the value in the producing operation and references
+    // it as `{{resource.var}}`.
+    std::set<std::string> chainKeys;
+    for (auto it = referencedVars.renamed.begin(); it != referencedVars.renamed.end();) {
+        if (!isRequestChainRef(it->first)) {
+            ++it;
+            continue;
+        }
+        chainKeys.insert(it->second);
+        warnings.push_back(std::format(
+            "REST Client request chaining `{{{{{}}}}}` cannot be imported as-is; it was "
+            "imported as `{{{{env.{}}}}}` (empty) — add an extraction to the request that "
+            "produces it and reference it as `{{{{{}.<variable>}}}}`",
+            it->first,
+            it->second,
+            resourceId));
+        it = referencedVars.renamed.erase(it);
+    }
+    is::warnRenamedVars(referencedVars, warnings);
+    for (const auto& ref : referencedVars.referenced) {
+        if (chainKeys.contains(ref)) {
+            env.try_emplace(ref, "");
+        } else if (!env.contains(ref)) {
             env[ref] = "";
             warnings.push_back(std::format(
                 "variable `{{{{{}}}}}` is referenced but was not defined — set it in the "

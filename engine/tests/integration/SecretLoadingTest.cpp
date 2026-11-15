@@ -15,11 +15,13 @@
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
 
+#include <reqloom/engine/ProjectTrustStore.h>
 #include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -58,6 +60,7 @@ public:
 
     std::expected<std::optional<std::string>, ce::ReqloomError> read(
         const std::string& name) override {
+        ++reads;
         if (name == failKey_) {
             return std::unexpected(ce::ReqloomError{
                 ce::ErrorCode::SecretAccessFailed, ce::ErrorClass::Auth, "fake backend failure"});
@@ -79,10 +82,48 @@ public:
         return {};
     }
 
+    int reads{0};
+
 private:
     std::map<std::string, std::string> values_;
     std::string failKey_;
 };
+
+/// In-memory ProjectTrustStore: the test seam standing in for the per-user
+/// file. `calls` counts every access so a test can prove it was not touched.
+class FakeTrustStore final : public ce::ProjectTrustStore {
+public:
+    std::expected<std::optional<std::filesystem::path>, ce::ReqloomError> folderFor(
+        const std::string& projectId) override {
+        ++calls;
+        if (auto it = folders.find(projectId); it != folders.end()) {
+            return std::optional<std::filesystem::path>{it->second};
+        }
+        return std::optional<std::filesystem::path>{};
+    }
+
+    std::expected<std::filesystem::path, ce::ReqloomError> recordIfAbsent(
+        const std::string& projectId, const std::filesystem::path& folder) override {
+        ++calls;
+        return folders.try_emplace(projectId, folder).first->second;
+    }
+
+    std::expected<void, ce::ReqloomError> rebind(const std::string& projectId,
+                                                 const std::filesystem::path& folder) override {
+        ++calls;
+        folders[projectId] = folder;
+        return {};
+    }
+
+    std::map<std::string, std::filesystem::path> folders;
+    int calls{0};
+};
+
+/// Folder the test projects claim to live in. Never created: the folder
+/// check resolves symlinks in the existing part of the path only.
+std::filesystem::path projectFolder(const std::string& name) {
+    return std::filesystem::temp_directory_path() / ("reqloom-secret-loading-" + name);
+}
 
 /// A one-operation project whose request header references {{secret.API_KEY}}.
 /// The actor is empty so no auth flow runs — the test isolates secret
@@ -91,6 +132,7 @@ ce::Project makeProjectWithSecretHeader() {
     ce::Project project;
     project.name = "SecretLoadingTest";
     project.id = "proj-test";
+    project.rootDir = projectFolder("a");
     project.defaultEnvironment = "local";
     project.environments["local"] = {{"baseUrl", "http://unused.test"}};
 
@@ -112,6 +154,7 @@ ce::Project makeProjectWithSecretHeader() {
 struct Fakes {
     CapturingHttpClient* http{nullptr};
     FakeSecretStore* secrets{nullptr};
+    FakeTrustStore* trust{nullptr};
 };
 
 /// Build an engine with capturing-http + fake-secrets and null schema/
@@ -119,10 +162,13 @@ struct Fakes {
 ce::ExecutionEngine makeEngine(Fakes& out) {
     auto http = std::make_unique<CapturingHttpClient>();
     auto secrets = std::make_unique<FakeSecretStore>();
+    auto trust = std::make_unique<FakeTrustStore>();
     out.http = http.get();
     out.secrets = secrets.get();
+    out.trust = trust.get();
     ce::ExecutionEngine::Dependencies deps{
         std::move(http), nullptr, nullptr, std::move(secrets), nullptr};
+    deps.trust = std::move(trust);
     return ce::ExecutionEngine{std::move(deps)};
 }
 
@@ -192,6 +238,94 @@ TEST(SecretLoading, dry_run_does_not_touch_the_secret_store) {
     // No SecretAccessFailed: the store was never read. Dry run succeeds.
     ASSERT_TRUE(result.has_value()) << result.error().detail;
     EXPECT_TRUE(fakes.http->requests().empty());
+    EXPECT_EQ(fakes.trust->calls, 0) << "a dry run must not touch the project trust store";
+}
+
+TEST(SecretLoading, first_run_binds_the_id_to_the_projects_folder) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("proj-test/API_KEY", "sk_live_zzz");
+
+    auto project = makeProjectWithSecretHeader();
+    ce::RunContext ctx;
+    ASSERT_TRUE(engine.run(project, ce::OperationId{"item.get"}, ctx).has_value());
+
+    ASSERT_TRUE(fakes.trust->folders.contains("proj-test"));
+    EXPECT_EQ(fakes.trust->folders.at("proj-test"),
+              std::filesystem::weakly_canonical(projectFolder("a")));
+}
+
+TEST(SecretLoading, secrets_load_for_the_bound_folder) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("proj-test/API_KEY", "sk_live_zzz");
+    fakes.trust->folders["proj-test"] = std::filesystem::weakly_canonical(projectFolder("a"));
+
+    auto project = makeProjectWithSecretHeader();
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_EQ(fakes.http->requests().size(), 1u);
+    EXPECT_EQ(fakes.http->requests().front().headers.at("X-Api-Key"), "sk_live_zzz");
+}
+
+TEST(SecretLoading, second_folder_claiming_a_bound_id_is_refused_before_any_request) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("proj-test/API_KEY", "sk_live_zzz");
+    const auto owner = std::filesystem::weakly_canonical(projectFolder("a"));
+    fakes.trust->folders["proj-test"] = owner;
+
+    auto impostor = makeProjectWithSecretHeader();
+    impostor.rootDir = projectFolder("b");
+    ce::RunContext ctx;
+    const auto result = engine.run(impostor, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SecretAccessFailed);
+    EXPECT_NE(result.error().detail.find(owner.string()), std::string::npos)
+        << result.error().detail;
+    EXPECT_NE(
+        result.error().detail.find(std::filesystem::weakly_canonical(projectFolder("b")).string()),
+        std::string::npos)
+        << result.error().detail;
+    EXPECT_EQ(fakes.secrets->reads, 0) << "no secret may be read for the impostor";
+    EXPECT_TRUE(fakes.http->requests().empty());
+    EXPECT_EQ(fakes.trust->folders.at("proj-test"), owner) << "the record must not move";
+}
+
+TEST(SecretLoading, in_memory_project_without_a_folder_cannot_use_secrets) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("proj-test/API_KEY", "sk_live_zzz");
+
+    auto project = makeProjectWithSecretHeader();
+    project.rootDir.clear();
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SecretAccessFailed);
+    EXPECT_EQ(fakes.secrets->reads, 0);
+    EXPECT_TRUE(fakes.http->requests().empty());
+}
+
+TEST(SecretLoading, engine_without_a_trust_store_refuses_secrets) {
+    auto http = std::make_unique<CapturingHttpClient>();
+    auto* httpRaw = http.get();
+    auto secrets = std::make_unique<FakeSecretStore>();
+    secrets->put("proj-test/API_KEY", "sk_live_zzz");
+    ce::ExecutionEngine engine{ce::ExecutionEngine::Dependencies{
+        std::move(http), nullptr, nullptr, std::move(secrets), nullptr}};
+
+    auto project = makeProjectWithSecretHeader();
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SecretAccessFailed);
+    EXPECT_TRUE(httpRaw->requests().empty());
 }
 
 TEST(SecretLoading, raw_query_templates_are_safe_and_structured_query_precedes_fragment) {

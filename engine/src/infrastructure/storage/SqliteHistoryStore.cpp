@@ -690,9 +690,8 @@ struct SqliteHistoryStore::Impl {
     StmtPtr updateRunEndedStmt;
     StmtPtr nextSeqStmt;
 
-    // Runs whose RunStarted was refused because the id already belonged to
-    // another run. Their later events are refused too, so they can't be
-    // appended onto the other run's timeline.
+    // Runs whose RunStarted was refused (id already in use); their later events are refused
+    // too, so they cannot append onto the other run's timeline.
     std::set<std::uint64_t> rejectedRuns;
 
     [[nodiscard]] std::expected<void, ReqloomError> exec(std::string_view sql) const {
@@ -805,9 +804,8 @@ struct SqliteHistoryStore::Impl {
         }
         insertRunStmt = std::move(*p2);
 
-        // `started_at IS NULL` limits this to a placeholder row (backfilled by
-        // an out-of-order event): a run that already started is never
-        // overwritten by another run's RunStarted with the same id.
+        // `started_at IS NULL` limits this to a placeholder row: a started run is never overwritten
+        // by another run's RunStarted with the same id.
         auto p3 = prepare(
             "UPDATE runs SET target_op = ?, env_name = ?, "
             "started_at = ?, chain_size = ? WHERE run_id = ? AND started_at IS NULL;");
@@ -893,11 +891,8 @@ std::expected<RunId, ReqloomError> SqliteHistoryStore::allocateRunId() {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: allocateRunId before open"});
     }
-    // BEGIN IMMEDIATE takes the database write lock, so concurrent
-    // allocators (other connections or processes) are serialised. The
-    // counter never moves backwards — not even after clear() — and starts
-    // above any run id already present (e.g. from an older build that used
-    // process-local counters).
+    // BEGIN IMMEDIATE takes the write lock, serialising concurrent allocators. The counter never
+    // moves backwards (even after clear()) and starts above any run id already present.
     SqliteTransaction txn{impl_->db.get()};
     if (!txn.began()) {
         return std::unexpected(sqliteError(impl_->db.get(), "history: begin allocate txn"));
@@ -990,8 +985,6 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
             return std::unexpected(sqliteError(impl_->db.get(), "history: update run start"));
         }
         if (!insertedFreshRun && sqlite3_changes(impl_->db.get()) == 0) {
-            // The id already belongs to a run that started: refuse this run
-            // (and its later events) instead of merging it into that one.
             impl_->rejectedRuns.insert(env.runId);
             return std::unexpected(ReqloomError{ErrorCode::Internal,
                                                 ErrorClass::Run,

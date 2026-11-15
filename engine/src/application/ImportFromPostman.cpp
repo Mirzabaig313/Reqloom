@@ -4,6 +4,7 @@
 #include "ImportFromPostman.h"
 #include "ImportFromFileRefs.h"
 #include "ImportFromJsonHelpers.h"
+#include "ImportSupport.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -27,6 +28,7 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 using json = nlohmann::json;
 
 /// Upper bound on the collection file we'll read (16 MiB). A Postman export is
@@ -148,12 +150,10 @@ HttpMethod parseMethod(std::string_view methodRaw) {
     return HttpMethod::Get;
 }
 
-/// Rewrite bare Postman `{{var}}` references to reqloom's `{{env.var}}` scope so
-/// they resolve against the imported environment. References that are already
-/// scoped (contain a '.') or are Postman dynamic variables (`{{$guid}}`) are
-/// left untouched. Every rewritten variable name is recorded in `referenced`.
+/// Rewrite Postman `{{var}}` to reqloom's `{{env.<key>}}` scope; a dotted name is one
+/// variable, sanitised to an environment key. Dynamic variables (`{{$guid}}`) are untouched.
 std::string rewriteTokens(std::string_view in,
-                          std::set<std::string>& referenced,
+                          is::VarRefs& referenced,
                           std::set<std::string>& dynamic) {
     std::string out;
     out.reserve(in.size());
@@ -183,11 +183,8 @@ std::string rewriteTokens(std::string_view in,
         } else if (inner.front() == '$') {
             dynamic.emplace(inner);
             out.append("{{").append(inner).append("}}");
-        } else if (inner.find('.') != std::string_view::npos) {
-            out.append("{{").append(inner).append("}}");
         } else {
-            referenced.emplace(inner);
-            out.append("{{env.").append(inner).append("}}");
+            out.append(is::envRef(inner, referenced));
         }
         i = close + 2;
     }
@@ -213,8 +210,14 @@ SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::stri
     if (noQuery.starts_with("{{")) {
         const auto close = noQuery.find("}}");
         if (close != std::string_view::npos) {
-            const std::string varName{noQuery.substr(2, close - 2)};
-            if (const auto it = vars.find(varName); it != vars.end()) {
+            std::string_view name = noQuery.substr(2, close - 2);
+            while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) {
+                name.remove_prefix(1);
+            }
+            while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
+                name.remove_suffix(1);
+            }
+            if (const auto it = vars.find(is::envKey(name)); it != vars.end()) {
                 out.base = it->second;
             }
             std::string_view rest = noQuery.substr(close + 2);
@@ -336,7 +339,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
         for (const auto& v : doc["variable"]) {
             const auto key = jsonStr(v, "key");
             if (!key.empty()) {
-                env[key] = jsonStr(v, "value");
+                env[is::envKey(key)] = jsonStr(v, "value");
             }
         }
     }
@@ -344,7 +347,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
     const auto importedAt = nowIso8601Utc();
     const std::string defaultResource = sanitizeId(collectionName, "requests");
 
-    std::set<std::string> referencedVars;
+    is::VarRefs referencedVars;
     std::set<std::string> dynamicVars;
     std::set<std::string> seenOpIds;
     std::string projectBase;  // first non-empty base wins (see ceiling below)
@@ -415,7 +418,17 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                 multipleBasesWarned = true;
             }
         }
-        op.pathTemplate = rewrite(split.path);
+        const auto pathParams = is::convertPathParams(rewrite(split.path), resourceId);
+        op.pathTemplate = pathParams.path;
+        is::VarMap pathValues;
+        if (urlNode != nullptr && urlNode->contains("variable") &&
+            (*urlNode)["variable"].is_array()) {
+            for (const auto& v : (*urlNode)["variable"]) {
+                if (const auto key = jsonStr(v, "key"); !key.empty()) {
+                    pathValues[is::identifier(key, "param")] = jsonStr(v, "value");
+                }
+            }
+        }
 
         // Query params: prefer the url object's structured array.
         if (urlNode != nullptr && urlNode->contains("query") && (*urlNode)["query"].is_array()) {
@@ -525,12 +538,11 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
         if (!reqName.empty()) {
             prov.evidence["postman_name"] = reqName;
         }
-        if (request.is_object() && request.contains("auth")) {
+        is::notePathParams(pathParams, op.id.value, resourceId, pathValues, prov, warnings);
+        if (request.is_object() && request.contains("auth") &&
+            is::warnDroppedAuth(
+                warnings, "operation " + op.id.value, jsonStr(request["auth"], "type"))) {
             prov.evidence["auth"] = "request declared Postman auth — configure an actor to wire it";
-            warnings.push_back(std::format(
-                "operation {}: request-level auth was not imported — create an actor and attach "
-                "it",
-                op.id.value));
         }
         op.provenance = std::move(prov);
 
@@ -551,6 +563,11 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                 continue;
             }
             if (item.contains("item") && item["item"].is_array()) {
+                if (item.contains("auth")) {
+                    is::warnDroppedAuth(warnings,
+                                        std::format("folder `{}`", jsonStr(item, "name")),
+                                        jsonStr(item["auth"], "type"));
+                }
                 // Folder. A top-level folder (resourceId empty) becomes its own
                 // resource; nested folders fold into the ancestor resource.
                 const std::string childResource =
@@ -562,6 +579,11 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
             }
         }
     };
+    if (doc.contains("auth")) {
+        is::warnDroppedAuth(warnings,
+                            std::format("collection `{}`", outcome.project.name),
+                            jsonStr(doc["auth"], "type"));
+    }
     walk(doc["item"], std::string{}, 0, walk);
 
     if (outcome.project.resources.empty()) {
@@ -582,7 +604,8 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
 
     // Surface variables that requests reference but the collection never
     // defined, so they load and can be filled in the environment editor.
-    for (const auto& ref : referencedVars) {
+    is::warnRenamedVars(referencedVars, warnings);
+    for (const auto& ref : referencedVars.referenced) {
         if (!env.contains(ref)) {
             env[ref] = "";
             warnings.push_back(std::format(

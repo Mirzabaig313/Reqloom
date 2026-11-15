@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -142,7 +143,7 @@ TEST(ImportFromThunderClient, rejects_traversal_outside_project_root) {
 }
 
 // File fields carrying paths from the exporting machine keep only their base
-// name (with a warning); a text field starting with `@` is flagged too.
+// name (with a warning); a text field starting with `@` is escaped as `@@`.
 TEST(ImportFromThunderClient, file_field_paths_are_reduced_to_base_names_with_warnings) {
     ScratchDir scratch;
     const auto file = scratch.write("uploads.json", R"JSON(
@@ -177,4 +178,49 @@ TEST(ImportFromThunderClient, file_field_paths_are_reduced_to_base_names_with_wa
     ASSERT_TRUE(op->bodyForm.has_value());
     reqloom::tests::expectImportedFileRefsSanitised(
         *op->bodyForm, outcome->warnings, "uploads.upload");
+}
+
+namespace {
+
+std::size_t countOf(const std::string& haystack, std::string_view needle) {
+    std::size_t n = 0;
+    for (auto pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+// A Thunder Client `{id}` path parameter (value in an `isPath` param)
+// becomes the shared `{{resource.id}}` reference; request auth warns once,
+// `inherit` and `none` do not, and collection `settings.auth` warns once.
+TEST(ImportFromThunderClient, path_parameter_and_auth_are_handled_like_other_importers) {
+    ScratchDir scratch;
+    const auto file = scratch.write("tc_auth.json", R"JSON(
+[ { "_id": "c1", "colName": "Users API", "settings": { "auth": { "type": "bearer" } },
+    "folders": [ { "_id": "f1", "name": "Users", "containerId": "" } ],
+    "requests": [
+      { "_id": "r1", "containerId": "f1", "name": "Get User", "method": "GET",
+        "url": "https://api.example.com/users/{id}",
+        "params": [ { "name": "id", "value": "7", "isPath": true } ],
+        "auth": { "type": "inherit" } },
+      { "_id": "r2", "containerId": "f1", "name": "Own Auth", "method": "GET",
+        "url": "https://api.example.com/me", "auth": { "type": "basic" } },
+      { "_id": "r3", "containerId": "f1", "name": "No Auth", "method": "GET",
+        "url": "https://api.example.com/open", "auth": { "type": "none" } }
+    ] } ]
+)JSON");
+    auto outcome = ce::importFromThunderClient(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* get = findOp(outcome->project, "users.get_user");
+    ASSERT_NE(get, nullptr);
+    EXPECT_EQ(get->pathTemplate, "/users/{{users.id}}");
+    EXPECT_FALSE(get->queryParams.contains("id"));
+    const auto& w = outcome->warnings;
+    EXPECT_NE(w.find("`7`"), std::string::npos) << w;
+    EXPECT_EQ(countOf(w, "auth was not imported"), 2u) << w;
+    EXPECT_EQ(countOf(w, "collection `Users API`: `bearer` auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "operation users.own_auth: `basic` auth was not imported"), 1u) << w;
 }

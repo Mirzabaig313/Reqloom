@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -200,10 +201,9 @@ TEST(ImportFromApidog, rejects_traversal_outside_project_root) {
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
 }
 
-// Apidog file parameters carry no path (always a bare `@` slot), but a text
-// parameter whose example starts with `@` would be sent as a file upload: it
-// is warned about and reduced to a base name.
-TEST(ImportFromApidog, text_field_starting_with_at_is_reduced_and_warned) {
+// Apidog file parameters carry no path (always a bare `@` slot); a text
+// parameter whose example starts with `@` is escaped as `@@` so it stays text.
+TEST(ImportFromApidog, text_field_starting_with_at_is_escaped_as_text) {
     ScratchDir scratch;
     const auto file = scratch.write("uploads.apidog.json", R"JSON(
 {
@@ -241,8 +241,49 @@ TEST(ImportFromApidog, text_field_starting_with_at_is_reduced_and_warned) {
     ASSERT_NE(op, nullptr);
     ASSERT_TRUE(op->bodyForm.has_value());
     EXPECT_EQ(op->bodyForm->at("avatar"), "@");
-    EXPECT_EQ(op->bodyForm->at("sneaky"), "@passwd");
+    EXPECT_EQ(op->bodyForm->at("sneaky"), "@@/etc/passwd");
     EXPECT_EQ(op->bodyForm->at("plain"), "hello");
-    EXPECT_NE(outcome->warnings.find("`sneaky`"), std::string::npos) << outcome->warnings;
+    EXPECT_EQ(outcome->warnings.find("`sneaky`"), std::string::npos) << outcome->warnings;
     EXPECT_EQ(outcome->warnings.find("`plain`"), std::string::npos) << outcome->warnings;
+}
+
+namespace {
+
+std::size_t countOf(const std::string& haystack, std::string_view needle) {
+    std::size_t n = 0;
+    for (auto pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+// An Apidog `{id}` path parameter becomes the shared `{{resource.id}}`
+// reference; endpoint auth gives one warning and `"auth": {}` none.
+TEST(ImportFromApidog, path_parameter_and_auth_are_handled_like_other_importers) {
+    ScratchDir scratch;
+    const auto file = scratch.write("users.apidog.json", R"JSON(
+{
+  "apidogProject": "1.0.0",
+  "info": { "name": "Users API" },
+  "apiCollection": [ { "name": "Root", "items": [ { "name": "Users", "items": [
+    { "name": "Get User", "api": { "method": "get", "path": "/users/{id}", "auth": {},
+      "parameters": { "path": [ { "name": "id", "example": "42" } ], "query": [], "header": [] } } },
+    { "name": "Delete User", "api": { "method": "delete", "path": "/users/{id}",
+      "auth": { "type": "bearer" }, "parameters": { "path": [], "query": [], "header": [] } } }
+  ] } ] } ]
+}
+)JSON");
+    auto outcome = ce::importFromApidog(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* get = findOp(outcome->project, "users.get_user");
+    ASSERT_NE(get, nullptr);
+    EXPECT_EQ(get->pathTemplate, "/users/{{users.id}}");
+    const auto& w = outcome->warnings;
+    EXPECT_NE(w.find("path parameter `id` resolves to {{users.id}}"), std::string::npos) << w;
+    EXPECT_NE(w.find("`42`"), std::string::npos) << w;
+    EXPECT_EQ(countOf(w, "auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "operation users.delete_user: `bearer` auth was not imported"), 1u) << w;
 }

@@ -2,6 +2,7 @@
 // classifies each extraction as Resolved / Null / Missing / Unsupported.
 
 #include "application/JsonExtraction.h"
+#include "application/PredicateEvaluator.h"
 
 #include <reqloom/engine/JsonValues.h>
 
@@ -410,4 +411,132 @@ TEST(JsonExtractionStrict, non_string_scalars_and_containers_are_unchanged) {
     EXPECT_EQ(result->at("b"), "false");
     EXPECT_EQ(result->at("o"), R"({"k":"v"})");
     EXPECT_EQ(result->at("a"), "[1,2]");
+}
+
+// ─── JSONPath bracket scanning (item 1) ─────────────────────────────────────
+
+TEST(JsonExtractionFilter, filter_containing_an_index_bracket_is_evaluated) {
+    const std::string body = R"({"items":[{"tags":["y"],"id":"a"},{"tags":["x","z"],"id":"b"}]})";
+    auto result = ce::extractFromJsonDetailed(
+        ce::OperationId{"t.l"}, body, {jsonpath("id", "$.items[?(@.tags[0]=='x')].id")});
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->traces[0].outcome, ce::ExtractionTrace::Outcome::Resolved);
+    EXPECT_EQ(result->traces[0].value, "b");
+}
+
+TEST(JsonExtractionFilter, filter_containing_an_array_literal_is_evaluated) {
+    const std::string body = R"({"items":[{"s":"c","id":1},{"s":"b","id":2},{"s":"a","id":3}]})";
+    auto result = ce::extractFromJsonDetailed(
+        ce::OperationId{"t.l"}, body, {jsonpath("id", "$.items[?(@.s in ['a','b'])].id")});
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->traces[0].value, "2");
+    const auto all = ce::extractValues(body, "$.items[?(@.s in ['a', 'b'])].id");
+    ASSERT_EQ(all.size(), 2u);
+    EXPECT_EQ(all[0], "2");
+    EXPECT_EQ(all[1], "3");
+}
+
+TEST(JsonExtractionFilter, quoted_bracket_inside_filter_string_is_literal) {
+    const std::string body = R"({"items":[{"n":"a]b","id":"hit"}]})";
+    auto result = ce::extractFromJsonDetailed(
+        ce::OperationId{"t.l"}, body, {jsonpath("id", "$.items[?(@.n == 'a]b')].id")});
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->traces[0].value, "hit");
+}
+
+TEST(JsonExtractionFilter, malformed_or_unsupported_path_is_invalid_pattern_not_missing) {
+    const std::string body = R"({"items":[{"id":"a"}],"k":{"id":"x"}})";
+    for (const char* path : {"$.items[?(@.id ==)].id",
+                             "$.items[?(@.id == 'a'",
+                             "$.items[-1]",
+                             "$['k']",
+                             "$.items[0]..id",
+                             "$.k."}) {
+        auto result =
+            ce::extractFromJsonDetailed(ce::OperationId{"t.l"}, body, {jsonpath("v", path)});
+        ASSERT_TRUE(result.has_value()) << path;
+        EXPECT_EQ(result->traces[0].outcome, ce::ExtractionTrace::Outcome::InvalidPattern) << path;
+        EXPECT_TRUE(ce::extractValues(body, path).empty()) << path;
+    }
+}
+
+// ─── Recursive descent (item 2) ─────────────────────────────────────────────
+
+TEST(JsonExtractionStrict, recursive_descent_is_rejected_not_read_as_a_direct_child) {
+    // Before the fix `$..id` silently behaved like `$.id` and returned "top".
+    const std::string body = R"({"id":"top","inner":{"id":"deep"}})";
+    auto detailed =
+        ce::extractFromJsonDetailed(ce::OperationId{"t.l"}, body, {jsonpath("v", "$..id")});
+    ASSERT_TRUE(detailed.has_value());
+    EXPECT_EQ(detailed->traces[0].outcome, ce::ExtractionTrace::Outcome::InvalidPattern);
+    EXPECT_TRUE(detailed->values.empty());
+
+    auto strict = ce::extractFromJson(body, {jsonpath("v", "$..id")});
+    ASSERT_FALSE(strict.has_value());
+    EXPECT_EQ(strict.error().code, ce::ErrorCode::ExtractionFailed);
+    EXPECT_NE(strict.error().detail.find("recursive descent"), std::string::npos)
+        << strict.error().detail;
+}
+
+// ─── Parse errors never echo the body (item 6) ──────────────────────────────
+
+TEST(JsonExtractionStrict, parse_error_reports_offset_without_body_text) {
+    const std::string body = R"({"access_token":"eyJhbGciOiJIUzI1NiJ9.secretpart)";
+    auto strict = ce::extractFromJson(body, {jsonpath("t", "$.access_token")});
+    ASSERT_FALSE(strict.has_value());
+    EXPECT_EQ(strict.error().code, ce::ErrorCode::ResponseParse);
+    EXPECT_EQ(strict.error().detail.find("eyJ"), std::string::npos) << strict.error().detail;
+    EXPECT_EQ(strict.error().detail.find("secret"), std::string::npos) << strict.error().detail;
+    EXPECT_NE(strict.error().detail.find("byte"), std::string::npos) << strict.error().detail;
+
+    auto detailed =
+        ce::extractFromJsonDetailed(ce::OperationId{"t.l"}, body, {jsonpath("t", "$.x")});
+    ASSERT_FALSE(detailed.has_value());
+    EXPECT_EQ(detailed.error().detail.find("eyJ"), std::string::npos) << detailed.error().detail;
+}
+
+// ─── Response nesting limit (item 5) ────────────────────────────────────────
+
+TEST(JsonExtractionStrict, response_nested_past_limit_is_rejected_before_walking) {
+    std::string deep(100'000, '[');
+    deep.append(100'000, ']');
+    auto detailed =
+        ce::extractFromJsonDetailed(ce::OperationId{"t.l"}, deep, {jsonpath("v", "$[0]")});
+    ASSERT_FALSE(detailed.has_value());
+    EXPECT_EQ(detailed.error().code, ce::ErrorCode::ResponseParse);
+    EXPECT_NE(detailed.error().detail.find("256"), std::string::npos) << detailed.error().detail;
+    EXPECT_FALSE(ce::extractFromJson(deep, {jsonpath("v", "$[0]")}).has_value());
+    EXPECT_TRUE(ce::extractValues(deep, "$[0]").empty());
+
+    std::string ok(256, '[');
+    ok.append(256, ']');
+    EXPECT_TRUE(ce::extractFromJson(ok, {jsonpath("v", "$[0]")}).has_value());
+}
+
+// ─── Regex guard on extraction (item 10) ────────────────────────────────────
+
+TEST(JsonExtractionResponse, regex_guard_refuses_catastrophic_pattern_and_oversized_body) {
+    auto nested =
+        ce::extractFromResponseDetailed(ce::OperationId{"t.l"},
+                                        "aaaa",
+                                        200,
+                                        {},
+                                        {make("v", "(a+)+$", ce::Extraction::Source::Regex)});
+    ASSERT_TRUE(nested.has_value());
+    EXPECT_EQ(nested->traces[0].outcome, ce::ExtractionTrace::Outcome::InvalidPattern);
+
+    const std::string big(ce::kMaxRegexSubjectBytes + 1, 'x');
+    auto oversized = ce::extractFromResponseDetailed(
+        ce::OperationId{"t.l"}, big, 200, {}, {make("v", "x", ce::Extraction::Source::Regex)});
+    ASSERT_TRUE(oversized.has_value());
+    EXPECT_EQ(oversized->traces[0].outcome, ce::ExtractionTrace::Outcome::InvalidPattern);
+
+    auto fine = ce::extractFromResponseDetailed(
+        ce::OperationId{"t.l"},
+        R"({"token":"abc"})",
+        200,
+        {},
+        {make("v", R"re("token":"([^"]+)")re", ce::Extraction::Source::Regex)});
+    ASSERT_TRUE(fine.has_value());
+    EXPECT_EQ(fine->values.at("v"), "abc");
 }

@@ -5,11 +5,16 @@
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/ProjectIdentity.h>
 
+#include <QtCore/QByteArray>
+#include <QtCore/QFile>
+#include <QtCore/QSaveFile>
+
 #include <algorithm>
 #include <filesystem>
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -97,6 +102,38 @@ void dropDependencies(engine::Project& draft, const std::set<std::string>& remov
     return {};
 }
 
+[[nodiscard]] bool writeAtomically(const std::filesystem::path& path, const QByteArray& bytes) {
+    QSaveFile out{QString::fromStdU16String(path.u16string())};
+    return out.open(QIODevice::WriteOnly) && out.write(bytes) == bytes.size() && out.commit();
+}
+
+/// Insert a single `id:` line into reqloom.yaml, leaving every other byte intact.
+/// Restores the original text and returns nullopt if the edit or re-parse fails.
+[[nodiscard]] std::optional<engine::Project> insertIdInPlace(const std::filesystem::path& yaml) {
+    QFile in{QString::fromStdU16String(yaml.u16string())};
+    if (!in.open(QIODevice::ReadOnly)) {
+        return std::nullopt;
+    }
+    const QByteArray original = in.readAll();
+    in.close();
+
+    const auto id = engine::generateProjectId();
+    const auto edited = engine::insertProjectIdLine(
+        std::string_view{original.constData(), static_cast<std::size_t>(original.size())}, id);
+    if (!edited || !edited->has_value()) {
+        return std::nullopt;
+    }
+    if (!writeAtomically(yaml, QByteArray::fromStdString(**edited))) {
+        return std::nullopt;
+    }
+    auto reparsed = engine::parseProject(yaml);
+    if (reparsed && reparsed->id == id) {
+        return std::move(*reparsed);
+    }
+    (void)writeAtomically(yaml, original);
+    return std::nullopt;
+}
+
 }  // namespace
 
 ProjectModel::ProjectModel(QObject* parent) : QObject(parent) {}
@@ -116,14 +153,11 @@ void ProjectModel::loadFromDirectory(const QString& directory) {
         return;
     }
 
-    // Secrets are keyed by the project id, so a project without one gets an
-    // id persisted now, before any secret can be stored under it. If the
-    // save fails the id is dropped again: an id that never reached disk
-    // would orphan every secret stored under it on the next open.
+    // Secrets are keyed by project id, so persist one before any secret is stored; if that
+    // is unsafe, open without an id (an id not on disk would orphan its secrets).
     if (parsed->id.empty()) {
-        parsed->id = engine::generateProjectId();
-        if (!engine::writeProject(dir, *parsed, /*overwrite=*/true, /*pruneStale=*/false)) {
-            parsed->id.clear();
+        if (auto withId = insertIdInPlace(yaml)) {
+            parsed = std::move(*withId);
         }
     }
 

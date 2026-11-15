@@ -41,11 +41,14 @@ add_executable(reqloom-engine-unit-tests
     unit/QuickJsHookRunnerTest.cpp
     unit/SchemaParserMultiFileTest.cpp
     unit/HeaderMaskingTest.cpp
+    unit/SecretRedactionTest.cpp
     unit/SqliteHistoryStoreTest.cpp
     unit/SchemaValidationTest.cpp
     unit/SecretEnvTagTest.cpp
     unit/ValidateProjectTest.cpp
     unit/JsonBodyTemplateTest.cpp
+    unit/ProjectTrustStoreTest.cpp
+    unit/ProjectIdInsertTest.cpp
 )
 target_include_directories(reqloom-engine-unit-tests
     PRIVATE
@@ -60,6 +63,7 @@ target_link_libraries(reqloom-engine-unit-tests
 )
 reqloom_set_warnings(reqloom-engine-unit-tests)
 reqloom_apply_sanitizers(reqloom-engine-unit-tests)
+reqloom_isolate_test_config(reqloom-engine-unit-tests)
 
 gtest_discover_tests(reqloom-engine-unit-tests
     PROPERTIES LABELS "engine_unit"
@@ -90,6 +94,7 @@ add_executable(reqloom-engine-integration-tests
     integration/TransportConfigTest.cpp
     integration/SecretLoadingTest.cpp
     integration/JsonBodyEscapingTest.cpp
+    integration/ValueRedactionTest.cpp
 )
 target_link_libraries(reqloom-engine-integration-tests
     PRIVATE
@@ -112,6 +117,7 @@ target_compile_definitions(reqloom-engine-integration-tests
 )
 reqloom_set_warnings(reqloom-engine-integration-tests)
 reqloom_apply_sanitizers(reqloom-engine-integration-tests)
+reqloom_isolate_test_config(reqloom-engine-integration-tests)
 
 gtest_discover_tests(reqloom-engine-integration-tests
     PROPERTIES LABELS "engine_integration"

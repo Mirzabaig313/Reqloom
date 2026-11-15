@@ -42,3 +42,16 @@ TEST(EvaluatePredicate, malformed_expression_reports_schema_invalid) {
 }
 
 }  // namespace
+
+TEST(PredicatePublic, validatePredicate_reports_parse_errors_only) {
+    EXPECT_TRUE(ce::validatePredicate("($.a == 1 || $.b == 2) && $.c").has_value());
+    const auto bad = ce::validatePredicate("$.a ==");
+    ASSERT_FALSE(bad.has_value());
+    EXPECT_EQ(bad.error().code, ce::ErrorCode::SchemaInvalid);
+}
+
+TEST(PredicatePublic, validateRegexPattern_applies_the_guard) {
+    EXPECT_TRUE(ce::validateRegexPattern(R"(^order \d+ ready$)").has_value());
+    EXPECT_FALSE(ce::validateRegexPattern("(a*)*").has_value());
+    EXPECT_FALSE(ce::validateRegexPattern("(unclosed").has_value());
+}

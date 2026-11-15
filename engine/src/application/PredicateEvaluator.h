@@ -2,8 +2,9 @@
 //
 // Grammar (intentionally shallow):
 //
-//   expr     := compare ( ('&&' | '||') compare )*
-//   compare  := term op term | jsonpath        // bare jsonpath = truthiness
+//   expr     := and ( ('||' | 'or') and )*     // '&&' binds tighter than '||'
+//   and      := compare ( ('&&' | 'and') compare )*
+//   compare  := '(' expr ')' | term op term | jsonpath   // bare jsonpath = truthiness
 //   op       := '==' | '!=' | '<' | '<=' | '>' | '>='
 //             | 'in' | 'matches'
 //   term     := jsonpath | string | number | boolean | null | array
@@ -11,12 +12,15 @@
 //   string   := '"' chars '"' | "'" chars "'"
 //   array    := '[' term ( ',' term )* ']'
 //
+// Parentheses and array literals may nest at most 64 levels deep.
+//
 // Lives in the application layer because it parses JSON (third-party dep),
 // which the domain layer is not allowed to pull in.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -24,6 +28,39 @@
 #include <string_view>
 
 namespace reqloom::engine {
+
+/// Deepest array/object nesting accepted in a JSON response body; deeper input is rejected
+/// before parsing because the walkers recurse once per level.
+inline constexpr std::size_t kMaxJsonNestingDepth = 256;
+
+/// True when `text` nests JSON arrays/objects more than `limit` levels deep. Iterative and
+/// string-aware, so safe to call on hostile input before parsing.
+[[nodiscard]] bool jsonNestingExceeds(std::string_view text,
+                                      std::size_t limit = kMaxJsonNestingDepth) noexcept;
+
+/// Largest subject (bytes) a regex is run over; larger input is refused because std::regex
+/// can recurse per character and overflow the stack.
+inline constexpr std::size_t kMaxRegexSubjectBytes = std::size_t{1024} * 1024;
+
+/// Longest regex pattern (bytes) accepted from a project.
+inline constexpr std::size_t kMaxRegexPatternBytes = 1024;
+
+struct RegexSearchResult {
+    enum class Outcome : std::uint8_t { Matched, NoMatch, Refused };
+    Outcome outcome{Outcome::NoMatch};
+    std::string value;   ///< Matched: capture group 1 when present, else the whole match.
+    std::string reason;  ///< Refused: why (pattern guard, invalid pattern, subject size).
+};
+
+/// Check a pattern against the regex guard and that std::regex (ECMAScript) compiles it;
+/// the error says how to rewrite it.
+[[nodiscard]] std::expected<void, std::string> checkRegexPattern(std::string_view pattern);
+
+/// The one place a project-supplied regex is run: pattern guard, subject size cap, shared
+/// compile cache, then search. There is no time limit: a slow pattern the heuristic misses
+/// can still take a long time.
+[[nodiscard]] RegexSearchResult guardedRegexSearch(std::string_view subject,
+                                                   std::string_view pattern);
 
 /// One evaluation outcome. Structurally invalid expressions or misses
 /// produce `False`, never an error.
@@ -86,9 +123,8 @@ public:
         std::string_view expression) const;
 
     /// Parse a response body once for reuse across multiple `evaluate`
-    /// calls. Total + noexcept: a malformed / non-JSON body is captured as
-    /// an empty object so `$.status_code`-only predicates still evaluate,
-    /// exactly matching the string_view `evaluate` overload's fallback.
+    /// calls. Total + noexcept: a malformed or too-deeply-nested body is captured as an empty
+    /// object so `$.status_code`-only predicates still evaluate, as the string_view overload does.
     [[nodiscard]] ParsedBody parseBody(std::string_view jsonBody) const noexcept;
 
     /// Evaluate a previously-parsed expression against a previously-parsed

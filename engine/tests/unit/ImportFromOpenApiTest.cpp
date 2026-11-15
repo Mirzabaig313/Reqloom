@@ -8,8 +8,10 @@
 #include <support/TempPath.h>
 
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -510,4 +512,159 @@ paths:
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     EXPECT_EQ(outcome->project.name, "Orders API");
     ASSERT_TRUE(outcome->project.resources.contains(ce::ResourceId{"order"}));
+}
+
+namespace {
+
+std::size_t countOf(const std::string& haystack, std::string_view needle) {
+    std::size_t n = 0;
+    for (auto pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+// Resource ids derived from path segments are sanitised: `/api/1.0/{id}`
+// used to yield `{{1.0.id}}` (RefUndefined) and `/status.json` an operation
+// id `status.json.list` that breaks first-dot lookups. Two segments that
+// sanitise to the same id get distinct resources.
+TEST(ImportFromOpenApi, path_derived_ids_are_sanitised_and_unique) {
+    ScratchDir scratch;
+    const auto spec = scratch.write("dotted.yaml", R"YAML(
+openapi: "3.0.3"
+info: { title: Dotted }
+paths:
+  /api/1.0/{id}:
+    get:
+      responses: { "200": { description: ok } }
+  /status.json:
+    get:
+      responses: { "200": { description: ok } }
+  /status_json:
+    get:
+      responses: { "200": { description: ok } }
+)YAML");
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto& res = outcome->project.resources;
+    ASSERT_TRUE(res.contains(ce::ResourceId{"1_0"}));
+    EXPECT_EQ(res.at(ce::ResourceId{"1_0"}).operations.at("get").pathTemplate,
+              "/api/1.0/{{1_0.id}}");
+    ASSERT_TRUE(res.contains(ce::ResourceId{"status_json"}));
+    ASSERT_TRUE(res.contains(ce::ResourceId{"status_json_2"}));
+    EXPECT_EQ(res.at(ce::ResourceId{"status_json"}).operations.at("list").id.value,
+              "status_json.list");
+    EXPECT_EQ(res.at(ce::ResourceId{"status_json"}).operations.at("list").pathTemplate,
+              "/status.json");
+    EXPECT_EQ(res.at(ce::ResourceId{"status_json_2"}).operations.at("list").pathTemplate,
+              "/status_json");
+}
+
+// Nested 10-way YAML aliases expand to 10^7 nodes in a few hundred bytes;
+// converting the response example must stop at the node cap with a clear
+// error instead of exhausting memory.
+TEST(ImportFromOpenApi, alias_expansion_in_examples_is_capped) {
+    std::string yaml = "openapi: \"3.0.3\"\ninfo: { title: Bomb }\nx-bomb:\n";
+    yaml += "  l0: &l0 [x, x, x, x, x, x, x, x, x, x]\n";
+    for (int i = 1; i <= 6; ++i) {
+        yaml += std::format("  l{}: &l{} [", i, i);
+        for (int j = 0; j < 10; ++j) {
+            yaml += std::format("{}*l{}", j == 0 ? "" : ", ", i - 1);
+        }
+        yaml += "]\n";
+    }
+    yaml += R"YAML(paths:
+  /items:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { id: { type: string } }
+              example: *l6
+)YAML";
+    ScratchDir scratch;
+    const auto spec = scratch.write("bomb.yaml", yaml);
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_NE(outcome.error().detail.find("nodes"), std::string::npos) << outcome.error().detail;
+}
+
+// Spec-level `security` gives one warning; an operation with
+// `security: []` opts out (no warning), one with its own requirement warns.
+TEST(ImportFromOpenApi, security_requirements_warn_once_per_scope) {
+    ScratchDir scratch;
+    const auto spec = scratch.write("sec.yaml", R"YAML(
+openapi: "3.0.3"
+info: { title: Secure }
+security: [ { bearerAuth: [] } ]
+paths:
+  /public:
+    get:
+      security: []
+      responses: { "200": { description: ok } }
+  /inherits:
+    get:
+      responses: { "200": { description: ok } }
+  /keyed:
+    get:
+      security: [ { apiKey: [] } ]
+      responses: { "200": { description: ok } }
+)YAML");
+    auto outcome = ce::importFromOpenApi(spec, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto& w = outcome->warnings;
+    EXPECT_EQ(countOf(w, "auth was not imported"), 2u) << w;
+    EXPECT_EQ(countOf(w, "spec `Secure`: `bearerAuth` auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "operation keyed.list: `apiKey` auth was not imported"), 1u) << w;
+}
+
+// importAny identifies OpenAPI by structure: a YAML spec whose parameter is
+// named `containerId` (a Thunder Client marker) or a JSON spec mentioning
+// `"endpoint"` must not be routed to another importer.
+TEST(ImportFromOpenApi, importAny_detects_openapi_by_structure_not_substrings) {
+    ScratchDir scratch;
+    const auto yamlSpec = scratch.write("containers.yaml", R"YAML(
+openapi: "3.0.3"
+info: { title: Containers, description: "colName and _postman_id are just words here" }
+paths:
+  /containers/{containerId}:
+    get:
+      parameters:
+        - { name: containerId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+)YAML");
+    auto fromYaml = ce::importAny(yamlSpec, scratch.path());
+    ASSERT_TRUE(fromYaml.has_value()) << fromYaml.error().detail;
+    EXPECT_EQ(fromYaml->project.name, "Containers");
+
+    const auto jsonSpec = scratch.write("endpoint.json", R"JSON(
+{ "openapi": "3.0.3", "info": { "title": "Endpoints" },
+  "paths": { "/endpoints": { "get": { "description": "lists every \"endpoint\"",
+    "responses": { "200": { "description": "ok" } } } } } }
+)JSON");
+    auto fromJson = ce::importAny(jsonSpec, scratch.path());
+    ASSERT_TRUE(fromJson.has_value()) << fromJson.error().detail;
+    EXPECT_EQ(fromJson->project.name, "Endpoints");
+}
+
+TEST(ImportFromOpenApi, importAny_lists_supported_formats_for_unknown_input) {
+    ScratchDir scratch;
+    const auto json = scratch.write("unknown.json", R"({"hello":"world"})");
+    auto fromJson = ce::importAny(json, scratch.path());
+    ASSERT_FALSE(fromJson.has_value());
+    EXPECT_NE(fromJson.error().detail.find("Supported formats"), std::string::npos)
+        << fromJson.error().detail;
+
+    const auto yaml = scratch.write("unknown.yaml", "hello: world\n");
+    auto fromYaml = ce::importAny(yaml, scratch.path());
+    ASSERT_FALSE(fromYaml.has_value());
+    EXPECT_NE(fromYaml.error().detail.find("Supported formats"), std::string::npos)
+        << fromYaml.error().detail;
 }

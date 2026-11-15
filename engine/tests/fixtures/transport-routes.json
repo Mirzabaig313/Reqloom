@@ -45,6 +45,22 @@
       }
     },
     {
+      "method": "POST",
+      "path": "/see-other-closed-port",
+      "status": 303,
+      "headers": {
+        "Location": "http://127.0.0.1:1/after-post"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/see-other-unresolvable",
+      "status": 303,
+      "headers": {
+        "Location": "http://reqloom-redirect-target.invalid/after-post"
+      }
+    },
+    {
       "method": "GET",
       "path": "/big",
       "status": 200,

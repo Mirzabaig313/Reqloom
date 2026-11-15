@@ -3,9 +3,11 @@
 #include "Cookies.h"
 #include "HeaderMasking.h"
 #include "JsonExtraction.h"
+#include "SecretRedaction.h"
 
 #include "../domain/Codecs.h"
 #include "../domain/JsonBodyTemplate.h"
+#include "../domain/SecretRegistry.h"
 #include "../domain/VariableResolver.h"
 #include "../infrastructure/http/HttpClient.h"
 #include "../infrastructure/util/Crypto.h"
@@ -181,6 +183,8 @@ public:
                                                             "': " + values.error().detail});
                 }
                 for (auto& [k, v] : *values) {
+                    // Register now, not at putSession, so later auth steps' events are redacted.
+                    ctx.secretRegistry().add(v);
                     session.variables[k] = std::move(v);
                 }
             }
@@ -234,6 +238,9 @@ public:
                                                     passResolved.unresolved.front()});
         }
 
+        ctx.secretRegistry().add(passResolved.output);
+        // user:pass registers its base64 spelling too, i.e. the credential.
+        ctx.secretRegistry().add(userResolved.output + ":" + passResolved.output);
         ActorSession session;
         session.state = ActorSession::State::Authenticating;
         session.variables["credential"] =
@@ -379,16 +386,14 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     }
 
     if (response->status < 200 || response->status >= 300) {
-        // Surface enough of the body to debug misconfigured credentials.
-        constexpr std::size_t kBodyExcerpt = 200;
-        std::string const excerpt = response->body.size() > kBodyExcerpt
-                                        ? response->body.substr(0, kBodyExcerpt) + "..."
-                                        : response->body;
-        return std::unexpected(
-            ReqloomError{ErrorCode::SessionRefreshFailed,
-                         ErrorClass::Auth,
-                         "auth: " + std::string{strategyLabel} + " token endpoint returned HTTP " +
-                             std::to_string(response->status) + " — " + excerpt});
+        // Show the endpoint's error text to debug credentials; sensitive fields are masked (a
+        // failed token response may still carry a token).
+        const auto excerpt = safeBodyExcerpt(response->body, nullptr);
+        return std::unexpected(ReqloomError{
+            ErrorCode::SessionRefreshFailed,
+            ErrorClass::Auth,
+            "auth: " + std::string{strategyLabel} + " token endpoint returned HTTP " +
+                std::to_string(response->status) + (excerpt ? " — " + *excerpt : std::string{})});
     }
 
     // Parse the token response once and read every field from the single
@@ -533,6 +538,7 @@ public:
             }
             clientSecret = *cs;
         }
+        ctx.secretRegistry().add(clientSecret);
 
         // RFC 6749 §4.4.2. Client credentials go in a Basic header, the body, or
         // are omitted entirely for a public client, per `client_auth`.
@@ -597,6 +603,7 @@ public:
         if (!password) {
             return std::unexpected(password.error());
         }
+        ctx.secretRegistry().add(*password);
         const auto scope =
             resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, kLabel, "scope");
         if (!scope) {
@@ -620,6 +627,7 @@ public:
             }
             clientSecret = *cs;
         }
+        ctx.secretRegistry().add(clientSecret);
 
         // RFC 6749 §4.3.2. Client credentials go in a Basic header, the body, or
         // are omitted entirely for a public client, per `client_auth`.
@@ -849,6 +857,7 @@ public:
         if (!secret) {
             return std::unexpected(secret.error());
         }
+        ctx.secretRegistry().add(*secret);
         const auto payload =
             resolveAuthConfigOptional(actor, ctx, rctx, *deps_.varResolver, "jwt", "payload");
         if (!payload) {

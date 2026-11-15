@@ -73,11 +73,34 @@ void SecretsController::refresh() {
     // thread; both singletons are created in the same thread.
     const auto* ctrl = AppController::create(nullptr, nullptr);
     project_ = ctrl->projectRaw();
+    reloadList();
+}
+
+void SecretsController::reloadList() {
+    QString conflict;
     if (project_ == nullptr || !project_->hasProject()) {
         list_.clear();
-        return;
+    } else {
+        conflict = manager_.folderConflict(*project_);
+        list_.reload(manager_.referencedSecrets(*project_));
     }
-    list_.reload(manager_.referencedSecrets(*project_));
+    if (conflict != folderConflict_) {
+        folderConflict_ = conflict;
+        emit folderConflictChanged();
+    }
+}
+
+bool SecretsController::confirmMove() {
+    QString error;
+    if (project_ == nullptr || !manager_.confirmMove(*project_, error)) {
+        emit notify(QStringLiteral("Couldn't use the secrets here: %1")
+                        .arg(project_ == nullptr ? QStringLiteral("no project loaded.") : error),
+                    true);
+        return false;
+    }
+    reloadList();
+    emit notify(QStringLiteral("This folder now owns the project's secrets."), false);
+    return true;
 }
 
 bool SecretsController::store(const QString& name, const QString& value) {
@@ -87,9 +110,7 @@ bool SecretsController::store(const QString& name, const QString& value) {
         return false;
     }
     if (manager_.store(*project_, name, value, error)) {
-        if (project_ != nullptr) {
-            list_.reload(manager_.referencedSecrets(*project_));
-        }
+        reloadList();
         emit notify(QStringLiteral("Set secret \u201C%1\u201D").arg(name), false);
         return true;
     }
@@ -104,9 +125,7 @@ bool SecretsController::clear(const QString& name) {
         return false;
     }
     if (manager_.clear(*project_, name, error)) {
-        if (project_ != nullptr) {
-            list_.reload(manager_.referencedSecrets(*project_));
-        }
+        reloadList();
         emit notify(QStringLiteral("Cleared secret \u201C%1\u201D").arg(name), false);
         return true;
     }

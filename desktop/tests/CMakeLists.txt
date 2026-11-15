@@ -65,6 +65,7 @@ set_target_properties(reqloom-desktop-ui-tests PROPERTIES
 )
 reqloom_set_warnings(reqloom-desktop-ui-tests)
 reqloom_apply_sanitizers(reqloom-desktop-ui-tests)
+reqloom_isolate_test_config(reqloom-desktop-ui-tests)
 
 gtest_discover_tests(reqloom-desktop-ui-tests
     # PRE_TEST defers test enumeration to ctest run time. The default
@@ -147,6 +148,7 @@ set_target_properties(reqloom-desktop-secret-tests PROPERTIES
 )
 reqloom_set_warnings(reqloom-desktop-secret-tests)
 reqloom_apply_sanitizers(reqloom-desktop-secret-tests)
+reqloom_isolate_test_config(reqloom-desktop-secret-tests)
 
 gtest_discover_tests(reqloom-desktop-secret-tests
     # PRE_TEST defers enumeration to ctest run time. POST_BUILD (the default)

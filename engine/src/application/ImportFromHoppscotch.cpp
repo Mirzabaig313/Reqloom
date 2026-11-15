@@ -8,6 +8,7 @@
 #include "ImportFromHoppscotch.h"
 #include "ImportFromFileRefs.h"
 #include "ImportFromJsonHelpers.h"
+#include "ImportSupport.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -31,6 +32,7 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 using json = nlohmann::json;
 
 constexpr std::uintmax_t kMaxExportBytes = std::uintmax_t{16} * 1024 * 1024;
@@ -140,9 +142,9 @@ HttpMethod parseMethod(std::string_view methodRaw) {
     return HttpMethod::Get;
 }
 
-/// Rewrite Hoppscotch `<<var>>` references to reqloom's `{{env.var}}` scope.
-/// Already-scoped names (containing '.') pass through unwrapped.
-std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced) {
+/// Rewrite Hoppscotch `<<var>>` references to reqloom's `{{env.<key>}}`
+/// scope; a dotted name is sanitised to an environment key.
+std::string rewriteTokens(std::string_view in, is::VarRefs& referenced) {
     std::string out;
     out.reserve(in.size());
     std::size_t i = 0;
@@ -167,11 +169,8 @@ std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced
         }
         if (inner.empty()) {
             out.append("<<>>");
-        } else if (inner.find('.') != std::string_view::npos) {
-            out.append("{{").append(inner).append("}}");
         } else {
-            referenced.emplace(inner);
-            out.append("{{env.").append(inner).append("}}");
+            out.append(is::envRef(inner, referenced));
         }
         i = close + 2;
     }
@@ -201,7 +200,7 @@ SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::stri
             while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
                 name.remove_suffix(1);
             }
-            if (const auto it = vars.find(std::string{name}); it != vars.end()) {
+            if (const auto it = vars.find(is::envKey(name)); it != vars.end()) {
                 out.base = it->second;
             }
             std::string_view rest = noQuery.substr(close + 2);
@@ -236,6 +235,15 @@ std::string jsonStr(const json& node, std::string_view key) {
         }
     }
     return {};
+}
+
+/// `node.auth.authType`; empty (no auth) when absent or `authActive` is false.
+std::string authType(const json& node) {
+    const auto it = node.find("auth");
+    if (it == node.end() || !it->is_object() || !import_json::boolOr(*it, "authActive", true)) {
+        return {};
+    }
+    return jsonStr(*it, "authType");
 }
 
 bool isFormContentType(std::string_view ct) {
@@ -317,7 +325,7 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
     auto& env = outcome.project.environments["default"];
 
     const std::string defaultResource = sanitizeId(collectionName, "requests");
-    std::set<std::string> referencedVars;
+    is::VarRefs referencedVars;
     std::set<std::string> seenOpIds;
     std::string projectBase;
     bool multipleBasesWarned = false;
@@ -431,6 +439,7 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
         if (!reqName.empty()) {
             prov.evidence["hoppscotch_name"] = reqName;
         }
+        is::warnDroppedAuth(warnings, "operation " + op.id.value, authType(item));
         op.provenance = std::move(prov);
 
         resource.operations.emplace(unique, std::move(op));
@@ -446,6 +455,10 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
                 "folder nesting exceeded the supported depth; deeper items were skipped");
             return;
         }
+        is::warnDroppedAuth(
+            warnings,
+            std::format("{} `{}`", depth == 0 ? "collection" : "folder", jsonStr(node, "name")),
+            authType(node));
         if (node.contains("requests") && node["requests"].is_array()) {
             for (const auto& req : node["requests"]) {
                 if (req.is_object()) {
@@ -482,7 +495,8 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
             "no host could be derived from the requests — set `baseUrl` in the environment");
     }
 
-    for (const auto& ref : referencedVars) {
+    is::warnRenamedVars(referencedVars, warnings, "<<", ">>");
+    for (const auto& ref : referencedVars.referenced) {
         if (!env.contains(ref)) {
             env[ref] = "";
             warnings.push_back(std::format(

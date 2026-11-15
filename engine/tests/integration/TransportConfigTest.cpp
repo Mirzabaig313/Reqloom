@@ -226,3 +226,51 @@ TEST_F(CurlTransportFixture, redirect_loop_stops_at_the_limit) {
     ASSERT_FALSE(res.has_value());
     EXPECT_EQ(res.error().code, ce::ErrorCode::NetworkPolicy);
 }
+
+// ─── Connection failures ─────────────────────────────────────────────────────
+// A refused connection proves no request bytes reached the server, so it
+// gets its own code (NetworkConnect) that the engine may re-send for any
+// method.
+
+TEST(CurlTransportConnect, closed_local_port_fails_with_network_connect) {
+    std::string url;
+    {
+        // Start the mock to learn a port that was just free, then shut it
+        // down so nothing listens there.
+        reqloom::tests::MockSutHarness harness(std::filesystem::path(REQLOOM_FIXTURES_DIR) /
+                                               "transport-routes.json");
+        url = harness.baseUrl() + "/resource";
+    }
+    ce::CurlHttpClient client;
+    ce::HttpRequest r;
+    r.method = ce::HttpMethod::Post;
+    r.url = url;
+    r.body = R"({"x":1})";
+    r.timeout = std::chrono::milliseconds{5'000};
+    auto res = client.send(r);
+    ASSERT_FALSE(res.has_value()) << "closed port answered with status " << res->status;
+    EXPECT_EQ(res.error().code, ce::ErrorCode::NetworkConnect) << res.error().detail;
+    EXPECT_EQ(res.error().cls, ce::ErrorClass::Network);
+}
+
+TEST_F(CurlTransportFixture, connect_failure_after_a_redirect_is_not_network_connect) {
+    // The POST reached the first server (which answered 303); the failed
+    // connect on the redirect hop must not be reported as "never sent".
+    auto req = makeRequest(ce::HttpMethod::Post, "/see-other-closed-port");
+    req.body = R"({"x":1})";
+    req.timeout = std::chrono::milliseconds{5'000};
+    auto res = client_.send(req);
+    ASSERT_FALSE(res.has_value()) << "redirect target answered with status " << res->status;
+    EXPECT_EQ(res.error().code, ce::ErrorCode::NetworkTimeout) << res.error().detail;
+}
+
+TEST_F(CurlTransportFixture, dns_failure_after_a_redirect_is_not_network_dns) {
+    // `.invalid` never resolves (RFC 6761), so the POST reached the first
+    // server and then failed name resolution on the redirect hop.
+    auto req = makeRequest(ce::HttpMethod::Post, "/see-other-unresolvable");
+    req.body = R"({"x":1})";
+    req.timeout = std::chrono::milliseconds{5'000};
+    auto res = client_.send(req);
+    ASSERT_FALSE(res.has_value()) << "redirect target answered with status " << res->status;
+    EXPECT_EQ(res.error().code, ce::ErrorCode::NetworkTimeout) << res.error().detail;
+}

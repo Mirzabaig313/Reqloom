@@ -14,8 +14,7 @@ namespace reqloom::engine {
 
 /// Evaluate a single assertion / poll predicate against a sample response
 /// body and HTTP status, using the engine's predicate grammar
-/// (`$.field == 'x'`, `$.status_code >= 200`, `&&`/`||`, `in`, `matches`,
-/// bare JSONPath truthiness, etc.).
+/// (`$.field == 'x'`, `&&`/`||`, `in`, `matches`, etc.).
 ///
 /// Returns the boolean outcome (`true` = the predicate holds) for a
 /// well-formed expression, or `ReqloomError{SchemaInvalid}` when the
@@ -29,5 +28,14 @@ namespace reqloom::engine {
 [[nodiscard]] std::expected<bool, ReqloomError> evaluatePredicate(std::string_view expression,
                                                                   std::string_view responseBody,
                                                                   int statusCode = 0);
+
+/// Parse-only check of a predicate: `ReqloomError{SchemaInvalid}` with the parser's message
+/// when malformed. Used at project load so a bad assertion is rejected before any request.
+[[nodiscard]] std::expected<void, ReqloomError> validatePredicate(std::string_view expression);
+
+/// Check a regex the engine will run over response text: at most 1024 bytes, no repeated
+/// group ending in an unbounded repeat (`(a+)+`; a heuristic, not a proof), and valid
+/// ECMAScript syntax. `ReqloomError{SchemaInvalid}` otherwise.
+[[nodiscard]] std::expected<void, ReqloomError> validateRegexPattern(std::string_view pattern);
 
 }  // namespace reqloom::engine

@@ -588,8 +588,7 @@ using HookResult = std::expected<void, ReqloomError>;
     return std::unexpected(ReqloomError{code, ErrorClass::Hook, std::move(detail)});
 }
 
-// Turn the pending exception into a hook error. Timeout iff the interrupt
-// handler fired; an out-of-memory surfaces as QuickJS's "out of memory".
+// Timeout iff the interrupt handler fired; out-of-memory surfaces as QuickJS's "out of memory".
 [[nodiscard]] std::unexpected<ReqloomError> exceptionError(JSContext* c,
                                                            const InterruptState& ist,
                                                            std::string_view prefix) {
@@ -600,10 +599,9 @@ using HookResult = std::expected<void, ReqloomError>;
     return hookError(ErrorCode::HookFailure, std::string{prefix} + err);
 }
 
-// Run queued promise jobs to completion under the same deadline and memory
-// limit, then judge `value`: a non-promise or fulfilled promise is success,
-// a rejected one fails with its reason. The sandbox has no timers or I/O,
-// so a promise still pending once the job queue is empty can never settle.
+// Run queued promise jobs under the same deadline and memory limit, then judge `value`: a
+// rejected promise fails with its reason. The sandbox has no timers or I/O, so a promise
+// still pending after the job queue drains can never settle.
 [[nodiscard]] HookResult settle(JSContext* c,
                                 const InterruptState& ist,
                                 JSValueConst value,
@@ -694,7 +692,6 @@ using HookResult = std::expected<void, ReqloomError>;
         if (JS_IsException(evalOk)) {
             return exceptionError(c, ist, "hook failed: ");
         }
-        // Module evaluation yields a promise; a top-level throw rejects it.
         if (auto settled = settle(c, ist, evalOk, "hook module evaluation"); !settled) {
             return std::unexpected(std::move(settled.error()));
         }
@@ -739,8 +736,6 @@ using HookResult = std::expected<void, ReqloomError>;
         if (JS_IsException(evalRes)) {
             return exceptionError(c, ist, "hook threw: ");
         }
-        // The eval's completion value is whatever the body returned; an
-        // inline hook may return a promise.
         if (auto settled = settle(c, ist, evalRes, "hook"); !settled) {
             return std::unexpected(std::move(settled.error()));
         }

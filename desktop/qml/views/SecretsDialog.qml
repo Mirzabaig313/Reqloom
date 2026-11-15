@@ -91,6 +91,53 @@ Dialog {
             }
         }
 
+        // Folder-conflict banner: this project's id belongs to another folder
+        // on this machine (the project was moved or copied). Secrets stay
+        // blocked until the user confirms the move.
+        Rectangle {
+            Layout.fillWidth: true
+            visible: SecretsController.folderConflict !== ""
+            radius: DesignTokens.radiusSm
+            color: Qt.rgba(DesignTokens.statusError.r, DesignTokens.statusError.g, DesignTokens.statusError.b, 0.12)
+            border.width: 1
+            border.color: DesignTokens.statusError
+            implicitHeight: conflictColumn.implicitHeight + DesignTokens.spaceSm * 2
+            ColumnLayout {
+                id: conflictColumn
+                anchors.fill: parent
+                anchors.margins: DesignTokens.spaceSm
+                spacing: DesignTokens.spaceXs
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("This project's id belongs to another folder on this machine:\n%1\nIf you moved the project here, use its secrets in this folder (the old folder loses access). If this is a copy, give it a new id in reqloom.yaml instead.").arg(SecretsController.folderConflict)
+                    color: DesignTokens.statusError
+                    font.pixelSize: DesignTokens.fontLabel
+                    wrapMode: Text.WordWrap
+                }
+                Button {
+                    id: confirmMoveBtn
+                    text: qsTr("I moved this project — use its secrets here")
+                    implicitHeight: Math.max(28, implicitContentHeight + DesignTokens.spaceXs * 2)
+                    leftPadding: DesignTokens.spaceSm
+                    rightPadding: DesignTokens.spaceSm
+                    background: Rectangle {
+                        radius: DesignTokens.radiusSm
+                        color: confirmMoveBtn.down ? DesignTokens.accentMuted : "transparent"
+                        border.width: 1
+                        border.color: DesignTokens.borderStrong
+                    }
+                    contentItem: Text {
+                        text: confirmMoveBtn.text
+                        color: DesignTokens.textPrimary
+                        font.pixelSize: DesignTokens.fontLabel
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: SecretsController.confirmMove()
+                }
+            }
+        }
+
         // Secrets table.
         ListView {
             id: secretList

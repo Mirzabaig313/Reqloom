@@ -530,3 +530,39 @@ TEST(VariableResolver, env_builtin_is_unresolved_when_allowed_env_is_empty) {
     EXPECT_EQ(result.output.find("denied-value"), std::string::npos);
     EXPECT_EQ(result.unresolvedOccurrences.size(), 1u);
 }
+
+// Item 7: an unknown faker name is unresolved (it used to resolve to a junk
+// `faker_<name>_<hex>` placeholder, so a typo was sent to the API).
+TEST(VariableResolver, unknown_faker_name_is_unresolved_not_a_placeholder) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const auto typo = resolver.resolve("{{$.faker.emial}}", ctx, rctx);
+    ASSERT_EQ(typo.unresolved.size(), 1u) << "output: " << typo.output;
+    EXPECT_EQ(typo.unresolved[0], "$.faker.emial");
+    EXPECT_EQ(typo.output, "{{$.faker.emial}}");
+
+    const auto email = resolver.resolve("{{$.faker.email}}", ctx, rctx);
+    EXPECT_TRUE(email.unresolved.empty());
+    EXPECT_TRUE(email.output.starts_with("test+")) << email.output;
+    const auto phone = resolver.resolve("{{$.faker.phone}}", ctx, rctx);
+    EXPECT_TRUE(phone.unresolved.empty());
+    EXPECT_TRUE(phone.output.starts_with("+1555")) << phone.output;
+}
+
+// Item 9 (documents current behaviour; not changed here): when the newest
+// instance lacks a field — which is what a Null extraction leaves behind,
+// since a Null outcome stores no value and does not fail the step — a
+// `{{res.var}}` reference silently falls back to an OLDER instance's value.
+TEST(VariableResolver, missing_field_on_newest_instance_falls_back_to_older_instance) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+    ctx.appendInstance(ce::ResourceId{"session"}, ce::ResourceInstance{{{"token", "old-token"}}});
+    ctx.appendInstance(ce::ResourceId{"session"}, ce::ResourceInstance{{{"user", "u2"}}});
+
+    const auto result = resolver.resolve("{{session.token}}", ctx, rctx);
+    EXPECT_TRUE(result.unresolved.empty());
+    EXPECT_EQ(result.output, "old-token");
+}

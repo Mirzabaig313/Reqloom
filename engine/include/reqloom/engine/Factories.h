@@ -28,6 +28,18 @@ namespace reqloom::engine {
 /// writes are dropped), and a UI should warn rather than imply persistence.
 [[nodiscard]] bool keychainBackendAvailable() noexcept;
 
+/// Where the per-user project trust file lives: `projects.json` in the application config
+/// directory (`REQLOOM_CONFIG_DIR` overrides it). Error when the home/config variable is unset.
+[[nodiscard]] std::expected<std::filesystem::path, ReqloomError> defaultProjectTrustStorePath();
+
+/// The file-backed ProjectTrustStore at `defaultProjectTrustStorePath()`. If that path cannot
+/// be resolved, every call reports the error.
+[[nodiscard]] std::unique_ptr<ProjectTrustStore> makeFileProjectTrustStore();
+
+/// The file-backed ProjectTrustStore at an explicit file path (tests, tools).
+[[nodiscard]] std::unique_ptr<ProjectTrustStore> makeFileProjectTrustStore(
+    const std::filesystem::path& file);
+
 class LlmClient;
 
 /// HTTP-backed LLM client. The transport reference is borrowed — it
@@ -64,15 +76,12 @@ class LlmClient;
 /// `parseProject` modulo YAML map ordering. Refuses to overwrite an
 /// existing `reqloom.yaml` unless `overwrite` is true.
 ///
-/// With `overwrite` and `pruneStale` both true (the default for an in-place
-/// project save), stale `*.yaml` files in actors/, resources/ and
-/// environments/ that no longer match an entity are deleted. Pass
-/// `pruneStale = false` to replace only the files being written and leave
-/// every other file in the directory untouched (e.g. `reqloom import --force`).
+/// With `overwrite` and `pruneStale` both true (the default for an in-place save), stale
+/// `*.yaml` files in actors/, resources/ and environments/ are deleted; `pruneStale = false`
+/// replaces only the files being written.
 ///
-/// Actor ids, resource ids and environment names must be safe file stems
-/// (non-empty, no leading dot, no `/`, `\`, `:` or NUL); otherwise an error
-/// naming the id is returned and nothing is written.
+/// Actor ids, resource ids and environment names must be safe file stems (non-empty, no
+/// leading dot, no `/`, `\`, `:` or NUL); otherwise an error names the id and nothing is written.
 ///
 /// Returns the path to the written `reqloom.yaml` on success.
 [[nodiscard]] std::expected<std::filesystem::path, ReqloomError> writeProject(

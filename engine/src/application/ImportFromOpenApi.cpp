@@ -1,6 +1,7 @@
 // ImportFromOpenApi — OpenAPI 3.x → Project parser.
 #include "ImportFromOpenApi.h"
 
+#include "ImportSupport.h"
 #include "Verifier.h"
 
 #include "../domain/DependencyResolver.h"
@@ -18,6 +19,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -29,6 +31,7 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 
 ReqloomError invalid(std::string detail) {
     return ReqloomError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
@@ -258,41 +261,23 @@ std::string swagger2BaseUrl(const YAML::Node& root) {
     return scheme + "://" + host + basePath;
 }
 
-/// Rewrite `{name}` path parameters into `{{<resource>.<name>}}` template
-/// references. The engine's variable resolver will then pull the value
-/// from a previously-extracted upstream variable. Linking the upstream
-/// op that *produces* the value is left to the user (or to an AI import
-/// pass) — we surface a warning per parameter to make the gap visible.
-struct PathRewriteResult {
-    std::string rewritten;
-    std::vector<std::string> paramNames;
-};
-
-PathRewriteResult rewritePathParams(std::string_view pathTemplate, std::string_view resourceId) {
-    PathRewriteResult out;
-    out.rewritten.reserve(pathTemplate.size());
-
-    std::size_t i = 0;
-    while (i < pathTemplate.size()) {
-        const auto open = pathTemplate.find('{', i);
-        if (open == std::string_view::npos) {
-            out.rewritten.append(pathTemplate.substr(i));
-            break;
+/// Comma-joined names of the schemes a `security` list asks for; empty when absent, `[]`, or
+/// only the optional `{}`.
+std::string requiredSecuritySchemes(const YAML::Node& security) {
+    std::string out;
+    if (!security || !security.IsSequence()) {
+        return out;
+    }
+    for (const auto& requirement : security) {
+        if (!requirement.IsMap()) {
+            continue;
         }
-        out.rewritten.append(pathTemplate.substr(i, open - i));
-        const auto close = pathTemplate.find('}', open);
-        if (close == std::string_view::npos) {
-            out.rewritten.append(pathTemplate.substr(open));
-            break;
+        for (const auto& kv : requirement) {
+            const auto name = kv.first.as<std::string>("");
+            if (!name.empty() && out.find(name) == std::string::npos) {
+                out += (out.empty() ? "" : ", ") + name;
+            }
         }
-        const auto param = pathTemplate.substr(open + 1, close - open - 1);
-        out.paramNames.emplace_back(param);
-        out.rewritten.append("{{");
-        out.rewritten.append(resourceId);
-        out.rewritten.push_back('.');
-        out.rewritten.append(param);
-        out.rewritten.append("}}");
-        i = close + 1;
     }
     return out;
 }
@@ -432,7 +417,21 @@ std::vector<std::pair<std::string, std::string>> inferExtractionsFromSchema(
 
 constexpr int kMaxYamlToJsonDepth = 64;
 
-nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
+/// Upper bound on nodes converted from YAML to JSON per import: the depth cap does not bound
+/// breadth, since yaml-cpp aliases are re-walked on every use.
+constexpr std::size_t kMaxYamlToJsonNodes = 1'000'000;
+
+struct YamlToJsonBudget {
+    std::size_t remaining{kMaxYamlToJsonNodes};
+    bool exceeded{false};
+};
+
+nlohmann::json yamlToJson(const YAML::Node& node, YamlToJsonBudget& budget, int depth = 0) {
+    if (budget.exceeded || budget.remaining == 0) {
+        budget.exceeded = true;
+        return nlohmann::json{nullptr};
+    }
+    --budget.remaining;
     if (depth > kMaxYamlToJsonDepth) {
         return nlohmann::json{nullptr};
     }
@@ -476,7 +475,7 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
     if (node.IsSequence()) {
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& item : node) {
-            arr.push_back(yamlToJson(item, depth + 1));
+            arr.push_back(yamlToJson(item, budget, depth + 1));
         }
         return arr;
     }
@@ -484,7 +483,7 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
     if (node.IsMap()) {
         nlohmann::json obj = nlohmann::json::object();
         for (const auto& kv : node) {
-            obj[kv.first.as<std::string>("")] = yamlToJson(kv.second, depth + 1);
+            obj[kv.first.as<std::string>("")] = yamlToJson(kv.second, budget, depth + 1);
         }
         return obj;
     }
@@ -565,6 +564,28 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
     std::vector<std::string> warnings;
 
     std::set<std::string> seenOpIds;
+    YamlToJsonBudget jsonBudget;
+    // Derived resource ids are sanitised (`1.0` would break `{{scope.field}}` splitting);
+    // distinct segments that sanitise to the same id get distinct ids.
+    std::map<std::string, std::string> resourceIdBySegment;
+    std::set<std::string> usedResourceIds;
+    const auto safeResourceId = [&](const std::string& derived) {
+        if (const auto it = resourceIdBySegment.find(derived); it != resourceIdBySegment.end()) {
+            return it->second;
+        }
+        const auto base = is::identifier(derived, "root");
+        std::string id = base;
+        for (int n{2}; usedResourceIds.contains(id); ++n) {
+            id = std::format("{}_{}", base, n);
+        }
+        usedResourceIds.insert(id);
+        resourceIdBySegment.emplace(derived, id);
+        return id;
+    };
+
+    if (const auto schemes = requiredSecuritySchemes(root["security"]); !schemes.empty()) {
+        is::warnDroppedAuth(warnings, std::format("spec `{}`", title), schemes);
+    }
 
     for (const auto& pathKv : paths) {
         const auto pathTemplate = pathKv.first.as<std::string>("");
@@ -574,7 +595,7 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
         }
 
         const auto derivation = deriveResourceIdDetailed(pathTemplate);
-        const auto& resourceId = derivation.id;
+        const auto resourceId = safeResourceId(derivation.id);
         auto& resource = outcome.project.resources[ResourceId{resourceId}];
         if (resource.id.value.empty()) {
             resource.id = ResourceId{resourceId};
@@ -607,8 +628,8 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
             op.resource = ResourceId{resourceId};
             op.method = parseHttpMethod(methodLower);
 
-            auto pathRewrite = rewritePathParams(pathTemplate, resourceId);
-            op.pathTemplate = std::move(pathRewrite.rewritten);
+            const auto pathRewrite = is::convertPathParams(pathTemplate, resourceId);
+            op.pathTemplate = pathRewrite.path;
             op.expectStatus = pickExpectedStatus(opNode["responses"]);
 
             Provenance prov;
@@ -625,14 +646,6 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
             if (const auto opIdSpec = opNode["operationId"].as<std::string>("");
                 !opIdSpec.empty()) {
                 prov.evidence["operationId"] = opIdSpec;
-            }
-            for (const auto& param : pathRewrite.paramNames) {
-                prov.evidence["path_param." + param] = std::format(
-                    "rewritten to {{{{{}.{}}}}}; "
-                    "ensure an upstream operation extracts {}",
-                    resourceId,
-                    param,
-                    param);
             }
 
             // Top-level scalar response fields become candidate extractions.
@@ -654,7 +667,13 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
                 SampleResponse sample;
                 sample.kind = Provenance::VerifiedAgainst::OpenApiExample;
                 sample.statusCode = op.expectStatus.value_or(200);
-                const auto exampleJson = yamlToJson(*exampleNode);
+                const auto exampleJson = yamlToJson(*exampleNode, jsonBudget);
+                if (jsonBudget.exceeded) {
+                    return std::unexpected(invalid(std::format(
+                        "openapi import: response examples expand to more than {} nodes "
+                        "(nested YAML aliases?); refusing to import",
+                        kMaxYamlToJsonNodes)));
+                }
                 sample.body = exampleJson.dump();
                 if (auto report = verifier.verify(op, sample); report) {
                     bool anyVerified = false;
@@ -705,21 +724,15 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
                     op.extractions.size()));
             }
 
-            op.provenance = std::move(prov);
-
             // Each rewritten path parameter shows up as one warning so the
             // user's review loop sees exactly what needs to be linked.
-            for (const auto& param : pathRewrite.paramNames) {
-                warnings.push_back(std::format(
-                    "operation {}: path parameter `{}` resolves to {{{{{}.{}}}}} — wire an "
-                    "upstream operation that extracts `{}` into resource `{}`",
-                    op.id.value,
-                    param,
-                    resourceId,
-                    param,
-                    param,
-                    resourceId));
+            is::notePathParams(pathRewrite, op.id.value, resourceId, {}, prov, warnings);
+            // Operation-level `security` replaces the spec-level one.
+            if (const auto schemes = requiredSecuritySchemes(opNode["security"]);
+                !schemes.empty()) {
+                is::warnDroppedAuth(warnings, "operation " + op.id.value, schemes);
             }
+            op.provenance = std::move(prov);
 
             resource.operations.emplace(uniqueName, std::move(op));
         }

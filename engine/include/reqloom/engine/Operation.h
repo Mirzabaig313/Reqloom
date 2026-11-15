@@ -45,15 +45,21 @@ struct Extraction {
 
 /// Per-operation retry policy.
 ///
-/// `maxAttempts` is the total number of sends (values below 1 count as 1).
-/// Retryable transport errors and unexpected 5xx responses are retried
-/// within that budget for GET, HEAD, OPTIONS, PUT and DELETE. POST and
-/// PATCH are re-sent only when the error proves the request never reached
-/// the server (NetworkDns); a 5xx or an ambiguous transport error is final.
+/// `maxAttempts` (YAML `retry.max`) is the total number of sends (values below 1 count as 1);
+/// waits back off exponentially from `baseBackoff` (`retry.backoff`, ms), capped at
+/// `maxBackoff`. Within that budget an attempt is re-sent when:
+/// - the transport failed with NetworkDns or NetworkConnect (the request never reached the
+///   server): for every method;
+/// - another retryable transport error (NetworkTimeout) or an unexpected 5xx occurred: for
+///   GET, HEAD, OPTIONS, PUT and DELETE, and for POST and PATCH only when `nonIdempotent`.
+/// Anything else (4xx, TLS and policy errors, an expected 5xx) is final.
 struct RetryPolicy {
     int maxAttempts{3};
     std::chrono::milliseconds baseBackoff{500};
     std::chrono::milliseconds maxBackoff{30'000};
+    /// YAML `retry.non_idempotent: true`: the author declares this POST or PATCH safe to
+    /// repeat. No effect on other methods.
+    bool nonIdempotent{false};
 };
 
 /// Polling configuration for operations that return 202 Accepted and need

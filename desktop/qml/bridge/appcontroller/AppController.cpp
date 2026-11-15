@@ -177,8 +177,6 @@ AppController::AppController(QObject* parent)
     sessionTicker_.setInterval(kSessionTickMs);
     connect(&sessionTicker_, &QTimer::timeout, this, &AppController::refreshActorSessions);
 
-    // Run state is per environment: point the controller at the newly selected
-    // environment's context and redraw what shows that context's state.
     connect(this, &AppController::environmentChanged, this, [this]() {
         runController_->setEnvironment(environment_);
         refreshActorSessions();
@@ -521,7 +519,6 @@ void AppController::closeProject(int index) {
     if (wasActive && !canLeaveActiveProject()) {
         return;
     }
-    // Closing drops the project's sessions + caches in every environment.
     if (const ProjectModel* closing = workspace_->at(index); closing != nullptr) {
         runController_->forgetProject(closing->rootPath());
     }
@@ -960,8 +957,7 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
         std::error_code mkEc;
         std::filesystem::create_directories(projectDir, mkEc);
 
-        // An import replaces the files it writes but must never delete the
-        // user's other actors/resources/environments (same rule as the CLI).
+        // An import must never delete the user's other actors/resources/environments.
         auto written =
             engine::writeProject(projectDir, imported->project, overwrite, /*pruneStale=*/false);
         if (!written) {
@@ -1843,9 +1839,8 @@ void AppController::beginEdit() {
         editBodyIsForm_ = true;
         editForm_.setPairs(toEditPairs(*op->bodyForm));
         editBody_.clear();
-        const bool anyFile = std::ranges::any_of(*op->bodyForm, [](const auto& kv) {
-            return QString::fromStdString(kv.second).startsWith(QLatin1Char('@'));
-        });
+        const bool anyFile = std::ranges::any_of(
+            *op->bodyForm, [](const auto& kv) { return engine::isFormFileTemplate(kv.second); });
         const bool multipart = anyFile || ctypeBase.compare(QStringLiteral("multipart/form-data"),
                                                             Qt::CaseInsensitive) == 0;
         editBodyType_ =
@@ -2351,6 +2346,18 @@ void AppController::copyToClipboard(const QString& text, const QString& label) {
 
 QString AppController::localFileFromUrl(const QUrl& url) const {
     return url.isLocalFile() ? url.toLocalFile() : url.toString();
+}
+
+bool AppController::isFormFileValue(const QString& value) const {
+    return engine::isFormFileTemplate(value.toStdString());
+}
+
+QString AppController::formValueText(const QString& value) const {
+    return QString::fromStdString(engine::formTemplateText(value.toStdString()));
+}
+
+QString AppController::formTextValue(const QString& text) const {
+    return QString::fromStdString(engine::formTextTemplate(text.toStdString()));
 }
 
 void AppController::refreshExamples() {

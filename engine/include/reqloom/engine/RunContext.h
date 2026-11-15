@@ -17,6 +17,8 @@
 
 namespace reqloom::engine {
 
+class SecretRegistry;
+
 /// One actor session, lifecycled per run.
 struct ActorSession {
     enum class State : std::uint8_t { None, Authenticating, Live, Refreshing };
@@ -131,8 +133,8 @@ public:
     [[nodiscard]] const ActorSession* session(const ActorId& actor) const noexcept;
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
-    /// Drop every session and cookie jar, including entries not keyed by a
-    /// declared actor (inline-OAuth2 token caches). Used by a clean run/reset.
+    /// Drop every session and cookie jar, including inline-OAuth2 token caches not keyed by an
+    /// actor.
     void clearSessions();
 
     /// Snapshot of the actor's current cookies. Empty when no jar.
@@ -164,6 +166,11 @@ public:
 
     void recordExtraction(ExtractionTrace trace);
     [[nodiscard]] const std::vector<ExtractionTrace>& extractionTrace() const noexcept;
+
+    /// Secret VALUES known to this context (engine-internal type); each is redacted from every
+    /// event, step detail and history row. `putSession` and `setCookie` register credentials
+    /// automatically. Thread-safe and usable through a const context.
+    [[nodiscard]] SecretRegistry& secretRegistry() const noexcept;
 
 private:
     struct Impl;

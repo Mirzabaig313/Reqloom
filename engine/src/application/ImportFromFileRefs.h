@@ -1,16 +1,15 @@
 // File-reference sanitising shared by the collection importers.
 //
-// In a Reqloom `body_form`, a value starting with `@` is a file upload
-// (MultipartBuilder reads the file at run time). Imported collections come
-// from someone else's machine, so an importer must never carry a directory
-// path from the collection into an `@` value: a shared collection naming
-// `/Users/x/.ssh/id_rsa` or `../../secret` would otherwise upload that file
-// when run. Importers keep only the base name and warn.
+// In a `body_form`, a value starting with `@` is a file upload. Imported collections come from
+// someone else's machine, so an importer must never carry a directory path into an `@` value
+// (`/Users/x/.ssh/id_rsa` or `../../secret` would upload that file when run); importers keep
+// only the base name and warn.
 //
-// A relative `@name` is resolved by MultipartBuilder against the process's
-// current working directory (it is not anchored to the project folder), so
-// the warnings say exactly that.
+// A text value starting with `@` is escaped as `@@`, so it needs no path stripping. A relative
+// `@name` resolves against the project folder.
 #pragma once
+
+#include <reqloom/engine/FormBody.h>
 
 #include <cctype>
 #include <format>
@@ -27,9 +26,8 @@ struct FileBaseName {
     bool hadDirectory{false};  ///< true when anything was removed from `path`
 };
 
-/// Final component of `path`, accepting both `/` and `\` separators and a
-/// leading drive letter (`C:a.png`), since collections come from any OS.
-/// `.` and `..` are not file names and reduce to an empty name.
+/// Final component of `path`, accepting `/` and `\` separators and a drive letter; `.` and
+/// `..` reduce to an empty name.
 [[nodiscard]] inline FileBaseName fileBaseName(std::string_view path) {
     std::string_view rest = path;
     bool hadDirectory{false};
@@ -51,15 +49,13 @@ namespace detail {
 
 [[nodiscard]] inline std::string placementHint(std::string_view name) {
     return std::format(
-        "place `{}` in the directory Reqloom is run from (relative `@` paths resolve against "
-        "the current working directory), or choose the file again in the form editor",
+        "place `{}` next to reqloom.yaml in the project folder (relative `@` paths resolve "
+        "against the project folder), or choose the file again in the form editor",
         name);
 }
 
-/// A file name that contains a `{{...}}` variable is only known at run
-/// time, after the importer's directory stripping has run, so a value from
-/// the imported environment could put a full path back. Such a reference
-/// is never imported.
+/// A file name containing a `{{...}}` variable is only known at run time, when an imported
+/// environment could put a full path back, so such a reference is never imported.
 [[nodiscard]] inline bool namesAVariable(std::string_view name) {
     return name.find("{{") != std::string_view::npos;
 }
@@ -81,10 +77,8 @@ inline void warnVariableFileName(std::string_view kind,
 
 }  // namespace detail
 
-/// `body_form` value for an imported FILE field whose source path is
-/// `path`: `@<base name>` (after `rewrite`), or a bare `@` placeholder when
-/// there is no usable name. Adds one warning to `warnings` when a directory
-/// part was dropped; a path that was already a bare name warns nothing.
+/// `body_form` value for an imported FILE field: `@<base name>` (after `rewrite`), or a bare
+/// `@` placeholder when no usable name remains. Warns once when a directory part was dropped.
 template <typename Rewrite>
 [[nodiscard]] std::string fileFieldValue(std::string_view path,
                                          std::string_view opId,
@@ -122,43 +116,15 @@ template <typename Rewrite>
     return "@" + std::forward<Rewrite>(rewrite)(base.name);
 }
 
-/// `body_form` value for an imported TEXT field. Reqloom has no escape for
-/// a literal leading `@`, so such a value would be sent as a file upload:
-/// it is warned about and its path reduced to a base name exactly like a
-/// file field, so a text field cannot smuggle in a directory path.
+/// `body_form` value for an imported TEXT field: the value after `rewrite`, with a leading
+/// `@` escaped as `@@` so it is not read as a file.
 template <typename Rewrite>
 [[nodiscard]] std::string textFieldValue(std::string_view value,
-                                         std::string_view opId,
-                                         std::string_view field,
-                                         std::vector<std::string>& warnings,
+                                         std::string_view /*opId*/,
+                                         std::string_view /*field*/,
+                                         std::vector<std::string>& /*warnings*/,
                                          Rewrite&& rewrite) {
-    if (!value.starts_with('@')) {
-        return std::forward<Rewrite>(rewrite)(value);
-    }
-    const auto base = fileBaseName(value.substr(1));
-    if (detail::namesAVariable(base.name)) {
-        detail::warnVariableFileName("text", opId, field, value, warnings);
-        return "@";
-    }
-    std::string detailText = base.hadDirectory
-                                 ? std::format("its directory was dropped and only `{}` kept — {}",
-                                               base.name,
-                                               detail::placementHint(base.name))
-                                 : std::string{"review the value"};
-    if (base.hadDirectory && base.name.empty()) {
-        detailText = "it had no file name and was imported as an empty file slot";
-    }
-    warnings.push_back(std::format(
-        "operation {}: text field `{}` value `{}` starts with `@`, which Reqloom sends as a file "
-        "upload (there is no escape for a literal leading `@`); {}",
-        opId,
-        field,
-        value,
-        detailText));
-    if (base.name.empty()) {
-        return "@";
-    }
-    return "@" + std::forward<Rewrite>(rewrite)(base.name);
+    return formTextTemplate(std::forward<Rewrite>(rewrite)(value));
 }
 
 }  // namespace reqloom::engine::import_files

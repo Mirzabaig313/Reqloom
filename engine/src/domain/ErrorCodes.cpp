@@ -26,6 +26,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_NETWORK_TIMEOUT";
         case ErrorCode::NetworkDns:
             return "E_NETWORK_DNS";
+        case ErrorCode::NetworkConnect:
+            return "E_NETWORK_CONNECT";
         case ErrorCode::NetworkTls:
             return "E_NETWORK_TLS";
         case ErrorCode::NetworkPolicy:
@@ -90,6 +92,8 @@ std::string_view humanize(ErrorCode code) noexcept {
             return "Request timed out";
         case ErrorCode::NetworkDns:
             return "Could not resolve host";
+        case ErrorCode::NetworkConnect:
+            return "Could not connect to host";
         case ErrorCode::NetworkTls:
             return "TLS handshake failed";
         case ErrorCode::NetworkPolicy:
@@ -138,7 +142,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
     // Reverse of toCodeString, matched against the full enumerator list.
     // The drift guard below fails the build if a code is added without
     // growing this array.
-    constexpr std::array<ErrorCode, 29> kAll = {
+    constexpr std::array<ErrorCode, 30> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,
         ErrorCode::Cycle,
@@ -148,6 +152,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::IndexedRefOutOfRange,
         ErrorCode::NetworkTimeout,
         ErrorCode::NetworkDns,
+        ErrorCode::NetworkConnect,
         ErrorCode::NetworkTls,
         ErrorCode::NetworkPolicy,
         ErrorCode::UploadFileUnreadable,
@@ -184,6 +189,7 @@ bool isRetryable(ErrorCode code) noexcept {
     switch (code) {
         case ErrorCode::NetworkTimeout:
         case ErrorCode::NetworkDns:
+        case ErrorCode::NetworkConnect:
         case ErrorCode::Http5xx:
             return true;
         default:
@@ -207,6 +213,7 @@ ErrorClass classify(ErrorCode code) noexcept {
 
         case ErrorCode::NetworkTimeout:
         case ErrorCode::NetworkDns:
+        case ErrorCode::NetworkConnect:
         case ErrorCode::NetworkTls:
         case ErrorCode::NetworkPolicy:
             return ErrorClass::Network;

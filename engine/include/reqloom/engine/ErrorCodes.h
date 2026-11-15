@@ -23,11 +23,13 @@ enum class ErrorCode : std::uint8_t {
     // Network
     NetworkTimeout,
     NetworkDns,
+    /// The TCP connection (or proxy tunnel) could not be established, so no request bytes
+    /// reached the server. Retryable for any method.
+    NetworkConnect,
     NetworkTls,
-    /// The transfer was refused by a transport safety rule rather than by
-    /// the network: a URL scheme other than http/https, a response body
-    /// over `TransportConfig::maxResponseBytes`, or too many redirects.
-    /// `detail` says which. Not retryable.
+    /// Refused by a transport safety rule (non-http(s) scheme, body over
+    /// `TransportConfig::maxResponseBytes`, too many redirects); `detail` says which. Not
+    /// retryable.
     NetworkPolicy,
     /// Local file referenced by an `@/path` value in `body_form` could
     /// not be read (missing, not a regular file, or exceeded the size

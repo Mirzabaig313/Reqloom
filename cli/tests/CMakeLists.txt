@@ -15,6 +15,7 @@ target_link_libraries(reqloom-cli-renderer-tests
 )
 reqloom_set_warnings(reqloom-cli-renderer-tests)
 reqloom_apply_sanitizers(reqloom-cli-renderer-tests)
+reqloom_isolate_test_config(reqloom-cli-renderer-tests)
 
 # CLI test binary follows the same boundary as the CLI itself.
 reqloom_forbid_dependencies(reqloom-cli-renderer-tests
@@ -47,6 +48,7 @@ target_link_libraries(reqloom-cli-import-tests
 )
 reqloom_set_warnings(reqloom-cli-import-tests)
 reqloom_apply_sanitizers(reqloom-cli-import-tests)
+reqloom_isolate_test_config(reqloom-cli-import-tests)
 
 reqloom_forbid_dependencies(reqloom-cli-import-tests
     Qt6::Widgets

@@ -221,8 +221,7 @@ TEST(ImportFromPostman, formdata_file_fields_become_at_path_references) {
 // File fields carrying paths from the exporting machine (Unix absolute,
 // Windows absolute, relative `../`) keep only their base name, each with a
 // warning; a bare name is untouched and silent. A text field whose value
-// starts with `@` would be sent as an upload, so it is warned about and
-// reduced the same way.
+// starts with `@` is escaped as `@@` so it is still sent as that text.
 constexpr const char* kFilePathsCollection = R"JSON(
 {
   "info": { "name": "Uploads", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
@@ -266,15 +265,16 @@ TEST(ImportFromPostman, file_field_paths_are_reduced_to_base_names_with_warnings
     EXPECT_EQ(form.at("bare"), "@photo.png");
     EXPECT_EQ(form.at("multi"), "@one.png");
     EXPECT_EQ(form.at("dironly"), "@");
-    EXPECT_EQ(form.at("sneaky"), "@passwd");
+    EXPECT_EQ(form.at("sneaky"), "@@/etc/passwd");
 
     const auto& w = outcome->warnings;
-    for (const char* field : {"`unix`", "`win`", "`rel`", "`dironly`", "`sneaky`"}) {
+    for (const char* field : {"`unix`", "`win`", "`rel`", "`dironly`"}) {
         EXPECT_NE(w.find(field), std::string::npos) << field << '\n' << w;
     }
     EXPECT_EQ(w.find("`bare`"), std::string::npos) << w;
+    EXPECT_EQ(w.find("`sneaky`"), std::string::npos) << w;
     EXPECT_NE(w.find("operation uploads.upload"), std::string::npos) << w;
-    EXPECT_NE(w.find("current working directory"), std::string::npos) << w;
+    EXPECT_NE(w.find("next to reqloom.yaml in the project folder"), std::string::npos) << w;
 }
 
 // A file name made of a variable is resolved only at run time, after the
@@ -298,8 +298,8 @@ TEST(ImportFileRefs, file_reference_built_from_a_variable_becomes_an_empty_slot)
     EXPECT_FALSE(warnings.empty());
 
     warnings.clear();
-    EXPECT_EQ(textFieldValue("@{{file}}", "up.load", "note", warnings, identity), "@");
-    EXPECT_FALSE(warnings.empty());
+    EXPECT_EQ(textFieldValue("@{{file}}", "up.load", "note", warnings, identity), "@@{{file}}");
+    EXPECT_TRUE(warnings.empty());
 
     // A plain name is unaffected.
     warnings.clear();
@@ -348,8 +348,8 @@ TEST(ImportFileRefs, base_name_handles_separators_drives_and_edge_cases) {
     EXPECT_EQ(ce::import_files::fileFieldValue("/a/x.png", "r.op", "f", warnings, identity),
               "@x.png");
     EXPECT_EQ(ce::import_files::textFieldValue("@handle", "r.op", "t", warnings, identity),
-              "@handle");
-    EXPECT_EQ(warnings.size(), 2U);
+              "@@handle");
+    EXPECT_EQ(warnings.size(), 1U);
 }
 
 TEST(ImportFromPostman, importAny_detects_collection_when_marker_past_head_window) {
@@ -417,4 +417,97 @@ TEST(ImportFromPostman, importAny_tolerates_non_string_meta_format) {
     ASSERT_NO_THROW(outcome = ce::importAny(file, scratch.path()));
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     EXPECT_EQ(outcome->project.name, "Meta");
+}
+
+namespace {
+
+std::size_t countOf(const std::string& haystack, std::string_view needle) {
+    std::size_t n = 0;
+    for (auto pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+// A Postman `:id` path parameter becomes the same `{{resource.id}}`
+// reference the OpenAPI importer produces, with its `url.variable` value
+// named in the warning.
+TEST(ImportFromPostman, path_variable_becomes_resource_reference) {
+    ScratchDir scratch;
+    const auto file = scratch.write("pathvar.json", R"JSON(
+{
+  "info": { "name": "Users", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  "item": [
+    { "name": "Get User", "request": { "method": "GET",
+      "url": { "raw": "https://api.example.com/users/:id", "path": ["users", ":id"],
+               "variable": [ { "key": "id", "value": "123" } ] } } }
+  ]
+}
+)JSON");
+    auto outcome = ce::importFromPostman(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "users.get_user");
+    ASSERT_NE(op, nullptr);
+    EXPECT_EQ(op->pathTemplate, "/users/{{users.id}}");
+    EXPECT_NE(outcome->warnings.find("path parameter `id` resolves to {{users.id}}"),
+              std::string::npos)
+        << outcome->warnings;
+    EXPECT_NE(outcome->warnings.find("`123`"), std::string::npos) << outcome->warnings;
+}
+
+// A dotted Postman variable is one variable name, not a Reqloom scope; it
+// maps to a sanitised environment key instead of failing the whole import
+// with RefUndefined.
+TEST(ImportFromPostman, dotted_variable_maps_to_sanitised_env_key) {
+    ScratchDir scratch;
+    const auto file = scratch.write("dotted.json", R"JSON(
+{
+  "info": { "name": "Keys" },
+  "variable": [ { "key": "api.key", "value": "k1" } ],
+  "item": [
+    { "name": "Ping", "request": { "method": "GET",
+      "header": [ { "key": "X-Key", "value": "{{api.key}}" } ],
+      "url": "https://api.example.com/ping" } }
+  ]
+}
+)JSON");
+    auto outcome = ce::importFromPostman(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "keys.ping");
+    ASSERT_NE(op, nullptr);
+    EXPECT_EQ(op->headers.at("X-Key"), "{{env.api_key}}");
+    EXPECT_EQ(outcome->project.environments.at("default").at("api_key"), "k1");
+    EXPECT_NE(outcome->warnings.find("`{{api.key}}`"), std::string::npos) << outcome->warnings;
+}
+
+// Collection- and folder-level auth each give one warning; a request with
+// `noauth` or with no auth block (inherits) gives none.
+TEST(ImportFromPostman, auth_warnings_once_per_scope_and_none_for_noauth) {
+    ScratchDir scratch;
+    const auto file = scratch.write("auth.json", R"JSON(
+{
+  "info": { "name": "Auth" },
+  "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{token}}" } ] },
+  "item": [
+    { "name": "Admin", "auth": { "type": "basic" }, "item": [
+      { "name": "Inherits", "request": { "method": "GET", "url": "https://a.example/x" } }
+    ] },
+    { "name": "Open", "request": { "method": "GET", "auth": { "type": "noauth" },
+      "url": "https://a.example/open" } },
+    { "name": "Own", "request": { "method": "GET", "auth": { "type": "apikey" },
+      "url": "https://a.example/own" } }
+  ]
+}
+)JSON");
+    auto outcome = ce::importFromPostman(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto& w = outcome->warnings;
+    EXPECT_EQ(countOf(w, "auth was not imported"), 3u) << w;
+    EXPECT_EQ(countOf(w, "collection `Auth`: `bearer` auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "folder `Admin`: `basic` auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "operation auth.own: `apikey` auth was not imported"), 1u) << w;
+    EXPECT_EQ(w.find("operation auth.open"), std::string::npos) << w;
 }

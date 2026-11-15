@@ -11,8 +11,10 @@
 
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <map>
 #include <string>
+#include <string_view>
 #include <variant>
 
 namespace reqloom::engine {
@@ -31,38 +33,64 @@ struct MultipartBody {
 };
 using FormBody = std::variant<UrlEncodedBody, MultipartBody>;
 
-/// Upload size caps applied while resolving `@path` file parts. Both are
-/// checked from the file's measured size before its bytes are read.
+/// Upload size caps for `@path` file parts, checked from the measured size before reading.
 struct UploadLimits {
     /// Largest single file part (50 MiB).
     std::uintmax_t perPartBytes{50ULL * 1024 * 1024};
-    /// Largest sum of all file parts in one request (256 MiB); text parts
-    /// do not count.
+    /// Largest sum of all file parts in one request (256 MiB); text parts do not count.
     std::uintmax_t totalBytes{256ULL * 1024 * 1024};
 };
 
-/// Whether the operation's headers route the request to multipart.
-[[nodiscard]] bool wantsMultipart(const std::map<std::string, std::string>& headers,
-                                  const std::map<std::string, std::string>& resolvedFormFields);
+enum class FormFieldKind : std::uint8_t {
+    Text,
+    File,
+};
 
-/// Build the request body from a `body_form` map whose values have
-/// already been substituted by `VariableResolver`.
+/// A `body_form` template classified from what is written in the YAML, before substitution:
+///   - one leading `@` is a FILE field; `rest` is the path template after the `@`;
+///   - a leading `@@` is TEXT with one `@` removed (`@@mirza` -> `@mirza`);
+///   - anything else is TEXT; `rest` is the whole template.
+/// The kind never depends on the substituted value, so a variable resolving to `@/etc/passwd`
+/// is still sent as text.
+struct FormFieldTemplate {
+    FormFieldKind kind{FormFieldKind::Text};
+    std::string_view rest;  ///< The template to resolve; views into the input.
+};
+[[nodiscard]] FormFieldTemplate classifyFormTemplate(std::string_view tmpl) noexcept;
+
+/// One `body_form` field ready for encoding: its kind and resolved value (the text to send,
+/// or the file path without the leading `@`).
+struct FormField {
+    FormFieldKind kind{FormFieldKind::Text};
+    std::string value;
+};
+using FormFields = std::map<std::string, FormField>;
+
+[[nodiscard]] FormFields literalFormFields(const std::map<std::string, std::string>& templates);
+
+/// Whether the request goes out as multipart: a multipart/form-data Content-Type, or any
+/// FILE field.
+[[nodiscard]] bool wantsMultipart(const std::map<std::string, std::string>& headers,
+                                  const FormFields& fields);
+
+/// Build the request body from classified, resolved `body_form` fields.
 ///
-///   - When `routeMultipart` is true OR any resolved value starts with
-///     `@`, returns `MultipartBody`. Values with leading `@` are treated
-///     as filesystem paths (the `@` is stripped before filesystem checks).
+///   - When `routeMultipart` is true, returns `MultipartBody`: TEXT fields
+///     become text parts, FILE fields are read from disk.
 ///   - Otherwise returns `UrlEncodedBody` with `&`-joined `key=value`
-///     pairs (URL-encoded).
+///     pairs (URL-encoded). Callers route to multipart whenever a FILE
+///     field is present (`wantsMultipart`).
 ///
-/// The `@` prefix is the conventional curl / Postman / GiGwala syntax
-/// for file fields. We honour it so existing schemas migrate cleanly.
+/// A FILE field's path is used as written when absolute; a relative path resolves against
+/// `projectRoot`, or the working directory when empty. `~` is not expanded.
 ///
 /// Returns `UploadFileUnreadable` when a referenced file is missing,
 /// not a regular file, exceeds the per-part cap, or would push the total
 /// of all file parts past the request cap (`limits`).
 [[nodiscard]] std::expected<FormBody, ReqloomError> buildFormBody(
-    const std::map<std::string, std::string>& resolvedFormFields,
+    const FormFields& fields,
     bool routeMultipart,
+    const std::filesystem::path& projectRoot,
     const UploadLimits& limits = UploadLimits{});
 
 }  // namespace reqloom::engine

@@ -13,9 +13,8 @@ namespace reqloom::engine {
 
 namespace {
 
-/// Index of the `}}` closing the placeholder opened at `start`. Mirrors the
-/// resolver's grammar: quoted builtin arguments may contain `}}` and
-/// escaped quotes, so quote state inside the placeholder is tracked here.
+/// Index of the `}}` closing the placeholder opened at `start`; quote state is tracked because
+/// quoted builtin arguments may contain `}}`.
 [[nodiscard]] std::optional<std::size_t> findPlaceholderEnd(std::string_view input,
                                                             std::size_t start) noexcept {
     char quote{};
@@ -69,7 +68,6 @@ namespace {
     return mediaType == "application/json" || mediaType.ends_with("+json");
 }
 
-/// Resolve one placeholder and append it, escaped when it sits in a string.
 void appendPlaceholder(const VariableResolver& resolver,
                        std::string_view placeholder,
                        const bool inString,
@@ -77,8 +75,7 @@ void appendPlaceholder(const VariableResolver& resolver,
                        const ResolveContext& resolveCtx,
                        VariableResolver::Result& result) {
     auto part = resolver.resolve(placeholder, ctx, resolveCtx);
-    // Unresolved placeholders stay verbatim so diagnostics and dry-run
-    // markers still find the original `{{token}}` in the output.
+    // Unresolved placeholders stay verbatim so diagnostics and dry-run markers can find them.
     const bool resolved = part.unresolvedOccurrences.empty();
     result.output += (resolved && inString) ? escapeJsonStringContent(part.output) : part.output;
     result.unresolved.insert(result.unresolved.end(),

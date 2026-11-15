@@ -6,6 +6,12 @@
 //   $.nested.field
 //   $.array[0].field
 //   $.field[0]
+//   $.items[?(@.status == 'open')].id   (predicate filter; `@` = element)
+//   $.items[*].id                       (list extraction only)
+// Anything else (`$..x`, quoted keys, negative indices, an unclosed bracket, a malformed
+// filter) is rejected as an unsupported path, never a silent miss. Bodies nested deeper than
+// kMaxJsonNestingDepth (256) are rejected with ResponseParse; parse errors report a byte
+// offset, never body text.
 //
 // Beyond JSONPath, the detailed variant additionally resolves:
 //   - Source::Header     — looks up an HTTP response header (case-insensitive).
@@ -34,10 +40,9 @@ namespace reqloom::engine {
 /// Resolve a JSONPath against an already-parsed document. Supports the engine's
 /// JSONPath subset — field access (`a.b`), array indexing (`a[0]`, `a[0][1]`),
 /// and predicate filters (`a[?(@.field=='x')]`, first match wins). Returns
-/// nullptr on a miss; a resolved-but-null value yields a non-null pointer to a
-/// JSON `null` (so callers can distinguish "missing" from "present and null").
-/// Shared so every JSONPath surface (extraction, verification) walks the same
-/// way.
+/// nullptr on a miss and on an unsupported / malformed path; a resolved-but-null value yields a
+/// non-null pointer to a JSON `null` (so callers can distinguish "missing" from "present and
+/// null"). Shared so every JSONPath surface (extraction, verification) walks the same way.
 [[nodiscard]] const nlohmann::json* walkJsonPath(const nlohmann::json& doc,
                                                  std::string_view sourcePath);
 

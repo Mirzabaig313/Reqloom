@@ -2,8 +2,11 @@
 // undefined refs.
 #include "DependencyResolver.h"
 
+#include <reqloom/engine/Predicate.h>
+
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <format>
 #include <iterator>
 #include <map>
@@ -28,10 +31,8 @@ struct ParsedRef {
     std::string field;
 };
 
-/// Collect the templated strings on an operation's request (path, body,
-/// headers, query params, form fields) into one list for reference
-/// scanning. Returns views into `op`; the caller must keep `op` alive
-/// while the returned list is in use (always synchronous here).
+/// Collect the templated strings on an operation's request into one list for reference
+/// scanning. Views into `op`; the caller keeps `op` alive.
 std::vector<std::string_view> requestTemplates(const Operation& op) {
     std::vector<std::string_view> templates;
     templates.reserve(1 + (op.bodyTemplate ? 1U : 0U) + op.headers.size() + op.queryParams.size() +
@@ -54,7 +55,6 @@ std::vector<std::string_view> requestTemplates(const Operation& op) {
     return templates;
 }
 
-/// Every value field of an inline auth block (all may hold `{{...}}`).
 void appendInlineAuthTemplates(const InlineAuth& a, std::vector<std::string_view>& out) {
     for (const std::string* field :
          {&a.token,           &a.username,           &a.password,
@@ -72,8 +72,8 @@ void appendInlineAuthTemplates(const InlineAuth& a, std::vector<std::string_view
     }
 }
 
-/// The operation's effective inline auth templates: its own block, or the
-/// project default when the block is `Inherit` (mirrors ExecutionEngine).
+/// The operation's effective inline auth templates: its own block, or the project default
+/// when it is `Inherit`.
 std::vector<std::string_view> authTemplates(const Operation& op, const Project& project) {
     std::vector<std::string_view> templates;
     if (!op.inlineAuth) {
@@ -89,7 +89,6 @@ std::vector<std::string_view> authTemplates(const Operation& op, const Project& 
     return templates;
 }
 
-/// `poll_until` templates: the poll path and its predicates.
 std::vector<std::string_view> pollTemplates(const Operation& op) {
     std::vector<std::string_view> templates;
     if (op.pollUntil) {
@@ -102,8 +101,6 @@ std::vector<std::string_view> pollTemplates(const Operation& op) {
     return templates;
 }
 
-/// Every templated string an operation resolves when it runs: request,
-/// effective inline auth, and `poll_until`.
 std::vector<std::string_view> operationTemplates(const Operation& op, const Project& project) {
     auto templates = requestTemplates(op);
     std::ranges::copy(authTemplates(op, project), std::back_inserter(templates));
@@ -122,8 +119,8 @@ std::vector<std::string_view> operationTemplates(const Operation& op, const Proj
     return s.substr(begin, end - begin + 1);
 }
 
-/// Split one dotted reference (`scope.field`, `scope[N].field`) into a
-/// ParsedRef. No dot → nullopt (unresolved at send time, not a load error).
+/// Split one dotted reference into a ParsedRef; no dot → nullopt (unresolved at send time,
+/// not a load error).
 std::optional<ParsedRef> parseDotted(std::string_view inner) {
     const auto dot = inner.find('.');
     if (dot == std::string_view::npos) {
@@ -132,17 +129,14 @@ std::optional<ParsedRef> parseDotted(std::string_view inner) {
     auto scope = std::string{inner.substr(0, dot)};
     auto field = std::string{inner.substr(dot + 1)};
 
-    // Strip a trailing `[N]` index, matching resolveDotted's
-    // indexed-resource handling (`order[2]`).
     if (const auto br = scope.find('['); br != std::string::npos) {
         scope = scope.substr(0, br);
     }
     return ParsedRef{std::move(scope), std::move(field)};
 }
 
-/// The bare-reference argument of a builtin call `$.ns.name(arg)`, if any.
-/// Mirrors VariableResolver::resolveCallArg: a quoted argument is a literal,
-/// anything else is a dotted reference resolved like a top-level one.
+/// The bare-reference argument of a builtin call `$.ns.name(arg)`, if any; a quoted argument
+/// is a literal.
 std::optional<std::string_view> builtinCallArgument(std::string_view inner) {
     const auto open = inner.find('(');
     if (open == std::string_view::npos || inner.back() != ')') {
@@ -162,9 +156,8 @@ std::optional<std::string_view> builtinCallArgument(std::string_view inner) {
 /// `{{ order.id }}` (spaces), dropping a real dependency edge and
 /// letting a whitespaced cyclic reference evade detection.
 ///
-/// `$` builtins are recorded with scope "$". A builtin call's bare
-/// reference argument (`{{$.base64.encode(secret.KEY)}}`) is recorded as
-/// well, so it is checked, creates edges and has its secret pre-loaded.
+/// `$` builtins are recorded with scope "$". A builtin call's bare reference argument is
+/// recorded too, so it is checked, creates edges and has its secret pre-loaded.
 std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templates) {
     static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
     std::vector<ParsedRef> refs;
@@ -178,8 +171,8 @@ std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templ
             }
 
             if (inner.front() == '$') {
-                // The builtin's tail (`env.NAME`, `uuid`, ...) is kept so
-                // validate() can check `$.env` names against allowed_env.
+                // The builtin's tail is kept so validate() can check `$.env` names against
+                // allowed_env.
                 refs.push_back(
                     ParsedRef{"$", inner.starts_with("$.") ? inner.substr(2) : std::string{}});
                 if (const auto arg = builtinCallArgument(inner)) {
@@ -198,8 +191,7 @@ std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templ
     return refs;
 }
 
-/// Reject a `$.env.NAME` builtin whose NAME is not in the project's
-/// `allowed_env` list: it can never resolve, and the message says how to fix it.
+/// Reject a `$.env.NAME` builtin whose NAME is not in the project's `allowed_env`.
 std::expected<void, ReqloomError> checkEnvBuiltinAllowed(const OperationId& opId,
                                                          const ParsedRef& ref,
                                                          const Project& project) {
@@ -222,9 +214,105 @@ std::expected<void, ReqloomError> checkEnvBuiltinAllowed(const OperationId& opId
                     name)});
 }
 
+/// The faker generators VariableResolver implements; any other name never resolves.
+constexpr std::array<std::string_view, 2> kFakerNames{"email", "phone"};
+
+/// Reject `$.faker.NAME` for an unknown generator; anything after the name is left to run time.
+std::expected<void, ReqloomError> checkFakerBuiltinKnown(const OperationId& opId,
+                                                         const ParsedRef& ref) {
+    constexpr std::string_view kFakerPrefix{"faker."};
+    if (ref.scope != "$" || !ref.field.starts_with(kFakerPrefix)) {
+        return {};
+    }
+    auto name = std::string_view{ref.field}.substr(kFakerPrefix.size());
+    const auto end = std::ranges::find_if(name, [](const char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) == 0 && c != '_';
+    });
+    name = name.substr(0, static_cast<std::size_t>(end - name.begin()));
+    if (std::ranges::find(kFakerNames, name) != kFakerNames.end()) {
+        return {};
+    }
+    return std::unexpected(
+        ReqloomError{ErrorCode::RefUndefined,
+                     ErrorClass::Schema,
+                     std::format("Operation '{}' uses $.faker.{}, which is not a faker generator; "
+                                 "valid names: email, phone",
+                                 opId.value,
+                                 name)});
+}
+
+/// True when `expr` has a `{{` outside a quoted string; such a predicate is left to run time
+/// rather than rejected at load.
+[[nodiscard]] bool hasUnquotedTemplate(std::string_view expr) {
+    char quote = 0;
+    for (std::size_t i = 0; i < expr.size(); ++i) {
+        const char c = expr[i];
+        if (quote != 0) {
+            if (c == '\\') {
+                ++i;
+            } else if (c == quote) {
+                quote = 0;
+            }
+        } else if (c == '\'' || c == '"') {
+            quote = c;
+        } else if (c == '{' && i + 1 < expr.size() && expr[i + 1] == '{') {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Parse every predicate an operation declares and check every regex extraction pattern, so
+/// a malformed one is a load error instead of a run-time failure after a request has gone out.
+std::expected<void, ReqloomError> validateOperationExpressions(const OperationId& opId,
+                                                               const Operation& op) {
+    const auto reject = [&](const std::string& field, const ReqloomError& err) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         std::format("Operation '{}' {}: {}", opId.value, field, err.detail)});
+    };
+    const auto check = [&](const std::string& field,
+                           std::string_view expr) -> std::expected<void, ReqloomError> {
+        if (hasUnquotedTemplate(expr)) {
+            return {};
+        }
+        if (auto ok = validatePredicate(expr); !ok) {
+            return reject(field, ok.error());
+        }
+        return {};
+    };
+    for (std::size_t i = 0; i < op.assertions.size(); ++i) {
+        const auto& a = op.assertions[i];
+        const auto label =
+            a.name ? std::format("assert[{}] '{}'", i, *a.name) : std::format("assert[{}]", i);
+        if (auto ok = check(label, a.expr); !ok) {
+            return ok;
+        }
+    }
+    if (op.pollUntil) {
+        if (auto ok = check("poll_until.success_when", op.pollUntil->successWhen); !ok) {
+            return ok;
+        }
+        if (op.pollUntil->failWhen) {
+            if (auto ok = check("poll_until.fail_when", *op.pollUntil->failWhen); !ok) {
+                return ok;
+            }
+        }
+    }
+    for (const auto& ext : op.extractions) {
+        if (ext.source != Extraction::Source::Regex) {
+            continue;
+        }
+        if (auto ok = validateRegexPattern(ext.sourcePath); !ok) {
+            return reject(std::format("extract '{}' (regex)", ext.variableName), ok.error());
+        }
+    }
+    return {};
+}
+
 using ImplicitDeps = std::vector<std::pair<OperationId, std::string>>;
 
-/// Whether `op`'s own templates consume `{{resource.var}}`.
 [[nodiscard]] bool consumesVariable(const Operation& op,
                                     const Project& project,
                                     const std::string& resource,
@@ -242,12 +330,10 @@ using ImplicitDeps = std::vector<std::pair<OperationId, std::string>>;
     return out;
 }
 
-/// Pick the producer(s) of `{{resource.var}}` for the operation `self`.
-/// Extractors other than `self` are the raw candidates; one that itself
-/// consumes the variable is dropped (it re-extracts, it does not produce).
-/// One left → it. Several → those named in `self`'s depends_on, else an
-/// ambiguity error. None left (every extractor consumes) → "no producer".
-/// No extractor at all → no edge (a runtime concern, as before).
+/// Pick the producer(s) of `{{resource.var}}` for `self`: extractors other than `self`,
+/// dropping any that also consume the variable. Several left → those in `self`'s depends_on,
+/// else an ambiguity error. None left → "no producer". No extractor at all → no edge (a
+/// runtime concern).
 std::expected<std::vector<OperationId>, ReqloomError> selectProducers(const Operation& op,
                                                                       const OperationId& self,
                                                                       const Project& project,
@@ -300,9 +386,8 @@ std::expected<std::vector<OperationId>, ReqloomError> selectProducers(const Oper
                     joinIds(candidates))});
 }
 
-/// Implicit dependencies of `op` (identified as `self`), keeping the
-/// flowing variable per producer (as "resource.var") so callers building
-/// a graph can label edges. One entry per distinct (producer, variable).
+/// Implicit dependencies of `op`, keeping the flowing variable per producer (as
+/// "resource.var") so callers can label edges.
 std::expected<ImplicitDeps, ReqloomError> inferImplicitDepsDetailed(const Operation& op,
                                                                     const OperationId& self,
                                                                     const Project& project) {
@@ -331,8 +416,8 @@ std::expected<ImplicitDeps, ReqloomError> inferImplicitDepsDetailed(const Operat
     return deps;
 }
 
-/// D-04: an operation's `actor`, `poll_until.actor` and `for_each.over`
-/// must name things that exist. An empty actor means "no actor".
+/// D-04: an operation's `actor`, `poll_until.actor` and `for_each.over` must name things
+/// that exist.
 std::expected<void, ReqloomError> validateOperationTargets(const OperationId& opId,
                                                            const Operation& op,
                                                            const Project& project) {
@@ -546,8 +631,8 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
 
             // AC-3.1.6: a reference whose scope isn't a known root can
             // never resolve — reject at load.
-            // `poll_until` templates may also use `{{response.X}}` (the
-            // initial response); everything else must be a known root.
+            // `poll_until` templates may also use `{{response.X}}`; everything else must be a known
+            // root.
             auto strictTemplates = requestTemplates(op);
             std::ranges::copy(authTemplates(op, project), std::back_inserter(strictTemplates));
             auto refs = scanReferences(strictTemplates);
@@ -571,6 +656,12 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
                 if (auto denied = checkEnvBuiltinAllowed(opId, ref, project); !denied) {
                     return denied;
                 }
+                if (auto unknown = checkFakerBuiltinKnown(opId, ref); !unknown) {
+                    return unknown;
+                }
+            }
+            if (auto exprs = validateOperationExpressions(opId, op); !exprs) {
+                return exprs;
             }
 
             // depends_on targets must name a real operation.
@@ -681,7 +772,6 @@ std::vector<std::string> DependencyResolver::collectSecretReferences(const Proje
         }
     }
 
-    // The project default auth (applied to `Inherit` operations).
     if (project.defaultAuth) {
         std::vector<std::string_view> defaultAuthTemplates;
         appendInlineAuthTemplates(*project.defaultAuth, defaultAuthTemplates);

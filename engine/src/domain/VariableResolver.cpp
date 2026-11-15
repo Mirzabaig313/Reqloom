@@ -443,8 +443,8 @@ ResolvedRef resolveBuiltin(std::string_view ref,
             return std::nullopt;
         }
         const std::string envName{ref.substr(6)};
-        // Only names the project lists in `allowed_env` are readable, so a
-        // project file cannot send an arbitrary process variable to the API.
+        // Only `allowed_env` names are readable: a project file must not read arbitrary process
+        // variables.
         if (!rctx.allowedEnv.contains(envName)) {
             return std::nullopt;
         }
@@ -465,7 +465,9 @@ ResolvedRef resolveBuiltin(std::string_view ref,
             // Weak RNG is fine here — faker is for fixture data, not security.
             return "+1555" + std::to_string(std::random_device{}() % 10000000);
         }
-        return std::string{"faker_"} + std::string{fakerType} + "_" + generateUuid().substr(0, 8);
+        // Only email and phone exist; any other name (usually a typo) is unresolved, not a junk
+        // placeholder.
+        return std::nullopt;
     }
 
     return std::nullopt;

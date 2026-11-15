@@ -8,8 +8,12 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <regex>
 #include <stdexcept>
 #include <string>
@@ -56,10 +60,11 @@ struct CompareNode {
     NodePtr lhs;
     NodePtr rhs;
 };
+/// N-ary so a long `a && b && c` chain is one flat node and evaluation and destruction stay
+/// iterative.
 struct LogicNode {
     LogicOp op;
-    NodePtr lhs;
-    NodePtr rhs;
+    std::vector<NodePtr> operands;
 };
 struct TruthyNode {
     NodePtr inner;
@@ -326,6 +331,10 @@ private:
 
 // Parser
 
+/// Deepest nesting of parentheses / array literals; the parser recurses per level, so this
+/// bounds its stack use on hostile input.
+constexpr std::size_t kMaxPredicateNesting = 64;
+
 class Parser {
 public:
     explicit Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
@@ -344,42 +353,66 @@ public:
 
 private:
     std::expected<NodePtr, std::string> parseLogicOr() {
-        auto lhs = parseLogicAnd();
-        if (!lhs) {
-            return lhs;
-        }
-        while (peek().kind == Tok::Or) {
-            consume();
-            auto rhs = parseLogicAnd();
-            if (!rhs) {
-                return rhs;
-            }
-            auto node = std::make_unique<ParsedPredicate::Node>();
-            node->kind = LogicNode{LogicOp::Or, std::move(*lhs), std::move(*rhs)};
-            lhs = std::move(node);
-        }
-        return lhs;
+        return parseLogicChain(Tok::Or, LogicOp::Or, &Parser::parseLogicAnd);
     }
 
     std::expected<NodePtr, std::string> parseLogicAnd() {
-        auto lhs = parseCompare();
-        if (!lhs) {
-            return lhs;
+        return parseLogicChain(Tok::And, LogicOp::And, &Parser::parseCompare);
+    }
+
+    std::expected<NodePtr, std::string> parseLogicChain(
+        Tok sep, LogicOp op, std::expected<NodePtr, std::string> (Parser::*operand)()) {
+        auto first = (this->*operand)();
+        if (!first || peek().kind != sep) {
+            return first;
         }
-        while (peek().kind == Tok::And) {
+        LogicNode logic{op, {}};
+        logic.operands.push_back(std::move(*first));
+        while (peek().kind == sep) {
             consume();
-            auto rhs = parseCompare();
-            if (!rhs) {
-                return rhs;
+            auto next = (this->*operand)();
+            if (!next) {
+                return next;
             }
-            auto node = std::make_unique<ParsedPredicate::Node>();
-            node->kind = LogicNode{LogicOp::And, std::move(*lhs), std::move(*rhs)};
-            lhs = std::move(node);
+            logic.operands.push_back(std::move(*next));
         }
-        return lhs;
+        auto node = std::make_unique<ParsedPredicate::Node>();
+        node->kind = std::move(logic);
+        return node;
+    }
+
+    std::expected<NodePtr, std::string> parseGroup() {
+        const auto open = consume();  // '('
+        if (auto entered = enterNesting(open.pos); !entered) {
+            return std::unexpected(std::move(entered).error());
+        }
+        auto inner = parseLogicOr();
+        --depth_;
+        if (!inner) {
+            return inner;
+        }
+        if (peek().kind != Tok::RParen) {
+            return std::unexpected("expected ')' to close '(' at position " +
+                                   std::to_string(open.pos));
+        }
+        consume();
+        return inner;
+    }
+
+    std::expected<void, std::string> enterNesting(std::size_t pos) {
+        if (depth_ >= kMaxPredicateNesting) {
+            return std::unexpected("predicate nests deeper than " +
+                                   std::to_string(kMaxPredicateNesting) + " levels at position " +
+                                   std::to_string(pos));
+        }
+        ++depth_;
+        return {};
     }
 
     std::expected<NodePtr, std::string> parseCompare() {
+        if (peek().kind == Tok::LParen) {
+            return parseGroup();
+        }
         auto lhs = parseTerm();
         if (!lhs) {
             return lhs;
@@ -435,6 +468,14 @@ private:
                 break;
             default:
                 break;
+        }
+        if (op == CompareOp::Matches) {
+            if (const auto* lit = std::get_if<LiteralNode>(&((*rhs)->kind));
+                lit != nullptr && lit->value.is_string()) {
+                if (auto ok = checkRegexPattern(lit->value.get_ref<const std::string&>()); !ok) {
+                    return std::unexpected(std::move(ok).error());
+                }
+            }
         }
         auto node = std::make_unique<ParsedPredicate::Node>();
         node->kind = CompareNode{op, std::move(*lhs), std::move(*rhs)};
@@ -526,7 +567,16 @@ private:
     }
 
     std::expected<NodePtr, std::string> parseArrayLiteral() {
-        consume();  // '['
+        const auto open = consume();  // '['
+        if (auto entered = enterNesting(open.pos); !entered) {
+            return std::unexpected(std::move(entered).error());
+        }
+        auto out = parseArrayItems();
+        --depth_;
+        return out;
+    }
+
+    std::expected<NodePtr, std::string> parseArrayItems() {
         ArrayNode arr;
         if (peek().kind != Tok::RBracket) {
             for (;;) {
@@ -562,6 +612,7 @@ private:
 
     std::vector<Token> toks_;
     std::size_t idx_{0};
+    std::size_t depth_{0};
 };
 
 // Evaluator
@@ -702,12 +753,10 @@ bool compareValues(CompareOp op, const Json& lhs, const Json& rhs) {
             if (!lhs.is_string() || !rhs.is_string()) {
                 return false;
             }
-            try {
-                std::regex const re{rhs.get<std::string>()};
-                return std::regex_search(lhs.get<std::string>(), re);
-            } catch (const std::regex_error&) {
-                return false;
-            }
+            // Refused (guard, bad pattern, oversized subject) evaluates false; evaluation is total.
+            return guardedRegexSearch(lhs.get_ref<const std::string&>(),
+                                      rhs.get_ref<const std::string&>())
+                       .outcome == RegexSearchResult::Outcome::Matched;
         }
     }
     return false;
@@ -740,14 +789,13 @@ bool evalNode(const ParsedPredicate::Node& node, const Json& body, int statusCod
         [&](const auto& n) -> bool {
             using T = std::decay_t<decltype(n)>;
             if constexpr (std::is_same_v<T, LogicNode>) {
-                const bool lhs = evalNode(*n.lhs, body, statusCode);
-                if (n.op == LogicOp::And && !lhs) {
-                    return false;
+                const bool stopOn = n.op == LogicOp::Or;
+                for (const auto& operand : n.operands) {
+                    if (evalNode(*operand, body, statusCode) == stopOn) {
+                        return stopOn;
+                    }
                 }
-                if (n.op == LogicOp::Or && lhs) {
-                    return true;
-                }
-                return evalNode(*n.rhs, body, statusCode);
+                return !stopOn;
             } else if constexpr (std::is_same_v<T, CompareNode>) {
                 const auto lhs = evalTerm(*n.lhs, body, statusCode);
                 const auto rhs = evalTerm(*n.rhs, body, statusCode);
@@ -791,7 +839,245 @@ ParsedBody::ParsedBody(ParsedBody&&) noexcept = default;
 ParsedBody& ParsedBody::operator=(ParsedBody&&) noexcept = default;
 ParsedBody::ParsedBody(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
+// Regex guard
+
+namespace {
+
+/// A quantifier at `i`: its length (0 when none) and whether it is unbounded.
+struct Quantifier {
+    std::size_t length{};
+    bool unbounded{false};
+};
+
+[[nodiscard]] Quantifier readQuantifier(std::string_view p, std::size_t i) {
+    Quantifier q;
+    if (i >= p.size()) {
+        return q;
+    }
+    if (p[i] == '*' || p[i] == '+' || p[i] == '?') {
+        q = {1, p[i] != '?'};
+    } else if (p[i] == '{') {
+        std::size_t j = i + 1;
+        const auto digits = [&] {
+            const auto from = j;
+            while (j < p.size() && std::isdigit(static_cast<unsigned char>(p[j])) != 0) {
+                ++j;
+            }
+            return j > from;
+        };
+        if (!digits()) {
+            return q;  // a literal '{'
+        }
+        bool unbounded = false;
+        if (j < p.size() && p[j] == ',') {
+            ++j;
+            unbounded = !digits();
+        }
+        if (j >= p.size() || p[j] != '}') {
+            return q;
+        }
+        q = {j + 1 - i, unbounded};
+    }
+    if (q.length > 0 && i + q.length < p.size() && p[i + q.length] == '?') {
+        ++q.length;  // lazy form repeats just as far
+    }
+    return q;
+}
+
+[[nodiscard]] std::size_t skipCharClass(std::string_view p, std::size_t i) {
+    std::size_t j = i + 1;
+    if (j < p.size() && p[j] == '^') {
+        ++j;
+    }
+    if (j < p.size() && p[j] == ']') {
+        ++j;  // a leading ']' is literal
+    }
+    while (j < p.size() && p[j] != ']') {
+        j += (p[j] == '\\') ? 2 : 1;
+    }
+    return std::min(j + 1, p.size());
+}
+
+/// Index just past a group's `(` and any `?:`, `?=`, `?<name>` prefix, so its `?` is not
+/// read as a quantifier.
+[[nodiscard]] std::size_t skipGroupPrefix(std::string_view p, std::size_t i) {
+    std::size_t j = i + 1;
+    if (j >= p.size() || p[j] != '?') {
+        return j;
+    }
+    ++j;
+    if (j < p.size() && (p[j] == ':' || p[j] == '=' || p[j] == '!')) {
+        return j + 1;
+    }
+    if (j < p.size() && p[j] == '<') {
+        ++j;
+        if (j < p.size() && (p[j] == '=' || p[j] == '!')) {
+            return j + 1;
+        }
+        const auto close = p.find('>', j);
+        return close == std::string_view::npos ? p.size() : close + 1;
+    }
+    return j;
+}
+
+/// Heuristic scan for the classic catastrophic-backtracking shape: a group whose content ends
+/// in an unbounded repeat and which is itself repeated without bound (`(a+)+`, `(x|y+){2,}`).
+/// Escapes, character classes and group prefixes are understood so `\(a+\)+` and `[(+]+` pass.
+/// Catches the common shape only; NOT a proof of reasonable run time. Returns the offending
+/// group's closing position, or npos.
+[[nodiscard]] std::size_t findNestedUnboundedRepeat(std::string_view p) {
+    std::vector<bool> altEndsUnbounded;  // one entry per open group
+    bool lastUnbounded = false;          // previous token ends in an unbounded repeat
+    std::size_t i = 0;
+    while (i < p.size()) {
+        const char c = p[i];
+        if (c == '\\' || c == '[') {
+            i = (c == '\\') ? std::min(i + 2, p.size()) : skipCharClass(p, i);
+            lastUnbounded = false;
+        } else if (c == '(') {
+            altEndsUnbounded.push_back(false);
+            i = skipGroupPrefix(p, i);
+            lastUnbounded = false;
+        } else if (c == '|') {
+            if (!altEndsUnbounded.empty() && lastUnbounded) {
+                altEndsUnbounded.back() = true;
+            }
+            lastUnbounded = false;
+            ++i;
+        } else if (c == ')' && !altEndsUnbounded.empty()) {
+            const bool groupEndsUnbounded = altEndsUnbounded.back() || lastUnbounded;
+            altEndsUnbounded.pop_back();
+            const auto q = readQuantifier(p, i + 1);
+            if (groupEndsUnbounded && q.unbounded) {
+                return i;
+            }
+            lastUnbounded = q.length > 0 ? q.unbounded : groupEndsUnbounded;
+            i += 1 + q.length;
+        } else if (const auto q = readQuantifier(p, i); q.length > 0) {
+            lastUnbounded = q.unbounded;
+            i += q.length;
+        } else {
+            lastUnbounded = false;
+            ++i;
+        }
+    }
+    return std::string_view::npos;
+}
+
+/// Compiled patterns shared by every evaluation, so a poll loop or filter compiles each once.
+/// Bounded: cleared when full.
+class RegexCache {
+public:
+    std::shared_ptr<const std::regex> get(std::string_view pattern) {
+        const std::scoped_lock lock{mutex_};
+        if (const auto it = cache_.find(pattern); it != cache_.end()) {
+            return it->second;
+        }
+        std::shared_ptr<const std::regex> compiled;
+        try {
+            compiled = std::make_shared<const std::regex>(std::string{pattern});
+        } catch (const std::regex_error&) {
+            compiled = nullptr;
+        }
+        if (cache_.size() >= kCapacity) {
+            cache_.clear();
+        }
+        cache_.emplace(std::string{pattern}, compiled);
+        return compiled;
+    }
+
+private:
+    static constexpr std::size_t kCapacity = 128;
+    std::mutex mutex_;
+    std::map<std::string, std::shared_ptr<const std::regex>, std::less<>> cache_;
+};
+
+RegexCache& regexCache() {
+    static RegexCache cache;
+    return cache;
+}
+
+[[nodiscard]] std::expected<std::shared_ptr<const std::regex>, std::string> compileGuarded(
+    std::string_view pattern) {
+    if (pattern.size() > kMaxRegexPatternBytes) {
+        return std::unexpected("regex pattern is " + std::to_string(pattern.size()) +
+                               " bytes; the limit is " + std::to_string(kMaxRegexPatternBytes));
+    }
+    if (const auto at = findNestedUnboundedRepeat(pattern); at != std::string_view::npos) {
+        return std::unexpected(
+            "regex '" + std::string{pattern} + "' refused: the group closing at position " +
+            std::to_string(at) +
+            " ends in an unbounded repeat (+, * or {n,}) and is itself repeated without "
+            "bound, which can take exponential time on some inputs; make the inner repeat "
+            "bounded (e.g. {1,64}) or remove the outer repeat");
+    }
+    auto compiled = regexCache().get(pattern);
+    if (!compiled) {
+        return std::unexpected("regex '" + std::string{pattern} + "' is not a valid pattern");
+    }
+    return compiled;
+}
+
+}  // namespace
+
+std::expected<void, std::string> checkRegexPattern(std::string_view pattern) {
+    if (auto compiled = compileGuarded(pattern); !compiled) {
+        return std::unexpected(std::move(compiled).error());
+    }
+    return {};
+}
+
+RegexSearchResult guardedRegexSearch(std::string_view subject, std::string_view pattern) {
+    using Outcome = RegexSearchResult::Outcome;
+    auto compiled = compileGuarded(pattern);
+    if (!compiled) {
+        return {Outcome::Refused, {}, std::move(compiled).error()};
+    }
+    if (subject.size() > kMaxRegexSubjectBytes) {
+        return {Outcome::Refused,
+                {},
+                "regex subject is " + std::to_string(subject.size()) + " bytes; the limit is " +
+                    std::to_string(kMaxRegexSubjectBytes) + " bytes (1 MiB)"};
+    }
+    try {
+        std::match_results<std::string_view::const_iterator> match;
+        if (!std::regex_search(subject.begin(), subject.end(), match, **compiled)) {
+            return {Outcome::NoMatch, {}, {}};
+        }
+        const auto& group = (match.size() >= 2 && match[1].matched) ? match[1] : match[0];
+        return {Outcome::Matched, group.str(), {}};
+    } catch (const std::regex_error& e) {
+        return {Outcome::Refused, {}, std::string{"regex search aborted: "} + e.what()};
+    }
+}
+
 // Public API
+
+bool jsonNestingExceeds(std::string_view text, std::size_t limit) noexcept {
+    std::size_t depth = 0;
+    bool inString = false;
+    bool escaped = false;
+    for (const char c : text) {
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                inString = false;
+            }
+        } else if (c == '"') {
+            inString = true;
+        } else if (c == '[' || c == '{') {
+            if (++depth > limit) {
+                return true;
+            }
+        } else if ((c == ']' || c == '}') && depth > 0) {
+            --depth;
+        }
+    }
+    return false;
+}
 
 PredicateEvaluator::PredicateEvaluator() = default;
 
@@ -814,7 +1100,9 @@ std::expected<ParsedPredicate, ReqloomError> PredicateEvaluator::parse(
 
 ParsedBody PredicateEvaluator::parseBody(std::string_view jsonBody) const noexcept {
     auto impl = std::make_unique<ParsedBody::Impl>();
-    if (!jsonBody.empty()) {
+    // A body nested deeper than the limit is treated as non-JSON: walking it could exhaust a
+    // worker thread's stack.
+    if (!jsonBody.empty() && !jsonNestingExceeds(jsonBody)) {
         try {
             impl->body = Json::parse(jsonBody);
         } catch (...) {
@@ -857,7 +1145,23 @@ std::expected<PredicateValue, ReqloomError> PredicateEvaluator::eval(std::string
     return evaluate(*p, jsonBody, statusCode);
 }
 
-// ─── Public free function (reqloom/engine/Predicate.h) ───────────────────────
+// ─── Public free functions (reqloom/engine/Predicate.h) ──────────────────────
+
+std::expected<void, ReqloomError> validatePredicate(std::string_view expression) {
+    const PredicateEvaluator evaluator;
+    if (auto parsed = evaluator.parse(expression); !parsed) {
+        return std::unexpected(parsed.error());
+    }
+    return {};
+}
+
+std::expected<void, ReqloomError> validateRegexPattern(std::string_view pattern) {
+    if (auto ok = checkRegexPattern(pattern); !ok) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(ok).error()});
+    }
+    return {};
+}
 
 std::expected<bool, ReqloomError> evaluatePredicate(std::string_view expression,
                                                     std::string_view responseBody,
