@@ -39,7 +39,6 @@ namespace {
 using namespace codecs;
 using json = nlohmann::json;
 
-// Masked headers as an ordered vector for event emission.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> snapshotMaskedRequestHeaders(
     const HttpRequest& req) {
     auto masked = maskHeaders(req.headers);
@@ -62,10 +61,8 @@ using json = nlohmann::json;
     return req.body ? req.body->size() : 0U;
 }
 
-// Opt-in body payload for an auth-flow `ResponseReceived`. Returns nullopt
-// unless capture is on; caps at `kMaxCapturedBodyBytes` (UTF-8-aware so the
-// truncated string stays valid for display). Auth bodies carry tokens — the
-// caller gates this behind RunOptions::captureResponseBodies.
+// Opt-in auth-flow response body (nullopt unless capture is on), capped UTF-8-safely; auth bodies
+// carry tokens.
 [[nodiscard]] std::optional<std::string> capturedBody(const std::string& body, bool capture) {
     if (!capture) {
         return std::nullopt;
@@ -76,8 +73,6 @@ using json = nlohmann::json;
     return body;
 }
 
-// Implements AuthStrategy::Simple and AuthStrategy::Chain. Walks actor.authSteps
-// in order; each step's response can extract variables for subsequent steps.
 class ChainAuthenticator final : public Authenticator {
 public:
     explicit ChainAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -85,8 +80,7 @@ public:
     std::expected<ActorSession, ReqloomError> authenticate(const Actor& actor,
                                                            RunContext& ctx,
                                                            const ResolveContext& rctx) override {
-        // nullptr here means a programming error in the engine, not a
-        // user-triggerable condition.
+        // nullptr is an engine programming error, not user-triggerable.
         if ((deps_.http == nullptr) || (deps_.varResolver == nullptr)) {
             return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
                                                 ErrorClass::Auth,
@@ -127,8 +121,8 @@ public:
             }
 
             if (deps_.emit) {
-                // runId/stepIndex are the parent step's, so the timeline
-                // groups the auth request under the op that triggered it.
+                // runId/stepIndex are the parent step's so the timeline groups the auth request
+                // under its op.
                 deps_.emit(RequestPrepared{deps_.runId,
                                            deps_.stepIndex,
                                            req.method,
@@ -158,11 +152,8 @@ public:
                                      capturedBody(response->body, deps_.captureResponseBodies)});
             }
 
-            // Absorb Set-Cookie headers from the auth response into the
-            // actor's jar so subsequent operations (which run AS this
-            // actor) carry the cookie. PHP / Rails apps that issue a
-            // session cookie on /login depend on this; without it the
-            // cookie disappears the moment authenticate() returns.
+            // Absorb Set-Cookie so later operations as this actor carry session cookies (PHP/Rails
+            // /login).
             cookies::absorbSetCookies(response->headers, actor.id, ctx, req.url);
 
             if (step.expectStatus && response->status != *step.expectStatus) {
@@ -201,8 +192,7 @@ private:
     AuthDependencies deps_;
 };
 
-// Implements AuthStrategy::Basic (RFC 7617). Pre-computes base64(username:password)
-// and exposes it as session.variables["credential"]. No HTTP call is made.
+// AuthStrategy::Basic (RFC 7617); no HTTP call.
 class BasicAuthenticator final : public Authenticator {
 public:
     explicit BasicAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -256,16 +246,9 @@ private:
     AuthDependencies deps_;
 };
 
-/// Implements `AuthStrategy::ApiKey`. Pure compute — no HTTP call.
-/// Reads from `actor.authConfig`:
-///   - `key`      (required) — the secret token, may contain {{X.y}}
-///   - `location` (optional) — "header" | "query" | "cookie"
-///   - `name`     (optional, required when `location` set) — sink name
-///
-/// The resolved key is always stored as `session.variables["key"]`.
-/// When `location` and `name` are both set, also populates
-/// `injectHeaders` / `injectQueryParams` for automatic injection.
-/// Cookie location is rejected — cookie jar is post-MVP.
+/// AuthStrategy::ApiKey; no HTTP call. Reads `key`, `location` (header|query) and `name` from
+/// `actor.authConfig`; injects automatically only when both location and name are set.
+/// The cookie location is rejected.
 class ApiKeyAuthenticator final : public Authenticator {
 public:
     explicit ApiKeyAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -299,8 +282,6 @@ public:
         session.state = ActorSession::State::Authenticating;
         session.variables["key"] = resolvedKey.output;
 
-        // Auto-inject only fires when the user opted in by setting both
-        // `location` and `name`.
         const auto locIt = actor.authConfig.find("location");
         const auto nameIt = actor.authConfig.find("name");
         if (locIt != actor.authConfig.end() && nameIt != actor.authConfig.end()) {
@@ -332,9 +313,7 @@ private:
     AuthDependencies deps_;
 };
 
-/// Shared OAuth2 token-endpoint flow used by `OAuth2ClientCredentials`
-/// and `OAuth2Password`. `formBody` is the already-built
-/// `application/x-www-form-urlencoded` payload.
+/// Shared OAuth2 token-endpoint flow; `formBody` is the urlencoded payload.
 std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     HttpClient& http,
     const std::string& tokenUrl,
@@ -348,9 +327,8 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     req.url = tokenUrl;
     req.headers["Content-Type"] = "application/x-www-form-urlencoded";
     req.headers["Accept"] = "application/json";
-    // Client Authentication = "Send as Basic Auth header": RFC 6749 §2.3.1
-    // permits the client credentials either in the body or as an HTTP Basic
-    // header. When the caller supplies the header, the body omits them.
+    // RFC 6749 §2.3.1: credentials go in the body or an HTTP Basic header; with the header the body
+    // omits them.
     if (authorizationHeader) {
         req.headers["Authorization"] = *authorizationHeader;
     }
@@ -375,9 +353,7 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
             "auth: " + std::string{strategyLabel} + " network error: " + response.error().detail});
     }
 
-    // Surface the token-endpoint response (incl. failures) so the timeline can
-    // show why OAuth2 auth failed, not just that it did. Body only when the
-    // run opted into capture — it carries tokens.
+    // Surface the token response (failures too) for the timeline; body only when capture is on.
     if (deps.emit) {
         deps.emit(ResponseReceived{deps.runId,
                                    deps.stepIndex,
@@ -390,8 +366,7 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     }
 
     if (response->status < 200 || response->status >= 300) {
-        // Show the endpoint's error text to debug credentials; sensitive fields are masked (a
-        // failed token response may still carry a token).
+        // Sensitive fields are masked; a failed token response may still carry a token.
         const auto excerpt = safeBodyExcerpt(response->body, nullptr, deps.failureExcerptBytes);
         return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
@@ -400,9 +375,7 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
                 std::to_string(response->status) + (excerpt ? " — " + *excerpt : std::string{})});
     }
 
-    // Parse the token response once and read every field from the single
-    // document — the previous approach re-ran extractFromJson (a full
-    // json::parse) once per optional field, parsing the body up to 5×.
+    // Parse once and read every field from the one document.
     json doc;
     try {
         doc = json::parse(response->body);
@@ -428,9 +401,7 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     session.state = ActorSession::State::Authenticating;
     auto accessToken = accessTokenIt->get<std::string>();
 
-    // Optional fields — captured one-at-a-time so a missing `expires_in`
-    // doesn't suppress `token_type`. A field that is present but not a
-    // string is rendered with dump() to match the prior JSONPath behaviour.
+    // Captured one at a time so a missing `expires_in` doesn't suppress `token_type`.
     for (const auto* optionalField : {"expires_in", "token_type", "scope", "refresh_token"}) {
         const auto it = doc.find(optionalField);
         if (it == doc.end() || it->is_null()) {
@@ -444,8 +415,7 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
     return session;
 }
 
-/// Resolve `authConfig[fieldName]` through the variable resolver.
-/// Empty strings are treated as missing.
+/// Resolve `authConfig[fieldName]`; empty strings count as missing.
 std::expected<std::string, ReqloomError> resolveAuthConfigField(const Actor& actor,
                                                                 const RunContext& ctx,
                                                                 const ResolveContext& rctx,
@@ -470,7 +440,6 @@ std::expected<std::string, ReqloomError> resolveAuthConfigField(const Actor& act
     return resolved.output;
 }
 
-/// Resolve an optional config field. Returns empty string when absent.
 std::expected<std::string, ReqloomError> resolveAuthConfigOptional(const Actor& actor,
                                                                    const RunContext& ctx,
                                                                    const ResolveContext& rctx,
@@ -492,10 +461,7 @@ std::expected<std::string, ReqloomError> resolveAuthConfigOptional(const Actor& 
     return resolved.output;
 }
 
-// Implements AuthStrategy::OAuth2ClientCredentials (RFC 6749 §4.4).
-// POSTs grant_type=client_credentials to token_url, extracts access_token,
-// auto-injects Authorization: Bearer. Reads token_url/client_id/client_secret
-// from actor.authConfig; scope is optional.
+// AuthStrategy::OAuth2ClientCredentials (RFC 6749 §4.4).
 class OAuth2ClientCredentialsAuthenticator final : public Authenticator {
 public:
     explicit OAuth2ClientCredentialsAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -534,8 +500,7 @@ public:
             return std::unexpected(clientAuth.error());
         }
 
-        // client_secret is required unless this is a public client
-        // (client_auth: none), per RFC 6749 §2.3.1 / §4.4.
+        // client_secret is required unless client_auth is none (public client), RFC 6749 §2.3.1.
         std::string clientSecret;
         if (*clientAuth != "none") {
             auto cs = resolveAuthConfigField(
@@ -547,8 +512,7 @@ public:
         }
         ctx.secretRegistry().add(clientSecret);
 
-        // RFC 6749 §4.4.2. Client credentials go in a Basic header, the body, or
-        // are omitted entirely for a public client, per `client_auth`.
+        // RFC 6749 §4.4.2; `client_auth` picks Basic header, body or none.
         std::string body = "grant_type=client_credentials";
         std::optional<std::string> authHeader;
         if (*clientAuth == "basic") {
@@ -571,10 +535,7 @@ private:
     AuthDependencies deps_;
 };
 
-// Implements AuthStrategy::OAuth2Password (RFC 6749 §4.3). Same wire shape
-// as client_credentials but uses grant_type=password with username/password.
-// Reads token_url/client_id/client_secret/username/password from authConfig;
-// scope is optional.
+// AuthStrategy::OAuth2Password (RFC 6749 §4.3).
 class OAuth2PasswordAuthenticator final : public Authenticator {
 public:
     explicit OAuth2PasswordAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -623,8 +584,7 @@ public:
             return std::unexpected(clientAuth.error());
         }
 
-        // client_secret is required unless this is a public client
-        // (client_auth: none), per RFC 6749 §2.3.1 / §4.3.
+        // client_secret is required unless client_auth is none (public client), RFC 6749 §2.3.1.
         std::string clientSecret;
         if (*clientAuth != "none") {
             auto cs = resolveAuthConfigField(
@@ -636,8 +596,7 @@ public:
         }
         ctx.secretRegistry().add(clientSecret);
 
-        // RFC 6749 §4.3.2. Client credentials go in a Basic header, the body, or
-        // are omitted entirely for a public client, per `client_auth`.
+        // RFC 6749 §4.3.2; `client_auth` picks Basic header, body or none.
         std::string body = "grant_type=password&username=" + urlEncode(*username) +
                            "&password=" + urlEncode(*password);
         std::optional<std::string> authHeader;
@@ -661,11 +620,7 @@ private:
     AuthDependencies deps_;
 };
 
-// Implements AuthStrategy::OAuth1 (RFC 5849, two-legged HMAC-SHA1).
-// Stashes credentials on the session and sets signingScheme = OAuth1HmacSha1
-// so the executor calls signOAuth1Request before each outbound request.
-// Reads consumer_key/consumer_secret from authConfig; token/token_secret and
-// realm are optional.
+// AuthStrategy::OAuth1 (RFC 5849, two-legged HMAC-SHA1); the executor signs each request.
 class OAuth1Authenticator final : public Authenticator {
 public:
     explicit OAuth1Authenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -738,15 +693,7 @@ private:
     AuthDependencies deps_;
 };
 
-// Implements AuthStrategy::AwsSigV4. Signs per-request — stashes credentials
-// on the session and sets signingScheme = AwsSigV4 so the executor calls
-// signSigV4Request before each outbound HTTP send.
-// Reads access_key/secret_key/region/service from authConfig; session_token
-// is optional (for STS temporary credentials).
-// Per the IAM Best Practices guide, prefer environment-injected
-/// short-lived credentials over long-lived access keys committed to
-/// reqloom.yaml. The {{X.y}} resolver lets you pull credentials from
-/// secret stores at run time.
+// AuthStrategy::AwsSigV4; the executor signs each request.
 class AwsSigV4Authenticator final : public Authenticator {
 public:
     explicit AwsSigV4Authenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -806,9 +753,7 @@ private:
     AuthDependencies deps_;
 };
 
-// Implements AuthStrategy::Bearer. Pure compute — no HTTP call. Injects a
-// static `Authorization: Bearer <token>` on every operation the actor owns.
-// Reads `token` from authConfig (may contain {{X.y}}).
+// AuthStrategy::Bearer; no HTTP call.
 class BearerAuthenticator final : public Authenticator {
 public:
     explicit BearerAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -838,15 +783,8 @@ private:
     AuthDependencies deps_;
 };
 
-// Implements AuthStrategy::Jwt. Pure compute — signs an HS256/HS512 JWT and
-// injects it as `Authorization: Bearer <jwt>`. Reads `secret` and `payload`
-// (a JSON claims object) from authConfig; `algorithm` is optional (default
-// HS256). Only HMAC variants are supported (crypto has no RS/ES).
-//
-//  the JWT is signed once at session creation, not per request — a
-// payload with time-based claims (exp/iat) is fixed for the session lifetime.
-// Upgrade path: re-sign per request (like the inline path) if actors need
-// short-lived per-request JWTs.
+// AuthStrategy::Jwt: HS256/HS512 only. Signed once at session creation, so time-based claims
+// (exp/iat) are fixed for the session lifetime.
 class JwtAuthenticator final : public Authenticator {
 public:
     explicit JwtAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -904,14 +842,8 @@ private:
     AuthDependencies deps_;
 };
 
-// Implements AuthStrategy::Mtls. Pure compute — resolves the client cert/key
-// paths and stashes them on the session's TransportConfig so the executor
-// presents them during the TLS handshake for every operation the actor owns.
-// Reads `cert_path` (required), `format` (pem|p12), `key_path` (PEM only),
-// `key_password`, and `ca_cert_path` from authConfig. Paths are variable-
-// resolved then handed to the HTTP client as-is (same trust model as a CA
-// bundle path — NOT sandboxed to the project root, since client certs commonly
-// live outside the repo).
+// AuthStrategy::Mtls: client cert/key paths go on the session TransportConfig. Paths are not
+// sandboxed to the project root (client certs commonly live outside it).
 class MtlsAuthenticator final : public Authenticator {
 public:
     explicit MtlsAuthenticator(AuthDependencies deps) : deps_(std::move(deps)) {}
@@ -1098,15 +1030,10 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
                                    capturedBody(response->body, deps.captureResponseBodies)});
     }
 
-    // Absorb Set-Cookie headers from the refresh response — same
-    // contract as ChainAuthenticator. Refresh endpoints commonly
-    // rotate session cookies (CSRF tokens, anti-replay nonces) and
-    // the next operation as this actor needs the rotated value.
+    // Absorb Set-Cookie from the refresh response; endpoints commonly rotate session cookies.
     cookies::absorbSetCookies(response->headers, actor.id, ctx, req.url);
 
-    // Honour the user's `expect_status:` when set, otherwise fall back
-    // to "any 2xx is success". Both forms align with the operation-level
-    // schema so users can copy patterns between the two.
+    // `expect_status:` when set, otherwise any 2xx.
     const auto statusOk = [&]() {
         if (!refresh.expectStatusList.empty()) {
             return std::find(refresh.expectStatusList.begin(),
@@ -1128,9 +1055,8 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     }
 
     if (refresh.extractions.empty()) {
-        // No declared extractions — treat as "refresh succeeded, but
-        // there's nothing to merge". Return an empty map so the caller
-        // can update expiresAt without overwriting any session vars.
+        // No extractions: return an empty map so the caller can update expiresAt without touching
+        // session vars.
         return std::map<std::string, std::string>{};
     }
     auto values = extractFromJson(response->body, refresh.extractions);

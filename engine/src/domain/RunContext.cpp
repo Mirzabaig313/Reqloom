@@ -40,7 +40,6 @@ void registerSessionSecrets(SecretRegistry& registry, const ActorSession& sessio
 
 struct RunContext::Impl {
     std::map<ActorId, ActorSession> sessions;
-    /// Per-actor cookie jar, oldest first.
     std::map<ActorId, std::vector<JarCookie>> cookieJars;
     std::map<ResourceId, std::vector<ResourceInstance>> instances;
     std::map<ResourceId, std::size_t> iterations;
@@ -68,9 +67,7 @@ void RunContext::putSession(const ActorId& actor, ActorSession session) {
 
 void RunContext::invalidateSession(const ActorId& actor) {
     impl_->sessions.erase(actor);
-    // Cookies travel with the session in 401-recovery scenarios — the
-    // pre-recovery jar reflected the now-stale token, so dropping it
-    // alongside the session prevents the retry from sending bad cookies.
+    // Cookies leave with the session on 401 recovery; the old jar belongs to the stale token.
     impl_->cookieJars.erase(actor);
 }
 

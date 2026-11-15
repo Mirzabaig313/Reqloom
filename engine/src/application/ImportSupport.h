@@ -1,7 +1,6 @@
-// Shared logic for the collection importers: identifier and environment-key
-// sanitising, variable-reference mapping, path-parameter conversion, auth
-// detection and environment merging. Each importer keeps its own parsing;
-// these helpers make the output the same whatever the source format.
+// Shared logic for the collection importers: identifier/environment-key sanitising, variable
+// mapping, path parameters, auth detection, environment merging. Each importer keeps its own
+// parsing.
 #pragma once
 
 #include <reqloom/engine/Operation.h>
@@ -20,17 +19,15 @@ namespace reqloom::engine::import_support {
 
 using VarMap = std::map<std::string, std::string>;
 
-/// Characters kept as-is in an imported identifier. Anything else (`.`, `$`,
-/// spaces, `/`, ...) would break `{{scope.field}}` splitting or a file name.
+/// Characters kept in an imported identifier; others would break `{{scope.field}}` splitting or a
+/// file name.
 [[nodiscard]] constexpr bool isIdChar(const char c) noexcept {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
            c == '-';
 }
 
-/// `name` with every run of characters outside [A-Za-z0-9_-] replaced by one
-/// `_`, and underscores that replacement put at either end trimmed. Case is
-/// kept, so a name that is already valid comes back unchanged. `fallback`
-/// when nothing is left.
+/// `name` with runs of characters outside [A-Za-z0-9_-] replaced by one `_` and end underscores
+/// trimmed; case is kept. `fallback` when nothing is left.
 [[nodiscard]] inline std::string identifier(std::string_view name, std::string_view fallback) {
     std::string out;
     out.reserve(name.size());
@@ -61,10 +58,8 @@ struct VarRefs {
     VarMap renamed;                    ///< source name → environment key, where they differ
 };
 
-/// `{{env.<key>}}` for a source variable reference. Source formats have no
-/// Reqloom scopes, so a dotted name (`api.key`, Insomnia `_.api.url`, REST
-/// Client `login.response.body.$.token`) is one variable name, not a
-/// `scope.field` reference; it is sanitised rather than passed through.
+/// `{{env.<key>}}` for a source variable reference. A dotted name (`api.key`, `_.api.url`) is one
+/// variable name, not `scope.field`, so it is sanitised.
 [[nodiscard]] inline std::string envRef(std::string_view sourceName, VarRefs& refs) {
     auto key = envKey(sourceName);
     if (key != sourceName) {
@@ -116,20 +111,15 @@ inline void applyBaseUrl(std::map<std::string, VarMap>& envs,
     }
 }
 
-// ── Path parameters ──────────────────────────────────────────────────────────
-
 /// A path with its parameters converted to Reqloom references.
 struct PathParams {
     std::string path;
     std::vector<std::string> names;  ///< sanitised parameter names, in order
 };
 
-/// Convert path parameters to `{{<resourceId>.<name>}}`, the form the
-/// OpenAPI importer has always produced: the value comes from an upstream
-/// operation of the same resource that extracts `<name>`. Accepts both
-/// `{name}` (OpenAPI, Apidog, Thunder Client) and a `:name` segment start
-/// (Postman, Bruno). Existing `{{...}}` references are left alone, so call
-/// this after the importer has rewritten its variable references.
+/// Convert path parameters to `{{<resourceId>.<name>}}`, taken from an upstream operation of the
+/// same resource that extracts `<name>`. Accepts `{name}` and `:name` segments; existing `{{...}}`
+/// are left alone, so call this after rewriting variable references.
 [[nodiscard]] inline PathParams convertPathParams(std::string_view path,
                                                   std::string_view resourceId) {
     PathParams out;
@@ -214,8 +204,6 @@ inline void notePathParams(const PathParams& params,
     }
 }
 
-// ── Auth ─────────────────────────────────────────────────────────────────────
-
 /// What an importer found in a source auth setting.
 enum class AuthKind : std::uint8_t {
     None,     ///< no auth (absent, empty, `none`, `noauth`, disabled)
@@ -254,8 +242,6 @@ inline bool warnDroppedAuth(std::vector<std::string>& warnings,
     return true;
 }
 
-// ── Bodies ───────────────────────────────────────────────────────────────────
-
 /// Keep a source multipart form multipart: the engine sends a form with no file field
 /// urlencoded unless the operation has `Content-Type: multipart/form-data`. An explicit
 /// source Content-Type is left alone.
@@ -276,8 +262,6 @@ inline void keepMultipart(Operation& op) {
     }
     op.headers["Content-Type"] = "multipart/form-data";
 }
-
-// ── Environments ─────────────────────────────────────────────────────────────
 
 /// Environment name for a source environment: lowercase, file-safe, unique
 /// among `taken`.

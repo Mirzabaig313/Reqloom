@@ -1,8 +1,5 @@
-// TimelineModel — the live run timeline . A flat
-// list model fed by ALL RunController signals; each streamed RunEvent appends
-// (or settles) a row, mirroring the old Widgets TimelinePanel's content and
-// its amber-not-red colouring for non-resolved extractions (DESIGN..
-// C++ owns the rows; QML (TimelinePanel.qml) renders them.
+// TimelineModel — the live run timeline: a flat list model where each streamed RunEvent appends or
+// settles a row. Non-resolved extractions are amber, not red. C++ owns the rows; QML renders them.
 #pragma once
 
 #include <QtQml/qqmlregistration.h>
@@ -31,22 +28,16 @@ class TimelineModel : public QAbstractListModel {
     /// Model row of the first causal failure, or -1 before any step fails.
     Q_PROPERTY(int rootFailureRow READ rootFailureRow NOTIFY rootFailureChanged)
 
-    /// The step the inspector is pinned to, as a 1-based step number; `0` means
-    /// "follow the live run" and is the resting state. Owned here rather than in
-    /// QML so it rides along in `Snapshot` and is therefore per-tab for free.
-    ///
-    /// Writing a step that does not exist clears the selection instead of
-    /// pinning a dead step. QML must treat this as write-on-gesture /
-    /// read-for-render: never bind a view's `currentIndex` to it *and* assign it
-    /// back from that view's change handler, or the two form a loop.
+    /// The step the inspector is pinned to (1-based); `0` follows the live run. Owned here so it
+    /// rides along in `Snapshot` (per tab). A step that does not exist clears the selection. QML
+    /// must write-on-gesture / read-for-render: never bind a view's `currentIndex` to it and assign
+    /// it back from that view's change handler (binding loop).
     Q_PROPERTY(int selectedStep READ selectedStep WRITE setSelectedStep NOTIFY selectionChanged)
     /// Operation id owning `selectedStep`, or empty when nothing is selected.
-    /// Lets the chain graph and the explorer highlight the same operation the
-    /// timeline is showing without either of them knowing a timeline exists.
     Q_PROPERTY(QString selectedOperationId READ selectedOperationId NOTIFY selectionChanged)
 
 public:
-    /// Row kind, mirroring the RunEvent types the old TimelinePanel rendered.
+    /// Row kind, one per RunEvent type.
     enum class Kind : std::uint8_t {
         RunStart,
         Step,
@@ -103,10 +94,8 @@ private:
     };
 
 public:
-    /// A full copy of the timeline's state, so a multi-tab host can park one
-    /// tab's run timeline and restore it on switch instead of losing it. Holds
-    /// the (private) Row rows plus the latency/step bookkeeping. Opaque to
-    /// callers — they only take/restore it, never inspect it.
+    /// A full copy of the timeline's state so a multi-tab host can park and restore a tab's
+    /// timeline. Opaque to callers.
     struct Snapshot {
         std::vector<Row> rows;
         std::vector<double> latencyMs;
@@ -133,11 +122,9 @@ public:
     [[nodiscard]] int rootFailureRow() const noexcept { return rootFailureRow_; }
 
     /// Model row of the step header for a 1-based step number, or -1 if absent.
-    /// Lets the sparkline scroll the timeline to a clicked bar's step.
     [[nodiscard]] Q_INVOKABLE int rowForStep(int stepNumber) const;
 
-    /// 1-based step number that ran `operationId`, or 0 when this run has no such
-    /// step. Lets a consumer named on one row be jumped to on another.
+    /// 1-based step number that ran `operationId`, or 0 when this run has no such step.
     [[nodiscard]] Q_INVOKABLE int stepForOperation(const QString& operationId) const;
 
     [[nodiscard]] int selectedStep() const { return selectedStep_; }
@@ -159,8 +146,7 @@ signals:
     void selectionChanged();
 
 public slots:
-    // One slot per RunController signal. Signatures match the signals so the
-    // controller connects them directly (function-pointer form, receiver-bound).
+    // One slot per RunController signal, with matching signatures for direct connection.
     void onRunStarted(QString target, int chainSize, QString environment);
     void onStepStarted(int index, QString op, int attempt);
     void onStepSkipped(int index, QString op, QString reason);
@@ -184,18 +170,16 @@ public slots:
     void reset();
 
 private:
-    /// Find the existing top-level step row for `index`, or append one. Mirrors
-    /// the old TimelinePanel::stepRow so streamed events settle the same row.
+    /// Find the existing top-level step row for `index`, or append one.
     [[nodiscard]] int stepRowFor(int index, const QString& op);
     [[nodiscard]] QVariantList prepareDiagnostics(QVariantList diagnostics) const;
     void appendRow(Row row);
-    /// QModelIndex for row position `at`. A named helper avoids the `index()`
-    /// member being shadowed by the `int index` slot parameters.
+    /// QModelIndex for row `at`; a named helper avoids the `index()` member being shadowed by `int
+    /// index` parameters.
     [[nodiscard]] QModelIndex rowIndex(int at) const { return index(at, 0); }
 
     std::vector<Row> rows_;
-    // Per-response latency samples (ms) for the run, in request order, plus the
-    // QML-facing bar list ({ms, token, op}); kept in lockstep.
+    // Per-response latency samples (ms) in request order, kept in lockstep with the QML bar list.
     std::vector<double> latencyMs_;
     QVariantList latencyBars_;
     // stepIndex → position in rows_. Positions are stable: rows are only ever
@@ -209,8 +193,7 @@ private:
     double runTotalMs_{0.0};
     int runChainSize_{0};
     QString runEnv_;
-    // Position of the run header row, so onRunEnded can settle its stale
-    // "running" badge to the final outcome instead of leaving it spinning.
+    // Position of the run header row, so onRunEnded can settle its "running" badge.
     int runStartRow_{-1};
     // First causal failure row for immediate reveal; later blocked rows never replace it.
     int rootFailureRow_{-1};

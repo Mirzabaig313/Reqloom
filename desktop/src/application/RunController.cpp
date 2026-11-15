@@ -21,7 +21,6 @@ namespace {
 
 namespace ce = reqloom::engine;
 
-/// Roll a header pair list into a single newline-joined string for display.
 [[nodiscard]] QString joinHeaders(const std::vector<std::pair<std::string, std::string>>& headers) {
     QString out;
     for (const auto& [key, value] : headers) {
@@ -43,11 +42,9 @@ RunController::RunController(ce::ExecutionEngine& engine,
     : QObject(parent), engine_(engine), project_(&project) {
     qRegisterMetaType<RunReport>("RunReport");
 
-    // The engine retains this callback for its lifetime (no unsubscribe in the
-    // public API) and outlives this controller (App member order). The
-    // callback captures a copy of the shared `alive` flag — not a bare `this`
-    // — and bails once `~RunController` clears it, so an event delivered after
-    // destruction can never dereference a freed `this`.
+    // The engine retains this callback with no unsubscribe and outlives this controller. Capture a
+    // copy of the `alive` flag, not a bare `this`, so an event after destruction can't touch a
+    // freed `this`.
     engine_.subscribe([this, alive = alive_](const ce::RunEvent& event) {
         if (alive->load(std::memory_order_acquire)) {
             publishEvent(event);
@@ -63,8 +60,7 @@ RunController::RunController(ce::ExecutionEngine& engine,
 }
 
 RunController::~RunController() {
-    // Block any further callback work, then drain the worker so an in-flight
-    // run() that is mid-emit can't race the teardown of this object.
+    // Block further callback work, then drain the worker so an in-flight run() can't race teardown.
     alive_->store(false, std::memory_order_release);
     if (watcher_.isRunning()) {
         watcher_.waitForFinished();
@@ -80,7 +76,6 @@ void RunController::setProject(const ProjectModel& project) noexcept {
 }
 
 RunController::ContextKey RunController::activeKey() const {
-    // Empty means the project's default, as in RunOptions::environment.
     std::string env = environment_;
     if (env.empty() && project_->hasProject()) {
         env = project_->project().defaultEnvironment;
@@ -215,8 +210,7 @@ namespace {
     return ce::HttpMethod::Get;
 }
 
-/// Parse a comma-separated status list ("200,201") into the engine's vector.
-/// Non-numeric tokens are skipped.
+/// Parse a comma-separated status list ("200,201"); non-numeric tokens are skipped.
 [[nodiscard]] std::vector<int> parseStatusList(const QString& text) {
     std::vector<int> out;
     const auto tokens = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
@@ -259,17 +253,14 @@ namespace {
 }  // namespace
 
 void applyOverrideToOperation(ce::Operation& op, const RequestOverride& ov) {
-    // Full-assignment, not partial-update: the editor always seeds every
-    // control from the current operation, so the override snapshot is a
-    // complete representation of the request. Assigning every field keeps the
-    // one-shot-run path and the Save-to-Project path identical, and lets the
-    // user actually clear a value (uncheck Force, pick no actor, etc.).
+    // Full assignment, not partial update: the editor seeds every control, so the override is a
+    // complete request. This keeps the one-shot run and Save-to-Project paths identical and lets
+    // the user clear a value.
     op.method = methodFromLabel(ov.method);
     op.pathTemplate = ov.path.toStdString();
     op.headers = ov.headers;
     op.queryParams = ov.queryParams;
 
-    // Body: form vs raw are mutually exclusive shapes.
     if (ov.bodyIsForm) {
         op.bodyForm = ov.formFields;
         op.bodyTemplate.reset();
@@ -283,10 +274,8 @@ void applyOverrideToOperation(ce::Operation& op, const RequestOverride& ov) {
         }
     }
 
-    // Actor: an empty selection clears it (the "(none)" combo entry).
     op.actor = ce::ActorId{ov.actor.toStdString()};
 
-    // Inline auth: full-assignment — nullopt clears any prior per-op auth.
     op.inlineAuth = ov.inlineAuth;
 
     const auto codes = parseStatusList(ov.expectStatus);
@@ -304,9 +293,7 @@ void applyOverrideToOperation(ce::Operation& op, const RequestOverride& ov) {
     }
     op.force = ov.forceReRun;
 
-    // Chain edits are opt-in: only touch depends_on / extract when the editor
-    // actually loaded and re-snapshotted them, so a request-only override
-    // leaves an operation's wiring intact.
+    // Chain edits are opt-in: a request-only override leaves the operation's wiring intact.
     if (ov.chainEdited) {
         op.explicitDependencies.clear();
         op.explicitDependencies.reserve(ov.dependencies.size());
@@ -335,9 +322,7 @@ void RunController::runWithOverride(const QString& target,
     options.captureResponseBodies = captureResponseBodies_;
 
     const ce::OperationId targetId{target.toStdString()};
-    // Strong handle to the project the worker runs against. For an override
-    // run this is a patched deep copy (one-shot); otherwise it's the shared
-    // loaded project. Either way the worker owns a strong ref, so a concurrent
+    // Strong handle to the worker's project (a patched copy for an override run), so a concurrent
     // reload can't dangle it.
     const std::shared_ptr<const ce::Project> project =
         requestOverride.active ? patchedProject(project_->project(), targetId, requestOverride)
@@ -346,10 +331,9 @@ void RunController::runWithOverride(const QString& target,
     ce::RunContext& ctx = contextForActive();
     runningRoot_ = project_->rootPath().toStdString();
 
-    // Value-picker pins (Option A): seed each chosen value as the resource's
-    // most-recent instance so the producing op is extraction-cache-skipped and
-    // the chain uses the pinned value. A clean run resets extractions inside
-    // the engine, so pins are intentionally ignored there (truly fresh).
+    // Value-picker pins seed each chosen value as the resource's most-recent instance, so the
+    // producing op is skipped and the pinned value used. A clean run resets extractions in the
+    // engine, so pins are ignored there.
     for (const auto& [token, value] : variableOverrides_) {
         const auto dot = token.find('.');
         if (dot == std::string::npos) {
@@ -363,14 +347,12 @@ void RunController::runWithOverride(const QString& target,
     running_ = true;
     emit runningChanged(true);
 
-    // Clear any prior run's id before the new run's RunStarted lands, so a
-    // cancelRun() racing the worker startup can't cancel by a stale id.
+    // Clear the prior run id so a cancelRun() racing worker startup can't cancel by a stale id.
     currentRunId_.store(0, std::memory_order_release);
 
-    // engine_.run blocks; run it on a worker. The captured state outlives the
-    // run: the engine lives for the app lifetime, `project` is a shared handle
-    // owned by the lambda, and ctx is a member owned by this controller (whose
-    // destructor drains the worker before teardown).
+    // engine_.run blocks, so run it on a worker. Captured state outlives the run: the engine lives
+    // for the app, `project` is owned by the lambda, and ctx is a member whose destructor drains
+    // the worker.
     auto future = QtConcurrent::run([this, project, targetId, &ctx, options]() -> RunReport {
         RunReport report;
         auto result = engine_.run(*project, targetId, ctx, options);
@@ -391,9 +373,8 @@ void RunController::cancelRun() {
     if (!running_) {
         return;
     }
-    // A run is in flight but its RunStarted may not have arrived yet (id still
-    // 0). Cancelling by a zero id is a no-op in the engine, so only forward a
-    // real id; the worker also checks cancellation each step once it starts.
+    // RunStarted may not have arrived yet (id 0); cancelling by a zero id is a no-op, so forward
+    // only a real id.
     const auto runId = currentRunId_.load(std::memory_order_acquire);
     if (runId != 0) {
         engine_.cancel(engine::RunId{runId});
@@ -424,8 +405,7 @@ void RunController::publishEvent(const ce::RunEvent& event) {
                                      joinHeaders(e.maskedHeaders),
                                      static_cast<int>(e.bodySize));
             } else if constexpr (std::is_same_v<T, ce::ResponseReceived>) {
-                // Body is present only when the run opted in; empty optional
-                // → empty QString, which the panel renders as "not captured".
+                // Body is empty unless the run opted in; the panel renders that as "not captured".
                 emit responseReceived(format::boundedIndex(e.stepIndex),
                                       e.status,
                                       joinHeaders(e.headers),
@@ -458,9 +438,8 @@ void RunController::publishEvent(const ce::RunEvent& event) {
             } else if constexpr (std::is_same_v<T, ce::RunEnded>) {
                 emit runEnded(format::runOutcome(e.outcome));
             }
-            // The timeline renders every event with user-facing evidence;
-            // ExtractionApplied, StepCancelled, and SessionRefreshed remain
-            // folded into finer-grained events or the final RunReport.
+            // ExtractionApplied, StepCancelled and SessionRefreshed are folded into finer events or
+            // the final RunReport.
         },
         event);
 }

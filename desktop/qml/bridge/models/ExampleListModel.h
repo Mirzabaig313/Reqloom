@@ -1,7 +1,5 @@
-// ExampleListModel — saved example responses for the currently-open operation
-//  A thin list view over SavedResponseStore::list
-// for one operation id; AppController refills it on selection + after any
-// example mutation. C++ owns the data; QML renders the rows.
+// ExampleListModel — saved example responses for the open operation; AppController refills it on
+// selection and after example mutations.
 #pragma once
 
 #include "application/SavedResponseStore.h"

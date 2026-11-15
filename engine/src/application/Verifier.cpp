@@ -27,10 +27,9 @@ std::string truncate(std::string_view s) {
     return out;
 }
 
-/// Resolve a JSONPath via the shared engine walker so the Dry-Run preview
-/// understands exactly what run-time extraction does — including predicate
-/// filters (`[?(@.field=='x')]`). Returns nullptr on miss; a non-null pointer
-/// to a JSON `null` for a resolved-but-null value.
+/// Resolve a JSONPath via the shared engine walker so the Dry-Run preview matches run-time
+/// extraction (incl. predicate filters). nullptr on miss; a pointer to JSON `null` for a resolved
+/// null.
 const Json* walk(const Json& root, std::string_view path) {
     return walkJsonPath(root, path);
 }
@@ -51,8 +50,7 @@ VerifiedExtraction verifyJsonPath(const Extraction& ext, const Json& body) {
         out.detail = "path resolved to null";
         return out;
     }
-    // Empty string / empty array / empty object are treated as Null —
-    // they're not useful for variable substitution.
+    // Empty string/array/object count as Null: useless for variable substitution.
     if (hit->is_string() && hit->get<std::string>().empty()) {
         out.status = VerificationStatus::Null;
         out.detail = "path resolved to empty string";
@@ -126,8 +124,6 @@ VerifiedExtraction verifyNotEvaluable(const Extraction& ext, std::string_view re
 
 }  // namespace
 
-// ─── Aggregate accessors ─────────────────────────────────────────────────────
-
 bool VerificationReport::allVerified() const noexcept {
     return std::all_of(extractions.begin(), extractions.end(), [](const auto& v) {
         return v.status == VerificationStatus::Verified;
@@ -144,8 +140,6 @@ bool VerificationReport::noFailures() const noexcept {
     return !hasFailures();
 }
 
-// ─── Public API ──────────────────────────────────────────────────────────────
-
 Verifier::Verifier() = default;
 
 std::expected<VerificationReport, ReqloomError> Verifier::verify(
@@ -161,7 +155,6 @@ std::expected<VerificationReport, ReqloomError> Verifier::verify(
         try {
             bodyDoc = Json::parse(sample.body);
         } catch (const Json::parse_error&) {
-            // Body provided but not JSON — JSONPath extractions fail with NoMatch.
             bodyDoc = Json::object();
         }
     }

@@ -1,9 +1,6 @@
 // ImportFromHttpFile — `.http` / `.rest` (REST Client / JetBrains HTTP Client)
 // → Project parser. Unlike the JSON importers this is line-based.
-//
-// path/id helpers mirror the JSON importers rather than share a
-// header. Upgrade path: extract a shared ImportSupport.h if the duplication
-// across all importers becomes worth removing.
+// Helpers mirror the JSON importers rather than share a header.
 
 #include "ImportFromHttpFile.h"
 #include "ImportSupport.h"
@@ -233,7 +230,6 @@ bool isRequestChainRef(std::string_view name) {
     return rest.starts_with("response.") || rest.starts_with("request.");
 }
 
-/// One parsed request block.
 struct Block {
     std::string name;
     std::string requestLine;
@@ -269,7 +265,6 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
     ss << in.rdbuf();
     const std::string text = ss.str();
 
-    // Split into lines (LF; trailing CR trimmed by `trim` at use sites).
     std::vector<std::string> lines;
     {
         std::size_t start = 0;
@@ -288,15 +283,13 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
     std::vector<Block> blocks;
     Block current;
 
-    // Parser state within a block: header phase (before the blank line that
-    // ends headers) vs body phase.
+    // Header phase until the blank line, then body phase.
     enum class Phase : std::uint8_t { BeforeRequest, Headers, Body };
     Phase phase = Phase::BeforeRequest;
     is::VarRefs referencedVars;
 
     auto finalizeBlock = [&]() {
         if (current.hasRequestLine) {
-            // Trim a trailing run of blank lines from the body.
             while (!current.body.empty() &&
                    (current.body.back() == '\n' || current.body.back() == '\r' ||
                     current.body.back() == ' ' || current.body.back() == '\t')) {
@@ -312,14 +305,12 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
         const std::string_view line = rawLine;
         const std::string_view t = trim(line);
 
-        // Request separator.
         if (t.starts_with("###")) {
             finalizeBlock();
             current.name = std::string{trim(t.substr(3))};
             continue;
         }
 
-        // Variable definition: @name = value (only meaningful outside a body).
         if (phase != Phase::Body && t.starts_with("@")) {
             const std::string_view rest = t.substr(1);
             const auto eq = rest.find('=');
@@ -369,7 +360,7 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
             continue;
         }
 
-        // Body phase: keep raw lines verbatim (preserve original, not trimmed).
+        // Body: raw lines verbatim.
         current.body.append(rawLine);
         current.body.push_back('\n');
     }
@@ -392,7 +383,6 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
         return rewriteTokens(s, referencedVars);
     };
 
-    // Seed the environment from @vars (rewriting nested references).
     for (const auto& [key, value] : fileVars) {
         env[is::envKey(key)] = rewrite(value);
     }
@@ -407,8 +397,7 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
     bool multipleBasesWarned = false;
 
     for (const auto& block : blocks) {
-        // Request line: optional METHOD then URL. Fold is not supported beyond a
-        // single line (rare in practice).
+        // Request line: optional METHOD then URL; folded lines are not supported.
         std::string_view rl = block.requestLine;
         HttpMethod method = HttpMethod::Get;
         std::string_view urlPart = rl;
@@ -417,7 +406,6 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
             if (const auto m = parseMethodStrict(rl.substr(0, sp))) {
                 method = *m;
                 urlPart = trim(rl.substr(sp + 1));
-                // Drop a trailing " HTTP/1.1" version token if present.
                 const auto httpPos = urlPart.rfind(" HTTP/");
                 if (httpPos != std::string_view::npos) {
                     urlPart = trim(urlPart.substr(0, httpPos));
@@ -460,7 +448,6 @@ std::expected<ImportFromHttpFile::Outcome, ReqloomError> ImportFromHttpFile::run
         }
         op.pathTemplate = rewrite(split.path);
 
-        // Query params from the URL's `?a=b&c=d` portion.
         if (const auto q = rawUrl.find('?'); q != std::string::npos) {
             std::string_view query = rawUrl;
             query.remove_prefix(q + 1);

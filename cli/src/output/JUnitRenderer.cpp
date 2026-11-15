@@ -1,10 +1,5 @@
-// JUnitRenderer — see header.
-//
-// JUnit XML schema matched to the surface Jenkins / GitLab / Buildkite
-// consume. One <testsuite> per chain, one <testcase> per declared
-// operation. Poll-attempt rows are merged into the parent <testcase>'s
-// <system-out> rather than emitted as their own cases — otherwise a
-// passing flow with 30 polls would inflate the suite count by 30.
+// JUnitRenderer — see header. Poll-attempt rows fold into the parent <testcase>'s <system-out>,
+// so a flow with 30 polls does not inflate the suite count.
 
 #include "JUnitRenderer.h"
 
@@ -24,9 +19,8 @@ namespace {
 
 namespace ce = reqloom::engine;
 
-/// XML 1.0 attribute / text escape. Drops control characters that the
-/// XML 1.0 spec disallows entirely (e.g. raw 0x00–0x08); Jenkins' parser
-/// rejects whole reports if those slip through.
+/// XML 1.0 escape; drops control characters the spec disallows (Jenkins rejects whole reports
+/// containing them).
 std::string xmlEscape(std::string_view input) {
     std::string out;
     out.reserve(input.size());
@@ -50,7 +44,6 @@ std::string xmlEscape(std::string_view input) {
                 break;
             default:
                 if (byte < 0x20 && ch != '\n' && ch != '\r' && ch != '\t') {
-                    // Skip — XML 1.0 disallows these even when escaped.
                     break;
                 }
                 out += ch;
@@ -60,11 +53,8 @@ std::string xmlEscape(std::string_view input) {
     return out;
 }
 
-/// Group consecutive poll-attempt rows under their parent op row. The
-/// engine emits polls BEFORE the parent (see ExecutionEngine::run), so
-/// we buffer poll rows forward and flush them onto the next non-poll
-/// row. Trailing polls (no parent — shouldn't happen, defensive)
-/// attach to the last emitted group, or are dropped if none exists.
+/// Group poll-attempt rows under their parent op row. The engine emits polls before the parent,
+/// so poll rows buffer until the next non-poll row.
 struct GroupedStep {
     std::size_t parentIdx{};
     std::vector<std::size_t> pollIdxs;
@@ -84,8 +74,7 @@ std::vector<GroupedStep> groupSteps(const std::vector<ce::StepResult>& steps) {
     }
 
     if (!pendingPolls.empty() && !groups.empty()) {
-        // Defensive: orphan polls past the last parent. Fold into the
-        // last group so they stay visible in the report.
+        // Orphan polls attach to the last group so they stay visible.
         for (auto idx : pendingPolls) {
             groups.back().pollIdxs.push_back(idx);
         }

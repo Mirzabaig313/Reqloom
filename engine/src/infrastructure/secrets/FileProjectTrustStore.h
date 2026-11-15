@@ -1,20 +1,8 @@
 // FileProjectTrustStore — the per-user JSON file that records which folder
 // each project id belongs to. See reqloom/engine/ProjectTrustStore.h.
-//
-// Format (UTF-8 JSON, unknown keys preserved on every write so later
-// features can add sections without a format break):
-//
-//   {
-//     "version": 1,
-//     "projects": {
-//       "<project id>": { "folder": "/absolute/canonical/path" }
-//     }
-//   }
-//
-// Reads tolerate a missing, unparseable or wrongly-shaped file (it is treated
-// as empty). Writes take a lock file next to it (two processes cannot
-// interleave a read-modify-write), replace the file atomically (temp file +
-// rename) and create it readable by the user only.
+// Format: UTF-8 JSON `{ "version": 1, "projects": { "<id>": { "folder": "/abs/path" } } }`; unknown
+// keys are preserved on write. Reads treat a bad file as empty; writes lock, replace atomically and
+// are user-only.
 #pragma once
 
 #include <reqloom/engine/ProjectTrustStore.h>

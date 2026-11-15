@@ -203,7 +203,6 @@ bool SetCookie::removes(std::chrono::system_clock::time_point now) const {
 }
 
 std::optional<std::pair<std::string, std::string>> parseSetCookie(std::string_view header) {
-    // The cookie is everything up to the first `;`; the rest are attributes.
     auto semi = header.find(';');
     auto cookie = (semi == std::string_view::npos) ? header : header.substr(0, semi);
 

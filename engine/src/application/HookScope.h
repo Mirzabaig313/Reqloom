@@ -13,9 +13,8 @@
 
 namespace reqloom::engine {
 
-/// Secret names a hook on `op` may read: those referenced by the operation's templates
-/// (directly or through an environment value), by its actor's auth and inject templates,
-/// and by the hook script itself (`ctx.secret.NAME` / `ctx.secret["NAME"]`).
+/// Secret names a hook on `op` may read: those referenced by the operation's templates (directly or
+/// via an environment value), its actor's auth/inject templates, and the hook script itself.
 [[nodiscard]] std::set<std::string> hookSecretNames(
     const Operation& op,
     const Project& project,

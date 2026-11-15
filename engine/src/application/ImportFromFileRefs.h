@@ -1,12 +1,9 @@
 // File-reference sanitising shared by the collection importers.
-//
-// In a `body_form`, a value starting with `@` is a file upload. Imported collections come from
-// someone else's machine, so an importer must never carry a directory path into an `@` value
-// (`/Users/x/.ssh/id_rsa` or `../../secret` would upload that file when run); importers keep
-// only the base name and warn.
-//
-// A text value starting with `@` is escaped as `@@`, so it needs no path stripping. A relative
-// `@name` resolves against the project folder.
+// A `body_form` value starting with `@` is a file upload. Imported paths come from someone else's
+// machine
+// (`/Users/x/.ssh/id_rsa` would upload that file when run), so importers keep only the base name
+// and warn. A text value starting with `@` is escaped as `@@`. A relative `@name` resolves against
+// the project folder.
 #pragma once
 
 #include <reqloom/engine/FormBody.h>

@@ -25,8 +25,8 @@ using TimePoint = std::chrono::system_clock::time_point;
 
 enum class SkipReason : std::uint8_t { SessionValid, ExtractionCached };
 
-/// Replaces every redacted value in events, details and history. Stable so renderers,
-/// persistence and tests can match on it.
+/// Replaces every redacted value in events, details and history; stable so renderers can match on
+/// it.
 inline constexpr std::string_view kRedactedHeaderValue = "<redacted>";
 
 struct RunStarted {
@@ -87,10 +87,7 @@ struct ExtractionApplied {
     TimePoint at;
 };
 
-/// Per-extraction outcome — one event per extraction declared on an op.
-/// Mirrors `ExtractionTrace` on `RunContext`. Lets the desktop timeline
-/// surface resolved values, nulls, and missing fields per step instead
-/// of the coarse-grained `ExtractionApplied` summary.
+/// Per-extraction outcome, one event per extraction declared on an op; mirrors `ExtractionTrace`.
 struct ExtractionCompleted {
     enum class Outcome : std::uint8_t { Resolved, Null, Missing, InvalidPattern, Unsupported };
 
@@ -139,11 +136,9 @@ enum class UnresolvedVariableCause : std::uint8_t {
     ExtractionUnsupported,
 };
 
-/// Safe, value-free evidence for one unresolved request variable.
-///
-/// Display strings are bounded and escaped before reaching this event. `token`
-/// excludes template braces. Source fields identify where a user can navigate;
-/// producer fields are present only when the current run proves causality.
+/// Value-free evidence for one unresolved request variable. `token` excludes template braces;
+/// source fields say where a user can navigate; producer fields appear only when the run proves
+/// causality.
 struct UnresolvedVariableDiagnostic {
     std::string token;
     VariableUseKind useKind{VariableUseKind::Unknown};
@@ -177,8 +172,7 @@ struct StepBlocked {
     TimePoint at;
 };
 
-/// One declared assertion evaluated against the final response. Streamed per
-/// assertion (like ExtractionCompleted) so the timeline shows pass/fail rows.
+/// One declared assertion evaluated against the final response, streamed per assertion.
 struct AssertionCompleted {
     RunId runId;
     std::size_t stepIndex{};

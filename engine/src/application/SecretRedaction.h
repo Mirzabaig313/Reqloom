@@ -1,17 +1,10 @@
-// SecretRedaction — applies value-based redaction (SecretRegistry) to
-// everything the engine hands out, and makes response-body excerpts safe to
-// quote in failure details.
-//
-// Two layers protect a string before it leaves the engine:
-//   1. Value redaction: every registered secret value is replaced by
-//      `kRedactedValueMarker`, whatever header, variable or field it sits in.
-//   2. Name redaction (HeaderMasking.h): header and extraction values under a
-//      secret-looking name are replaced by `kRedactedHeaderValue`.
-// Body excerpts additionally get field redaction: the values of
-// sensitive-named JSON keys (at any depth), `key=value` / `key: value` pairs
-// and XML elements are masked, because a failed login response can carry a
-// token the engine never registered. Captured bodies on events are exempt:
-// they are the person's own view (see `maskCapturedBody` for agent surfaces).
+// SecretRedaction — value-based redaction (SecretRegistry) of everything the engine hands out, and
+// safe response-body excerpts for failure details. Two layers: value redaction (every registered
+// secret becomes `kRedactedValueMarker`) and name redaction (HeaderMasking.h: secret-looking names
+// become `kRedactedHeaderValue`). Body excerpts also get field redaction (sensitive-named JSON
+// keys, `key=value` pairs, XML elements), since a failed login response can carry a token the
+// engine never registered. Captured bodies on events are exempt: they are the person's own view
+// (see `maskCapturedBody` for agent surfaces).
 #pragma once
 
 #include <reqloom/engine/Events.h>
@@ -28,11 +21,9 @@ namespace reqloom::engine {
 
 class SecretRegistry;
 
-/// Copy of `body` with the values of sensitive-named fields replaced by the
-/// marker. JSON bodies are walked structurally (key order kept); other text
-/// gets a conservative `key=value` / `key: value` / `<key>value</key>` scan.
-/// Returns nullopt when the body is not text (binary, NUL bytes, invalid
-/// UTF-8) and so cannot be made safe.
+/// Copy of `body` with values of sensitive-named fields replaced by the marker: JSON is walked
+/// structurally (key order kept), other text gets a conservative `key=value` / `key: value` /
+/// `<key>value</key>` scan. nullopt when the body is not text (binary, NUL bytes, invalid UTF-8).
 [[nodiscard]] std::optional<std::string> redactSensitiveBodyFields(std::string_view body);
 
 /// Failure-detail excerpt of `body`: field redaction, then value redaction against `registry`

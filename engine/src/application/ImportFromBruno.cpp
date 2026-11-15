@@ -1,10 +1,7 @@
 // ImportFromBruno — Bruno collection (directory of `.bru` block-DSL files) →
 // Project parser. Directory-based, unlike the single-file importers.
-//
-// ponytail: the .bru block parser uses naive brace-depth matching to find a
-// block's closing `}` — a JSON body string containing an unbalanced brace
-// (e.g. "}" inside a string) could miscount. Upgrade path: a string-aware
-// scanner. In practice Bruno bodies are balanced JSON, so this holds.
+// ponytail: .bru blocks are found by naive brace-depth matching; an unbalanced brace inside a JSON
+// string body could miscount.
 
 #include "ImportFromBruno.h"
 #include "ImportFromFileRefs.h"
@@ -247,7 +244,6 @@ std::vector<BruBlock> parseBlocks(std::string_view text) {
     std::vector<BruBlock> blocks;
     std::size_t i = 0;
     while (i < text.size()) {
-        // Find the next block header: identifier chars then optional ':sub'.
         while (i < text.size() &&
                (text[i] == ' ' || text[i] == '\t' || text[i] == '\r' || text[i] == '\n')) {
             ++i;
@@ -263,7 +259,6 @@ std::vector<BruBlock> parseBlocks(std::string_view text) {
             ++i;
         }
         std::string_view header = text.substr(nameStart, i - nameStart);
-        // Skip whitespace to the opening brace.
         while (i < text.size() &&
                (text[i] == ' ' || text[i] == '\t' || text[i] == '\r' || text[i] == '\n')) {
             ++i;
@@ -275,7 +270,6 @@ std::vector<BruBlock> parseBlocks(std::string_view text) {
             }
             continue;
         }
-        // Match the block body via brace depth.
         std::size_t depth = 0;
         const std::size_t bodyStart = i + 1;
         std::size_t j = i;
@@ -392,7 +386,6 @@ std::string readFile(const fs::path& p, std::error_code& ec) {
     return ss.str();
 }
 
-/// One `.bru` file read from the collection.
 struct BruFile {
     fs::path rel;                ///< path relative to the collection root
     std::string firstComponent;  ///< first directory of `rel` (or its file name)
@@ -470,7 +463,6 @@ std::string containerAuthMode(const std::vector<BruBlock>& blocks) {
 
 std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
     const fs::path& input, const fs::path& projectRoot) const {
-    // Resolve the collection root from whatever was pointed at.
     std::error_code ec;
     fs::path root;
     if (fs::is_directory(input, ec)) {
@@ -494,7 +486,6 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
         return rewriteTokens(s, referencedVars);
     };
 
-    // Collection name from bruno.json when present, else the directory name.
     std::string collectionName;
     {
         const auto brunoJson = collectionRoot / "bruno.json";
@@ -579,7 +570,6 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
             continue;
         }
 
-        // Find the method block; skip files without one (not a request).
         const BruBlock* methodBlock = nullptr;
         HttpMethod method = HttpMethod::Get;
         std::string reqName;
@@ -626,7 +616,6 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
             continue;
         }
 
-        // The method block is a dictionary carrying url / body / auth.
         std::string rawUrl;
         std::string authMode;
         for (const auto& [k, v] : parseDict(methodBlock->inner)) {

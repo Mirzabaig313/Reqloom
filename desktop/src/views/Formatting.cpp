@@ -167,7 +167,6 @@ theming::StatusToken methodStatusToken(const QString& method) {
     if (method == QStringLiteral("DELETE")) {
         return theming::StatusToken::Error;
     }
-    // PUT / PATCH — mutation.
     return theming::StatusToken::Warning;
 }
 
@@ -187,7 +186,6 @@ theming::MethodColor methodColor(const QString& method) {
     if (method == QStringLiteral("DELETE")) {
         return theming::MethodColor::Delete;
     }
-    // HEAD / OPTIONS / unknown — no dedicated hue.
     return theming::MethodColor::Neutral;
 }
 
@@ -297,8 +295,7 @@ QVariantList unresolvedDiagnostics(
         item.insert(QStringLiteral("producerOperationId"),
                     diagnostic.producerOp ? QString::fromStdString(diagnostic.producerOp->value)
                                           : QString{});
-        // A persisted index of SIZE_MAX would wrap to step 0 and read as
-        // "no producer" while claiming one, so it is rejected rather than shown.
+        // A persisted index of SIZE_MAX would wrap to step 0 and claim a producer, so reject it.
         qulonglong producerStep{};
         constexpr auto kMaxProducerIndex =
             static_cast<std::size_t>(std::numeric_limits<int>::max() - 1);

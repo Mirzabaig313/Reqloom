@@ -1,9 +1,6 @@
 // ImportFromThunderClient — Thunder Client (VS Code) collection export (JSON) →
 // Project parser. Sibling of ImportFromPostman.
-//
-// path/id/url helpers mirror ImportFromPostman rather than share a
-// header (the existing importers do the same). Upgrade path: extract a shared
-// ImportSupport.h once the duplication is worth removing.
+// Helpers mirror ImportFromPostman rather than share a header.
 
 #include "ImportFromThunderClient.h"
 #include "ImportFromFileRefs.h"
@@ -275,8 +272,7 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                          std::string{"thunder client import: invalid JSON: "} + e.what()});
     }
 
-    // Normalise to a list of collection objects. "Export Collection" gives an
-    // array; a single object is also accepted.
+    // Accept an "Export Collection" array or a single collection object.
     std::vector<const json*> collections;
     if (doc.is_array()) {
         for (const auto& c : doc) {
@@ -430,7 +426,6 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                 }
             }
 
-            // Headers.
             if (item.contains("headers") && item["headers"].is_array()) {
                 for (const auto& h : item["headers"]) {
                     if (!h.is_object() || import_json::boolOr(h, "isDisabled", false)) {
@@ -443,7 +438,6 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                 }
             }
 
-            // Body.
             if (item.contains("body") && item["body"].is_object()) {
                 const json& body = item["body"];
                 const auto type = jsonStr(body, "type");

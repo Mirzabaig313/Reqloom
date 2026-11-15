@@ -47,8 +47,7 @@ namespace reqloom::engine {
 
 namespace {
 
-/// Convert the public sample request to the engine-internal view used by
-/// HookRunner. The two mirror each other field-for-field.
+/// Convert the public sample request to the engine-internal view used by HookRunner.
 [[nodiscard]] HookRequestView toInternal(const HookSampleRequest& req) {
     return HookRequestView{req.method, req.url, req.headers, req.body};
 }
@@ -67,8 +66,6 @@ namespace {
 
 }  // namespace
 
-// Dependencies special members (out-of-line for incomplete-type users)
-
 ExecutionEngine::Dependencies::Dependencies() = default;
 
 ExecutionEngine::Dependencies::Dependencies(std::unique_ptr<HttpClient> httpIn,
@@ -86,8 +83,6 @@ ExecutionEngine::Dependencies::~Dependencies() = default;
 ExecutionEngine::Dependencies::Dependencies(Dependencies&&) noexcept = default;
 ExecutionEngine::Dependencies& ExecutionEngine::Dependencies::operator=(Dependencies&&) noexcept =
     default;
-
-// Factories
 
 std::unique_ptr<HttpClient> makeCurlHttpClient() {
     return std::make_unique<CurlHttpClient>();
@@ -387,8 +382,7 @@ enum class YamlShape : std::uint8_t { Unparseable, OpenApi, Other };
 
 std::expected<OpenApiImportOutcome, ReqloomError> importAny(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
-    // `.http` / `.rest` are text (not JSON), so route them by extension before
-    // the content checks.
+    // `.http` / `.rest` are text, so route them by extension before the content checks.
     std::string ext = spec.extension().string();
     for (auto& c : ext) {
         if (c >= 'A' && c <= 'Z') {

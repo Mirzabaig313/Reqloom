@@ -14,8 +14,7 @@ double percentileSorted(const std::vector<double>& sorted, double q) {
         return sorted.front();
     }
     const double clampedQ = std::clamp(q, 0.0, 1.0);
-    // Type-7 (linear interpolation between order statistics), as used by
-    // NumPy/R defaults: rank = q * (n - 1).
+    // Type-7 percentile (linear interpolation, NumPy/R default): rank = q * (n - 1).
     const double rank = clampedQ * static_cast<double>(sorted.size() - 1);
     const auto lo = static_cast<std::size_t>(std::floor(rank));
     const auto hi = static_cast<std::size_t>(std::ceil(rank));
@@ -54,7 +53,6 @@ Histogram histogram(std::vector<double> samples) {
     const double hi = samples.back();
     const double range = hi - lo;
 
-    // All identical → a single unit-width bin holding everything.
     if (range <= 0.0) {
         out.start = lo;
         out.binWidth = 1.0;

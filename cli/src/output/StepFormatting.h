@@ -1,7 +1,5 @@
-// Small, side-effect-free helpers shared by every CLI renderer.
-// Keeps the per-step glyph and error-code spelling consistent between
-// the live event stream, the post-run summary, and the JUnit / JSON
-// emitters.
+// Side-effect-free helpers shared by every CLI renderer, keeping glyphs and error-code spelling
+// consistent.
 
 #pragma once
 

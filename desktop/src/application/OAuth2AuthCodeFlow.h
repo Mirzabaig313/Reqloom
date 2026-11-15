@@ -1,8 +1,6 @@
-// OAuth2AuthCodeFlow — runs the OAuth 2.0 Authorization Code flow with PKCE
-// (RFC 7636) in-app: generates the PKCE pair, opens the system browser to the
-// authorization endpoint, catches the redirect on a loopback server, then
-// exchanges the code for an access token. Emits `succeeded` or `failed` exactly
-// once. Desktop-only — the headless engine can't drive an interactive browser.
+// OAuth2AuthCodeFlow — in-app OAuth 2.0 Authorization Code flow with PKCE (RFC 7636): opens the
+// browser, catches the redirect on a loopback server, exchanges the code. Emits `succeeded` or
+// `failed` exactly once.
 #pragma once
 
 #include <QtCore/QObject>

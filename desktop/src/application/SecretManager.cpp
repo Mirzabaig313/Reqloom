@@ -39,8 +39,7 @@ QList<SecretEntry> SecretManager::referencedSecrets(const ProjectModel& project)
         return entries;
     }
 
-    // Ask the engine which secrets the project actually references — we only
-    // probe the keychain for those names, never enumerate the whole store.
+    // Probe the keychain only for names the project references, never enumerating the store.
     const auto names = engine::collectSecretReferences(project.project());
     // No keychain access at all unless this folder owns the project id.
     const auto trusted = names.empty()

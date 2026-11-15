@@ -44,7 +44,6 @@ std::expected<void, ReqloomError> validateProjectId(const std::string_view id) {
 }
 
 std::string generateProjectId() {
-    // random_device is the OS entropy source on every supported platform.
     std::random_device rd;
     std::array<std::uint8_t, 16> bytes{};
     for (auto& b : bytes) {
@@ -261,7 +260,6 @@ struct TextLine {
     return std::ranges::all_of(line, isSpaceOrTab);
 }
 
-/// `---` / `...` followed by end of line or whitespace.
 [[nodiscard]] bool isMarker(const std::string_view line, const std::string_view marker) {
     return line.starts_with(marker) && (line.size() == 3 || isSpaceOrTab(line[3]));
 }
@@ -382,7 +380,6 @@ struct RootLayout {
     return layout;
 }
 
-/// The line index the id goes before: after `name:` and its value lines, else the first key.
 [[nodiscard]] std::size_t idLineIndex(const std::string_view text,
                                       const std::vector<TextLine>& lines,
                                       const RootLayout& layout) {

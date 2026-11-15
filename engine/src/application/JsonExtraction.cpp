@@ -392,9 +392,8 @@ std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
 
 namespace {
 
-/// Strip a leading `$.<prefix>.` from sourcePath if present, returning
-/// the remainder. Used by Header / Cookie sources where the schema
-/// convention is `$.headers.X` or `$.cookies.X`.
+/// Strip a leading `$.<prefix>.` from sourcePath (Header/Cookie sources use `$.headers.X` /
+/// `$.cookies.X`).
 [[nodiscard]] std::string stripPrefix(std::string_view sourcePath, std::string_view prefix) {
     if (sourcePath.starts_with(prefix)) {
         return std::string{sourcePath.substr(prefix.size())};
@@ -403,7 +402,6 @@ namespace {
 }
 
 /// Look up a header by name, case-insensitive per RFC 7230 §3.2.
-/// Returns nullopt when not present.
 [[nodiscard]] std::optional<std::string> findHeader(
     const std::vector<std::pair<std::string, std::string>>& headers, std::string_view name) {
     const auto target = toLowerCopy(name);
@@ -415,9 +413,8 @@ namespace {
     return std::nullopt;
 }
 
-/// Parse a `Set-Cookie` header value and return the named cookie's
-/// value, or nullopt when absent. Delegates to the shared cookies
-/// parser — same shape used by the executor's per-actor jar.
+/// Value of the named cookie in a `Set-Cookie` value via the shared cookies parser; nullopt when
+/// absent.
 [[nodiscard]] std::optional<std::string> parseSetCookieValue(std::string_view header,
                                                              std::string_view cookieName) {
     auto parsed = cookies::parseSetCookie(header);
@@ -430,13 +427,8 @@ namespace {
     return std::move(parsed->second);
 }
 
-/// Look up a cookie across all `Set-Cookie` headers present on the
-/// response. Returns the value of the LAST matching cookie when more
-/// than one collides — RFC 6265 §5.3 step 11 says a newer cookie
-/// replaces an older one in the user-agent's store, and that's the
-/// behavior browsers and curl ship. Pinning "last wins" here makes
-/// schemas portable: the same response that works in a browser
-/// resolves the same way through the engine.
+/// Look up a cookie across all `Set-Cookie` headers; the LAST match wins (RFC 6265 §5.3 step 11, as
+/// browsers and curl do) so schemas resolve the same way as in a browser.
 [[nodiscard]] std::optional<std::string> findCookie(
     const std::vector<std::pair<std::string, std::string>>& headers, std::string_view name) {
     std::optional<std::string> latest;
@@ -451,9 +443,7 @@ namespace {
     return latest;
 }
 
-/// Walk a JSONPath against an already-parsed JSON document and append
-/// the trace. Shared by `extractFromJsonDetailed` and the new
-/// response-aware overload.
+/// Walk a JSONPath against a parsed document and append the trace.
 void resolveJsonPath(const json& doc,
                      const Extraction& ext,
                      ExtractionTrace& trace,
@@ -478,7 +468,6 @@ void resolveJsonPath(const json& doc,
     out.values[ext.variableName] = std::move(value);
 }
 
-/// Whether at least one extraction in the list needs the JSON body.
 [[nodiscard]] bool anyNeedsJsonParse(const std::vector<Extraction>& extractions) {
     return std::ranges::any_of(
         extractions, [](const auto& ext) { return ext.source == Extraction::Source::JsonPath; });
@@ -488,8 +477,8 @@ void resolveJsonPath(const json& doc,
 
 std::expected<DetailedExtraction, ReqloomError> extractFromJsonDetailed(
     const OperationId& opId, const std::string& body, const std::vector<Extraction>& extractions) {
-    // Body-only entry point: zero status code and no headers means
-    // Header / StatusCode / Cookie / Regex all surface as Missing.
+    // Body-only: with no status or headers, Header / StatusCode / Cookie / Regex surface as
+    // Missing.
     return extractFromResponseDetailed(opId, body, 0, {}, extractions);
 }
 
@@ -526,8 +515,7 @@ std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
         switch (ext.source) {
             case Extraction::Source::JsonPath: {
                 if (!docParsed) {
-                    // Defensive — we said anyNeedsJsonParse was false yet
-                    // a JsonPath slipped through. Mark as Missing rather
+                    // Defensive: a JsonPath slipped past anyNeedsJsonParse; mark Missing rather
                     // than UB.
                     trace.outcome = ExtractionTrace::Outcome::Missing;
                     break;
@@ -549,7 +537,6 @@ std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
             }
             case Extraction::Source::StatusCode: {
                 if (statusCode == 0) {
-                    // No status was passed in (body-only call site).
                     trace.outcome = ExtractionTrace::Outcome::Missing;
                     break;
                 }
@@ -580,25 +567,21 @@ std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
                         out.values[ext.variableName] = rx.value;
                         break;
                     case RegexSearchResult::Outcome::NoMatch:
-                        // Pattern compiled fine; the body just didn't
-                        // match. Same outcome as a JsonPath that walks
-                        // the document successfully but finds no node.
+                        // Pattern compiled but did not match: same as a JsonPath that finds no
+                        // node.
                         trace.outcome = ExtractionTrace::Outcome::Missing;
                         break;
                     case RegexSearchResult::Outcome::Refused:
-                        // Pattern malformed or refused by the regex guard,
-                        // or the body exceeds the subject cap — distinct
-                        // from Missing so users can fix the schema instead
-                        // of staring at a body wondering why their
-                        // capture group didn't fire.
+                        // Malformed or refused pattern, or body over the subject cap: distinct from
+                        // Missing so users can fix the schema.
                         trace.outcome = ExtractionTrace::Outcome::InvalidPattern;
                         break;
                 }
                 break;
             }
             case Extraction::Source::XPath:
-                // XML parsing is post-MVP — flag for the user instead of
-                // silently failing. The trace value stays empty.
+                // XML parsing is post-MVP; flag it rather than failing silently. The trace value
+                // stays empty.
                 trace.outcome = ExtractionTrace::Outcome::Unsupported;
                 break;
         }

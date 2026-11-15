@@ -1,22 +1,9 @@
 // SecretRegistry — per-run set of secret VALUES that must never leave the
-// engine in clear text.
+// engine in clear text. Every string bound for an event, StepResult detail, error detail or history
+// row goes through `redact()`. Values are registered in several spellings (raw, URL-encoded,
+// base64/base64url); short or common values are ignored.
 //
-// Name-based masking (HeaderMasking.h) only catches a secret sitting under a
-// secret-looking name. This registry closes the gap: every value the engine
-// knows to be secret (loaded `{{secret.X}}` values, allowed `{{$.env.NAME}}`
-// values, credentials an authenticator obtains or builds, cookie values,
-// sensitive extractions) is added here, and every string bound for an event,
-// a StepResult detail, an error detail or a history row is passed through
-// `redact()`, which replaces each occurrence with `kRedactedValueMarker`.
-//
-// Each value is registered in several spellings: raw, URL-encoded (RFC 3986
-// and form `+`-for-space), and base64 / base64url (padded and unpadded), so a
-// token in a query string or a Basic credential is caught too. Values shorter
-// than `kMinSecretLength` or trivially common ("true", "Bearer", …) are
-// ignored so ordinary text is not shredded.
-//
-// Thread-safe: `add()` takes an exclusive lock, `redact()` a shared one. The
-// desktop runs the engine on a worker thread and may read results elsewhere.
+// Thread-safe: `add()` takes an exclusive lock, `redact()` a shared one.
 #pragma once
 
 #include <reqloom/engine/Events.h>
@@ -31,8 +18,7 @@
 
 namespace reqloom::engine {
 
-/// Replaces a registered secret value wherever it appears; the same marker
-/// as name-based masking.
+/// Replaces a registered secret value; same marker as name-based masking.
 inline constexpr std::string_view kRedactedValueMarker = kRedactedHeaderValue;
 
 class SecretRegistry {
@@ -54,9 +40,8 @@ public:
     /// are not registrable or already known.
     void add(std::string_view value);
 
-    /// Copy of `text` with every occurrence of every registered spelling
-    /// replaced by `kRedactedValueMarker`. Overlapping matches merge into one
-    /// marker, so no fragment of either value survives.
+    /// Copy of `text` with every registered spelling replaced by `kRedactedValueMarker`;
+    /// overlapping matches merge into one marker.
     [[nodiscard]] std::string redact(std::string_view text) const;
 
     /// True when nothing has been registered.

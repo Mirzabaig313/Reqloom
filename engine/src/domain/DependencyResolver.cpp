@@ -24,16 +24,11 @@ namespace reqloom::engine {
 
 namespace {
 
-/// One parsed `{{scope.field}}` reference found in a template. `scope`
-/// is the part before the first dot with any `[N]` index stripped; for
-/// `{{order[2].order_id}}` scope is "order", field is "order_id".
 struct ParsedRef {
     std::string scope;
     std::string field;
 };
 
-/// Collect the templated strings on an operation's request into one list for reference
-/// scanning. Views into `op`; the caller keeps `op` alive.
 std::vector<std::string_view> requestTemplates(const Operation& op) {
     std::vector<std::string_view> templates;
     templates.reserve(1 + (op.bodyTemplate ? 1U : 0U) + op.headers.size() + op.queryParams.size() +
@@ -119,8 +114,6 @@ std::vector<std::string_view> operationTemplates(const Operation& op, const Proj
     return templates;
 }
 
-/// Trim ASCII spaces/tabs — matches VariableResolver's trim of each
-/// `{{...}}` capture.
 [[nodiscard]] std::string_view trimWs(std::string_view s) {
     const auto begin = s.find_first_not_of(" \t");
     if (begin == std::string_view::npos) {
@@ -160,15 +153,9 @@ std::optional<std::string_view> builtinCallArgument(std::string_view inner) {
     return arg;
 }
 
-/// Find every `{{...}}` reference and split it into (scope, field).
-///
-/// Must mirror VariableResolver exactly — it matches `{{[^}]+}}`, trims,
-/// then splits on the first dot. A narrower pattern here would miss
-/// `{{ order.id }}` (spaces), dropping a real dependency edge and
-/// letting a whitespaced cyclic reference evade detection.
-///
-/// `$` builtins are recorded with scope "$". A builtin call's bare reference argument is
-/// recorded too, so it is checked, creates edges and has its secret pre-loaded.
+/// Find every `{{...}}` reference and split it into (scope, field). Must mirror VariableResolver's
+/// pattern, trim and split, or a whitespaced reference would drop a dependency edge.
+/// `$` builtins use scope "$"; a builtin's bare reference argument is recorded too.
 std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templates) {
     static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
     std::vector<ParsedRef> refs;
@@ -182,8 +169,7 @@ std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templ
             }
 
             if (inner.front() == '$') {
-                // The builtin's tail is kept so validate() can check `$.env` names against
-                // allowed_env.
+                // Keep the builtin's tail so validate() can check `$.env` names.
                 refs.push_back(
                     ParsedRef{"$", inner.starts_with("$.") ? inner.substr(2) : std::string{}});
                 if (const auto arg = builtinCallArgument(inner)) {
@@ -225,8 +211,6 @@ std::expected<void, ReqloomError> checkEnvBuiltinAllowed(std::string_view owner,
                     name)});
 }
 
-/// The templated strings on an actor's auth surfaces: config, login steps, refresh, injected
-/// headers. Views into `actor`.
 std::vector<std::string_view> actorTemplates(const Actor& actor) {
     std::vector<std::string_view> templates;
     for (const auto& [_, v] : actor.authConfig) {
@@ -256,7 +240,6 @@ std::vector<std::string_view> actorTemplates(const Actor& actor) {
     return templates;
 }
 
-/// Prefix `error` with `file:line:` when the entity it names has a known source.
 ReqloomError withSource(const SourceLocation& at, ReqloomError error) {
     if (!at.file.empty()) {
         error.detail = at.line > 0 ? std::format("{}:{}: {}", at.file, at.line, error.detail)
@@ -316,7 +299,6 @@ std::expected<void, ReqloomError> validateEnvReadsOutsideOperations(const Projec
 /// The faker generators VariableResolver implements; any other name never resolves.
 constexpr std::array<std::string_view, 2> kFakerNames{"email", "phone"};
 
-/// Reject `$.faker.NAME` for an unknown generator; anything after the name is left to run time.
 std::expected<void, ReqloomError> checkFakerBuiltinKnown(const OperationId& opId,
                                                          const ParsedRef& ref) {
     constexpr std::string_view kFakerPrefix{"faker."};
@@ -340,8 +322,7 @@ std::expected<void, ReqloomError> checkFakerBuiltinKnown(const OperationId& opId
                                  name)});
 }
 
-/// Parse every predicate an operation declares and check every regex extraction pattern, so
-/// a malformed one is a load error instead of a run-time failure after a request has gone out.
+/// Parse every predicate and regex extraction pattern so a malformed one is a load error.
 std::expected<void, ReqloomError> validateOperationExpressions(const OperationId& opId,
                                                                const Operation& op) {
     const auto reject = [&](const std::string& field, const ReqloomError& err) {
@@ -386,7 +367,6 @@ std::expected<void, ReqloomError> validateOperationExpressions(const OperationId
     return {};
 }
 
-/// Every `failure_message.show` path must be one the extraction walker supports.
 std::expected<void, ReqloomError> validateFailureMessagePaths(
     std::string_view owner, const std::vector<std::string>& paths) {
     for (const auto& path : paths) {
@@ -419,10 +399,9 @@ using ImplicitDeps = std::vector<std::pair<OperationId, std::string>>;
     return out;
 }
 
-/// Pick the producer(s) of `{{resource.var}}` for `self`: extractors other than `self`,
-/// dropping any that also consume the variable. Several left → those in `self`'s depends_on,
-/// else an ambiguity error. None left → "no producer". No extractor at all → no edge (a
-/// runtime concern).
+/// Pick the producer(s) of `{{resource.var}}` for `self`: extractors other than `self` that do not
+/// also consume it. Several left: those in `self`'s depends_on, else ambiguity. None left: "no
+/// producer".
 std::expected<std::vector<OperationId>, ReqloomError> selectProducers(const Operation& op,
                                                                       const OperationId& self,
                                                                       const Project& project,
@@ -475,8 +454,6 @@ std::expected<std::vector<OperationId>, ReqloomError> selectProducers(const Oper
                     joinIds(candidates))});
 }
 
-/// Implicit dependencies of `op`, keeping the flowing variable per producer (as
-/// "resource.var") so callers can label edges.
 std::expected<ImplicitDeps, ReqloomError> inferImplicitDepsDetailed(const Operation& op,
                                                                     const OperationId& self,
                                                                     const Project& project) {
@@ -505,8 +482,6 @@ std::expected<ImplicitDeps, ReqloomError> inferImplicitDepsDetailed(const Operat
     return deps;
 }
 
-/// D-04: an operation's `actor`, `poll_until.actor` and `for_each.over` must name things
-/// that exist.
 std::expected<void, ReqloomError> validateOperationTargets(const OperationId& opId,
                                                            const Operation& op,
                                                            const Project& project) {
@@ -545,8 +520,6 @@ std::expected<std::vector<OperationId>, ReqloomError> DependencyResolver::resolv
 
 std::expected<ResolvedPlan, ReqloomError> DependencyResolver::resolvePlan(
     const Project& project, const OperationId& target) const {
-    // 1. Build the full dependency graph (explicit + implicit edges) for the
-    //    transitive closure of `target`, recording edge metadata as we go.
     std::map<OperationId, std::vector<OperationId>> graph;
     std::vector<DependencyEdge> edges;
     std::set<OperationId> visited;
@@ -589,10 +562,7 @@ std::expected<ResolvedPlan, ReqloomError> DependencyResolver::resolvePlan(
 
         const auto& op = opIt->second;
 
-        // Explicit edges first, so an explicit dep that is also implied is
-        // surfaced as the (solid) explicit edge rather than a duplicate.
-        // Iterate the de-duplicated set so a repeated `depends_on` yields one
-        // edge, not two.
+        // Explicit edges first, so an edge both explicit and implied shows as explicit.
         std::set<OperationId> explicitProducers(op.explicitDependencies.begin(),
                                                 op.explicitDependencies.end());
         std::set<OperationId> allDeps = explicitProducers;
@@ -619,9 +589,8 @@ std::expected<ResolvedPlan, ReqloomError> DependencyResolver::resolvePlan(
         }
     }
 
-    // 2. Topological sort (Kahn's) with lexicographic tie-break.
-    //    Graph edges are "current depends on dep", so the sort order is
-    //    dependencies first, target last.
+    // Kahn's sort, lexicographic tie-break; edges mean "current depends on dep", so dependencies
+    // come first.
     std::map<OperationId, int> inDegree;
     std::map<OperationId, std::vector<OperationId>> dependents;
 
@@ -667,7 +636,6 @@ std::expected<ResolvedPlan, ReqloomError> DependencyResolver::resolvePlan(
         }
     }
 
-    // 3. Cycle detection: if sorted.size() < graph.size(), there's a cycle.
     if (sorted.size() < graph.size()) {
         std::set<OperationId> const sortedSet(sorted.begin(), sorted.end());
         std::string cycleOps;
@@ -683,7 +651,6 @@ std::expected<ResolvedPlan, ReqloomError> DependencyResolver::resolvePlan(
             ErrorCode::Cycle, ErrorClass::Schema, "Circular dependency detected: " + cycleOps});
     }
 
-    // Stable edge order so renderers and tests see deterministic output.
     std::ranges::sort(edges, [](const DependencyEdge& a, const DependencyEdge& b) {
         if (a.consumer.value != b.consumer.value) {
             return a.consumer.value < b.consumer.value;
@@ -719,19 +686,15 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
         return project.resources.contains(ResourceId{scope});
     };
 
-    // Walk every operation: check references and depends_on targets, and
-    // build the whole-project graph so the cycle check sees all edges,
-    // not just those reachable from one target.
+    // Build the whole-project graph so the cycle check sees every edge, not just one target's.
     std::map<OperationId, std::vector<OperationId>> graph;
 
     for (const auto& [resId, resource] : project.resources) {
         for (const auto& [opName, op] : resource.operations) {
             const auto opId = OperationId{std::format("{}.{}", resId.value, opName)};
             auto checked = [&]() -> std::expected<void, ReqloomError> {
-                // AC-3.1.6: a reference whose scope isn't a known root can
-                // never resolve — reject at load.
-                // `poll_until` templates may also use `{{response.X}}`; everything else must be a
-                // known root.
+                // A reference whose scope is not a known root can never resolve; `poll_until` may
+                // also use `{{response.X}}`.
                 auto strictTemplates = requestTemplates(op);
                 std::ranges::copy(authTemplates(op, project), std::back_inserter(strictTemplates));
                 std::ranges::copy(assertionTemplates(op), std::back_inserter(strictTemplates));
@@ -773,7 +736,6 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
                     }
                 }
 
-                // depends_on targets must name a real operation.
                 std::set<OperationId> allDeps;
                 for (const auto& dep : op.explicitDependencies) {
                     const auto dotPos = dep.value.find('.');
@@ -817,8 +779,7 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
         }
     }
 
-    // Whole-project cycle detection (Kahn's). A self-loop never reaches
-    // in-degree 0, so AC-3.1.5 falls out for free.
+    // A self-loop never reaches in-degree 0, so it is reported as a cycle.
     std::map<OperationId, int> inDegree;
     std::map<OperationId, std::vector<OperationId>> dependents;
     for (const auto& [node, deps] : graph) {
@@ -887,7 +848,6 @@ std::expected<void, ReqloomError> checkEntityFileStem(std::string_view kind,
 std::vector<std::string> DependencyResolver::collectSecretReferences(const Project& project) {
     std::set<std::string> names;
 
-    // Scan a list of template strings and record every `secret.X` field.
     const auto scan = [&names](const std::vector<std::string_view>& templates) {
         for (const auto& ref : scanReferences(templates)) {
             if (ref.scope == "secret" && !ref.field.empty()) {
@@ -908,10 +868,7 @@ std::vector<std::string> DependencyResolver::collectSecretReferences(const Proje
         scan(defaultAuthTemplates);
     }
 
-    // Environment values can themselves be secret references — a
-    // `key: !secret NAME` env entry is parsed into `{{secret.NAME}}`, and
-    // an operation that references `{{env.key}}` expands to it. Scan them
-    // so NAME is pre-loaded from the secret store.
+    // Env values can be `!secret NAME` references; scan them so NAME is pre-loaded.
     for (const auto& [_, vars] : project.environments) {
         std::vector<std::string_view> envValues;
         envValues.reserve(vars.size());
@@ -921,9 +878,6 @@ std::vector<std::string> DependencyResolver::collectSecretReferences(const Proje
         scan(envValues);
     }
 
-    // Actor auth surfaces also resolve `{{secret.X}}` (basic credentials,
-    // api_key, oauth client secrets, signing keys, refresh bodies, and
-    // injected headers like `Authorization: Bearer {{secret.TOKEN}}`).
     for (const auto& [_, actor] : project.actors) {
         scan(actorTemplates(actor));
     }
@@ -945,7 +899,6 @@ std::vector<VariableSuggestion> collectVariableSuggestions(const Project& projec
         out.push_back(VariableSuggestion{std::move(token), kind, std::move(detail)});
     };
 
-    // Resolve "<resource>.<op>" against the project.
     const auto findOp = [&project](const OperationId& id) -> const Operation* {
         const auto dot = id.value.find('.');
         if (dot == std::string::npos) {
@@ -964,8 +917,7 @@ std::vector<VariableSuggestion> collectVariableSuggestions(const Project& projec
         return &opIt->second;
     };
 
-    // 1. Upstream extracts — every producing op in the chain (not the target).
-    //    A variable extracted by an op in resource R is referenced as {{R.var}}.
+    // Upstream extracts, referenced as `{{R.var}}` where R is the producing op's resource.
     for (const auto& opId : plan.order) {
         if (opId.value == target.value) {
             continue;
@@ -982,8 +934,6 @@ std::vector<VariableSuggestion> collectVariableSuggestions(const Project& projec
         }
     }
 
-    // 2. The target actor's session tokens — {{actor.var}} from its auth
-    //    steps and refresh block.
     if (const auto* targetOp = findOp(target); targetOp != nullptr) {
         if (const auto actorIt = project.actors.find(targetOp->actor);
             actorIt != project.actors.end()) {
@@ -1005,7 +955,6 @@ std::vector<VariableSuggestion> collectVariableSuggestions(const Project& projec
         }
     }
 
-    // 3. Environment variables — {{env.X}}.
     const std::string envName = environment.empty() ? project.defaultEnvironment : environment;
     if (const auto envIt = project.environments.find(envName);
         envIt != project.environments.end()) {
@@ -1014,13 +963,11 @@ std::vector<VariableSuggestion> collectVariableSuggestions(const Project& projec
         }
     }
 
-    // 4. Declared secrets — {{secret.X}}.
     for (const auto& name : DependencyResolver::collectSecretReferences(project)) {
         add("secret." + name, VariableSuggestion::Kind::Secret, {});
     }
 
-    // 5. Built-ins. Function forms are inserted with empty parens for the user
-    //    to fill; `$.now` accepts an optional +/- duration offset.
+    // Built-ins: function forms get empty parens to fill; `$.now` accepts a +/- duration offset.
     static constexpr std::array<std::pair<std::string_view, std::string_view>, 8> kBuiltins{{
         {"$.uuid", "Random UUID v4"},
         {"$.now", "Current timestamp (ISO 8601); supports an offset, e.g. $.now+5m"},

@@ -82,7 +82,6 @@ constexpr int kStaleLockMs = 30'000;
     return fromUtf8(folder->get<std::string>());
 }
 
-/// Set `projects[id].folder`, keeping every other key (later sections).
 void setFolder(json& doc, const std::string& id, const fs::path& folder) {
     if (!doc.contains("version") || !doc["version"].is_number_integer()) {
         doc["version"] = kFormatVersion;
@@ -98,7 +97,6 @@ void setFolder(json& doc, const std::string& id, const fs::path& folder) {
     entry["folder"] = toUtf8(folder);
 }
 
-/// Create the config directory (user-only when we create it).
 [[nodiscard]] std::expected<void, ReqloomError> ensureDirectory(const fs::path& dir) {
     std::error_code ec;
     if (fs::is_directory(dir, ec)) {
@@ -112,7 +110,6 @@ void setFolder(json& doc, const std::string& id, const fs::path& folder) {
     return {};
 }
 
-/// Replace the file with `doc` atomically (temp file + rename).
 [[nodiscard]] std::expected<void, ReqloomError> saveDocument(const fs::path& file,
                                                              const json& doc) {
     QSaveFile out{toQt(file)};
@@ -169,8 +166,8 @@ std::expected<std::optional<std::filesystem::path>, ReqloomError> FileProjectTru
     if (pathError_) {
         return std::unexpected(*pathError_);
     }
-    // Lock-free: writers replace the file atomically, so a reader sees either
-    // the old or the new document, never a torn one.
+    // Lock-free: writers replace the file atomically, so a reader sees the old or the new document,
+    // never a torn one.
     return recordedFolder(loadDocument(file_), projectId);
 }
 

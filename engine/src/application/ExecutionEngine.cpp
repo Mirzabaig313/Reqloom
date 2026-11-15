@@ -448,10 +448,8 @@ struct AuthTemplateUse {
     return {};
 }
 
-/// Overlay an actor session's mTLS transport (client cert/key/CA) onto a
-/// request, composing with — not replacing — the environment transport already
-/// on `req`. Only non-empty fields win, so an mTLS actor adds its client cert
-/// while keeping the environment's proxy/timeout settings.
+/// Overlay an actor session's mTLS transport onto `req`, keeping the environment's proxy/timeout
+/// settings; only non-empty fields win.
 void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
     if (!session.transport) {
         return;
@@ -474,9 +472,8 @@ void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
     }
 }
 
-/// Build a HookContext snapshot from current run state. Values are copied so the hook can't
-/// reach back into RunContext. A hook sees only its operation's actor session and the secrets
-/// `hookSecretNames` allows.
+/// Build a HookContext snapshot (values copied so the hook can't reach back into RunContext): the
+/// operation's actor session and the secrets `hookSecretNames` allows.
 [[nodiscard]] HookContext buildHookContext(const HttpRequest& req,
                                            const RunContext& ctx,
                                            const ResolveContext& rctx,
@@ -501,8 +498,7 @@ void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
     return out;
 }
 
-/// Convert HttpResponse's vector<pair> headers (curl preserves order
-/// and casing) into the map<string,string> the hook surface expects.
+/// Convert HttpResponse's ordered header pairs into the map the hook surface expects.
 [[nodiscard]] std::map<std::string, std::string> headersToMap(
     const std::vector<std::pair<std::string, std::string>>& headers) {
     std::map<std::string, std::string> out;
@@ -512,9 +508,7 @@ void applyActorSessionTransport(HttpRequest& req, const ActorSession& session) {
     return out;
 }
 
-/// Convert a hook-mutated header map back into vector<pair> form so the
-/// downstream pipeline (extraction, response viewer) sees the same shape
-/// it would have seen without the hook.
+/// Convert a hook-mutated header map back into vector<pair> form.
 /// Add the secrets the chain's hook scripts name, which no template references.
 void appendHookScriptSecrets(const Project& project,
                              const std::vector<OperationId>& chain,
@@ -549,8 +543,7 @@ void appendHookScriptSecrets(const Project& project,
     return out;
 }
 
-/// Bytes the request body puts on the wire — inline body, or the sum of
-/// multipart part sizes.
+/// Bytes the request body puts on the wire: inline body or summed multipart part sizes.
 [[nodiscard]] std::size_t requestBodySize(const HttpRequest& req) noexcept {
     if (!req.multipart.empty()) {
         std::size_t total = 0;
@@ -687,8 +680,8 @@ void setQueryParameter(std::string& url, const std::string_view key, const std::
     return sanitized;
 }
 
-/// `expectStatusList` takes precedence over the legacy single value; with no expectation any
-/// status is accepted.
+/// `expectStatusList` wins over the legacy single value; with no expectation any status is
+/// accepted.
 [[nodiscard]] bool expectsStatus(const Operation& op, const int status) {
     if (!op.expectStatusList.empty()) {
         return std::ranges::find(op.expectStatusList, status) != op.expectStatusList.end();
@@ -765,14 +758,11 @@ struct ExecutionEngine::Impl {
     std::mutex cancelMutex;
     std::condition_variable cancelWake;
 
-    // Operations that have stored resource instances during the run in progress. The first
-    // store replaces what that operation produced in earlier runs; later ones (for_each
-    // iterations) append.
+    // Operations that stored resource instances this run: the first store replaces earlier runs',
+    // later ones (for_each) append.
     std::set<OperationId> producedThisRun;
 
-    // Set per-run from RunOptions. Runs are serialized on one engine
-    // instance (concurrent run() is unsupported in the MVP), so a plain
-    // member is safe — no run overlaps another's read of this flag.
+    // Runs are serialized per engine (concurrent run() is unsupported), so a plain member is safe.
     bool captureResponseBodies{false};
     std::size_t failureExcerptBytes{kDefaultFailureExcerptBytes};
     // True for a run whose secret store has no backend on this machine.
@@ -824,11 +814,8 @@ struct ExecutionEngine::Impl {
         }
     }
 
-    /// Build the opt-in body payload for a `ResponseReceived` event.
-    /// Returns nullopt unless the run opted in, capping the captured
-    /// bytes at `kMaxCapturedBodyBytes` (UTF-8-aware so the in-memory
-    /// string a viewer renders never ends mid-character) to bound
-    /// event/UI memory.
+    /// Opt-in body payload for a `ResponseReceived` event: nullopt unless the run opted in, capped
+    /// at `kMaxCapturedBodyBytes` UTF-8-safely.
     [[nodiscard]] std::optional<std::string> capturedBody(const std::string& body) const {
         if (!captureResponseBodies) {
             return std::nullopt;
@@ -842,23 +829,17 @@ struct ExecutionEngine::Impl {
     void emit(const RunEvent& event) {
         RunEvent safeEvent{event};
         if (auto* prepared = std::get_if<RequestPrepared>(&safeEvent); prepared != nullptr) {
-            // A prepared URL is display evidence, not a replayable request. Treat
-            // authority, path, query segments, and fragment as opaque because
-            // templates and hooks can source any of them from secrets.
+            // A prepared URL is display evidence, not replayable: any part may be sourced from
+            // secrets, so all is opaque.
             prepared->url = sanitizeEventUrl(prepared->url);
         }
-        // Value redaction: every registered secret, in any string field of any event; name-based
-        // masking at the emit sites is a second layer.
+        // Value redaction of every registered secret in any string field; name-based masking at
+        // emit sites is a second layer.
         if (activeSecrets != nullptr) {
             redactEvent(safeEvent, *activeSecrets);
         }
-        // Persist before fanning out — the event survives a subscriber
-        // that crashes the process. Best-effort: a persistence failure
-        // must never break the run. append() returns errors via
-        // std::expected, but a serialization edge (e.g. nlohmann dump on
-        // unexpected input) could still throw; swallow it here so a
-        // history hiccup can never abort the chain or escape across the
-        // engine boundary on the worker thread.
+        // Persist before fanning out so the event survives a crashing subscriber. Best-effort: a
+        // history failure (even a throw) must never abort the run.
         if (deps.history) {
             try {
                 // NOLINTNEXTLINE(bugprone-unused-return-value)
@@ -877,21 +858,16 @@ struct ExecutionEngine::Impl {
         for (auto& cb : snapshot) {
             try {
                 cb(safeEvent);
-                // Subscriber isolation is intentional: a misbehaving callback
-                // must not propagate into the engine's run loop, which would
-                // break the chain for every other subscriber. Once the
-                // engine logger lands (Engine Requirement §10), this becomes
-                // log + continue.
-                // NOLINTNEXTLINE(bugprone-empty-catch)
+                // Subscriber isolation: a misbehaving callback must not break the run for other
+                // subscribers. NOLINTNEXTLINE(bugprone-empty-catch)
             } catch (...) {
             }
         }
     }
 
-    /// After a refresh, rebuild the credential the authenticator pre-resolved into the session's
-    /// inject maps at login; otherwise requests keep sending the pre-refresh credential. Keys
-    /// mirror AuthStrategy.cpp: oauth2 → access_token, bearer → token, api_key → key. A refresh
-    /// that doesn't extract that name leaves the credential as it was.
+    /// After a refresh, rebuild the credential pre-resolved into the session's inject maps at login
+    /// (keys mirror AuthStrategy.cpp: oauth2 → access_token, bearer → token, api_key → key). A
+    /// refresh without that name leaves it as it was.
     static void refreshInjectedCredentials(const Actor& actor,
                                            const std::map<std::string, std::string>& refreshed,
                                            ActorSession& session) {
@@ -924,15 +900,14 @@ struct ExecutionEngine::Impl {
         }
     }
 
-    // Authenticate an actor if its session is not live. nullopt on success, else why the
-    // actor could not be signed in.
+    // Authenticate an actor if its session is not live; nullopt on success, else why sign-in
+    // failed.
     std::optional<ReqloomError> ensureSession(const Actor& actor,
                                               RunContext& ctx,
                                               const ResolveContext& rctx,
                                               RunId runId,
                                               std::size_t stepIndex) {
-        // Forwards auth-flow events into Impl::emit so they reach
-        // subscribers and history under the parent step's runId/stepIndex.
+        // Forward auth-flow events into Impl::emit under the parent step's runId/stepIndex.
         auto sink = [this](const RunEvent& ev) {
             this->emit(ev);
         };
@@ -969,7 +944,6 @@ struct ExecutionEngine::Impl {
                                           std::chrono::system_clock::now()});
                     return std::nullopt;
                 }
-                // Refresh failed — fall through to full re-auth.
             }
         }
 
@@ -1002,9 +976,8 @@ struct ExecutionEngine::Impl {
         return std::nullopt;
     }
 
-    // Run the polling phase for an operation. Returns the FINAL poll response on
-    // success. Errors: PollFailPredicate, PollTimeout, PollMaxAttemptsExceeded,
-    // SchemaInvalid. Cancellation is checked each iteration.
+    // Polling phase: returns the FINAL poll response; errors PollFailPredicate, PollTimeout,
+    // PollMaxAttemptsExceeded, SchemaInvalid.
     std::expected<HttpResponse, ReqloomError> runPollLoop(const Operation& op,
                                                           const PollUntil& poll,
                                                           const Project& project,
@@ -1091,9 +1064,8 @@ struct ExecutionEngine::Impl {
         HttpResponse lastResponse;
         bool haveLastResponse = false;
 
-        // Inline auth for the poll requests, computed once. OAuth2 fetches its
-        // token a single time here (not per poll attempt) and the resulting
-        // Bearer header is re-applied to every attempt.
+        // Inline auth for poll requests, computed once (OAuth2 fetches its token a single time, not
+        // per attempt).
         const std::optional<InlineAuth> effAuth = effectiveInlineAuth(op, project);
         std::map<std::string, std::string> inlineOAuth2Headers;
         if (effAuth && effAuth->type == InlineAuthType::OAuth2) {
@@ -1158,10 +1130,7 @@ struct ExecutionEngine::Impl {
                     }
                 }
 
-                // Cookie jar emission for poll requests. Same priority
-                // as the parent op: a poll inheriting the parent's
-                // actor sees the jar that has accumulated through the
-                // initial response and any prior poll attempt.
+                // Cookie jar emission, same priority as the parent op.
                 if (!containsHeaderCaseInsensitive(req.headers, "Cookie")) {
                     if (auto header =
                             cookies::requestHeaderFor(ctx.jarCookies(pollActor->id), req.url);
@@ -1171,9 +1140,7 @@ struct ExecutionEngine::Impl {
                 }
             }
 
-            // Inline (actor-less) auth on the parent op also covers its poll
-            // requests. Applied before signing; inline-auth ops have no signing
-            // session, so the two never interact in practice.
+            // Inline (actor-less) auth on the parent op also covers its poll requests.
             if (auto authErr = applyInlineAuth(req, effAuth, ctx, rctx)) {
                 return std::unexpected(*authErr);
             }
@@ -1205,7 +1172,6 @@ struct ExecutionEngine::Impl {
                 }
             }
 
-            // Inline (actor-less) signing on the parent op also covers polls.
             if (auto why = signInlineAuth(req, effAuth, ctx, rctx)) {
                 return std::unexpected(
                     ReqloomError{ErrorCode::SessionRefreshFailed,
@@ -1236,18 +1202,13 @@ struct ExecutionEngine::Impl {
                                   std::chrono::system_clock::now(),
                                   capturedBody(lastResponse.body)});
 
-            // Update the cookie jar from this poll's Set-Cookie headers.
-            // Pollers that issue stateful status checks (rare but real)
-            // can rotate session cookies — without absorbing them here
-            // a follow-up op would send a stale cookie.
+            // Absorb Set-Cookie from this poll so a follow-up op doesn't send a stale cookie.
             if (pollActor != nullptr) {
                 cookies::absorbSetCookies(lastResponse.headers, pollActor->id, ctx, req.url);
             }
 
-            // Each poll attempt is a timeline row alongside the parent step.
-            // Parse the body once per attempt and evaluate both predicates
-            // against it — evaluate() would otherwise re-parse the same
-            // body for each predicate.
+            // Each attempt is a timeline row; parse the body once and evaluate both predicates
+            // against it.
             const auto parsedBody = evaluator.parseBody(lastResponse.body);
             const auto failMatched =
                 failPredicate &&
@@ -1290,7 +1251,6 @@ struct ExecutionEngine::Impl {
                 return lastResponse;
             }
 
-            // Next-attempt delay: fixed interval or exponential backoff.
             std::chrono::milliseconds delay = poll.interval;
             if (poll.backoffBase) {
                 const auto shift = std::min(attempt, 20);
@@ -1330,9 +1290,8 @@ struct ExecutionEngine::Impl {
                 : "poll_until: max_attempts (" + std::to_string(poll.maxAttempts) + ") exceeded"});
     }
 
-    // Apply an operation's actor-less inline auth to a fully-built request.
-    // Values may contain {{variables}}, resolved here like any header. Called
-    // after actor/session injects so inline auth wins on the Authorization key.
+    // Apply an operation's actor-less inline auth; values resolve like any header. Runs after
+    // actor/session injects so inline auth wins on Authorization.
     [[nodiscard]] std::optional<ReqloomError> applyInlineAuth(HttpRequest& req,
                                                               const std::optional<InlineAuth>& auth,
                                                               const RunContext& ctx,
@@ -1378,9 +1337,8 @@ struct ExecutionEngine::Impl {
                 const auto secret = varResolver.resolve(auth->jwtSecret, ctx, rctx).output;
                 ctx.secretRegistry().add(secret);
                 const auto payload = varResolver.resolve(auth->jwtPayload, ctx, rctx).output;
-                // Only HS256/HS512 are supported (crypto has no RS/ES). Empty
-                // algorithm defaults to HS256; anything else fails the step
-                // rather than silently signing with the wrong algorithm.
+                // Only HS256/HS512 (empty = HS256); anything else fails the step rather than
+                // signing with the wrong algorithm.
                 std::string algo = auth->jwtAlgorithm;
                 std::ranges::transform(algo, algo.begin(), [](unsigned char c) {
                     return static_cast<char>(std::toupper(c));
@@ -1412,18 +1370,15 @@ struct ExecutionEngine::Impl {
             case InlineAuthType::OAuth2:
             case InlineAuthType::Mtls:
             case InlineAuthType::Inherit:
-                // AwsSigV4/OAuth1 sign per-attempt (signInlineAuth); OAuth2 is a
-                // token fetch (applyInlineOAuth2); Mtls is transport-level;
-                // Inherit is resolved to the project default before we get here.
+                // AwsSigV4/OAuth1 sign per attempt (signInlineAuth); OAuth2 fetches a token; Mtls
+                // is transport-level; Inherit is already resolved.
                 break;
         }
         return std::nullopt;
     }
 
-    // Per-request signing for inline (actor-less) AWS SigV4 / OAuth1. Reuses
-    // the same tested signers as the actor path by feeding the inline
-    // credentials into a transient session. Returns why signing failed, leaving req untouched,
-    // or nullopt on success.
+    // Per-request signing for inline AWS SigV4 / OAuth1 via the actor-path signers on a transient
+    // session. Returns why signing failed (req untouched) or nullopt.
     [[nodiscard]] std::optional<std::string> signInlineAuth(HttpRequest& req,
                                                             const std::optional<InlineAuth>& auth,
                                                             const RunContext& ctx,
@@ -1487,9 +1442,8 @@ struct ExecutionEngine::Impl {
             .value_or("missing access_key/secret_key/region/service or malformed URL");
     }
 
-    // Resolve an operation's effective inline auth. Inherit resolves to the
-    // project default (which must not itself be Inherit; a nested Inherit or an
-    // absent default resolves to no auth).
+    // Resolve effective inline auth: Inherit takes the project default; a nested Inherit or absent
+    // default means no auth.
     [[nodiscard]] std::optional<InlineAuth> effectiveInlineAuth(const Operation& op,
                                                                 const Project& project) const {
         if (op.inlineAuth && op.inlineAuth->type == InlineAuthType::Inherit) {
@@ -1501,9 +1455,7 @@ struct ExecutionEngine::Impl {
         return op.inlineAuth;
     }
 
-    // Mutual TLS: stamp the client cert/key onto the request's transport so the
-    // HTTP client presents them during the handshake. Transport-level, so it
-    // composes with (does not replace) any header auth.
+    // Mutual TLS: stamp client cert/key onto the request transport; composes with header auth.
     void applyInlineMtls(HttpRequest& req,
                          const std::optional<InlineAuth>& auth,
                          const RunContext& ctx,
@@ -1533,15 +1485,9 @@ struct ExecutionEngine::Impl {
         }
     }
 
-    // OAuth 2.0 (client credentials): fetch a token by synthesizing a transient
-    // actor and reusing the tested OAuth2 authenticator, then inject the
-    // resulting Authorization: Bearer. Returns an error on token-fetch failure.
-    //
-    // The token is cached in the RunContext session store keyed by the resolved
-    // token_url / client_id / username / scope, honoring the token endpoint's `expires_in`
-    // (with a small safety margin), so ops sharing the same OAuth2 config —
-    // and repeated runs on the same context — reuse one token instead of
-    // re-fetching per operation.
+    // OAuth 2.0 client credentials: fetch a token via a transient actor and the OAuth2
+    // authenticator, then inject Bearer. The token is cached in the session store keyed by
+    // token_url/client_id/username/scope and honors `expires_in`, so ops sharing a config reuse it.
     [[nodiscard]] std::optional<ReqloomError> applyInlineOAuth2(
         HttpRequest& req,
         const std::optional<InlineAuth>& auth,
@@ -1553,9 +1499,8 @@ struct ExecutionEngine::Impl {
             return std::nullopt;
         }
 
-        // Authorization Code (PKCE) is interactive: the desktop runs the browser
-        // flow and stores the token on the op. The engine only injects it — it
-        // can't acquire one headlessly.
+        // Authorization Code (PKCE) is interactive: the desktop stores the token on the op; the
+        // engine only injects it.
         if (auth->oauth2GrantType == "authorization_code") {
             const auto token = varResolver.resolve(auth->oauth2AccessToken, ctx, rctx).output;
             ctx.secretRegistry().add(token);
@@ -1583,7 +1528,6 @@ struct ExecutionEngine::Impl {
         const ActorId cacheId{"__inline_oauth2:" +
                               codecs::hexEncode(crypto::sha256(cacheKeyMaterial))};
 
-        // Reuse a still-valid cached token.
         if (const auto* cached = ctx.session(cacheId);
             cached != nullptr && cached->state == ActorSession::State::Live &&
             std::chrono::steady_clock::now() < cached->expiresAt) {
@@ -1596,8 +1540,7 @@ struct ExecutionEngine::Impl {
 
         Actor actor;
         actor.id = cacheId;
-        // Only the non-interactive grants are supported headlessly. "password"
-        // uses the password grant; anything else uses client_credentials.
+        // Only non-interactive grants run headlessly: "password", else client_credentials.
         actor.strategy = auth->oauth2GrantType == "password"
                              ? AuthStrategy::OAuth2Password
                              : AuthStrategy::OAuth2ClientCredentials;
@@ -1634,8 +1577,7 @@ struct ExecutionEngine::Impl {
             req.headers[key] = value;
         }
 
-        // Cache with a lifetime from `expires_in` (default 5 min, minus a 30s
-        // safety margin so we never present a token about to expire).
+        // Lifetime from `expires_in` (default 5 min) minus a 30s margin.
         auto ttl = std::chrono::seconds{300};
         if (const auto it = session->variables.find("expires_in"); it != session->variables.end()) {
             long secs{0};
@@ -1652,9 +1594,8 @@ struct ExecutionEngine::Impl {
         return std::nullopt;
     }
 
-    // Execute a single operation step. pollAttemptRows is an out-parameter since
-    // each timeline row is a separate StepResult (a parent can't carry a
-    // vector<StepResult> without making the type recursive).
+    // Execute one operation step. pollAttemptRows is an out-parameter: a StepResult can't carry
+    // vector<StepResult> without recursing.
     StepResult executeStep(const Operation& op,
                            const Project& project,
                            RunContext& ctx,
@@ -1718,8 +1659,7 @@ struct ExecutionEngine::Impl {
                                                       : std::string{kRedactedValueMarker},
                                             std::string{location}};
             }
-            // ponytail: Bound untrusted template amplification. If richer bulk
-            // diagnostics are needed, index sources once before raising this cap.
+            // Bound untrusted template amplification.
             if (diagnostics.size() >= kMaxDiagnosticsPerStep) {
                 return;
             }
@@ -1745,8 +1685,6 @@ struct ExecutionEngine::Impl {
 
         HttpRequest req{};
 
-        // Resolve the operation's effective inline auth once (Inherit → project
-        // default) and use it for every auth step below.
         const std::optional<InlineAuth> effAuth = effectiveInlineAuth(op, project);
         const auto failPreparation = [&](const ErrorCode code, std::string detail) {
             result.status = StepResult::Status::Failed;
@@ -1799,7 +1737,6 @@ struct ExecutionEngine::Impl {
                         req.headers[key] = resolved.output;
                         headerResolutions[key] = std::move(resolved);
                     }
-                    // Session-level inject wins on key collision.
                     if (const auto* session = ctx.session(op.actor); session != nullptr) {
                         for (const auto& [key, value] : session->injectHeaders) {
                             eraseHeaderCaseInsensitive(req.headers, key);
@@ -1912,8 +1849,7 @@ struct ExecutionEngine::Impl {
                 return true;
             }
 
-            // Preserve the prior pure-auth error precedence while keeping
-            // side-effectful OAuth acquisition after request-template preflight.
+            // Side-effectful OAuth acquisition comes after request-template preflight.
             if (auto authErr = applyInlineAuth(req, effAuth, ctx, rctx)) {
                 return failPreparation(authErr->code, authErr->detail);
             }
@@ -1930,8 +1866,8 @@ struct ExecutionEngine::Impl {
                 }
                 if (auto* multipart = std::get_if<MultipartBody>(&*formBody)) {
                     req.multipart = std::move(multipart->parts);
-                    // libcurl writes Content-Type with the boundary; drop any
-                    // user-supplied value so curl doesn't send two headers.
+                    // libcurl writes Content-Type with the boundary; drop a user-supplied one so it
+                    // isn't sent twice.
                     eraseHeaderCaseInsensitive(req.headers, "Content-Type");
                 } else if (auto* encoded = std::get_if<UrlEncodedBody>(&*formBody)) {
                     req.body = std::move(encoded->body);
@@ -1948,8 +1884,8 @@ struct ExecutionEngine::Impl {
                 req.timeout = *op.timeout;
             }
 
-            // Hooks rerun after session refresh because their output may depend
-            // on freshly resolved headers, URL, or body values.
+            // Hooks rerun after a refresh because their output may depend on freshly resolved
+            // values.
             if (op.preRequestScript && deps.hooks) {
                 auto hookContext =
                     buildHookContext(req, ctx, rctx, op, project, *op.preRequestScript);
@@ -1965,9 +1901,8 @@ struct ExecutionEngine::Impl {
             return true;
         };
 
-        // Diagnose target templates before authentication can issue HTTP. The
-        // current actor's own session fields are the only unresolved references
-        // authentication is allowed to satisfy; everything else fails here.
+        // Diagnose target templates before authentication can issue HTTP; only the current actor's
+        // own session fields may be left to authentication.
         ignoreCurrentActorUnresolved = true;
         if (!prepareRequest(true)) {
             return result;
@@ -2018,8 +1953,8 @@ struct ExecutionEngine::Impl {
                 return result;
             }
 
-            // Per-request signing (OAuth 1.0a / AWS SigV4). Inside the
-            // retry loop so each attempt gets a fresh nonce/timestamp.
+            // Sign inside the retry loop so each attempt gets a fresh nonce/timestamp (OAuth 1.0a /
+            // SigV4).
             if (!op.actor.value.empty()) {
                 if (const auto* session = ctx.session(op.actor); session) {
                     if (session->signingScheme == ActorSession::SigningScheme::OAuth1HmacSha1) {
@@ -2046,8 +1981,6 @@ struct ExecutionEngine::Impl {
                 }
             }
 
-            // Inline (actor-less) AWS SigV4 / OAuth1 signing — per-attempt so
-            // each retry gets a fresh nonce/timestamp, mirroring the actor path.
             if (auto why = signInlineAuth(req, effAuth, ctx, rctx)) {
                 result.status = StepResult::Status::Failed;
                 result.error = ErrorCode::SessionRefreshFailed;
@@ -2075,12 +2008,7 @@ struct ExecutionEngine::Impl {
                                       httpResp->elapsed,
                                       std::chrono::system_clock::now(),
                                       capturedBody(httpResp->body)});
-                // Absorb Set-Cookie headers immediately so any
-                // post_response hook running between here and the next
-                // outbound call sees the up-to-date jar (today the jar
-                // isn't exposed to the JS sandbox, but the contract is
-                // clearer if absorption happens at receive time, not
-                // before send time).
+                // Absorb Set-Cookie at receive time so a post_response hook sees the current jar.
                 if (!op.actor.value.empty()) {
                     cookies::absorbSetCookies(httpResp->headers, op.actor, ctx, req.url);
                 }
@@ -2110,15 +2038,9 @@ struct ExecutionEngine::Impl {
 
         result.attempts = attemptCount;
 
-        // 401-recovery: if the response says "your session is no longer
-        // valid", try re-authenticating once and retry the operation.
-        // Only fires when:
-        //   - the op has an actor (otherwise there's nothing to refresh)
-        //   - the response is a real HTTP 401 (not a redirected 200)
-        //   - the user's `expect_status:` doesn't already include 401
-        //     (some flows test 401 explicitly — don't fight them)
-        // Emits SessionRefreshed{Trigger::Unauthorized} so subscribers
-        // can surface this in the timeline UI.
+        // 401 recovery: re-authenticate once and retry, only when the op has an actor, the response
+        // is a real 401, and `expect_status:` doesn't include 401. Emits
+        // SessionRefreshed{Trigger::Unauthorized}.
         const auto userExpects401 = [&]() {
             if (!op.expectStatusList.empty()) {
                 return std::find(op.expectStatusList.begin(), op.expectStatusList.end(), 401) !=
@@ -2203,9 +2125,7 @@ struct ExecutionEngine::Impl {
                                               capturedBody(httpResp->body)});
                         cookies::absorbSetCookies(httpResp->headers, op.actor, ctx, req.url);
                     } else {
-                        // Network error on the retry — surface the new
-                        // error rather than the original 401 so users
-                        // see what changed.
+                        // Surface the retry's network error rather than the original 401.
                         result.status = StepResult::Status::Failed;
                         result.error = retryResp.error().code;
                         result.detail = retryResp.error().detail;
@@ -2218,9 +2138,6 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        // When expectStatusList is non-empty it takes precedence over the
-        // singular expectStatus field; the latter is the legacy single-value
-        // form consulted only when the list is empty.
         const bool statusMatches = !httpResp || expectsStatus(op, httpResp->status);
 
         if (!statusMatches) {
@@ -2253,7 +2170,6 @@ struct ExecutionEngine::Impl {
             return result;
         }
 
-        // Polling phase — engine polls until success_when/fail_when matches or budget fires.
         if (op.pollUntil && httpResp) {
             auto pollResult = runPollLoop(op,
                                           *op.pollUntil,
@@ -2277,10 +2193,8 @@ struct ExecutionEngine::Impl {
             httpResp = std::move(*pollResult);
         }
 
-        // post_response hook: runs after the final response (post-poll if
-        // applicable) but before extraction. Hooks may mutate
-        // status/headers/body — extractions then see the mutated body.
-        // Useful for decrypting / unwrapping vendor envelopes.
+        // post_response hook runs after the final (post-poll) response and before extraction; its
+        // mutations are seen by extractions.
         if (httpResp && op.postResponseScript && deps.hooks) {
             auto hctx = buildHookContext(req, ctx, rctx, op, project, *op.postResponseScript);
             HookResponseView respView;
@@ -2308,7 +2222,6 @@ struct ExecutionEngine::Impl {
         }
 
         if (httpResp && !op.extractions.empty()) {
-            // Partition extractions: list (`[*]` JSONPath, fan-out) vs scalar.
             std::vector<Extraction> scalarExts;
             std::vector<Extraction> listExts;
             for (const auto& ext : op.extractions) {
@@ -2343,8 +2256,8 @@ struct ExecutionEngine::Impl {
                     }
                 }
 
-                // Trace every extraction outcome — including misses — so the
-                // timeline shows nulls and missing fields. The op still fails
+                // Trace every extraction outcome, misses included, so the timeline shows nulls and
+                // missing fields.
                 std::optional<std::string> firstMiss;
                 for (auto& t : detailed->traces) {
                     const bool isMissLike = t.outcome == ExtractionTrace::Outcome::Missing ||
@@ -2367,9 +2280,8 @@ struct ExecutionEngine::Impl {
                     ev.at = std::chrono::system_clock::now();
                     switch (t.outcome) {
                         case ExtractionTrace::Outcome::Resolved:
-                            // RunContext keeps the real value for downstream
-                            // templating; the event copy (timeline + disk) is
-                            // masked when the variable name looks secret.
+                            // RunContext keeps the real value; the event copy is masked when the
+                            // name looks secret.
                             ev.outcome = ExtractionCompleted::Outcome::Resolved;
                             ev.value = isSensitiveName(t.variableName)
                                            ? std::string{kRedactedHeaderValue}
@@ -2410,7 +2322,6 @@ struct ExecutionEngine::Impl {
             }
 
             if (listExts.empty()) {
-                // Plain extraction: one instance from the scalar values.
                 if (!scalarValues.empty() || !nullVariables.empty()) {
                     ResourceInstance instance;
                     instance.variables = std::move(scalarValues);
@@ -2431,9 +2342,8 @@ struct ExecutionEngine::Impl {
                     storeInstances(ctx, op, std::move(latest));
                 }
             } else {
-                // List extraction (for-each producer): each `[*]` path yields a
-                // vector; we append one instance per item (scalars broadcast
-                // into every instance), so a downstream for_each can iterate.
+                // List extraction: each `[*]` path yields a vector; one instance per item, scalars
+                // broadcast.
                 std::size_t count = 0;
                 std::vector<std::pair<std::string, std::vector<std::string>>> lists;
                 std::optional<std::string> emptyList;
@@ -2504,10 +2414,8 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        // Response assertions: evaluate each declared predicate against the
-        // final (post-poll, post-hook, post-extraction) response. Record every
-        // outcome; the first failure fails the step. Reuses the predicate
-        // grammar that poll_until.success_when uses.
+        // Response assertions: evaluate each predicate against the final response and record every
+        // outcome; the first failure fails the step.
         if (httpResp && !op.assertions.empty()) {
             const PredicateEvaluator assertionEval;
             const auto parsedBody = assertionEval.parseBody(httpResp->body);
@@ -2583,8 +2491,6 @@ struct ExecutionEngine::Impl {
     }
 };
 
-// ─── Public API ──────────────────────────────────────────────────────────────
-
 ExecutionEngine::ExecutionEngine(Dependencies deps)
     : impl_(std::make_unique<Impl>(std::move(deps))) {}
 
@@ -2628,26 +2534,17 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     if (project.environments.contains(envName)) {
         rctx.envVars = project.environments.at(envName);
     }
-    // Resolve per-env transport overrides once at run start. Operations,
-    // auth steps, refresh blocks and poll requests all see the same
-    // TLS / proxy / connect-timeout settings via rctx.transport.
+    // Resolve per-env transport overrides once at run start; every request sees them via
+    // rctx.transport.
     if (auto it = project.transport.find(envName); it != project.transport.end()) {
         rctx.transport = it->second;
     }
     rctx.allowedEnv.insert(project.allowedEnv.begin(), project.allowedEnv.end());
 
-    // Pre-load referenced secrets from the OS keychain into the resolve
-    // context. We read only the names the project actually references —
-    // never a bulk dump — so an unrelated keychain entry can't leak into
-    // a run. A missing key is left unset (surfaces later as VarUnresolved
-    // when the template can't resolve); a backend failure aborts the run
-    // with SecretAccessFailed so the user isn't silently sent unsigned.
-    //
-    // Skipped on dry runs: a preview must not touch the OS keychain, which
-    // can pop an interactive unlock/authorization prompt. Unresolved
-    // `{{secret.X}}` markers in the previewed chain are expected.
-    //
-    // The run id is announced first: a keychain prompt can block, and cancel() needs a target.
+    // Pre-load only the secrets the project references from the OS keychain (never a bulk dump). A
+    // missing key stays unset (VarUnresolved later); a backend failure aborts with
+    // SecretAccessFailed. Skipped on dry runs: a preview must not trigger a keychain prompt. The
+    // run id is announced first: a keychain prompt can block, and cancel() needs a target.
     const auto runId = impl_->allocateRunId();
     impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});
     const auto emitRunEnded = [&](const RunOutcome outcome) {
@@ -2781,10 +2678,8 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
         StepResult stepResult{};
         std::vector<UnresolvedVariableDiagnostic> stepDiagnostics{};
         if (op.forEach) {
-            // Data-driven fan-out: run once per instance of the `over` resource
-            // (populated by an upstream list extraction). Each iteration binds
-            // `{{<over>.field}}` to that item; iteration rows are tagged with
-            // forEachIndex and grouped under this step, like poll attempts.
+            // Data-driven fan-out: one run per instance of the `over` resource, binding
+            // `{{<over>.field}}`; rows carry forEachIndex and group under this step.
             const ResourceId overRes = op.forEach->over;
             const std::size_t itemCount = ctx.instances(overRes).size();
             stepResult.op = opId;

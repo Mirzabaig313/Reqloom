@@ -1,10 +1,5 @@
-// JsonRenderer — see header.
-//
-// Hand-rolled JSON emission. The CLI doesn't otherwise depend on
-// nlohmann_json, and pulling it in just for one renderer would add a
-// link edge to a target whose footprint we want to keep minimal
-// (CLI = engine + Qt6::Core only). The schema we emit is small and
-// stable; a hundred-line escape function is cheaper than a new dep.
+// JsonRenderer — see header. Hand-rolled JSON: the CLI links only the engine and Qt6::Core,
+// and the schema is small and stable.
 
 #include "JsonRenderer.h"
 
@@ -24,9 +19,7 @@ namespace {
 
 namespace ce = reqloom::engine;
 
-/// Escape a UTF-8 byte sequence per RFC 8259 §7. Bytes ≤ 0x1F use the
-/// short escape forms; everything else passes through. Linear in the input,
-/// so a long detail (a failure excerpt can reach 1 MiB) is safe.
+/// Escape per RFC 8259 §7. Linear, so a long detail (a failure excerpt can reach 1 MiB) is safe.
 std::string escape(std::string_view input) {
     std::string out;
     out.reserve(input.size() + 2);
@@ -80,8 +73,7 @@ JsonRenderer::JsonRenderer(std::ostream& out) : out_(out) {}
 void JsonRenderer::render(const ce::OperationId& target,
                           std::string_view environment,
                           const ce::RunResult& result) {
-    // Aggregate counts let CI consumers gate on "any failure" without
-    // scanning every step entry.
+    // Aggregate counts let CI gate on "any failure" without scanning steps.
     std::uint32_t succeeded = 0;
     std::uint32_t failed = 0;
     std::uint32_t skipped = 0;

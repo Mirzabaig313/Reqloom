@@ -1,5 +1,4 @@
-// BodyHighlighter — see header. Rule-based highlighter attached to a QML
-// TextArea document.
+// BodyHighlighter — see header.
 #include "BodyHighlighter.h"
 
 #include <QtCore/QRegularExpression>
@@ -13,9 +12,8 @@
 
 namespace reqloom::desktop::qml {
 
-// Single-line regex rule: every match of `re` colours capture group `group`
-// with `fmt`. Single-line is sufficient for JSON/XML/YAML tokens, which never
-// span lines; block comments / multi-line strings are out of scope for the MVP.
+// Single-line regex rule: every match of `re` colours capture group `group` with `fmt`.
+// Tokens never span lines; multi-line constructs are out of scope.
 class HighlighterImpl : public QSyntaxHighlighter {
 public:
     struct Rule {
@@ -160,8 +158,7 @@ void BodyHighlighter::rebuild() {
     const QString& lang = language_;
 
     if (lang == QLatin1String("json")) {
-        // Value strings first; the key rule runs last so a "key": is recoloured
-        // as a property even though it also matched the string rule.
+        // Value strings first; the key rule runs last so a "key": is recoloured as a property.
         rules.push_back(rule(QStringLiteral("\"(?:[^\"\\\\]|\\\\.)*\""), stringColor_));
         rules.push_back(
             rule(QStringLiteral("-?\\b\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b"), numberColor_));
@@ -192,7 +189,6 @@ void BodyHighlighter::rebuild() {
         rules.push_back(rule(QStringLiteral("\\*\\*[^*]+\\*\\*"), propertyColor_));
         rules.push_back(rule(QStringLiteral("`[^`]+`"), stringColor_));
     }
-    // "text" / unknown → no rules (plain mono).
 
     impl_->setRules(std::move(rules));
 }

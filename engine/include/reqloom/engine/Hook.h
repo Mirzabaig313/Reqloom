@@ -1,9 +1,7 @@
 // Public, stateless hook dry-run / validation.
 //
-// Runs a pre-request or post-response hook script in the same sandboxed
-// JS environment the engine uses at run time (no filesystem, no network,
-// 1-second budget), against a caller-supplied sample context. Lets an editor
-// validate a hook and preview its mutations without executing a real request.
+// Runs a hook script in the engine's run-time sandbox against a caller-supplied sample context, so
+// an editor can validate a hook and preview its mutations without a real request.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>

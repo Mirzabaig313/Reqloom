@@ -27,9 +27,7 @@ namespace {
 
 using ordered_json = nlohmann::ordered_json;
 
-/// Sensitive-name policy for body fields: the header policy (exact names
-/// such as `authorization`, plus the token/secret/password/key/auth
-/// substrings) applied to the field name.
+/// Sensitive-name policy for body fields: the header policy applied to the field name.
 [[nodiscard]] bool isSensitiveField(std::string_view name) noexcept {
     return isSensitiveHeader(name);
 }

@@ -136,9 +136,7 @@ void printUsage(std::ostream& os) {
         }
     }
 
-    // Machine-readable formats imply --quiet because their output contract
-    // is a single document on stdout. Mixing live event noise into a JSON
-    // document would corrupt the parse on the consumer side.
+    // Machine-readable formats imply --quiet: stdout carries a single document.
     if (out.format == Format::Json || out.format == Format::JUnit) {
         out.quiet = true;
     }
@@ -192,18 +190,14 @@ int runCommand(const QStringList& args) {
         }
     }
 
-    // Decide where rendered output goes. `--output` redirects the renderer's
-    // sink; live progress (when not quiet) always goes to stdout/stderr so
-    // CI tail logs still see the run unfold.
+    // `--output` redirects the renderer's sink; live progress still goes to stdout/stderr.
     std::unique_ptr<std::ofstream> ownedSink;
     std::ostream& sink = renderTarget(std::cout, cfg.outputPath, ownedSink);
     if (ownedSink && !ownedSink->good()) {
         return 1;
     }
 
-    // Text mode in quiet mode would be silent; keep the project preamble
-    // off when the user wants machine-readable output. The summary always
-    // goes to `sink` (stdout or `--output`), live progress to stdout/stderr.
+    // The summary goes to `sink`; live progress to stdout/stderr.
     TextRenderer textRenderer(sink, std::cout, std::cerr, cfg.quiet);
     if (cfg.format == Format::Text && !cfg.quiet) {
         textRenderer.printProjectPreamble(

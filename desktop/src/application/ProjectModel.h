@@ -1,6 +1,5 @@
-// Owns the loaded engine::Project and exposes Qt-friendly accessors for the
-// views. The Project value type stays engine-pure; this wrapper adds the
-// QObject signalling the UI needs and nothing the engine shouldn't see.
+// Owns the loaded engine::Project and exposes Qt-friendly accessors; the engine-pure Project stays
+// free of QObject signalling.
 #pragma once
 
 #include <reqloom/engine/PublicApi.h>
@@ -18,9 +17,8 @@
 
 namespace reqloom::desktop {
 
-/// Loaded-project state holder. Loading parses + validates via the engine;
-/// failures surface through `loadFailed`. The owned Project must outlive any
-/// in-flight run, so the UI blocks reloads while a run is active.
+/// Loaded-project state holder; load failures surface through `loadFailed`. The Project must
+/// outlive any in-flight run, so the UI blocks reloads while a run is active.
 class ProjectModel : public QObject {
     Q_OBJECT
 
@@ -37,30 +35,23 @@ public:
     /// `project()`), or `loadFailed` with a stable code + detail otherwise.
     void loadFromDirectory(const QString& directory);
 
-    /// Scaffold a brand-new, empty project: create `directory` if needed, write
-    /// a minimal `reqloom.yaml` there via the engine writer, then load it so
-    /// the model rebinds to the fresh project (emitting `loaded`). `name` is
-    /// the project name; blank falls back to the folder's own name. Returns
-    /// false (with `error` set and nothing loaded) if the folder can't be
-    /// created or already contains a `reqloom.yaml` — the caller keeps its
-    /// dialog open so the user's input isn't lost.
+    /// Scaffold an empty project: write a minimal `reqloom.yaml` in `directory` (created if
+    /// needed), then load it, emitting `loaded`. Blank `name` falls back to the folder name.
+    /// Returns false (`error` set, nothing loaded) if the folder can't be created or already holds
+    /// a `reqloom.yaml`.
     [[nodiscard]] bool createProject(const QString& directory, const QString& name, QString& error);
 
     [[nodiscard]] bool hasProject() const noexcept;
     [[nodiscard]] const engine::Project& project() const noexcept;
 
-    /// Shared, immutable handle to the current project. A consumer that runs
-    /// work outliving the GUI's `isRunning()` guard (e.g. the off-thread
-    /// engine run) captures this so a concurrent `loadFromDirectory` — which
-    /// rebinds the model to a fresh project — can't dangle the in-flight run.
-    /// Empty before the first successful load.
+    /// Shared, immutable handle to the current project. Off-thread consumers capture it so a
+    /// concurrent `loadFromDirectory` can't dangle an in-flight run. Empty before the first load.
     [[nodiscard]] std::shared_ptr<const engine::Project> projectPtr() const noexcept;
 
     [[nodiscard]] QString name() const;
 
-    /// Absolute project directory the current project was loaded from.
-    /// Empty before the first successful load. Used as a stable key for
-    /// per-project UI persistence (e.g. the selected environment).
+    /// Absolute project directory, empty before the first load; the stable key for per-project UI
+    /// persistence.
     [[nodiscard]] QString rootPath() const;
 
     /// Environment names declared by the project, default first.
@@ -71,19 +62,15 @@ public:
     [[nodiscard]] const engine::Operation* findOperation(
         const engine::OperationId& id) const noexcept;
 
-    /// Replace operation `id` with `updated`, persist the whole project back to
-    /// its directory as YAML, and rebind to the saved state. Returns true on
-    /// success; on failure `error` carries a human-readable message and nothing
-    /// is changed on disk. Emits `saved` on success.
+    /// Replace operation `id` with `updated`, persist the project as YAML and rebind. Returns false
+    /// with `error` set and disk unchanged on failure. Emits `saved` on success.
     [[nodiscard]] bool saveOperation(const engine::OperationId& id,
                                      const engine::Operation& updated,
                                      QString& error);
 
-    /// Apply many operation updates in one draft, validate once, and write
-    /// once (so the whole-chain editor persists every step's depends_on /
-    /// extract atomically rather than reloading per operation). `updates` maps
-    /// "<resource>.<op>" id → the replacement operation. Emits `saved` on
-    /// success; on failure `error` is set and nothing is written.
+    /// Apply many operation updates in one draft: validate once, write once (so the chain editor
+    /// persists atomically). `updates` maps "<resource>.<op>" → replacement. Emits `saved`; on
+    /// failure sets `error` and writes nothing.
     [[nodiscard]] bool saveOperations(const std::map<std::string, engine::Operation>& updates,
                                       QString& error);
 
@@ -92,9 +79,8 @@ public:
     [[nodiscard]] bool saveProjectDefaultAuth(const std::optional<engine::InlineAuth>& defaultAuth,
                                               QString& error);
 
-    /// Rename operation `id` to `newName` (the part after the resource dot),
-    /// persist the project, and rebind. Fails if the name is empty, malformed,
-    /// or already used in the resource. Emits `saved` on success.
+    /// Rename operation `id` to `newName` (the part after the resource dot). Fails if empty,
+    /// malformed or already used. Emits `saved` on success.
     [[nodiscard]] bool renameOperation(const engine::OperationId& id,
                                        const QString& newName,
                                        QString& error);
@@ -114,26 +100,19 @@ public:
     /// `<id>.yaml` file. Emits `saved` on success.
     [[nodiscard]] bool deleteResource(const engine::ResourceId& id, QString& error);
 
-    /// Create or update an actor. `originalId` empty → create a new actor;
-    /// otherwise update that actor (renaming to `actor.id` if different,
-    /// remapping operations that referenced it). The caller supplies the fully
-    /// built actor (the bridge preserves fields the editor doesn't touch).
-    /// Validates + persists; emits `saved` on success.
+    /// Create or update an actor (`originalId` empty → create; else update, renaming to `actor.id`
+    /// and remapping references). The caller supplies the full actor. Emits `saved` on success.
     [[nodiscard]] bool saveActor(const QString& originalId,
                                  const engine::Actor& actor,
                                  QString& error);
 
-    /// Delete actor `id`, clear it from any operation that referenced it,
-    /// persist (the writer prunes the stale `actors/<id>.yaml`), and rebind.
-    /// Emits `saved` on success.
+    /// Delete actor `id`, clear it from operations that referenced it, persist and rebind. Emits
+    /// `saved` on success.
     [[nodiscard]] bool deleteActor(const engine::ActorId& id, QString& error);
 
-    /// Create or update an environment. `originalName` empty → create a new
-    /// environment named `name`; otherwise update it (renaming to `name` if
-    /// different, moving its transport config and the project default when they
-    /// point at the old name). `variables` replaces the env's variable map.
-    /// Validates + persists (the writer prunes a renamed env's stale file);
-    /// emits `saved` on success.
+    /// Create or update an environment (`originalName` empty → create; else update, renaming to
+    /// `name` and moving its transport config and default). `variables` replaces the variable map.
+    /// Emits `saved` on success.
     [[nodiscard]] bool saveEnvironment(const QString& originalName,
                                        const QString& name,
                                        const std::map<std::string, std::string>& variables,
@@ -143,34 +122,27 @@ public:
     /// project default, reassign the default to another environment (or empty).
     /// Persists + rebinds; emits `saved` on success.
     [[nodiscard]] bool deleteEnvironment(const QString& name, QString& error);
-    /// Set the project-level p95 latency SLO budget (ms); 0 clears it.
-    /// Persists the whole project and rebinds. Emits `saved` on success.
+    /// Set the project-level p95 latency SLO budget (ms); 0 clears it. Emits `saved` on success.
     [[nodiscard]] bool setLatencySloP95Ms(int ms, QString& error);
 
-    /// Create an empty resource named `name` (optional `description`), persist,
-    /// and rebind. Fails if the name is empty, contains id-breaking characters
-    /// ('.', '/', '\'), or already exists. Emits `saved` on success.
+    /// Create an empty resource. Fails if the name is empty, contains '.', '/' or a backslash, or
+    /// already exists. Emits `saved`.
     [[nodiscard]] bool createResource(const QString& name,
                                       const QString& description,
                                       QString& error);
 
-    /// Create `operation` under `resourceId` using `name` as its local id,
-    /// persist, and rebind. The supplied operation is preserved in full except
-    /// that its `id` and `resource` are set from the destination. The draft is
-    /// validated before writing, so failure leaves memory and disk unchanged.
-    ///
-    /// @return The fully-qualified operation id on success, or `std::nullopt`
-    /// with a human-readable message in `error` on failure.
+    /// Create `operation` under `resourceId` with `name` as its local id; its `id` and `resource`
+    /// are set from the destination. The draft is validated before writing, so failure leaves
+    /// memory and disk unchanged.
+    /// @return The fully-qualified id, or `std::nullopt` with a message in `error`.
     [[nodiscard]] std::optional<engine::OperationId> createOperation(
         const engine::ResourceId& resourceId,
         const QString& name,
         const engine::Operation& operation,
         QString& error);
 
-    /// Create an operation with the given basic request and chain fields.
-    ///
-    /// Convenience overload for callers that do not have a complete operation.
-    /// Emits `saved` on success.
+    /// Convenience overload creating an operation from basic request and chain fields. Emits
+    /// `saved` on success.
     [[nodiscard]] std::optional<engine::OperationId> createOperation(
         const engine::ResourceId& resourceId,
         const QString& name,

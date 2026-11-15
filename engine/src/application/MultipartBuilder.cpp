@@ -1,25 +1,13 @@
 // MultipartBuilder — see header.
-//
-// Two routing rules in order:
-//   1. If any header is `Content-Type: multipart/form-data` (case-
-//      insensitive), the request is multipart regardless of values.
-//      This matches what users wrote in their YAML — they explicitly
-//      asked for multipart, so we honour it.
-//   2. Otherwise, if any field is a FILE field, we route to multipart. A field is a file when
-//      its TEMPLATE (before `{{var}}` substitution) starts with a single `@` (the curl
-//      convention), so users needn't set the Content-Type header by hand. `@@` escapes a
-//      literal leading `@`, and a substituted value never turns text into a file.
-//
-// A relative file path resolves against the project folder, or the working directory for an
-// in-memory project. Resolution is conservative: paths must exist, be regular files, and
-// fit under a 50 MiB per-part cap and a 256 MiB per-request total (see `UploadLimits`). We do
-// NOT enforce project-root
-// containment — the user's own YAML legitimately references files in
-// `~/Documents`, `/tmp`, etc. The threat model for `body_form` is "the
-// person editing the YAML is the operator", same as for shell scripts.
-// If that ever needs tightening (third-party / team-shared YAMLs), the
-// containment hook is one if-statement away.
-//
+// Routing: multipart when a header is `Content-Type: multipart/form-data` (the user asked for it),
+// or when any field is a FILE field. A field is a file when its TEMPLATE (before `{{var}}`
+// substitution) starts with a single
+// `@`; `@@` escapes a literal `@`, and a substituted value never turns text into a file.
+// A relative path resolves against the project folder (the working directory for an in-memory
+// project). Files must exist, be regular, and fit the per-part and per-request caps
+// (`UploadLimits`). Project-root containment is deliberately NOT enforced: the YAML author is the
+// operator, and files in
+// ~/Documents or /tmp are legitimate.
 
 #include "MultipartBuilder.h"
 
@@ -185,9 +173,8 @@ std::expected<FormBody, ReqloomError> buildFormBody(const FormFields& fields,
             continue;
         }
 
-        // File reference. Validate-then-open-then-read; the bytes load
-        // through an open fd so size and content cannot be swapped out
-        // from under us between the stat and the read.
+        // File reference: the bytes load through an open fd so size and content can't be swapped
+        // between stat and read.
         if (field.value.empty()) {
             return std::unexpected(
                 ReqloomError{ErrorCode::UploadFileUnreadable,
@@ -201,11 +188,8 @@ std::expected<FormBody, ReqloomError> buildFormBody(const FormFields& fields,
         const auto canonical = fs::weakly_canonical(lookup, ec);
         const auto& effective = ec ? lookup : canonical;
 
-        // Cosmetic gates first: nicer error messages for the common
-        // "you typoed the path" / "you pointed at a directory" cases.
-        // These are racy on their own, which is exactly why the size
-        // and content checks below go through an open fd instead of
-        // re-statting the path.
+        // Cosmetic gates for friendly errors on a typoed path or a directory; racy on their own, so
+        // the real checks go through an open fd.
         if (!fs::exists(effective, ec) || ec) {
             return std::unexpected(ReqloomError{
                 ErrorCode::UploadFileUnreadable,
@@ -219,11 +203,8 @@ std::expected<FormBody, ReqloomError> buildFormBody(const FormFields& fields,
                 std::format("body_form field '{}': not a regular file: {}", k, rawPath)});
         }
 
-        // Open and pull bytes through the resulting handle. From this
-        // point on the path is irrelevant — even if an attacker swaps
-        // the path to a symlink targeting /etc/shadow or a 5 GiB file,
-        // tellg() / read() operate on the inode we already have. The
-        // per-part and total caps below bound per-request RSS.
+        // From here on the path is irrelevant: tellg()/read() use the inode we already hold, even
+        // if the path is swapped for a symlink; the caps below bound RSS.
         std::ifstream in(effective, std::ios::binary);
         if (!in) {
             return std::unexpected(
@@ -247,8 +228,7 @@ std::expected<FormBody, ReqloomError> buildFormBody(const FormFields& fields,
         fileBytes += size;
         in.seekg(0, std::ios::beg);
 
-        // Slurp through the open fd. The streambuf-iterator pattern
-        // reads every byte verbatim, including embedded NULs.
+        // Streambuf-iterator reads every byte verbatim, including NULs.
         std::string contents;
         contents.reserve(static_cast<std::size_t>(size));
         contents.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>{});
@@ -296,8 +276,7 @@ std::expected<FormBodyPreview, ReqloomError> previewFormBody(
         FormPartPreview pp;
         pp.name = part.name;
         pp.isFile = part.isFile();
-        // `part.value` holds the loaded file bytes (or the text value); we
-        // expose only its length, never the bytes themselves.
+        // `part.value` holds file bytes or text; only its length is exposed.
         pp.sizeBytes = part.value.size();
         if (part.filename) {
             pp.filename = *part.filename;

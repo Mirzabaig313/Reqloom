@@ -183,15 +183,13 @@ int ProjectTreeModel::operationCount(const Node& node) {
 int ProjectTreeModel::badgeCount(const Node& node) {
     switch (node.kind) {
         case Kind::Project:
-            // A project's direct children are the two group folders, so "2"
-            // says nothing. Count the endpoints underneath instead.
+            // A project's children are the two group folders, so count endpoints instead.
             return operationCount(node);
         case Kind::ActorGroup:
         case Kind::ResourceGroup:
         case Kind::Resource:
             return static_cast<int>(node.children.size());
         default:
-            // Leaves (operations, actors, examples) carry no badge.
             return 0;
     }
 }
@@ -200,9 +198,7 @@ QString ProjectTreeModel::countLabel(const Node& node, int count) {
     if (count <= 0) {
         return {};
     }
-    // Singular and plural spelled out rather than tr("%n unit(s)"): Qt only
-    // picks a plural form when a translator is loaded, and untranslated builds
-    // would render the literal "1 endpoint(s)".
+    // Plural spelled out rather than tr("%n unit(s)"): Qt only pluralizes with a translator loaded.
     switch (node.kind) {
         case Kind::Project:
         case Kind::Resource:
@@ -252,7 +248,6 @@ void ProjectTreeModel::setActorSessions(QMap<QString, ActorSessionRow> sessions)
     }
     actorSessions_ = std::move(sessions);
 
-    // Actor rows are always the first group under a project.
     for (int p = 0; p < rowCount({}); ++p) {
         const QModelIndex actors = index(0, 0, index(p, 0, {}));
         const int actorRows = rowCount(actors);
@@ -297,8 +292,8 @@ void ProjectTreeModel::rebuild() {
         }
         const engine::Project& proj = *entry.project;
 
-        // One Project node per open collection; its subtree carries the owning
-        // root on every descendant so a selection resolves the right project.
+        // Each Project node's subtree carries the owning root so a selection resolves the right
+        // project.
         Node* projectNode = addChild(root_.get(), Kind::Project);
         projectNode->name = entry.name.isEmpty() ? entry.root : entry.name;
         projectNode->projectRoot = entry.root;

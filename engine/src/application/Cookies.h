@@ -1,12 +1,5 @@
-// Cookies — RFC 6265 helpers used by the executor (request-time jar emission,
-// response-time jar updates) and the extractor (resolving $.cookies.X from
-// Set-Cookie headers).
-//
-// The per-actor jar in RunContext holds each cookie with the host that set it and
-// its Domain, Path, Secure and expiry. A Set-Cookie that expires a cookie
-// (Max-Age <= 0, a past Expires, an empty value) removes it (`absorbSetCookies`).
-// `shouldSend` / `requestHeaderFor` decide which cookies go on a request. A
-// cookie without Path is sent on every path (no RFC default-path).
+// Cookies — RFC 6265 helpers for the executor (jar emission and updates) and the extractor
+// ($.cookies.X). A cookie without Path is sent on every path (no RFC default-path).
 
 #pragma once
 
@@ -28,11 +21,7 @@ struct JarCookie;
 
 namespace reqloom::engine::cookies {
 
-/// Parse a single `Set-Cookie` header value. Returns `(name, value)`
-/// when the header is well-formed (`name=value` followed by zero or
-/// more `; attr=...` segments). Returns nullopt on malformed input
-/// (no `=`, empty name) — well-known browser-vendor lenience that
-/// matches every other cookie parser in the wild.
+/// Parse a `Set-Cookie` value into `(name, value)`; nullopt when malformed (no `=`, empty name).
 [[nodiscard]] std::optional<std::pair<std::string, std::string>> parseSetCookie(
     std::string_view header);
 
@@ -55,10 +44,8 @@ struct SetCookie {
 /// attributes are ignored. nullopt under the same conditions as `parseSetCookie`.
 [[nodiscard]] std::optional<SetCookie> parseSetCookieHeader(std::string_view header);
 
-/// Walk an HTTP response's headers and return every cookie's
-/// `(name, value)` in the order the server emitted them. Later
-/// duplicates intentionally appear after earlier ones — the caller
-/// decides whether to take last-wins or first-wins semantics.
+/// Every cookie's `(name, value)` from a response's headers in server order; duplicates are kept so
+/// the caller picks last- or first-wins.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> collectFromResponse(
     const std::vector<std::pair<std::string, std::string>>& headers);
 
@@ -77,10 +64,9 @@ void absorbSetCookies(const std::vector<std::pair<std::string, std::string>>& he
 /// not an IP address. Both are compared case-insensitively.
 [[nodiscard]] bool domainMatches(std::string_view host, std::string_view domain);
 
-/// Whether `cookie`, set by a response from `setterHost`, goes on a request to `requestUrl`.
-/// Without Domain it is host-only; a Domain the setter may not claim (not a domain-match of
-/// the setter) is never sent. Secure cookies need https; Path must path-match (§5.1.4). No
-/// public-suffix list is consulted.
+/// Whether `cookie`, set by `setterHost`, goes on a request to `requestUrl`: host-only without
+/// Domain, never for a Domain the setter may not claim, Secure needs https, Path must path-match
+/// (§5.1.4). No public-suffix list is consulted.
 [[nodiscard]] bool shouldSend(const SetCookie& cookie,
                               std::string_view setterHost,
                               std::string_view requestUrl);
@@ -98,11 +84,8 @@ void absorbSetCookies(const std::vector<std::pair<std::string, std::string>>& he
     std::string_view requestUrl,
     std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
 
-/// Emit `name1=v1; name2=v2; ...` for a request `Cookie:` header.
-/// Returns empty when the jar is empty. Cookie order follows the
-/// jar's internal ordering (alphabetical, since std::map keys are
-/// ordered) — RFC 6265 §5.4 says order should not be relied upon, so
-/// any deterministic order is acceptable.
+/// Emit `name1=v1; name2=v2; ...` for a request `Cookie:` header; empty for an empty jar.
+/// Order is alphabetical (std::map), which RFC 6265 §5.4 allows.
 [[nodiscard]] std::string formatRequestHeader(const std::map<std::string, std::string>& jar);
 
 }  // namespace reqloom::engine::cookies

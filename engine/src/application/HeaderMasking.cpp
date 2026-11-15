@@ -12,8 +12,7 @@ namespace reqloom::engine {
 
 namespace {
 
-// Always-redacted header names, lower-cased for case-insensitive match.
-// The substring needles below catch the long tail (X-Foo-Token, …).
+// Always-redacted header names, lower-cased; the substring needles below catch the long tail.
 constexpr std::array<std::string_view, 5> kSensitiveExactNames = {
     "authorization",
     "proxy-authorization",
@@ -22,9 +21,8 @@ constexpr std::array<std::string_view, 5> kSensitiveExactNames = {
     "x-api-key",
 };
 
-// Matched as substrings after '-'/'_' are stripped, so "Api-Key" and
-// "api_key" both hit "key". "auth" is broad on purpose — over-redacting
-// a stray header beats leaking a token.
+// Matched as substrings after '-'/'_' are stripped; "auth" is broad on purpose (over-redacting
+// beats leaking).
 constexpr std::array<std::string_view, 5> kSensitiveSubstrings = {
     "token",
     "secret",
@@ -59,9 +57,8 @@ constexpr std::array<std::string_view, 5> kSensitiveSubstrings = {
 }  // namespace
 
 bool isSensitiveHeader(std::string_view name) noexcept {
-    // Fail closed: if classification ever throws (only plausible on OOM,
-    // since the helpers allocate), treat the header as sensitive so a
-    // secret is never logged in the clear. Upholds the noexcept contract.
+    // Fail closed: if classification throws (OOM), treat the header as sensitive; keeps the
+    // noexcept contract.
     try {
         const auto lower = toLowerCopy(name);
         for (const auto& exact : kSensitiveExactNames) {

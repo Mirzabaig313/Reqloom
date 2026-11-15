@@ -1,7 +1,5 @@
-// Per-project active-environment persistence. Stateless helpers over a
-// caller-supplied QSettings: production passes the app's default store,
-// tests pass an isolated temp-file-backed one. Keyed by project path so
-// each project remembers its own last-selected environment.
+// Per-project active-environment persistence: stateless helpers over a caller-supplied QSettings,
+// keyed by project path.
 #pragma once
 
 #include <QtCore/QString>

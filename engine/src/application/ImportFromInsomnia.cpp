@@ -1,12 +1,6 @@
 // ImportFromInsomnia — Insomnia v4 (JSON) → Project parser.
-// Sibling of ImportFromPostman. Insomnia exports a flat `resources` array whose
-// nodes (`workspace`/`request_group`/`request`/`environment`) reference their
-// parent by `parentId`; this walks that graph into reqloom resources/operations.
-//
-// the path/id/url helpers mirror ImportFromPostman rather than share a
-// common header — keeps this parser self-contained (the existing importers do
-// the same). Upgrade path: extract a shared ImportSupport.h once a third parser
-// needs the identical helpers.
+// Insomnia exports a flat `resources` array whose nodes reference their parent by `parentId`;
+// this walks that graph into reqloom resources/operations.
 
 #include "ImportFromInsomnia.h"
 #include "ImportFromFileRefs.h"
@@ -322,8 +316,8 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
 
     const json& resources = doc["resources"];
 
-    // Index nodes by _id and note the workspace(s). Insomnia references parents
-    // by parentId, so we need random access to climb the group chain.
+    // Index nodes by _id: parents are referenced by parentId, so the group chain needs random
+    // access.
     std::unordered_map<std::string, const json*> byId;
     std::set<std::string> workspaceIds;
     for (const auto& node : resources) {
@@ -405,9 +399,8 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
         envs[is::environmentName(name, envs)] = std::move(merged);
     }
 
-    // Resolve a request's owning resource id: climb parentId until the child of
-    // a workspace. The top-most request_group in that chain is the resource;
-    // requests directly under the workspace fall back to a default resource.
+    // Resolve a request's resource id: the top-most request_group below the workspace; requests
+    // directly under the workspace fall back to a default resource.
     const std::string defaultResource = sanitizeId(workspaceName, "requests");
     auto resourceForRequest = [&](const json& request) -> std::string {
         std::string topGroupName;
@@ -485,7 +478,6 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
         }
         op.pathTemplate = rewrite(split.path);
 
-        // Query params.
         if (item.contains("parameters") && item["parameters"].is_array()) {
             for (const auto& q : item["parameters"]) {
                 if (!q.is_object() || import_json::boolOr(q, "disabled", false)) {
@@ -498,7 +490,6 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
             }
         }
 
-        // Headers.
         if (item.contains("headers") && item["headers"].is_array()) {
             for (const auto& h : item["headers"]) {
                 if (!h.is_object() || import_json::boolOr(h, "disabled", false)) {
@@ -511,7 +502,6 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
             }
         }
 
-        // Body.
         if (item.contains("body") && item["body"].is_object()) {
             const json& body = item["body"];
             const auto mime = jsonStr(body, "mimeType");
@@ -531,9 +521,8 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
                         continue;
                     }
                     if (jsonStr(f, "type") == "file") {
-                        // Insomnia stores the picked file under `fileName`. Map
-                        // to reqloom's `@path` multipart convention (empty → a
-                        // `@` placeholder the editor shows as "Choose a file…").
+                        // Insomnia stores the picked file under `fileName`; map to the `@path`
+                        // convention (empty → bare `@` placeholder).
                         const auto fileName = jsonStr(f, "fileName");
                         form[key] = import_files::fileFieldValue(
                             fileName, op.id.value, key, warnings, rewrite);

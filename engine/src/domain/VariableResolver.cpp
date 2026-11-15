@@ -48,7 +48,6 @@ std::string generateUuid() {
            hex(r(), 3) + "-" + hex(r(), 8) + hex(r(), 4);
 }
 
-/// ISO 8601 timestamp for a given system_clock time point (UTC, second precision).
 [[nodiscard]] std::optional<std::string> formatIso(std::chrono::system_clock::time_point tp) {
     const auto time = std::chrono::system_clock::to_time_t(tp);
     std::tm buf{};
@@ -73,9 +72,8 @@ std::string generateUuid() {
     return formatIso(std::chrono::system_clock::now());
 }
 
-/// Parse a duration literal like "5m", "1h", "30s", "7d". Returns nullopt
-/// for malformed input. Overflow-safe: absurdly large values return nullopt
-/// rather than triggering signed overflow UB.
+/// Parse a duration literal like "5m", "1h", "30s", "7d"; nullopt for malformed or overflowing
+/// input.
 [[nodiscard]] std::optional<std::chrono::seconds> parseDuration(std::string_view literal) {
     if (literal.size() < 2) {
         return std::nullopt;
@@ -141,10 +139,8 @@ ResolvedRef resolveDotted(std::string_view ref,
                           const ResolveContext& rctx,
                           int depth);
 
-/// Single-pass `{{...}}` substitution shared by the public resolve() and
-/// by the env branch (which re-expands embedded refs like a `!secret`
-/// env value that parsed to `{{secret.NAME}}`). `depth` bounds the
-/// re-expansion so a self-referential env value can't recurse forever.
+/// Single-pass `{{...}}` substitution shared by resolve() and the env branch, which re-expands
+/// embedded refs (e.g. a `!secret` value); `depth` bounds that re-expansion.
 std::string substituteRefs(
     std::string_view input,
     const RunContext& ctx,
@@ -204,7 +200,6 @@ std::string substituteRefs(
            (character >= 'A' && character <= 'F');
 }
 
-/// Encode resolved URL components without encoding an existing `%HH` escape again.
 [[nodiscard]] std::string urlEncodePreservingEscapes(std::string_view input) {
     std::string output;
     output.reserve(input.size());
@@ -244,8 +239,7 @@ std::string substituteRefs(
     return true;
 }
 
-// Re-expansion of an env value into one further level (env → secret) is
-// the only nesting we rely on; a small cap leaves margin without cycles.
+// Env to secret re-expansion is the only nesting relied on; a small cap bounds it.
 constexpr int kMaxResolveDepth = 4;
 
 struct CallParts {
@@ -313,8 +307,6 @@ ResolvedRef resolveCallArg(std::string_view arg,
     return resolveDotted(arg, ctx, rctx, depth);
 }
 
-/// Resolve `$.something[+offset]` builtins (category 1 in the resolution
-/// order). Returns nullopt for unrecognised builtins.
 ResolvedRef resolveBuiltin(std::string_view ref,
                            const RunContext& ctx,
                            const ResolveContext& rctx,
@@ -380,7 +372,6 @@ ResolvedRef resolveBuiltin(std::string_view ref,
         return std::nullopt;
     }
 
-    // Split off optional ±offset. Find the rightmost '+' or '-' not inside parens.
     std::chrono::seconds offset{0};
     bool hasOffset = false;
     {
@@ -473,8 +464,6 @@ ResolvedRef resolveBuiltin(std::string_view ref,
     return std::nullopt;
 }
 
-/// Resolve dotted refs (env.X, secret.X, actor.var, resource.var) and
-/// indexed refs (resource[N].var).
 ResolvedRef resolveDotted(std::string_view ref,
                           const RunContext& ctx,
                           const ResolveContext& rctx,
@@ -492,14 +481,10 @@ ResolvedRef resolveDotted(std::string_view ref,
         if (it == rctx.envVars.end()) {
             return std::nullopt;
         }
-        // An env value may itself be a reference — e.g. a `!secret NAME`
-        // entry parsed to `{{secret.NAME}}`. Re-expand one level deeper
-        // (bounded by kMaxResolveDepth) so callers see the resolved
-        // secret, not the literal placeholder. If the nested value can't
-        // fully resolve (e.g. the secret wasn't loaded), report this env
-        // ref as unresolved rather than emitting a half-expanded string —
-        // the outer loop then preserves the `{{env.X}}` placeholder and
-        // records it, matching how every other unresolved ref behaves.
+        // An env value may itself be a reference (e.g. `!secret NAME` parsed to `{{secret.NAME}}`);
+        // re-expand it one level deeper (bounded by kMaxResolveDepth). If that cannot fully
+        // resolve, report this env ref as unresolved so the outer loop preserves the `{{env.X}}`
+        // placeholder.
         if (it->second.find("{{") != std::string::npos) {
             std::vector<std::string> nested;
             std::vector<VariableResolver::UnresolvedOccurrence> nestedOccurrences;
@@ -534,7 +519,6 @@ ResolvedRef resolveDotted(std::string_view ref,
         }
     }
 
-    // Indexed resource reference: resource[N].var (1-indexed).
     static const std::regex indexedPattern(R"((\w+)\[(\d+)\])");
     std::smatch indexMatch;
     if (std::regex_match(scope, indexMatch, indexedPattern)) {
@@ -561,14 +545,11 @@ ResolvedRef resolveDotted(std::string_view ref,
         return std::nullopt;
     }
 
-    // Search instances in reverse (most recent first). Handles the case where
-    // a resource accrues fields across multiple operations — e.g. order.create
-    // extracts order_id, order.pay extracts payment_id; both should resolve.
+    // Most recent instance first, so a field accrued across several operations still resolves.
     const ResourceId resId{scope};
     const auto& instances = ctx.instances(resId);
 
-    // For-each binding: while iterating, resolve to the bound instance instead
-    // of the most-recent, so the body uses the current item.
+    // While iterating for_each, the bound instance wins over the most recent.
     if (const auto iter = ctx.iteration(resId); iter.has_value() && *iter < instances.size()) {
         const auto fieldIt = instances[*iter].variables.find(field);
         if (fieldIt != instances[*iter].variables.end()) {
@@ -610,9 +591,7 @@ std::string substituteRefs(
     VariableResolver::Component component,
     int depth,
     bool encodeResolvedRefs) {
-    // Depth guard: a self-referential env value (e.g. one whose value
-    // references itself) would otherwise loop. Preserve the text but report
-    // the nested reference so callers fail closed at the cap.
+    // Depth guard: a self-referential env value would loop; report it so callers fail closed.
     if (depth >= kMaxResolveDepth) {
         const std::size_t referenceStart{input.find("{{")};
         if (referenceStart != std::string_view::npos) {

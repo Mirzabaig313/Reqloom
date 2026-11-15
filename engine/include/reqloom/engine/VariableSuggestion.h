@@ -1,7 +1,5 @@
-// Variable suggestions — the set of `{{...}}` references usable at a given point
-// in a chain (upstream extracts, the actor's session tokens, env vars, declared
-// secrets, and `$.` built-ins). Powers `{{` autocomplete in the editors so a
-// user never has to memorise or mistype a variable name.
+// Variable suggestions: the `{{...}}` references usable at a point in a chain, powering `{{`
+// autocomplete.
 #pragma once
 
 #include <cstdint>

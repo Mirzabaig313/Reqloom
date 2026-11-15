@@ -16,10 +16,8 @@ namespace {
 
 namespace ce = reqloom::engine;
 
-// C++23 <print> only provides std::println(FILE*, ...) and std::println(...)
-// overloads — no std::ostream overload. Xcode 15.4's libc++ correctly rejects
-// std::println(ostream, ...) per the standard, so we format via std::format
-// and stream the result with a trailing newline (println semantics).
+// C++23 <print> has no std::ostream overload (libc++ rejects it), so format with std::format
+// and stream the result with a trailing newline.
 template <typename... Args>
 void ostreamPrintln(std::ostream& out, std::format_string<Args...> fmt, Args&&... args) {
     out << std::format(fmt, std::forward<Args>(args)...) << '\n';
@@ -75,7 +73,6 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
                 ostreamPrintln(
                     progress_, "  [{}] Skipped: {} (cached)", e.stepIndex + 1, e.op.value);
             } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
-                // Failures always go to stderr, even when quiet — CI logs need them.
                 ostreamPrintln(err_,
                                "  [{}] FAILED: {} [{}] — {}",
                                e.stepIndex + 1,
@@ -95,9 +92,7 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
 void TextRenderer::render(const ce::OperationId& target,
                           std::string_view environment,
                           const ce::RunResult& result) {
-    // Summary table prints even in quiet mode — it's the canonical record
-    // of which steps ran. Suppressing it would make the run silent on
-    // success, which defeats `--quiet` consumers that do their own parsing.
+    // The summary prints even in quiet mode: it is the canonical record of which steps ran.
     ostreamPrintln(summary_, "\n--- Chain Summary ---");
     ostreamPrintln(summary_,
                    "Target: {}   Env: {}   Outcome: {}",

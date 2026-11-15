@@ -1,10 +1,5 @@
 // Topological sort utilities — Kahn's algorithm with stable tie-break.
-//
-// Edge semantics: `edges[node] = [deps...]` means `node` depends on each
-// element of `deps`. The sort places dependencies before dependents, so
-// the target operation (the one that depends on everything else) comes
-// last. Tie-break is lexicographic over `OperationId.value` to keep
-// runs deterministic across hash-map iteration order.
+// `edges[node]` lists node's dependencies, which sort first; ties break lexicographically.
 #include "Topology.h"
 
 #include <queue>
@@ -14,14 +9,11 @@ namespace reqloom::engine {
 
 std::expected<std::vector<OperationId>, ReqloomError> topologicalSort(
     const std::map<OperationId, std::vector<OperationId>>& edges) {
-    // Empty graph trivially satisfies any topological order.
     if (edges.empty()) {
         return std::vector<OperationId>{};
     }
 
-    // Build the in-degree table and reverse-edge map. Nodes that appear
-    // only as dependency targets (never as a key in `edges`) still need
-    // a zero in-degree entry so they're picked up by the ready queue.
+    // Nodes seen only as dependencies still need a zero in-degree entry.
     std::map<OperationId, int> inDegree;
     std::map<OperationId, std::vector<OperationId>> dependents;
 
@@ -38,9 +30,8 @@ std::expected<std::vector<OperationId>, ReqloomError> topologicalSort(
         }
     }
 
-    // Min-heap on OperationId.value gives lexicographic tie-break for
-    // independent nodes. Comparator inverts the natural order because
-    // std::priority_queue is a max-heap by default.
+    // Min-heap (inverted comparator, as priority_queue is a max-heap) gives the lexicographic
+    // tie-break.
     auto cmp = [](const OperationId& a, const OperationId& b) {
         return a.value > b.value;
     };
@@ -69,8 +60,7 @@ std::expected<std::vector<OperationId>, ReqloomError> topologicalSort(
         }
     }
 
-    // Cycle detection: if any node never reached zero in-degree, the
-    // remaining nodes form (or feed into) a cycle.
+    // Nodes that never reached zero in-degree form or feed a cycle.
     if (sorted.size() < inDegree.size()) {
         std::set<OperationId> const sortedSet(sorted.begin(), sorted.end());
         std::string cycleOps;

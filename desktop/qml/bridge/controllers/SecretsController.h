@@ -1,6 +1,5 @@
-// SecretsController — QML-facing bridge over SecretManager. Exposes the list
-// of required {{secret.NAME}} entries + their keychain state, and lets QML
-// set / clear individual secrets. Never returns stored values to QML.
+// SecretsController — QML bridge over SecretManager: lists required {{secret.NAME}} entries with
+// their keychain state and sets/clears secrets. Never returns stored values.
 #pragma once
 
 #include "application/SecretManager.h"
@@ -65,8 +64,7 @@ public:
 
     static SecretsController* create(QQmlEngine*, QJSEngine*) {
         static SecretsController instance;
-        // CppOwnership: don't let the QML engine delete this static singleton
-        // at teardown (would be a free of non-heap memory).
+        // CppOwnership: the QML engine must not delete this static singleton at teardown.
         QQmlEngine::setObjectOwnership(&instance, QQmlEngine::CppOwnership);
         return &instance;
     }

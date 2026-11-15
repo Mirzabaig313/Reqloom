@@ -62,8 +62,7 @@ void OAuth2AuthCodeFlow::start(const Config& config) {
         return host == QLatin1String("127.0.0.1") || host == QLatin1String("localhost") ||
                host == QLatin1String("::1");
     };
-    // Secrets (code_verifier, client_secret, the token) cross authUrl/tokenUrl.
-    // Require HTTPS; only loopback may use plain http (local test servers).
+    // Secrets cross authUrl/tokenUrl: require HTTPS, except plain http on loopback.
     const auto isSecure = [&](const QUrl& u) {
         return u.scheme() == QLatin1String("https") ||
                (u.scheme() == QLatin1String("http") && isLoopback(u.host()));
@@ -101,7 +100,6 @@ void OAuth2AuthCodeFlow::start(const Config& config) {
     });
     timeout_->start(kTimeoutMs);
 
-    // Build the authorization request (RFC 6749 §4.1.1 + RFC 7636 §4.3).
     QUrl authUrl(config_.authUrl);
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("response_type"), QStringLiteral("code"));
@@ -145,18 +143,12 @@ void OAuth2AuthCodeFlow::onCallbackConnection() {
         }
         *handled = true;
 
-        // First line: "GET /callback?code=...&state=... HTTP/1.1".
         const QByteArray firstLine = buffer->left(eol);
         const auto parts = firstLine.split(' ');
 
-        // Only the configured callback PATH is the genuine redirect. A browser
-        // can open other connections to this loopback origin around the same
-        // time (favicon, a reload, an OPTIONS preflight); if such a stray
-        // request finished parsing first it would win the flow and fire a
-        // spurious "no code" failure while the real callback is still in
-        // flight. Reply 404 to anything that isn't the callback path (and to a
-        // malformed request line) and keep listening — do NOT touch done_ or
-        // server_ here.
+        // Only the configured callback path is the genuine redirect. Reply 404 to anything else
+        // (favicon, reload, preflight, malformed line) and keep listening; touching done_/server_
+        // here would fire a spurious failure.
         QString requestPath;
         if (parts.size() >= 2) {
             requestPath =
@@ -180,7 +172,6 @@ void OAuth2AuthCodeFlow::onCallbackConnection() {
             return;  // ignore; keep the server waiting for the real callback
         }
 
-        // Genuine callback → parse the OAuth response parameters.
         const QUrl target(QStringLiteral("http://localhost") + QString::fromLatin1(parts.at(1)));
         const QUrlQuery q(target);
         const QString code = q.queryItemValue(QStringLiteral("code"));
@@ -198,9 +189,8 @@ void OAuth2AuthCodeFlow::onCallbackConnection() {
         socket->flush();
         socket->disconnectFromHost();
 
-        // Stop accepting further loopback connections before the async token
-        // exchange, so a stray request (favicon, reload) can't fire a spurious
-        // failure mid-flight.
+        // Stop accepting loopback connections before the async token exchange so a stray request
+        // can't fail the flow.
         if (server_) {
             server_->close();
         }
@@ -221,7 +211,6 @@ void OAuth2AuthCodeFlow::exchangeCode(const QString& code) {
     if (net_ == nullptr) {
         net_ = new QNetworkAccessManager(this);
     }
-    // RFC 6749 §4.1.3 + RFC 7636 §4.5 — code_verifier proves possession.
     QUrlQuery form;
     form.addQueryItem(QStringLiteral("grant_type"), QStringLiteral("authorization_code"));
     form.addQueryItem(QStringLiteral("code"), code);

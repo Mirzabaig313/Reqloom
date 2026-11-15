@@ -37,8 +37,8 @@ ReqloomError invalid(std::string detail) {
     return ReqloomError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
 }
 
-// Containment check: resolved path must live under projectRoot with a
-// path-separator boundary so `/home/user/proj` doesn't admit `/home/user/proj-evil`.
+// Containment: resolved path must live under projectRoot with a separator boundary (`/proj` must
+// not admit `/proj-evil`).
 std::expected<fs::path, ReqloomError> canonicalSpecPath(const fs::path& spec,
                                                         const fs::path& projectRoot) {
     std::error_code ec;
@@ -195,7 +195,6 @@ constexpr bool isOpenApiMethod(std::string_view m) noexcept {
            m == "head" || m == "options";
 }
 
-// Pick the first 2xx status declared on the operation, falling back to 200.
 int pickExpectedStatus(const YAML::Node& responses) {
     if (!responses || !responses.IsMap()) {
         return 200;
@@ -231,8 +230,7 @@ std::string nowIso8601Utc() {
                        tm.tm_sec);
 }
 
-/// Server URL → environment baseUrl. Only `servers[0]` is consumed; later
-/// slices can offer environment-per-server.
+/// Server URL → environment baseUrl; only `servers[0]` is consumed.
 std::string firstServerUrl(const YAML::Node& root) {
     const auto& servers = root["servers"];
     if (!servers || !servers.IsSequence() || servers.size() == 0) {
@@ -349,11 +347,8 @@ bool isScalarSchemaType(std::string_view t) noexcept {
     return t == "string" || t == "integer" || t == "number" || t == "boolean";
 }
 
-// YAML::Node's destructor is not marked noexcept upstream (yaml-cpp 0.8),
-// so the implicit ~UnwrappedSchema is noexcept-suspect. In practice
-// yaml-cpp's destructor only releases ref-counted nodes and cannot throw.
-// Silenced locally rather than wrapping a noexcept dtor in try/catch.
-// NOLINTNEXTLINE(bugprone-exception-escape)
+// yaml-cpp 0.8's YAML::Node destructor isn't noexcept, but it only releases ref-counted nodes and
+// cannot throw. NOLINTNEXTLINE(bugprone-exception-escape)
 struct UnwrappedSchema {
     YAML::Node schema;
     bool wrappedInData{false};
@@ -459,9 +454,8 @@ nlohmann::json yamlToJson(const YAML::Node& node, YamlToJsonBudget& budget, int 
                 fc.ec == std::errc{} && fc.ptr == last) {
                 return nlohmann::json(asInt);
             }
-            // libc++ on Apple Clang 16 / Xcode 16.4 has not yet implemented
-            // std::from_chars for floating-point types. Use std::strtod for
-            // portability; raw is a std::string and therefore null-terminated.
+            // libc++ on Apple Clang 16 lacks floating-point std::from_chars; strtod is fine as raw
+            // is null-terminated.
             char* end = nullptr;
             errno = 0;
             const double asDouble = std::strtod(raw.c_str(), &end);
@@ -500,9 +494,7 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
         return std::unexpected(canonical.error());
     }
 
-    // 8 MiB cap. Real-world OpenAPI specs (Stripe, GitHub) clock in around
-    // 5 MiB; anything bigger is almost certainly an attack or a runaway
-    // generator. yaml-cpp will happily allocate gigabytes if we let it.
+    // 8 MiB cap: real specs are ~5 MiB, and yaml-cpp will allocate gigabytes on a hostile one.
     constexpr std::uintmax_t kMaxSpecBytes = std::uintmax_t{8} * 1024 * 1024;
     std::error_code sizeEc;
     const auto specSize = fs::file_size(*canonical, sizeEc);
@@ -613,8 +605,8 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
             }
 
             auto opName = deriveOperationName(methodLower, pathTemplate);
-            // Disambiguate collisions (e.g. two GETs on different paths
-            // mapping to the same resource both calling themselves "list").
+            // Disambiguate operations that collide within a resource (e.g. two GETs both called
+            // "list").
             std::string uniqueName = opName;
             int suffix = 2;
             while (resource.operations.contains(uniqueName) ||
@@ -648,9 +640,8 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
                 prov.evidence["operationId"] = opIdSpec;
             }
 
-            // Top-level scalar response fields become candidate extractions.
-            // When an example payload is present, the verifier confirms
-            // each candidate path; results land in provenance evidence.
+            // Top-level scalar response fields become candidate extractions, confirmed against an
+            // example payload when present.
             const auto schemaNode = firstJsonResponseSchema(opNode);
             const auto exampleNode = firstJsonResponseExample(opNode);
             const auto candidates = inferExtractionsFromSchema(schemaNode);
@@ -724,8 +715,6 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
                     op.extractions.size()));
             }
 
-            // Each rewritten path parameter shows up as one warning so the
-            // user's review loop sees exactly what needs to be linked.
             is::notePathParams(pathRewrite, op.id.value, resourceId, {}, prov, warnings);
             // Operation-level `security` replaces the spec-level one.
             if (const auto schemes = requiredSecuritySchemes(opNode["security"]);
@@ -742,9 +731,8 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
         return std::unexpected(invalid("openapi import: spec yielded zero importable operations"));
     }
 
-    // Same load-time validation the YAML parser runs — the importer
-    // builds a Project directly and would otherwise skip it. Harmless
-    // today (generated ops can't cycle), cheap insurance for later.
+    // Run the load-time validation the YAML parser runs; the importer builds a Project directly and
+    // would skip it.
     if (auto valid = DependencyResolver{}.validate(outcome.project); !valid) {
         return std::unexpected(valid.error());
     }

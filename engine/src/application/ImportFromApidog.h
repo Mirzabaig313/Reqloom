@@ -19,16 +19,9 @@ public:
     };
 
     /// Parse an Apidog native export into a Project.
-    ///
-    /// `apiCollection` is a folder tree; folders hold `items` (sub-folders or
-    /// endpoints). Top-level folders become resources (Apidog's synthetic
-    /// single "Root" wrapper is unwrapped so its child folders are the
-    /// resources); each endpoint's `api` becomes an operation. Header/query
-    /// parameter examples and a request-body example seed the operation. Apidog
-    /// `{{var}}` references are rewritten to `{{env.var}}`. Apidog native
-    /// exports carry no server URL, so `baseUrl` is left for the user to set.
-    ///
-    /// Path containment: the file must resolve to a regular file under
+    /// Top-level folders become resources (the synthetic "Root" wrapper is unwrapped), each
+    /// endpoint's `api` an operation; `{{var}}` becomes `{{env.var}}`. The export carries no server
+    /// URL, so `baseUrl` is left unset. Path containment: the file must resolve under
     /// `projectRoot`. Returns `SchemaInvalid`/`YamlParse` on bad input.
     [[nodiscard]] std::expected<Outcome, ReqloomError> run(
         const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) const;

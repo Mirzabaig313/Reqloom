@@ -1,7 +1,5 @@
-// JsonExtraction — apply a list of `Extraction`s against a JSON body.
-// Shared between ExecutionEngine and AuthStrategy implementations.
-//
-// Supported JSONPath subset:
+// JsonExtraction — apply a list of `Extraction`s against a JSON body; shared by ExecutionEngine and
+// AuthStrategy. Supported JSONPath subset:
 //   $.field
 //   $.nested.field
 //   $.array[0].field
@@ -12,8 +10,7 @@
 // filter) is rejected as an unsupported path, never a silent miss. Bodies nested deeper than
 // kMaxJsonNestingDepth (256) are rejected with ResponseParse; parse errors report a byte
 // offset, never body text.
-//
-// Beyond JSONPath, the detailed variant additionally resolves:
+// Beyond JSONPath, the detailed variant also resolves:
 //   - Source::Header     — looks up an HTTP response header (case-insensitive).
 //   - Source::StatusCode — captures the response status as a string.
 //   - Source::Cookie     — parses Set-Cookie headers and returns the named cookie.
@@ -37,12 +34,10 @@
 
 namespace reqloom::engine {
 
-/// Resolve a JSONPath against an already-parsed document. Supports the engine's
-/// JSONPath subset — field access (`a.b`), array indexing (`a[0]`, `a[0][1]`),
-/// and predicate filters (`a[?(@.field=='x')]`, first match wins). Returns
-/// nullptr on a miss and on an unsupported / malformed path; a resolved-but-null value yields a
-/// non-null pointer to a JSON `null` (so callers can distinguish "missing" from "present and
-/// null"). Shared so every JSONPath surface (extraction, verification) walks the same way.
+/// Resolve a JSONPath (field access, indexing, `[?(@.f=='x')]` first-match filters) against a
+/// parsed document. nullptr on a miss or unsupported path; a resolved null yields a pointer to JSON
+/// `null`, so callers can tell missing from null. Shared so extraction and verification walk paths
+/// the same way.
 [[nodiscard]] const nlohmann::json* walkJsonPath(const nlohmann::json& doc,
                                                  std::string_view sourcePath);
 
@@ -54,32 +49,22 @@ namespace reqloom::engine {
 [[nodiscard]] std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
     const std::string& body, const std::vector<Extraction>& extractions);
 
-/// Per-extraction outcome including the resolved value (when present).
-/// Unlike `extractFromJson`, this never short-circuits — every entry in
-/// `extractions` produces one trace row, so callers that want to record
-/// the full extraction history (the executor, for the timeline UI) can.
-///
-/// Returns `ResponseParse` only when the body is not valid JSON AND at
-/// least one extraction needs to look at the body (JsonPath, Regex). A
-/// header / status / cookie extraction against a non-JSON body succeeds
-/// because none of those need to parse JSON.
-///
-/// A path that doesn't resolve is NOT an error — it surfaces as
-/// `ExtractionTrace::Outcome::Missing`.
+/// Per-extraction outcome including the resolved value. Never short-circuits: every extraction
+/// produces one trace row. Returns `ResponseParse` only when the body is invalid JSON AND an
+/// extraction needs it (JsonPath, Regex). An unresolved path is not an error; it traces as
+/// `Outcome::Missing`.
 struct DetailedExtraction {
     std::vector<ExtractionTrace> traces;
     std::map<std::string, std::string> values;  ///< Resolved values only.
 };
 
-/// Body-only entry point. Callers that only have JSON (auth steps,
-/// refresh blocks) keep using this — Header / StatusCode / Cookie /
-/// Regex all return Unsupported when called this way.
+/// Body-only entry point (auth steps, refresh blocks); Header / StatusCode / Cookie / Regex return
+/// Unsupported.
 [[nodiscard]] std::expected<DetailedExtraction, ReqloomError> extractFromJsonDetailed(
     const OperationId& opId, const std::string& body, const std::vector<Extraction>& extractions);
 
-/// Full-response entry point used by the executor. Resolves Header /
-/// StatusCode / Cookie / Regex sources from the captured response in
-/// addition to JSONPath against `body`.
+/// Full-response entry point used by the executor; also resolves Header / StatusCode / Cookie /
+/// Regex sources.
 [[nodiscard]] std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
     const OperationId& opId,
     const std::string& body,

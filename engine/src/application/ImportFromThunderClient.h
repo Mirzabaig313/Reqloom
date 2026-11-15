@@ -19,17 +19,11 @@ public:
     };
 
     /// Parse a Thunder Client collection export into a Project.
-    ///
-    /// Accepts the "Export Collection" shape (a JSON array of collection
-    /// objects, each with `folders` + `requests`) and a single collection
-    /// object. Top-level folders (containerId == "") become resources; nested
-    /// folders fold into their top-level ancestor; each request becomes an
-    /// operation. A request URL's scheme+host becomes the `default`
-    /// environment's `baseUrl`; bare `{{var}}` references are rewritten to
-    /// `{{env.var}}`.
-    ///
-    /// Path containment: the export must resolve to a regular file under
-    /// `projectRoot`. Returns `SchemaInvalid`/`YamlParse` on bad input.
+    /// Accepts the "Export Collection" array of collections or a single collection object.
+    /// Top-level folders (containerId == "") become resources (nested ones fold into them),
+    /// requests operations; `{{var}}` becomes
+    /// `{{env.var}}`. Path containment: the export must resolve under `projectRoot`.
+    /// Returns `SchemaInvalid`/`YamlParse` on bad input.
     [[nodiscard]] std::expected<Outcome, ReqloomError> run(
         const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) const;
 };

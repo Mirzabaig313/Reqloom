@@ -1,10 +1,7 @@
-// Public interface for the per-user record of which folder each project id
-// belongs to on this machine. Secrets are keyed by the project id, and the id
-// comes from the project file, so a second project could copy another's id to
-// read its secrets. The engine therefore binds each id to the folder that
-// first used it (trust on first use) and refuses secrets to any other folder
-// claiming that id. The record lives outside every project folder, in the
-// user's application config directory, so a project cannot edit it.
+// Public interface for the per-user record binding each project id to the folder that first used it
+// (trust on first use), so a project copying another's id is refused its secrets. The record lives
+// in the user's application config directory, outside every project folder, so a project cannot
+// edit it.
 //
 // Embedders construct the file-backed store with `makeFileProjectTrustStore()`
 // (Factories.h); tests inject an in-memory fake.
@@ -33,10 +30,8 @@ public:
     [[nodiscard]] virtual std::expected<std::optional<std::filesystem::path>, ReqloomError>
     folderFor(const std::string& projectId) = 0;
 
-    /// Record `folder` for `projectId` unless the id already has a record, in
-    /// one atomic step (two processes racing cannot both win). Returns the
-    /// folder on record afterwards: `folder` when it was recorded now, or the
-    /// earlier record otherwise.
+    /// Record `folder` for `projectId` unless it already has a record, in one atomic step; returns
+    /// the folder on record afterwards.
     [[nodiscard]] virtual std::expected<std::filesystem::path, ReqloomError> recordIfAbsent(
         const std::string& projectId, const std::filesystem::path& folder) = 0;
 

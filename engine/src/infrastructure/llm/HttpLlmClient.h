@@ -1,8 +1,6 @@
 // HttpLlmClient — concrete LlmClient that delegates to an HttpClient.
-//
-// The HttpClient reference is non-owning so production wiring can share
-// the same CurlHttpClient between the run engine and the importer; tests
-// substitute a fake.
+// The HttpClient reference is non-owning, so production shares one CurlHttpClient with the
+// importer.
 #pragma once
 
 #include "LlmClient.h"

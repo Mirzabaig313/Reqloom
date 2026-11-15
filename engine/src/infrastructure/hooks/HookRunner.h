@@ -1,11 +1,8 @@
-// Engine-internal interface for executing pre/post hooks in a sandboxed
-// JS environment. Concrete impl: QuickJsHookRunner.
+// Engine-internal interface for executing pre/post hooks in a sandboxed JS environment.
+// Concrete impl: QuickJsHookRunner.
 //
-// Sandbox rules:
-//   - No filesystem access
-//   - No network beyond the operation's own request
-//   - 1-second timeout per hook
-//   - Read-only access to the operation's own actor variables and to the secrets it uses
+// Sandbox: no filesystem, no network beyond the operation's own request, 1-second timeout per hook,
+// read-only access to the operation's own actor variables and the secrets it uses.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>

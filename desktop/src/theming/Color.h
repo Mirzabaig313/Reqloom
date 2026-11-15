@@ -1,6 +1,5 @@
-// OKLCH → sRGB conversion. keeps color perceptual at the source
-// (OKLCH ramps) and converts to sRGB once here, since Qt's QSS parser does not
-// read OKLCH. Pure functions, no Qt-widget dependency — unit-tested.
+// OKLCH → sRGB conversion: colour stays perceptual at the source and converts once here, since Qt's
+// QSS parser does not read OKLCH. Pure functions.
 #pragma once
 
 #include <QtGui/QColor>
@@ -25,15 +24,10 @@ namespace reqloom::desktop::theming {
 /// (black on white). Order-independent.
 [[nodiscard]] double contrastRatio(const QColor& a, const QColor& b);
 
-/// Solve for an OKLCH colour (keeping `chroma`/`hueDegrees`) whose sRGB form
-/// meets at least `targetRatio` WCAG contrast against `background`.
-///
-/// Starts from `startLightness`: if that already meets the target it is
-/// returned unchanged, so a palette value that is already accessible keeps its
-/// designed look. Otherwise the lightness moves the minimal distance that
-/// reaches the target — darker on light backgrounds, lighter on dark ones —
-/// relaxing chroma only as a last resort when lightness alone cannot. This is
-/// "solve for accessibility" rather than hand-tuning lightness per colour.
+/// Solve for an OKLCH colour (keeping `chroma`/`hueDegrees`) whose sRGB form meets `targetRatio`
+/// WCAG contrast against `background`. Returns `startLightness` unchanged if it already meets the
+/// target; otherwise moves lightness the minimal distance (darker on light backgrounds, lighter on
+/// dark), relaxing chroma only as a last resort.
 [[nodiscard]] QColor oklchForContrast(double chroma,
                                       double hueDegrees,
                                       const QColor& background,

@@ -1,9 +1,4 @@
 // reqloom CLI entry point.
-//
-// Subcommands:
-//   reqloom run <op>      — execute an operation chain
-//   reqloom lint          — validate a project schema
-//   reqloom import <file> — import OpenAPI / Postman / Bruno
 #include "commands/ImportCommand.h"
 #include "commands/LintCommand.h"
 #include "commands/RunCommand.h"
@@ -42,9 +37,7 @@ void printUsage() {
 
 int main(int argc, char** argv) {
     try {
-        // The QCoreApplication instance must outlive the argument parsing
-        // below: it initializes the Qt application state that
-        // QCoreApplication::arguments() reads from.
+        // Must outlive argument parsing: QCoreApplication::arguments() reads its state.
         [[maybe_unused]] const QCoreApplication app(argc, argv);
         QCoreApplication::setApplicationName(QStringLiteral("reqloom"));
         QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
@@ -70,15 +63,9 @@ int main(int argc, char** argv) {
         printUsage();
         return 2;
     } catch (const std::exception& ex) {
-        // Last-resort handler. Surface a stable exit code (3) so CI can
-        // distinguish a crash from a normal validation failure (2) or a
-        // successful run with failing checks (1). std::fputs is noexcept,
-        // unlike std::println — using it here keeps the catch handler
-        // itself from throwing and re-arming the exception-escape lint.
-        // We discard fputs return values intentionally: if stderr is
-        // closed or full, there is no recovery action available in a
-        // last-resort handler — we still exit 3.
-        // NOLINTBEGIN(cert-err33-c)
+        // Last-resort handler: exit 3 so CI can tell a crash from a validation failure (2) or
+        // failing checks (1). fputs is noexcept and its result is deliberately ignored; nothing can
+        // be done if stderr is closed. NOLINTBEGIN(cert-err33-c)
         std::fputs("fatal: ", stderr);
         std::fputs(ex.what(), stderr);
         std::fputs("\n", stderr);

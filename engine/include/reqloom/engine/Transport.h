@@ -1,11 +1,5 @@
-// Per-environment transport knobs. Resolved by the schema parser, held
-// by Project, and stamped onto every outbound HttpRequest by the
-// executor. The HTTP-client layer (CurlHttpClient) then translates
-// these into CURLOPT_* settings.
-//
-// Defaults are deliberately safe: TLS verified end to end, no proxy,
-// 5-second connect timeout. Schemas that omit `transport:` keep the
-// pre-existing behavior verbatim.
+// Per-environment transport knobs, stamped onto every outbound HttpRequest and translated to
+// CURLOPT_* by CurlHttpClient. Defaults are safe: TLS verified, no proxy, 5-second connect timeout.
 #pragma once
 
 #include <chrono>
@@ -24,33 +18,25 @@ struct TransportConfig {
     /// (`CURLOPT_SSL_VERIFYHOST`). Mirrors `tlsVerify` by default.
     bool tlsVerifyHost{true};
 
-    /// Optional path to a custom CA bundle (`CURLOPT_CAINFO`). When set,
-    /// libcurl uses this file in place of the system trust store. Useful
-    /// for corporate roots and dev environments.
+    /// Optional custom CA bundle (`CURLOPT_CAINFO`), used in place of the system trust store.
     std::optional<std::string> caBundlePath;
 
-    /// Outbound proxy URL (`CURLOPT_PROXY`). Schemes: `http://`,
-    /// `https://`, `socks5://`, `socks5h://`. Empty means "no override"
-    /// — libcurl still honours `HTTPS_PROXY` / `NO_PROXY` env vars per
-    /// request, matching the `curl` CLI's behavior.
+    /// Outbound proxy URL (`CURLOPT_PROXY`): `http://`, `https://`, `socks5://` or `socks5h://`.
+    /// Empty means no override; libcurl still honours `HTTPS_PROXY` / `NO_PROXY`.
     std::optional<std::string> proxy;
 
-    /// TCP connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`). Default 5s
-    /// matches the previous hard-coded value.
+    /// TCP connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`). Default 5s.
     std::chrono::milliseconds connectTimeout{5'000};
 
-    /// Mutual TLS: client certificate (`CURLOPT_SSLCERT`) and private key
-    /// (`CURLOPT_SSLKEY`) presented to the server during the TLS handshake.
-    /// Empty means "no client cert" (the common case).
+    /// Mutual TLS client certificate (`CURLOPT_SSLCERT`) and private key (`CURLOPT_SSLKEY`); empty
+    /// means none.
     std::optional<std::string> clientCertPath;
     std::optional<std::string> clientKeyPath;
     /// Passphrase for an encrypted client key, or the PKCS#12 password
     /// (`CURLOPT_KEYPASSWD`).
     std::optional<std::string> clientKeyPassword;
-    /// Certificate container type (`CURLOPT_SSLCERTTYPE`): "PEM" (libcurl's
-    /// default, so usually left unset) or "P12" for a PKCS#12 bundle. When
-    /// "P12", `clientCertPath` points at the .p12/.pfx and `clientKeyPath`
-    /// is unused (the key lives inside the bundle).
+    /// Certificate type (`CURLOPT_SSLCERTTYPE`): "PEM" (default) or "P12", where `clientCertPath`
+    /// is the .p12/.pfx and `clientKeyPath` is unused.
     std::optional<std::string> clientCertType;
 
     /// Upper bound on the response body, counted after decompression; a larger body fails with

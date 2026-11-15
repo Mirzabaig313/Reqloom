@@ -1,8 +1,6 @@
-// LatencyStats — pure summary statistics + histogram binning for response
-// latencies (the timeline sparkline / distribution). No Qt dependency, so it's
-// unit-tested in isolation. Percentiles use linear interpolation (type-7); the
-// histogram uses the Freedman–Diaconis rule (bin width = 2·IQR·n^(-1/3)), with
-// a √n fallback when that degenerates (n < 2 or zero IQR).
+// LatencyStats — pure summary statistics and histogram binning for response latencies. Percentiles
+// are type-7; the histogram uses Freedman–Diaconis (bin width = 2·IQR·n^(-1/3)) with a √n fallback
+// when n < 2 or IQR is zero.
 #pragma once
 
 #include <vector>

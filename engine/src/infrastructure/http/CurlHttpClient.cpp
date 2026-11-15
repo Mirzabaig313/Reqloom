@@ -20,8 +20,7 @@ namespace reqloom::engine {
 
 namespace {
 
-/// Case-insensitive header-name comparison (ASCII), so a caller-supplied
-/// "user-agent" still counts as overriding our default "User-Agent".
+/// Case-insensitive ASCII header-name comparison, so a caller's "user-agent" overrides our default.
 [[nodiscard]] bool headerNameEquals(std::string_view a, std::string_view b) noexcept {
     if (a.size() != b.size()) {
         return false;
@@ -35,15 +34,10 @@ namespace {
     return true;
 }
 
-// Clamp a 64-bit count into libcurl's `long`-sized timeout slots.
-// On Windows, `long` is 32-bit and `chrono::milliseconds::rep` is 64-bit,
-// so an unchecked cast silently truncates past ~24 days. The clamp is a
-// no-op on platforms where `long` is already 64-bit (macOS, Linux LP64).
+// Clamp a 64-bit count into libcurl's `long` timeout slots (32-bit on Windows, where a cast
+// truncates).
 [[nodiscard]] long toCurlLongClamped(std::int64_t v) noexcept {
-    // Parenthesise max/min to defang the function-like macros that
-    // <windows.h> (pulled in transitively by curl on Windows) defines for
-    // `min` and `max`. The extra parens stop the preprocessor treating these
-    // as macro invocations; on other platforms they are a harmless no-op.
+    // Parenthesised so <windows.h>'s min/max macros do not expand.
     constexpr auto kMax = (std::numeric_limits<long>::max)();
     constexpr auto kMin = (std::numeric_limits<long>::min)();
     if (v > static_cast<std::int64_t>(kMax)) {
@@ -54,8 +48,6 @@ namespace {
     }
     return static_cast<long>(v);
 }
-
-// ─── RAII wrappers ───────────────────────────────────────────────────────────
 
 struct CurlEasyDeleter {
     void operator()(CURL* p) const noexcept {
@@ -84,8 +76,6 @@ struct CurlMimeDeleter {
 };
 using CurlMimeHandle = std::unique_ptr<curl_mime, CurlMimeDeleter>;
 
-// ─── Process-wide curl global init ──────────────────────────────────────────
-
 void ensureCurlGlobalInit() {
     static std::once_flag flag;
     std::call_once(flag, []() {
@@ -95,13 +85,8 @@ void ensureCurlGlobalInit() {
     });
 }
 
-// ─── Callbacks ───────────────────────────────────────────────────────────────
-
-// libcurl invokes these from its own C stack frames; a C++ exception
-// unwinding through them is undefined behaviour. Both are noexcept and
-// signal failure to libcurl by returning a short count, which surfaces as
-// CURLE_WRITE_ERROR on curl_easy_perform.
-// Response body accumulator with a hard cap on the decompressed size.
+// libcurl calls these from C frames, so they are noexcept and signal failure with a short count
+// (CURLE_WRITE_ERROR). Response body accumulator with a hard cap on the decompressed size.
 struct BodySink {
     std::string body;
     std::size_t limit{0};
@@ -201,8 +186,6 @@ std::size_t headerCallback(char* ptr,
 
 constexpr long kMaxRedirects = 10;
 
-// Map a failed transfer to a ReqloomError; transport-policy refusals get their own
-// non-retryable code.
 [[nodiscard]] ReqloomError describeCurlFailure(CURLcode res,
                                                const BodySink& sink,
                                                bool requestSent) {
@@ -234,8 +217,6 @@ constexpr long kMaxRedirects = 10;
 
 }  // namespace
 
-// ─── Public ──────────────────────────────────────────────────────────────────
-
 CurlHttpClient::CurlHttpClient() {
     ensureCurlGlobalInit();
 }
@@ -262,8 +243,8 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     } else {
         curl_easy_setopt(curl.get(), CURLOPT_CUSTOMREQUEST, methodString(request.method));
     }
-    // Only http(s), for every redirect hop too: no file://, gopher:// etc. from a project URL
-    // or a Location header.
+    // Only http(s), for every redirect hop too: no file://, gopher:// etc. from a project URL or a
+    // Location header.
     curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, writeCallback);
@@ -276,8 +257,6 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
                      CURLOPT_TIMEOUT_MS,
                      toCurlLongClamped(static_cast<std::int64_t>(request.timeout.count())));
 
-    // Connect timeout — configurable via TransportConfig::connectTimeout.
-    // Default 5s matches the hard-coded value before this knob existed.
     curl_easy_setopt(
         curl.get(),
         CURLOPT_CONNECTTIMEOUT_MS,
@@ -290,9 +269,8 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
         curl_easy_setopt(curl.get(), CURLOPT_CAINFO, request.transport.caBundlePath->c_str());
     }
 
-    // Mutual TLS: present a client certificate/key during the handshake.
-    // PEM is assumed (libcurl's default SSLCERTTYPE); an encrypted key uses
-    // the optional passphrase.
+    // Mutual TLS: PEM is assumed (libcurl's default SSLCERTTYPE); an encrypted key uses the
+    // passphrase.
     if (request.transport.clientCertPath && !request.transport.clientCertPath->empty()) {
         curl_easy_setopt(curl.get(), CURLOPT_SSLCERT, request.transport.clientCertPath->c_str());
     }
@@ -308,18 +286,13 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
             curl.get(), CURLOPT_KEYPASSWD, request.transport.clientKeyPassword->c_str());
     }
 
-    // Proxy. Empty leaves libcurl on its default (which honours the
-    // HTTPS_PROXY / NO_PROXY env vars per request); a non-empty value
-    // pins the request to that proxy regardless of env state.
+    // Empty keeps libcurl's default (HTTPS_PROXY / NO_PROXY env vars); non-empty pins the proxy.
     if (request.transport.proxy && !request.transport.proxy->empty()) {
         curl_easy_setopt(curl.get(), CURLOPT_PROXY, request.transport.proxy->c_str());
     }
 
     CurlSlistHandle headerList;
-    // Append `line` to headerList, adopting libcurl's returned head. The
-    // released pointer is the same node `appended` already references (the head
-    // is unchanged after the first append), so discarding it is correct —
-    // headerList has already disowned the storage.
+    // The released pointer is the head `appended` already references, so discarding it is correct.
     auto appendHeaderLine = [&headerList](const std::string& line) -> bool {
         auto* appended = curl_slist_append(headerList.get(), line.c_str());
         if (appended == nullptr) {
@@ -331,16 +304,12 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
         return true;
     };
 
-    // Track whether the caller pinned any of the headers we otherwise default,
-    // so a user-supplied value always wins. (User-Agent needs no flag: we
-    // always set CURLOPT_USERAGENT and a caller's header overrides it in libcurl.)
+    // Track which default headers the caller pinned, so a user-supplied value always wins.
     bool hasAcceptEncoding{false};
     bool hasConnection{false};
     for (const auto& [key, value] : request.headers) {
-        // Multipart routing sets Content-Type itself (with the boundary),
-        // so suppress any caller-supplied Content-Type for those requests.
-        // Case-insensitive: a "content-type" header must not slip through and
-        // override libcurl's boundary-bearing multipart Content-Type.
+        // Multipart sets its own Content-Type (with the boundary); drop any caller one,
+        // case-insensitively.
         if (!request.multipart.empty() && headerNameEquals(key, "Content-Type")) {
             continue;
         }
@@ -355,8 +324,7 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
         }
     }
 
-    // Auto-generated headers (mirrored in the UI's auto-header panel). Connection
-    // rides the header list; only add it when the caller didn't set their own.
+    // Auto-generated headers (mirrored in the UI panel); Connection only when the caller set none.
     if (!hasConnection && !appendHeaderLine(std::format("Connection: {}", kDefaultConnection))) {
         return std::unexpected(ReqloomError{ErrorCode::NetworkTimeout,
                                             ErrorClass::Network,
@@ -366,19 +334,15 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
         curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headerList.get());
     }
 
-    // User-Agent: libcurl sends none by default. Set ours; a caller-supplied
-    // User-Agent in the header list above overrides this in libcurl, so it's a
-    // safe fallback. libcurl copies the string, so a temporary is fine.
+    // libcurl sends no User-Agent by default; a caller's header in the list overrides this one.
     curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, std::string(kDefaultUserAgent).c_str());
-    // Accept-Encoding: advertise gzip/deflate and let libcurl decompress
-    // transparently, unless the caller pinned their own encoding.
+    // Advertise gzip/deflate for libcurl to decompress, unless the caller pinned an encoding.
     if (!hasAcceptEncoding) {
         curl_easy_setopt(
             curl.get(), CURLOPT_ACCEPT_ENCODING, std::string(kDefaultAcceptEncoding).c_str());
     }
 
-    // Multipart and inline body are mutually exclusive. Multipart wins
-    // when both are set; the upper layer guarantees only one is populated.
+    // Multipart wins over an inline body; the upper layer populates only one.
     CurlMimeHandle mime;
     if (!request.multipart.empty()) {
         mime.reset(curl_mime_init(curl.get()));
@@ -401,10 +365,8 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
                                  ErrorClass::Network,
                                  "curl_mime_name failed for part: " + part.name});
             }
-            // Both text and file parts ship via curl_mime_data — the
-            // file bytes were pre-loaded by MultipartBuilder so libcurl
-            // never re-opens the path. That's the TOCTOU fix; see
-            // MultipartBuilder.cpp's prologue for the full rationale.
+            // File parts were pre-loaded by MultipartBuilder, so libcurl never re-opens the path
+            // (TOCTOU).
             if (curl_mime_data(mp, part.value.data(), part.value.size()) != CURLE_OK) {
                 return std::unexpected(
                     ReqloomError{ErrorCode::NetworkTimeout,
@@ -420,14 +382,11 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
         }
         curl_easy_setopt(curl.get(), CURLOPT_MIMEPOST, mime.get());
     } else if (request.body) {
-        // _LARGE takes curl_off_t — plain POSTFIELDSIZE is `long` and
-        // truncates bodies over 2 GiB on Windows.
+        // _LARGE takes curl_off_t; POSTFIELDSIZE is `long` and truncates past 2 GiB on Windows.
         curl_easy_setopt(
             curl.get(), CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(request.body->size()));
-        // POSTFIELDS (not COPYPOSTFIELDS) — `request` outlives this
-        // synchronous perform, so libcurl can reference the body in place
-        // instead of copying it. Set the size first so libcurl treats the
-        // buffer as opaque bytes (may contain NULs) rather than a C string.
+        // POSTFIELDS, not COPYPOSTFIELDS: `request` outlives the synchronous perform. Set the size
+        // first so the buffer is opaque bytes (may contain NULs).
         curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, request.body->data());
     }
 

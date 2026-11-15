@@ -7,14 +7,10 @@ namespace reqloom::desktop {
 
 namespace {
 
-// All per-project environment selections live under one settings group so
-// they're easy to inspect and don't collide with other preferences.
+// All environment selections live under one settings group.
 constexpr const char* kGroup = "activeEnvironment";
 
-// QSettings uses '/' as a key-path separator, so a project key that starts
-// with or contains '/' (e.g. "/projects/alpha") would be misinterpreted as
-// an absolute path or nested subgroups. Replace every '/' with '|', which
-// QSettings treats as a plain character on all backends.
+// QSettings treats '/' as a key-path separator, so replace it with '|' to keep project keys flat.
 QString sanitizeKey(const QString& projectKey) {
     QString k = projectKey;
     k.replace(QLatin1Char('/'), QLatin1Char('|'));
@@ -30,10 +26,7 @@ void EnvironmentSettings::save(QSettings& settings, const QString& projectKey, c
     settings.beginGroup(QString::fromUtf8(kGroup));
     settings.setValue(sanitizeKey(projectKey), env);
     settings.endGroup();
-    // Flush to backing store immediately. Without this a second QSettings
-    // instance opened over the same file (as the round-trip test does) can
-    // read stale content on Windows, where the write is otherwise buffered
-    // until destruction.
+    // Flush now so a second QSettings over the same file can't read stale content on Windows.
     settings.sync();
 }
 

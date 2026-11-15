@@ -1,8 +1,5 @@
-// AuthStepListModel — editable list of an actor's auth-chain login steps. Each
-// row is one HTTP request (method, path, body, expect) plus its own extractions
-// (a nested EditableKeyValueModel), mirroring the engine's Actor::authSteps
-// (std::vector<AuthStep>). C++ owns the per-row extraction models; QML edits
-// rows via the invokables. Backs the N-step login editor in ActorDetail.
+// AuthStepListModel — editable list of an actor's login steps; each row is one HTTP request plus
+// its own extraction model (C++ owned). Backs the N-step login editor.
 #pragma once
 
 #include "EditableKeyValueModel.h"
@@ -59,8 +56,7 @@ public:
     Q_INVOKABLE void setExpect(int row, const QString& expect);
     /// Append a blank step (POST, empty path). Returns the new row index.
     Q_INVOKABLE int addStep();
-    /// Remove `row`. Refuses to remove the last remaining step — a step-based
-    /// actor needs at least one login request.
+    /// Remove `row`; refuses to remove the last step.
     Q_INVOKABLE void removeStep(int row);
     /// Move `row` up (delta -1) or down (delta +1); a no-op at the ends.
     Q_INVOKABLE void moveStep(int row, int delta);

@@ -1,6 +1,4 @@
-// `reqloom import <spec>` — import an API definition or client export into a Reqloom
-// project (reqloom.yaml + per-entity sub-files) via the engine's importAny() +
-// writeImportedProject(), which moves imported credentials into the project's secrets.
+// `reqloom import <spec>`: import an API definition or client export into a Reqloom project.
 
 #include "ImportCommand.h"
 
@@ -98,7 +96,6 @@ void printUsage(std::FILE* stream) {
     return out;
 }
 
-/// Count operations across every resource for the success summary.
 [[nodiscard]] std::size_t operationCount(const ce::Project& project) {
     std::size_t total{0};
     for (const auto& resource : project.resources | std::views::values) {
@@ -107,7 +104,7 @@ void printUsage(std::FILE* stream) {
     return total;
 }
 
-/// Say where each credential went: names only, never values.
+/// Names only, never values.
 void printCredentialSummary(const ce::CredentialMoveReport& report) {
     if (!report.moved.empty()) {
         std::string names;
@@ -150,9 +147,7 @@ int importCommand(const QStringList& args, ce::SecretStore* store, ce::ProjectTr
         return 1;
     }
 
-    // Default the containment root to the spec's parent so an explicitly named
-    // file always resolves inside it; `--project-root` tightens this when the
-    // caller wants to confine the import to a known project tree.
+    // Default the containment root to the spec's parent; `--project-root` tightens it.
     const fs::path projectRoot = cfg.projectRoot.empty() ? cfg.spec.parent_path() : cfg.projectRoot;
 
     auto imported = ce::importAny(cfg.spec, projectRoot);
@@ -189,8 +184,7 @@ int importCommand(const QStringList& args, ce::SecretStore* store, ce::ProjectTr
                  written->reqloomYaml.string());
     printCredentialSummary(written->credentials);
 
-    // Per-operation notes (path params to wire to upstream extractions, etc.)
-    // go to stderr so the success line on stdout stays machine-friendly.
+    // Warnings go to stderr so the stdout success line stays machine-friendly.
     if (!imported->warnings.empty()) {
         std::println(stderr, "\nReview notes:\n{}", imported->warnings);
     }

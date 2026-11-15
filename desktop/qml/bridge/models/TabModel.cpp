@@ -61,13 +61,11 @@ QString TabModel::displayTitle(int index) const {
         return {};
     }
     const TabState& tab = tabs_.at(static_cast<std::size_t>(index));
-    // A draft has no saved name to qualify, and an actor tab has no module —
-    // both keep their bare label.
+    // A draft or actor tab keeps its bare label (no saved name or module to qualify).
     if (tab.module.isEmpty() || tab.operationDraft) {
         return tab.title;
     }
-    // Identity by address, not by index: every element lives in `tabs_`, so
-    // this is just "some other row shares my bare title".
+    // Compare by address: ambiguous when another row shares this bare title.
     const bool ambiguous = std::ranges::any_of(tabs_, [&tab](const TabState& other) {
         return &other != &tab && other.title == tab.title;
     });
@@ -127,8 +125,7 @@ void TabModel::refreshRow(int index) {
     }
     const QModelIndex idx = createIndex(index, 0);
     emit dataChanged(idx, idx);
-    // A rename (draft promotion, actor save) can start or end a collision for
-    // some other row, so the rest of the strip re-reads its titles too.
+    // A rename can start or end a collision for another row, so re-read every title.
     refreshTitles();
 }
 

@@ -1,11 +1,8 @@
 // KeychainSecretStore — OS-keychain-backed secret storage via QtKeychain.
 //
-// Gated on REQLOOM_HAS_QTKEYCHAIN: when QtKeychain is found at configure
-// time the real backend below is compiled (macOS Keychain, Windows
-// Credential Store, libsecret/KWallet on Linux). Otherwise a placeholder is
-// compiled so the engine still links — `read` reports no secret, `write` and
-// `remove` fail with SecretAccessFailed. The placeholder exists for build
-// environments without QtKeychain; it must never be the production path.
+// Gated on REQLOOM_HAS_QTKEYCHAIN: without it a placeholder is compiled so the engine still links
+// (`read` finds nothing, `write`/`remove` fail with SecretAccessFailed); it must never be the
+// production path.
 #include "KeychainSecretStore.h"
 
 #ifdef REQLOOM_HAS_QTKEYCHAIN
@@ -22,15 +19,11 @@ namespace reqloom::engine {
 
 namespace {
 
-// All Reqloom secrets share one logical service so they're grouped in
-// the OS keychain and don't collide with other apps' entries.
+// All Reqloom secrets share one keychain service so they do not collide with other apps.
 constexpr const char* kKeychainService = "com.reqloom.secrets";
 
-// Runs an async QtKeychain job to completion on a local event loop.
-// Returns false when there is no QCoreApplication — QtKeychain jobs need
-// one to deliver `finished`, and without it loop.exec() would block
-// forever. Callers treat that as a backend-unavailable condition rather
-// than hanging (e.g. headless test binaries that never spin a Qt app).
+// Runs an async QtKeychain job on a local event loop. False without a QCoreApplication, where
+// loop.exec() would block forever (e.g. headless tests).
 template <typename Job>
 [[nodiscard]] bool runJobBlocking(Job& job) {
     if (QCoreApplication::instance() == nullptr) {
@@ -68,9 +61,7 @@ std::expected<std::optional<std::string>, ReqloomError> KeychainSecretStore::rea
     job.setAutoDelete(false);
     job.setKey(toQt(name));
     if (!runJobBlocking(job)) {
-        // No event loop to drive the job — treat as "secret not present"
-        // rather than blocking. Surfaces downstream as VarUnresolved, the
-        // same as a genuinely missing key.
+        // No event loop to drive the job: report "secret not present" (surfaces as VarUnresolved).
         return std::optional<std::string>{};
     }
 
@@ -113,8 +104,7 @@ std::expected<void, ReqloomError> KeychainSecretStore::remove(const std::string&
                                             "keychain delete requires a running QCoreApplication"});
     }
 
-    // A missing entry is not an error for remove() — the post-condition
-    // (the key is absent) already holds.
+    // A missing entry is not an error for remove(): the key is absent either way.
     if (job.error() != QKeychain::NoError && job.error() != QKeychain::EntryNotFound) {
         return std::unexpected(ReqloomError{
             ErrorCode::SecretAccessFailed, ErrorClass::Auth, job.errorString().toStdString()});

@@ -1,8 +1,6 @@
-// Verifier — evaluates extractions against a sample response and tags each
-// with Verified / Null / NoMatch / NotEvaluated / NoSample.
-//
-// Pure computation — no I/O, no engine state. Lives in the application
-// layer because it parses JSON (third-party dep).
+// Verifier — evaluates extractions against a sample response and tags each Verified / Null /
+// NoMatch / NotEvaluated / NoSample. Pure computation (no I/O or engine state); it parses JSON, so
+// it lives in the application layer.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>
@@ -91,13 +89,9 @@ public:
     [[nodiscard]] std::expected<VerificationReport, ReqloomError> verify(
         const Operation& op, const SampleResponse& sample) const;
 
-    /// Verify with an empty sample. Every extraction comes back tagged
-    /// `NoSample`. Used when no sample of any kind is available.
-    ///
-    /// Not noexcept: building the report allocates strings and grows a
-    /// vector. On OOM the standard exception propagates — callers in the
-    /// engine treat that as unrecoverable, matching the rest of the
-    /// application layer.
+    /// Verify with an empty sample: every extraction comes back `NoSample`. Not noexcept: building
+    /// the report allocates, and OOM propagates as unrecoverable like the rest of the application
+    /// layer.
     [[nodiscard]] VerificationReport verifyWithoutSample(const Operation& op) const;
 };
 

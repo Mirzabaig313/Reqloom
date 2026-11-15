@@ -19,16 +19,10 @@ public:
     };
 
     /// Parse a Bruno collection into a Project.
-    ///
-    /// `input` may be the collection directory, its `bruno.json`, or any `.bru`
-    /// file inside it — the collection root is derived from whichever is given.
-    /// Top-level sub-directories become resources; each request `.bru` becomes
-    /// an operation; `environments/*.bru` `vars` seed environments; a request
-    /// URL's scheme+host becomes the `default` environment `baseUrl`. Bruno
-    /// `{{var}}` references are rewritten to `{{env.var}}`.
-    ///
-    /// Path containment: the resolved collection root must live under
-    /// `projectRoot`. Returns `SchemaInvalid` on unusable input.
+    /// `input` may be the collection directory, its `bruno.json`, or any `.bru` file inside it.
+    /// Top-level sub-directories become resources, requests operations, `environments/*.bru`
+    /// environments; `{{var}}` becomes `{{env.var}}`. Path containment: the collection root must
+    /// resolve under `projectRoot`. Returns `SchemaInvalid` on unusable input.
     [[nodiscard]] std::expected<Outcome, ReqloomError> run(
         const std::filesystem::path& input, const std::filesystem::path& projectRoot) const;
 };

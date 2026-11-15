@@ -115,9 +115,8 @@ std::string SecretRegistry::redact(std::string_view text) const {
     if (patterns_.empty() || text.size() < shortestPattern_) {
         return std::string{text};
     }
-    // Mark every byte covered by any match (longest pattern first at each
-    // position), then collapse each covered run into one marker. Merging
-    // runs means overlapping secrets leave no visible fragment.
+    // Mark every byte covered by a match (longest first), then collapse each run into one marker,
+    // so overlapping secrets leave no fragment.
     std::vector<bool> covered{};
     std::size_t coverEnd{0};
     for (std::size_t i{}; i + shortestPattern_ <= text.size(); ++i) {

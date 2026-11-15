@@ -14,8 +14,8 @@
 //
 // Parentheses and array literals may nest at most 64 levels deep.
 //
-// Lives in the application layer because it parses JSON (third-party dep),
-// which the domain layer is not allowed to pull in.
+// Lives in the application layer because it parses JSON (a third-party dep the domain layer may not
+// pull in).
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>
@@ -56,9 +56,8 @@ struct RegexSearchResult {
 /// the error says how to rewrite it.
 [[nodiscard]] std::expected<void, std::string> checkRegexPattern(std::string_view pattern);
 
-/// The one place a project-supplied regex is run: pattern guard, subject size cap, shared
-/// compile cache, then search. There is no time limit: a slow pattern the heuristic misses
-/// can still take a long time.
+/// The one place a project-supplied regex runs: pattern guard, subject cap, shared compile cache,
+/// search. No time limit: a slow pattern the heuristic misses can still run long.
 [[nodiscard]] RegexSearchResult guardedRegexSearch(std::string_view subject,
                                                    std::string_view pattern);
 
@@ -66,8 +65,8 @@ struct RegexSearchResult {
 /// produce `False`, never an error.
 enum class PredicateValue : std::uint8_t { False, True };
 
-/// Compiled expression handle. Opaque to callers — keeps the AST out of
-/// the header. Move-only because the AST contains unique_ptr nodes.
+/// Compiled expression handle; opaque (keeps the AST out of the header) and move-only (unique_ptr
+/// nodes).
 class ParsedPredicate {
 public:
     ParsedPredicate();
@@ -87,13 +86,9 @@ private:
     std::unique_ptr<Node> root_;
 };
 
-/// Pre-parsed response body. Holds the parsed JSON document (and the
-/// "was it valid JSON" outcome) so a single body can be evaluated against
-/// several predicates without re-parsing each time — the hot path is the
-/// poll loop, which checks both a success and a fail predicate per attempt.
-///
-/// Opaque + move-only on purpose: the nlohmann::json type stays in the
-/// .cpp so it never leaks onto the application-layer public surface.
+/// Pre-parsed response body so one body can be evaluated against several predicates without
+/// re-parsing (the poll loop checks a success and a fail predicate per attempt). Opaque and
+/// move-only so nlohmann::json stays in the .cpp.
 class ParsedBody {
 public:
     ParsedBody();
@@ -127,22 +122,16 @@ public:
     /// object so `$.status_code`-only predicates still evaluate, as the string_view overload does.
     [[nodiscard]] ParsedBody parseBody(std::string_view jsonBody) const noexcept;
 
-    /// Evaluate a previously-parsed expression against a previously-parsed
-    /// body. Total: never throws, never returns an error. Use this (with a
-    /// shared `ParsedBody`) when checking several predicates against the
-    /// same response to avoid re-parsing the body each time.
-    ///
-    /// `statusCode` is exposed inside expressions as `$.status_code`.
+    /// Evaluate a parsed expression against a `ParsedBody`. Total: never throws or errors. Share
+    /// one `ParsedBody` across predicates on the same response. `statusCode` is exposed as
+    /// `$.status_code`.
     [[nodiscard]] PredicateValue evaluate(const ParsedPredicate& predicate,
                                           const ParsedBody& body,
                                           int statusCode = 0) const noexcept;
 
-    /// Evaluate a previously-parsed expression against a JSON document.
-    /// Total: never throws, never returns an error. Convenience wrapper
-    /// that parses `jsonBody` and forwards to the `ParsedBody` overload.
-    ///
-    /// `statusCode` is exposed inside expressions as `$.status_code`.
-    /// Pass 0 when there is no associated HTTP status.
+    /// Evaluate a parsed expression against a JSON document: parses `jsonBody` and forwards to the
+    /// `ParsedBody` overload. Total. `statusCode` is `$.status_code`; pass 0 when there is no HTTP
+    /// status.
     [[nodiscard]] PredicateValue evaluate(const ParsedPredicate& predicate,
                                           std::string_view jsonBody,
                                           int statusCode = 0) const noexcept;

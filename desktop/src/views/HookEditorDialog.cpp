@@ -21,8 +21,8 @@ namespace reqloom::desktop {
 
 namespace {
 
-// Build one tab: an optional "from file" hint above a themed CodeEditor seeded
-// with `script`. Returns the editor so the dialog can read it back on accept.
+// Build one tab: an optional "from file" hint above a themed CodeEditor seeded with `script`;
+// returns the editor.
 [[nodiscard]] CodeEditor* buildTab(QTabWidget* tabs,
                                    const QString& title,
                                    const QString& script,
@@ -106,7 +106,6 @@ HookEditorDialog::HookEditorDialog(const QString& operationId,
     postEditor_ = buildTab(tabs, tr("Post-response"), postScript, postRef, palette);
     layout->addWidget(tabs, 1);
 
-    // Status line for validation results (hidden until the author validates).
     okColor_ = palette.statusSuccess.name();
     errorColor_ = palette.statusError.name();
     status_ = new QLabel(this);
@@ -122,7 +121,6 @@ HookEditorDialog::HookEditorDialog(const QString& operationId,
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(validateButton, &QPushButton::clicked, this, &HookEditorDialog::validateHooks);
 
-    // Deliver the off-thread validation result back on the GUI thread.
     connect(&validateWatcher_, &QFutureWatcher<ValidationReport>::finished, this, [this]() {
         const ValidationReport report = validateWatcher_.result();
         QStringList lines = report.lines;
@@ -143,8 +141,7 @@ void HookEditorDialog::validateHooks() {
         return;
     }
 
-    // Snapshot the editor text on the GUI thread; the worker captures owned
-    // copies only (no `this`, no widgets).
+    // Snapshot the editor text on the GUI thread; the worker captures owned copies only.
     const std::string pre = preEditor_->toPlainText().trimmed().toStdString();
     const std::string post = postEditor_->toPlainText().trimmed().toStdString();
     const QString preLabel = tr("Pre-request");

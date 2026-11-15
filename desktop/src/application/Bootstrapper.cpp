@@ -1,13 +1,12 @@
-// Constructs the ExecutionEngine with default infrastructure. Centralising
-// the wiring keeps view models free of dependency-injection logic.
+// Constructs the ExecutionEngine with default infrastructure, keeping wiring out of the view
+// models.
 #include "Bootstrapper.h"
 
 #include <reqloom/engine/Factories.h>
 
 namespace reqloom::desktop {
 
-// Note: the run-history database is opened per-project by AppController when a
-// project loads (so runs are isolated between projects), not globally here.
+// The run-history database is opened per project by AppController, not here.
 Bootstrapper::Bootstrapper()
     : engine_(std::make_unique<engine::ExecutionEngine>(engine::makeDefaultDependencies())) {}
 

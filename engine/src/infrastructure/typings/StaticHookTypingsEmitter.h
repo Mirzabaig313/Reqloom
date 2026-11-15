@@ -1,6 +1,4 @@
-// StaticHookTypingsEmitter — concrete `HookTypingsEmitter` that writes a
-// fixed `reqloom.d.ts` body. When per-project specialisation lands, this
-// class either grows the logic or gets joined by a sibling.
+// StaticHookTypingsEmitter — `HookTypingsEmitter` that writes a fixed `reqloom.d.ts` body.
 #pragma once
 
 #include "HookTypingsEmitter.h"

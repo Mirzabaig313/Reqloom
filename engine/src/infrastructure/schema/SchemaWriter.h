@@ -24,18 +24,15 @@ public:
     SchemaWriter& operator=(SchemaWriter&&) = delete;
     virtual ~SchemaWriter() = default;
 
-    /// Write `project` into `targetDir`. Creates the directory if needed,
-    /// refuses to overwrite existing files unless `overwrite` is set.
-    /// When `overwrite` and `pruneStale` are both set (the in-place project save), `*.yaml` files
-    /// in actors/, resources/ and environments/ that are not part of `project` are deleted; with
-    /// `pruneStale` false nothing is deleted.
+    /// Write `project` into `targetDir`, creating it if needed; refuses to overwrite existing files
+    /// unless `overwrite`. With `overwrite` and `pruneStale`, `*.yaml` files in actors/, resources/
+    /// and environments/ that are not part of `project` are deleted.
     ///
-    /// Actor ids, resource ids and environment names become file names, so an unsafe one (empty,
-    /// leading dot, `/`, `\`, `:`, NUL) is rejected and nothing is written.
+    /// Unsafe actor/resource/environment ids (empty, leading dot, `/`, `\`, `:`, NUL) are rejected
+    /// and nothing is written.
     ///
-    /// `loadedFiles` (canonical path → hash of the bytes at load, as the parser records in
-    /// `Project::loadedFiles`), when given, limits pruning to those files and fails the write
-    /// before anything is committed if a target is on disk but not in it, or if a file in it
+    /// `loadedFiles` (canonical path to hash at load), when given, limits pruning to those files
+    /// and fails the write before commit if a target is on disk but not in it or a file in it
     /// changed since load. On success it is replaced by the files now on disk.
     ///
     /// Layout produced:

@@ -6,9 +6,7 @@
 
 namespace reqloom::engine {
 
-/// Application-layer use case wrapping ExecutionEngine. Kept as a separate
-/// abstraction so the CLI and UI share the same conceptual entry point as
-/// the engine evolves.
+/// Application-layer use case wrapping ExecutionEngine; the shared entry point for CLI and UI.
 class RunOperationUseCase {
 public:
     explicit RunOperationUseCase(ExecutionEngine& engine);

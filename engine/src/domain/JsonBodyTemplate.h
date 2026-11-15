@@ -1,8 +1,6 @@
 // JsonBodyTemplate — JSON-aware resolution of request body templates.
-//
-// A placeholder inside a JSON string literal has its value escaped as string content, so it
-// cannot break out of the string; outside a literal it is inserted raw, so numbers,
-// booleans, arrays and objects still work.
+// A placeholder inside a JSON string literal is escaped as string content; outside one it is
+// inserted raw.
 #pragma once
 
 #include "VariableResolver.h"

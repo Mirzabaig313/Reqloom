@@ -24,34 +24,20 @@ public:
     [[nodiscard]] std::expected<std::vector<OperationId>, ReqloomError> resolve(
         const Project& project, const OperationId& target) const;
 
-    /// Like `resolve`, but additionally returns the resolved dependency
-    /// edges (explicit + implicit, with the flowing variable for implicit
-    /// ones). Used to draw the real resolved chain graph. `resolve` is a
-    /// thin wrapper over this that discards the edges.
+    /// Like `resolve`, but also returns the resolved edges (explicit + implicit, with the flowing
+    /// variable for implicit ones). `resolve` wraps this.
     [[nodiscard]] std::expected<ResolvedPlan, ReqloomError> resolvePlan(
         const Project& project, const OperationId& target) const;
 
-    /// Whole-project validation, run at schema load so a malformed
-    /// project is rejected before any operation can run:
-    ///   - every `{{X.y}}` reference names a known scope ($ builtin,
-    ///     env, secret, a defined actor or resource) → else RefUndefined
-    ///     (field existence stays a runtime concern);
-    ///   - every `depends_on:` target names a real operation → else
-    ///     RefUndefined;
-    ///   - a non-empty `actor`, `poll_until.actor`, and `for_each.over`
-    ///     name a defined actor / resource → else RefUndefined;
-    ///   - each `{{res.var}}` has one clear producer: extractors that also
-    ///     consume the variable are skipped, `depends_on` disambiguates →
-    ///     else RefUndefined ("ambiguous producer" / "no producer");
-    ///   - the full dependency graph is acyclic, self-loops included →
-    ///     else Cycle, listing the operations involved.
+    /// Whole-project validation, run at schema load. `RefUndefined` for an unknown `{{X.y}}` scope,
+    /// an unknown `depends_on` / `actor` / `poll_until.actor` / `for_each.over` target, or a
+    /// `{{res.var}}` with no or an ambiguous producer (extractors that also consume it are skipped,
+    /// `depends_on` disambiguates). `Cycle`, listing the operations involved, when the graph is
+    /// cyclic (self-loops included).
     [[nodiscard]] std::expected<void, ReqloomError> validate(const Project& project) const;
 
-    /// Collect the distinct `secret.X` names referenced anywhere in the
-    /// project (operation templates, actor auth config, auth steps,
-    /// refresh blocks, poll predicates). Used at run start to pre-load
-    /// exactly those secrets from the SecretStore into the resolve
-    /// context — we never bulk-dump the keychain. Sorted, de-duplicated.
+    /// The distinct `secret.X` names referenced anywhere in the project, sorted; used to pre-load
+    /// exactly those secrets rather than bulk-dump the keychain.
     [[nodiscard]] static std::vector<std::string> collectSecretReferences(const Project& project);
 };
 
@@ -62,12 +48,10 @@ public:
 [[nodiscard]] std::expected<void, ReqloomError> checkEntityFileStem(std::string_view kind,
                                                                     std::string_view name);
 
-/// Enumerate the `{{...}}` references usable at `target`, given its already
-/// resolved `plan`: upstream extracts (`resource.var` for every producing op
-/// in the chain), the target actor's session tokens (`actor.var`), the chosen
-/// environment's vars (`env.X`), declared secrets (`secret.X`), and `$.`
-/// built-ins. De-duplicated; `environment` empty → the project default. Pure
-/// (no I/O) so the editor can call it on every keystroke.
+/// Enumerate the `{{...}}` references usable at `target` given its resolved `plan`: upstream
+/// extracts, the actor's session tokens, env vars, declared secrets and `$.` built-ins.
+/// De-duplicated; `environment` empty means the project default. Pure, so the editor can call it on
+/// every keystroke.
 [[nodiscard]] std::vector<VariableSuggestion> collectVariableSuggestions(
     const Project& project,
     const OperationId& target,

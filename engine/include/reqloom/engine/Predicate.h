@@ -1,8 +1,7 @@
 // Public, stateless predicate/assertion evaluation.
 //
-// Exposes the same boolean expression grammar the engine applies to
-// `assertions:` and `poll_until.success_when`, so an editor can offer a
-// live "test this expression" box without running a full request.
+// Exposes the grammar the engine applies to `assertions:` and `poll_until.success_when`, so an
+// editor can offer a live "test this expression" box.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>
@@ -12,19 +11,13 @@
 
 namespace reqloom::engine {
 
-/// Evaluate a single assertion / poll predicate against a sample response
-/// body and HTTP status, using the engine's predicate grammar
-/// (`$.field == 'x'`, `&&`/`||`, `in`, `matches`, etc.).
+/// Evaluate an assertion / poll predicate against a sample response body and HTTP status.
 ///
-/// Returns the boolean outcome (`true` = the predicate holds) for a
-/// well-formed expression, or `ReqloomError{SchemaInvalid}` when the
-/// expression is syntactically malformed — letting the editor distinguish a
-/// failing assertion from a typo. A structurally valid expression that simply
-/// doesn't match (or a non-JSON body) yields `false`, never an error, exactly
-/// as it would at run time.
+/// Returns the boolean outcome for a well-formed expression, or `ReqloomError{SchemaInvalid}` when
+/// it is syntactically malformed. A valid expression that does not match (or a non-JSON body)
+/// yields `false`, as at run time.
 ///
-/// `statusCode` is exposed inside the expression as `$.status_code`; pass 0
-/// when there is no associated HTTP status. Pure: no I/O, no shared state.
+/// `statusCode` is exposed as `$.status_code`; pass 0 when there is no HTTP status. Pure.
 [[nodiscard]] std::expected<bool, ReqloomError> evaluatePredicate(std::string_view expression,
                                                                   std::string_view responseBody,
                                                                   int statusCode = 0);

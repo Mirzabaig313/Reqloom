@@ -34,8 +34,6 @@ int lintCommand(const QStringList& args) {
         return 1;
     }
 
-    // Run dry-run for every operation and treat resolution errors as lint failures.
-    // A standalone validator helper in Factories.h would be cleaner — this works for now.
     auto& project = *projectResult;
     // Load warnings (unknown keys, imports that matched nothing) never fail the lint.
     for (const auto& warning : project.loadWarnings) {

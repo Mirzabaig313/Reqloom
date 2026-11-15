@@ -1,9 +1,6 @@
 // QuickJsHookRunner — sandboxed JS execution via quickjs-ng.
 //
-// One JSRuntime/JSContext is created per hook invocation and torn down on
-// return. That's not the fastest model, but it's the simplest and the
-// safest: every hook runs in a clean slate with no carry-over of globals,
-// closures, or module bindings between invocations.
+// One JSRuntime/JSContext per hook invocation, so no globals or closures carry over.
 //
 // The JS surface exposed on `ctx` is intentionally narrow:
 //
@@ -13,38 +10,23 @@
 //   ctx.env[name]                              — read-only
 //   ctx.secret[name]                           — read-only, only the names the engine passes
 //
-// A body or header value that is not valid UTF-8 is exposed as a binary string: one
-// character per byte (U+0000–U+00FF). Written back, a string whose characters are all
-// ≤ U+00FF becomes those bytes; any other string is written as UTF-8. A field the hook
-// leaves alone comes back byte-for-byte, NUL bytes included.
+// A body or header value that is not valid UTF-8 is exposed as a binary string (one character per
+// byte, U+0000–U+00FF); written back, characters all ≤ U+00FF become those bytes, else UTF-8.
 //   ctx.base64.{encode,decode}(s)              — string codecs
 //   ctx.hex.{encode,decode}(s)
 //   ctx.url.{encode,decode}(s)
 //   ctx.hmac.{sha1,sha256,sha512}(key, msg)    — returns hex
-//   ctx.hash.{md5,sha1,sha256,sha512}(msg)     — returns hex (md5/sha1
-//                                                 surface deferred — no
-//                                                 op-level need yet)
+//   ctx.hash.{md5,sha1,sha256,sha512}(msg)     — returns hex
 //   ctx.jwt.sign(claims, key, alg)             — HS256/HS512
-//   ctx.json.{stringify,parse}                 — canonicalised stringify
-//                                                 (sorted keys)
+//   ctx.json.{stringify,parse}                 — canonicalised stringify (sorted keys)
 //
-// Sandbox guarantees:
-//   - No filesystem access (QuickJS doesn't expose `os` / `std` unless we
-//     opt in with `js_init_module_*`; we don't).
-//   - No network (same — we don't add `fetch`/`XMLHttpRequest`).
-//   - No `require` (CommonJS isn't built in, and we don't supply a loader).
-//   - 1-second wall-clock interrupt budget per hook invocation. Hooks
-//     longer than that fail with `E_HOOK_TIMEOUT`.
-//   - 8 MiB stack cap to avoid runaway recursion bringing the process
-//     down via stack overflow.
-//   - 64 MiB heap cap; exceeding it fails the hook ("out of memory").
-//   - Async hooks: pending promise jobs are drained within the same budget
-//     and a returned promise must settle (rejection fails the hook).
+// Sandbox: no filesystem, network or `require` (QuickJS `os`/`std` are not opted in; no fetch or
+// loader); 1-second wall-clock budget (`E_HOOK_TIMEOUT`), 8 MiB stack cap, 64 MiB heap cap. Pending
+// promise jobs are drained within the same budget and a returned promise must settle.
 //
-// The runner accepts BOTH module-style (`export default function (ctx){…}`)
-// and script-style (`(ctx) => {…}`, or a plain top-level body that mutates
-// `ctx`) hooks. Module mode is detected by the presence of `export ` /
-// `import ` at the top level.
+// The runner accepts module-style (`export default function (ctx){…}`) and script-style hooks
+// (`(ctx) => {…}` or a plain body mutating `ctx`); module mode is detected by a top-level `export `
+// / `import `.
 
 #include "QuickJsHookRunner.h"
 
@@ -82,12 +64,10 @@ namespace {
 
 using namespace codecs;
 
-// ─── Wall-clock budget enforcement ───────────────────────────────────────────
-
 struct InterruptState {
     std::chrono::steady_clock::time_point deadline;
-    /// Set when the budget ran out and execution was interrupted. The
-    /// timeout verdict comes from this flag, never from exception text.
+    /// Set when the budget ran out; the timeout verdict comes from this flag, never from exception
+    /// text.
     bool fired{false};
 };
 
@@ -99,8 +79,6 @@ int interruptCallback(JSRuntime* /*rt*/, void* opaque) {
     }
     return 0;
 }
-
-// ─── Tiny RAII wrappers around JS lifetime ───────────────────────────────────
 
 struct JsRuntimeDeleter {
     void operator()(JSRuntime* rt) const noexcept {
@@ -134,8 +112,6 @@ private:
     JSContext* ctx_;
     JSValue v_;
 };
-
-// ─── String marshalling ──────────────────────────────────────────────────────
 
 [[nodiscard]] std::string toCppString(JSContext* ctx, JSValueConst v) {
     if (JS_IsUndefined(v) || JS_IsNull(v)) {
@@ -197,7 +173,6 @@ private:
     return true;
 }
 
-/// A byte string as a JS string: UTF-8 text as text, anything else one character per byte.
 [[nodiscard]] JSValue jsBytes(JSContext* ctx, std::string_view s) {
     if (isValidUtf8(s)) {
         return jsStr(ctx, s);
@@ -209,7 +184,6 @@ private:
     return JS_NewStringUTF16(ctx, units.data(), units.size());
 }
 
-/// Inverse of `jsBytes` for a value whose original was `binary`.
 [[nodiscard]] std::string fromJsBytes(JSContext* ctx, JSValueConst v, bool binary) {
     if (!binary) {
         return toCppString(ctx, v);
@@ -249,7 +223,6 @@ void setIntProp(JSContext* ctx, JSValueConst obj, const char* name, int32_t valu
     return obj;
 }
 
-/// Read a JS string map back; `original` decides how each pre-existing value is decoded.
 [[nodiscard]] std::map<std::string, std::string> readStringMap(
     JSContext* ctx, JSValueConst obj, const std::map<std::string, std::string>& original) {
     std::map<std::string, std::string> out;
@@ -282,13 +255,7 @@ void setIntProp(JSContext* ctx, JSValueConst obj, const char* name, int32_t valu
     return out;
 }
 
-// ─── Helper bindings ─────────────────────────────────────────────────────────
-//
-// All helpers follow a common shape:
-//   - First arg is always present, otherwise return undefined
-//   - Result is always a JS string (callers' templates are textual)
-//   - On failure (malformed input, missing arg) we return undefined; the
-//     hook author can detect that and choose how to react
+// Helpers return a JS string, or undefined on malformed input or a missing argument.
 
 [[nodiscard]] std::optional<std::string> argString(JSContext* ctx,
                                                    int argc,
@@ -381,9 +348,8 @@ JSValue jsSha256(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     return jsStr(ctx, hexEncode(crypto::sha256(*msg)));
 }
 
-/// JWT signing entry point. Signature: `ctx.jwt.sign(claims, key, alg?)`.
-/// `claims` may be either a JS object or a JSON string. `alg` defaults
-/// to "HS256"; "HS512" is also supported.
+/// JWT signing: `ctx.jwt.sign(claims, key, alg?)`; `claims` is a JS object or JSON string, `alg`
+/// defaults to "HS256" ("HS512" also supported).
 JSValue jsJwtSign(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (argc < 2) {
         return JS_UNDEFINED;
@@ -393,9 +359,7 @@ JSValue jsJwtSign(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     if (JS_IsString(argv[0])) {
         payloadJson = toCppString(ctx, argv[0]);
     } else if (JS_IsObject(argv[0])) {
-        // Stringify via the global JSON.stringify so we don't reimplement
-        // canonicalisation. The user's expectation is "JS object → JWT
-        // payload", which matches plain stringify semantics.
+        // Use the global JSON.stringify rather than reimplementing canonicalisation.
         JSValue const global = JS_GetGlobalObject(ctx);
         JsValueGuard const globalGuard{ctx, global};
         JSValue const jsonObj = JS_GetPropertyStr(ctx, global, "JSON");
@@ -437,13 +401,9 @@ JSValue jsJwtSign(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     return jsStr(ctx, signed_);
 }
 
-// QuickJS calls helper functions from its own C stack frames. A C++
-// exception (e.g. std::bad_alloc from the codec/crypto/std::string calls
-// the helpers make) unwinding through those frames is undefined behaviour.
-// Every helper is registered through this noexcept trampoline, which
-// collapses any throw into the helpers' existing "return undefined on
-// failure" contract. Routing registration through installHelper makes the
-// guard impossible to forget for a newly added helper.
+// QuickJS calls helpers from its own C frames, so a C++ exception unwinding through them is UB.
+// Every helper is registered through this noexcept trampoline, which turns any throw into "return
+// undefined".
 template <JSCFunction* Fn>
 JSValue guardHelper(JSContext* ctx, JSValueConst thisVal, int argc, JSValueConst* argv) noexcept {
     try {
@@ -459,12 +419,9 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
     JS_SetPropertyStr(ctx, parent, name, f);
 }
 
-// ─── Build the `ctx` object handed to the hook ───────────────────────────────
-
 [[nodiscard]] JSValue buildHookCtx(JSContext* ctx, const HookContext& hctx, bool includeResponse) {
     JSValue root = JS_NewObject(ctx);
 
-    // request
     {
         JSValue const req = JS_NewObject(ctx);
         setStringProp(ctx, req, "method", std::string{codecs::methodToString(hctx.request.method)});
@@ -478,7 +435,6 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
         JS_SetPropertyStr(ctx, root, "request", req);
     }
 
-    // response (post hooks only)
     if (includeResponse && hctx.response) {
         JSValue const resp = JS_NewObject(ctx);
         setIntProp(ctx, resp, "status", hctx.response->status);
@@ -489,7 +445,6 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
         JS_SetPropertyStr(ctx, root, "response", JS_NULL);
     }
 
-    // actors → { actorName: { var: value, ... }, ... }
     {
         JSValue const actors = JS_NewObject(ctx);
         for (const auto& [actor, vars] : hctx.variables) {
@@ -501,7 +456,6 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
     JS_SetPropertyStr(ctx, root, "env", makeStringMap(ctx, hctx.env));
     JS_SetPropertyStr(ctx, root, "secret", makeStringMap(ctx, hctx.secrets));
 
-    // helpers
     {
         JSValue const base64 = JS_NewObject(ctx);
         installHelper<jsBase64Encode>(ctx, base64, "encode", 1);
@@ -541,8 +495,6 @@ void installHelper(JSContext* ctx, JSValueConst parent, const char* name, int ar
     return root;
 }
 
-// ─── Read mutated request/response back from JS ──────────────────────────────
-
 void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outReq) {
     JSValue const req = JS_GetPropertyStr(ctx, root, "request");
     JsValueGuard const guard{ctx, req};
@@ -573,8 +525,7 @@ void readMutatedRequest(JSContext* ctx, JSValueConst root, HookRequestView& outR
             outReq.headers = readStringMap(ctx, headers, outReq.headers);
         }
     }
-    // method is intentionally read-only post-resolution; templates have
-    // already locked it in by the time hooks see ctx.
+    // method is read-only here: templates have already locked it in.
 }
 
 void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& outResp) {
@@ -610,8 +561,6 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
     }
 }
 
-// ─── Error formatting ────────────────────────────────────────────────────────
-
 [[nodiscard]] std::string formatJsValue(JSContext* ctx, JSValueConst ex) {
     if (JS_IsNull(ex) || JS_IsUndefined(ex)) {
         return "<unknown>";
@@ -635,21 +584,9 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
     return formatJsValue(ctx, ex);
 }
 
-// ─── Script shape detection ──────────────────────────────────────────────────
-//
-// Two surfaces from the user's perspective:
-//
-//   (a) A module file: `export default function (ctx) { ... }` — the
-//       schema parser loads sibling .js files in this style. We compile
-//       it as JS_EVAL_TYPE_MODULE, retrieve the default export, and call
-//       it with `ctx` as the only argument.
-//
-//   (b) An inline `pre_request: |` block: a sequence of statements that
-//       reference a free `ctx` symbol. We wrap that body in
-//       `(function (ctx) { <body> })` and call the wrapper.
-//
-// Heuristic: if the script contains a top-level `export ` or `import `
-// keyword, treat it as (a). Otherwise (b).
+// Module hooks (`export default function (ctx)`) and inline `pre_request: |` bodies are told apart
+// by a top-level `export ` or `import `; an inline body is wrapped in `(function (ctx) { <body>
+// })`.
 
 [[nodiscard]] bool looksLikeModule(std::string_view script) {
     while (!script.empty() && (std::isspace(static_cast<unsigned char>(script.front())) != 0)) {
@@ -659,8 +596,6 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
 }
 
 }  // namespace
-
-// ─── Public surface ──────────────────────────────────────────────────────────
 
 QuickJsHookRunner::QuickJsHookRunner() = default;
 QuickJsHookRunner::~QuickJsHookRunner() = default;
@@ -751,9 +686,8 @@ using HookResult = std::expected<void, ReqloomError>;
 
     JSContext* c = jsctx.get();
 
-    // Build the `ctx` object and stash it on the global as `__reqloom_ctx`
-    // so wrapper code can reach it whether the script is a module or an
-    // inline body.
+    // Stash ctx on the global as `__reqloom_ctx` so wrapper code reaches it for module and inline
+    // hooks.
     JSValue const hookCtxObj = buildHookCtx(c, context, includeResponse);
     JSValue const global = JS_GetGlobalObject(c);
     JsValueGuard const globalGuard{c, global};
@@ -765,8 +699,8 @@ using HookResult = std::expected<void, ReqloomError>;
     };
 
     if (looksLikeModule(script)) {
-        // Compile the module and trigger evaluation. The user's default
-        // export is invoked via a thin script that imports it back.
+        // Compile and evaluate the module; a thin script imports the default export back and calls
+        // it.
         JSValue const compiled = JS_Eval(c,
                                          script.data(),
                                          script.size(),
@@ -813,10 +747,8 @@ using HookResult = std::expected<void, ReqloomError>;
             return std::unexpected(std::move(settled.error()));
         }
     } else {
-        // Inline body. Wrap in `(function(ctx){ <body> })(__reqloom_ctx)`.
-        // We don't add `'use strict';` because hook bodies are user code
-        // and forcing strict mode would silently break valid loose-mode
-        // snippets. Crypto helpers don't care either way.
+        // Inline body, wrapped in `(function(ctx){ <body> })(__reqloom_ctx)`; no 'use strict', so
+        // loose-mode snippets keep working.
         const std::string wrapped =
             "(function(ctx){\n" + script + "\n}).call(undefined, globalThis.__reqloom_ctx);\n";
         JSValue const evalRes =

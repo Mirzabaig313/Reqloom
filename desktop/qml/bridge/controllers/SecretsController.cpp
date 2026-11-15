@@ -6,8 +6,6 @@
 
 namespace reqloom::desktop::qml {
 
-// ── SecretListModel ─────────────────────────────────────────────────────────
-
 int SecretListModel::rowCount(const QModelIndex& parent) const {
     return parent.isValid() ? 0 : entries_.size();
 }
@@ -62,15 +60,12 @@ void SecretListModel::clear() {
     endResetModel();
 }
 
-// ── SecretsController ────────────────────────────────────────────────────────
-
 SecretsController::SecretsController(QObject* parent) : QObject(parent) {}
 
 SecretsController::~SecretsController() = default;
 
 void SecretsController::refresh() {
-    // Reach AppController through its singleton create() — safe on the GUI
-    // thread; both singletons are created in the same thread.
+    // Reach AppController via its singleton create(); both singletons live on the GUI thread.
     const auto* ctrl = AppController::create(nullptr, nullptr);
     project_ = ctrl->projectRaw();
     reloadList();

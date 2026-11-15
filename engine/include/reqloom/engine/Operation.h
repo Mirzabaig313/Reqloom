@@ -62,13 +62,9 @@ struct RetryPolicy {
     bool nonIdempotent{false};
 };
 
-/// Polling configuration for operations that return 202 Accepted and need
-/// a follow-up status poll.
-///
-/// The initial request runs once. If its status matches `expectStatusList`
-/// and `pollUntil` is set, the engine polls until `successWhen` matches,
-/// `failWhen` matches, or a budget fires. Extractions run against the
-/// final poll response.
+/// Polling for operations that return 202 Accepted: after the initial request matches
+/// `expectStatusList` and `pollUntil` is set, the engine polls until `successWhen` or `failWhen`
+/// matches or a budget fires. Extractions run against the final poll response.
 struct PollUntil {
     HttpMethod method{HttpMethod::Get};
 
@@ -79,8 +75,7 @@ struct PollUntil {
     /// Defaults to the parent operation's actor when nullopt.
     std::optional<ActorId> actor;
 
-    /// Predicate against the poll response body (and `$.status_code`).
-    /// Required.
+    /// Predicate against the poll response body (and `$.status_code`). Required.
     std::string successWhen;
 
     /// Predicate that short-circuits the poll on a known-bad terminal state.
@@ -101,22 +96,17 @@ struct PollUntil {
     int maxAttempts{30};
 };
 
-/// For-each / data-driven execution. When set, the operation runs once per
-/// instance of resource `over` (populated by an upstream op that extracts a
-/// list via a `[*]` path). During iteration k, `{{<over>.<field>}}` in this
-/// operation's templates resolves to that resource's k-th instance.
+/// For-each / data-driven execution: the operation runs once per instance of resource `over`;
+/// during iteration k, `{{<over>.<field>}}` resolves to its k-th instance.
 struct ForEach {
     ResourceId over;
 
-    /// When true, a failed iteration does not stop the fan-out — the remaining
-    /// items still run and the parent step is marked failed if any failed.
-    /// When false (default), the fan-out stops at the first failed iteration.
+    /// When true a failed iteration does not stop the fan-out; the parent step fails if any failed.
+    /// When false (default) the fan-out stops at the first failure.
     bool continueOnError{false};
 };
 
-/// Import/verification provenance for non-hand-written operations.
-/// Treated as opaque metadata by the runtime — extending this struct
-/// must not change execution semantics.
+/// Import/verification provenance for non-hand-written operations; opaque to the runtime.
 struct Provenance {
     /// How this operation entered the project.
     enum class Source : std::uint8_t {
@@ -135,8 +125,7 @@ struct Provenance {
         Unknown,         ///< a YAML spelling this version does not know; see `unknownSource`
     };
 
-    /// What kind of sample response (if any) the verifier used to confirm
-    /// extractions when this op was written.
+    /// Kind of sample response (if any) the verifier used to confirm extractions.
     enum class VerifiedAgainst : std::uint8_t {
         None,  ///< verification was not run
         OpenApiExample,
@@ -159,16 +148,13 @@ struct Provenance {
     /// ISO 8601 wall-clock timestamp at import time.
     std::optional<std::string> importedAt;
 
-    /// Free-form rationale per inferred field. Keys are dotted field paths
-    /// within the operation (e.g. "actor", "extract.product_id"). Values
-    /// are the short evidence string surfaced in the review UI.
+    /// Free-form rationale per inferred field, keyed by dotted field path (e.g.
+    /// "extract.product_id"); shown in the review UI.
     std::map<std::string, std::string> evidence;
 };
 
-/// Per-operation inline auth kind. This is the actor-less alternative to
-/// running a request "as" an actor — a quick, Postman-style credential attached
-/// directly to one endpoint (e.g. hitting an out-of-project URL without
-/// standing up a full actor + login chain).
+/// Per-operation inline auth kind: a quick credential attached to one endpoint instead of an actor
+/// + login chain.
 enum class InlineAuthType : std::uint8_t {
     None,      ///< No inline auth (field absent / explicitly cleared).
     Bearer,    ///< Authorization: Bearer <token>
@@ -182,10 +168,9 @@ enum class InlineAuthType : std::uint8_t {
     Inherit,   ///< Use the project's default auth (see Project::defaultAuth).
 };
 
-/// A credential bound to a single operation, applied at request-build time.
-/// All value fields may contain `{{variable}}` templates (resolved like
-/// headers) — prefer `{{secret.X}}` for real secrets rather than storing a
-/// plaintext token here, since these round-trip verbatim into the YAML.
+/// A credential bound to a single operation, applied at request-build time. Value fields may
+/// contain `{{variable}}` templates; prefer `{{secret.X}}`, since these round-trip verbatim into
+/// the YAML.
 struct InlineAuth {
     InlineAuthType type{InlineAuthType::None};
 
@@ -210,9 +195,8 @@ struct InlineAuth {
     std::string oauthToken;
     std::string oauthTokenSecret;
 
-    // OAuth 2.0 — a token is fetched at request build and injected as
-    // Authorization: Bearer. Only the non-interactive grants are supported
-    // (a headless engine can't drive the authorization-code browser redirect).
+    // OAuth 2.0: a token is fetched at request build and injected as Bearer; only non-interactive
+    // grants.
     std::string oauth2GrantType;  ///< "client_credentials", "password", or "authorization_code".
     std::string oauth2TokenUrl;
     std::string oauth2ClientId;
@@ -222,23 +206,19 @@ struct InlineAuth {
         oauth2ClientAuth;  ///< "body" (default) or "basic" (client creds in a Basic header).
     // Password grant reuses the generic `username`/`password` fields above.
 
-    // Authorization Code (with PKCE) — interactive grant. The engine can't run
-    // the browser flow; the desktop obtains the token and stores it here.
+    // Authorization Code (PKCE): interactive; the desktop obtains the token and stores it here.
     std::string oauth2AuthUrl;      ///< Authorization endpoint (browser).
     std::string oauth2CallbackUrl;  ///< Loopback redirect URI.
     std::string oauth2PkceMethod;   ///< "S256" (default) or "plain". Desktop-only.
     std::string oauth2AccessToken;  ///< Token from the interactive flow. NEVER
                                     ///< persisted to YAML (ephemeral secret).
 
-    // JWT Bearer — a JWT is signed and injected as Authorization: Bearer.
     std::string jwtAlgorithm;  ///< "HS256" (default) or "HS512".
     std::string jwtSecret;
     std::string jwtPayload;  ///< Claims as a JSON object string.
 
-    // Mutual TLS — client certificate/key for the TLS handshake. Paths are
-    // variable-resolved then handed to the HTTP client as-is (same trust model
-    // as a CA bundle path); they are NOT sandboxed to the project root, since
-    // client certs commonly live outside the repo. Prefer absolute paths.
+    // Mutual TLS: paths are variable-resolved and passed to the HTTP client as-is, not sandboxed to
+    // the project root (client certs often live outside the repo).
     std::string mtlsFormat;       ///< "pem" (default) or "p12" (PKCS#12 bundle).
     std::string mtlsCertPath;     ///< PEM cert, or the .p12/.pfx path when format is p12.
     std::string mtlsKeyPath;      ///< PEM private key (unused for p12).
@@ -246,11 +226,9 @@ struct InlineAuth {
     std::string mtlsCaCertPath;   ///< Optional custom CA bundle to trust the server.
 };
 
-/// A declared response assertion. `expr` is a predicate in the engine's
-/// predicate grammar (the same one `poll_until.success_when` uses): comparisons
-/// (`==, !=, <, <=, >, >=, in, matches`), boolean `&&`/`||`, `$.json.path`
-/// references, and the `$.status_code` shortcut. Evaluated against the final
-/// response after extractions. `name` is an optional human label for reports.
+/// A declared response assertion. `expr` uses the predicate grammar shared with
+/// `poll_until.success_when`, evaluated against the final response after extractions. `name` is an
+/// optional label for reports.
 struct Assertion {
     std::string expr;
     std::optional<std::string> name;
@@ -269,9 +247,8 @@ struct Operation {
     ResourceId resource;
     ActorId actor;
 
-    /// Actor-less per-endpoint credential. Mutually exclusive with `actor` in
-    /// the UI (use an actor OR an inline auth type), but if both are set the
-    /// inline auth is applied last and wins on the Authorization header.
+    /// Actor-less per-endpoint credential. If both this and `actor` are set, inline auth is applied
+    /// last and wins on the Authorization header.
     std::optional<InlineAuth> inlineAuth;
 
     HttpMethod method{HttpMethod::Get};
@@ -293,22 +270,20 @@ struct Operation {
     /// final response. Any failing assertion fails the step (AssertionFailed).
     std::vector<Assertion> assertions;
 
-    /// `failure_message.show`: JSONPaths of the response parts a status-mismatch failure
-    /// quotes. Replaces `Project::failureMessageShow` when set; an empty list means the default
-    /// excerpt. nullopt inherits the project list.
+    /// `failure_message.show`: JSONPaths quoted by a status-mismatch failure; replaces
+    /// `Project::failureMessageShow`. Empty means the default excerpt; nullopt inherits the project
+    /// list.
     std::optional<std::vector<std::string>> failureMessageShow;
 
     /// Explicit dependencies declared by the user.
     std::vector<OperationId> explicitDependencies;
 
-    /// Optional inline JS hook scripts (resolved content; a file reference is
-    /// loaded into these at parse time).
+    /// Optional inline JS hooks (a file reference is loaded into these at parse time).
     std::optional<std::string> preRequestScript;
     std::optional<std::string> postResponseScript;
 
-    /// When a hook came from a file reference (e.g. "./hooks/x.js"), the
-    /// original path. The writer re-emits the reference instead of inlining the
-    /// resolved content, so the sidecar file isn't orphaned on save.
+    /// The original path when a hook came from a file reference (e.g. "./hooks/x.js"); the writer
+    /// re-emits the reference instead of inlining so the sidecar file is not orphaned.
     std::optional<std::string> preRequestScriptRef;
     std::optional<std::string> postResponseScriptRef;
 
@@ -316,17 +291,14 @@ struct Operation {
     std::optional<std::chrono::milliseconds> timeout;
     bool force{false};  ///< Per-op force re-run flag.
 
-    /// When set, after the initial request returns a status in
-    /// `expectStatusList`, the engine enters a polling loop. Extractions
-    /// run against the final poll response.
+    /// When set, a status in `expectStatusList` after the initial request starts a polling loop;
+    /// extractions run against the final poll response.
     std::optional<PollUntil> pollUntil;
 
-    /// When set, the engine runs this operation once per instance of the
-    /// `over` resource (data-driven fan-out). See `ForEach`.
+    /// When set, runs this operation once per instance of the `over` resource. See `ForEach`.
     std::optional<ForEach> forEach;
 
-    /// Set only for non-hand-written operations. Pure metadata — the runtime
-    /// ignores this; tooling and the UI consume it.
+    /// Set only for non-hand-written operations; ignored by the runtime.
     std::optional<Provenance> provenance;
 
     /// Where the operation was defined; see `SourceLocation`.

@@ -1,7 +1,5 @@
-// SavedResponseStore — persists named example responses per operation so a
-// user can save a run's response and reload it later (the Apidog/Postman
-// "saved example" concept). Stored as JSON under the project root, keyed by
-// operation id. Pure Qt (no engine dependency); unit-tested.
+// SavedResponseStore — persists named example responses per operation as JSON under the project
+// root, keyed by operation id. Pure Qt (no engine dependency).
 #pragma once
 
 #include <QtCore/QList>

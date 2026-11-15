@@ -1,6 +1,5 @@
-// ResponseBodyModel — see header. Parses the body with QJsonDocument and
-// flattens it pre-order into `nodes_`; `visible_` projects the rows whose
-// ancestors are all expanded.
+// ResponseBodyModel — see header. Flattens the parsed body pre-order into `nodes_`;
+// `visible_` holds the rows whose ancestors are expanded.
 #include "ResponseBodyModel.h"
 
 #include <QtCore/QJsonArray>
@@ -12,9 +11,8 @@ namespace reqloom::desktop::qml {
 
 namespace {
 
-// Cap a leaf's display string so a multi-megabyte scalar (e.g. an embedded
-// base64 blob) can't create a giant Text item. The full value stays available
-// via RawValueRole for copy.
+// Cap a leaf's display string so a huge scalar (e.g. a base64 blob) can't create a giant Text item;
+// the full value stays in RawValueRole.
 constexpr int kMaxDisplayValue = 512;
 
 [[nodiscard]] QString scalarToString(const QJsonValue& value) {
@@ -23,7 +21,6 @@ constexpr int kMaxDisplayValue = 512;
             return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
         case QJsonValue::Double: {
             const double d = value.toDouble();
-            // Render integers without a trailing ".0"; keep precision otherwise.
             if (d == static_cast<double>(static_cast<qint64>(d))) {
                 return QString::number(static_cast<qint64>(d));
             }
@@ -91,9 +88,8 @@ void ResponseBodyModel::walk(const QJsonValue& value,
                              const QString& field,
                              int depth,
                              const QString& path) {
-    // Reserve this node's slot, then fill it after recursing so subtreeEnd can
-    // be set to one-past its last descendant. Index is stable because nodes_
-    // only ever grows here.
+    // Reserve this node's slot and fill it after recursing so subtreeEnd can be set;
+    // nodes_ only grows here, so the index is stable.
     const int idx = static_cast<int>(nodes_.size());
     nodes_.push_back(Node{});
     Node node;
@@ -106,8 +102,7 @@ void ResponseBodyModel::walk(const QJsonValue& value,
         node.isLeaf = false;
         node.hasChildren = !obj.isEmpty();
         node.value = QStringLiteral("{%1}").arg(obj.size());
-        // QJsonObject iterates keys in sorted order; that matches the tree's
-        // addressing needs (path uses the key, not insertion order).
+        // QJsonObject iterates keys sorted; paths use the key, so order doesn't matter.
         for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
             walk(it.value(), it.key(), depth + 1, path + QStringLiteral(".") + it.key());
         }
@@ -142,8 +137,7 @@ void ResponseBodyModel::setBody(const QString& body) {
         const QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &err);
         if (err.error == QJsonParseError::NoError && !doc.isNull()) {
             isJson_ = true;
-            // Don't emit a redundant root row for the top-level container —
-            // expose its members at depth 0 (mirrors the previous behavior).
+            // Expose the top-level container's members at depth 0 instead of a redundant root row.
             if (doc.isObject()) {
                 const QJsonObject obj = doc.object();
                 for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
@@ -156,7 +150,7 @@ void ResponseBodyModel::setBody(const QString& body) {
                 }
             }
         } else {
-            // Not JSON: a single raw row, so the tree view still shows the body.
+            // Not JSON: one raw row so the tree still shows the body.
             Node node;
             node.field = QStringLiteral("(not JSON)");
             node.rawValue = body;
@@ -186,7 +180,6 @@ void ResponseBodyModel::rebuildVisible() {
         visible_.push_back(i);
         if (nodes_[static_cast<std::size_t>(i)].collapsed &&
             nodes_[static_cast<std::size_t>(i)].hasChildren) {
-            // Skip the whole collapsed subtree in O(1) via subtreeEnd.
             i = nodes_[static_cast<std::size_t>(i)].subtreeEnd;
         } else {
             ++i;

@@ -1,7 +1,5 @@
-// DependencyEditModel — editable depends_on picker list
-//  Each row is a selection among existing operation ids, so a dependency
-// can never name something undefined. An always-present trailing blank row
-// grows the list (Apidog ghost-row pattern). C++ owns state; QML renders combos.
+// DependencyEditModel — editable depends_on picker list: each row picks an existing operation id,
+// with an always-present trailing blank row.
 #pragma once
 
 #include <QtQml/qqmlregistration.h>
@@ -35,8 +33,7 @@ public:
     /// Replace the pickable operation ids and reset rows to a single blank one.
     void setCandidates(const QStringList& operationIds);
 
-    /// Seed the picker rows from an existing operation's dependencies, then
-    /// append the trailing blank ghost row. Used when opening an op for edit.
+    /// Seed the rows from an operation's dependencies, then append the trailing blank row.
     void setDependencies(const std::vector<std::string>& dependencies);
 
     /// Set the selection of `row` (empty string clears it). Appends a fresh

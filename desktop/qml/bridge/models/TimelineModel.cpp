@@ -1,4 +1,4 @@
-// TimelineModel — see header. Mirrors the old TimelinePanel.cpp content.
+// TimelineModel — see header.
 #include "TimelineModel.h"
 
 #include "widgets/LatencyStats.h"
@@ -12,8 +12,7 @@ namespace reqloom::desktop::qml {
 
 namespace {
 
-/// Pre-format a byte count for the timeline's size column (B / KB / MB), with
-/// one decimal under 10 of each unit so values stay compact and aligned.
+/// Format a byte count for the size column (B / KB / MB), one decimal under 10.
 [[nodiscard]] QString formatBytes(int bytes) {
     if (bytes < 1024) {
         return QStringLiteral("%1 B").arg(bytes);
@@ -54,10 +53,8 @@ namespace {
     return QStringLiteral("step");
 }
 
-/// Turn a raw engine error code (E_SESSION_REFRESH_FAILED) into a phrase a
-/// human can act on. Known codes resolve via the engine's canonical
-/// `humanize` (one source of truth shared with the CLI); anything else falls
-/// back to title-casing the token (strip E_, underscores → spaces).
+/// Turn a raw engine error code into an actionable phrase: known codes use the engine's `humanize`
+/// (shared with the CLI), others are title-cased (strip E_, underscores → spaces).
 [[nodiscard]] QString humanizeError(const QString& code) {
     if (const auto known = engine::fromCodeString(code.toStdString())) {
         const auto phrase = engine::humanize(*known);
@@ -217,8 +214,8 @@ int TimelineModel::stepRowFor(int index, const QString& op) {
     row.kind = Kind::Step;
     row.stepIndex = index + 1;
     row.title = QStringLiteral("%1. %2").arg(index + 1).arg(op);
-    // Kept as its own field rather than parsed back out of `title`: the title is
-    // a display string ("3. auth.login") and callers need the bare id.
+    // Kept as its own field: `title` is a display string ("3. auth.login") and callers need the
+    // bare id.
     row.op = op;
     const int at = static_cast<int>(rows_.size());
     beginInsertRows({}, at, at);
@@ -264,8 +261,7 @@ void TimelineModel::reset() {
         latencyBars_.clear();
         emit latenciesChanged();
     }
-    // A pinned step cannot outlive the rows it pointed at, so drop the pin and
-    // let the inspector follow the new run.
+    // A pinned step cannot outlive its rows; drop the pin so the inspector follows the new run.
     if (selectedStep_ != 0) {
         selectedStep_ = 0;
         emit selectionChanged();
@@ -285,9 +281,8 @@ int TimelineModel::stepForOperation(const QString& operationId) const {
 }
 
 void TimelineModel::setSelectedStep(int stepNumber) {
-    // Only a step that actually has a row may be pinned: a stale click arriving
-    // after a reset, or a bar from a previous run, would otherwise pin the
-    // inspector to a step that no longer exists.
+    // Only a step with a row may be pinned: a stale click or old-run bar would otherwise pin a dead
+    // step.
     const int next = (stepNumber > 0 && rowForStep(stepNumber) >= 0) ? stepNumber : 0;
     if (next == selectedStep_) {
         return;
@@ -330,22 +325,21 @@ void TimelineModel::restoreSnapshot(Snapshot snapshot) {
     runEnv_ = std::move(snapshot.runEnv);
     runStartRow_ = snapshot.runStartRow;
     rootFailureRow_ = snapshot.rootFailureRow;
-    // Swap latency data in before endResetModel so a view reacting to the reset
-    // never observes the previous tab's bars against the new tab's rows.
+    // Swap latency data in before endResetModel so a view never sees the previous tab's bars
+    // against new rows.
     latencyMs_ = std::move(snapshot.latencyMs);
     latencyBars_ = std::move(snapshot.latencyBars);
     selectedStep_ = snapshot.selectedStep;
     endResetModel();
     emit latenciesChanged();
     emit rootFailureChanged();
-    // Unconditional: the step number may be unchanged while the rows beneath it
-    // belong to a different tab, so selectedOperationId can differ regardless.
+    // Unconditional: the step number may be unchanged while the rows under it belong to a different
+    // tab.
     emit selectionChanged();
 }
 
 int TimelineModel::rowForStep(int stepNumber) const {
-    // Bars carry the 1-based step number; stepRowByIndex_ is keyed by the
-    // 0-based event index, so translate before looking up.
+    // Bars carry the 1-based step number; stepRowByIndex_ is keyed by the 0-based event index.
     return stepRowByIndex_.value(stepNumber - 1, -1);
 }
 
@@ -415,20 +409,15 @@ void TimelineModel::onRequestPrepared(
     row.stepIndex = index + 1;
     row.subLabel = QStringLiteral("%1.%2").arg(index + 1).arg(++stepChildSeq_[index]);
     row.title = QStringLiteral("\u2192 Request");  // → Request
-    // Keep the summary short so it never elides; the fully-resolved URL lives
-    // in the expansion below (open the row to read / copy it).
+    // Keep the summary short so it never elides; the resolved URL is in the expansion.
     row.detail = QStringLiteral("%1  ·  %2 body bytes").arg(method).arg(bodySize);
     row.statusToken = QStringLiteral("neutral");
-    // Structured columns for the timeline's columnar layout: method pill, the
-    // request path, the body size, and a wall-clock stamp.
     row.method = method;
     const QString path = QUrl(url).path();
     row.path = path.isEmpty() ? url : path;
     row.sizeText = formatBytes(bodySize);
     row.clockText = nowClock();
-    // Expansion: the fully-resolved URL (base URL + path) up top, then the
-    // masked request headers. Lets the user confirm exactly where the call
-    // went without squinting at the elided one-liner.
+    // Expansion: the fully-resolved URL, then the masked request headers.
     QString expanded = QStringLiteral("URL\n%1").arg(url);
     if (!maskedHeaders.isEmpty()) {
         expanded += QStringLiteral("\n\nHeaders\n%1").arg(maskedHeaders);
@@ -439,8 +428,8 @@ void TimelineModel::onRequestPrepared(
 
 void TimelineModel::onResponseReceived(
     int index, int status, QString headers, int bodySize, qint64 elapsedMs, QString body) {
-    // Settle the parent step row to a terminal status by HTTP class (§2.5),
-    // and accumulate the step's response time for the step-header total.
+    // Settle the parent step row to a terminal status by HTTP class and accumulate its response
+    // time.
     stepMs_[index] += static_cast<double>(elapsedMs);
     runTotalMs_ += static_cast<double>(elapsedMs);
     const auto it = stepRowByIndex_.constFind(index);
@@ -462,17 +451,14 @@ void TimelineModel::onResponseReceived(
     row.title = QStringLiteral("\u2190 Response");  // ← Response
     row.detail =
         QStringLiteral("HTTP %1  ·  %2 bytes  ·  %3 ms").arg(status).arg(bodySize).arg(elapsedMs);
-    // Colour the response row by HTTP class so a non-2xx stands out.
     row.statusToken = status >= 500   ? QStringLiteral("error")
                       : status >= 300 ? QStringLiteral("warning")
                                       : QStringLiteral("success");
-    // Structured columns: HTTP status pill, size, duration, wall-clock stamp.
     row.statusLabel = QStringLiteral("HTTP %1").arg(status);
     row.sizeText = formatBytes(bodySize);
     row.durationText = QStringLiteral("%1 ms").arg(elapsedMs);
     row.clockText = nowClock();
-    // Expansion: status line, headers, and the body when the run captured it
-    // (off by default — see RunOptions::captureResponseBodies).
+    // Expansion: status line, headers, and the body when the run captured it.
     QString expanded = QStringLiteral("Status\nHTTP %1").arg(status);
     if (!headers.isEmpty()) {
         expanded += QStringLiteral("\n\nHeaders\n%1").arg(headers);
@@ -483,7 +469,6 @@ void TimelineModel::onResponseReceived(
     row.value = expanded;
     appendRow(std::move(row));
 
-    // Feed the latency sparkline: one bar per response, in request order.
     const QString token = status >= 500   ? QStringLiteral("error")
                           : status >= 300 ? QStringLiteral("warning")
                                           : QStringLiteral("success");
@@ -492,8 +477,7 @@ void TimelineModel::onResponseReceived(
     bar.insert(QStringLiteral("ms"), static_cast<double>(elapsedMs));
     bar.insert(QStringLiteral("token"), token);
     bar.insert(QStringLiteral("op"), QStringLiteral("step %1").arg(index + 1));
-    // 1-based step number, so a click on this bar can scroll the timeline to
-    // the owning step row (see rowForStep).
+    // 1-based step number, so clicking this bar scrolls to the owning step row.
     bar.insert(QStringLiteral("stepIndex"), index + 1);
     latencyBars_.append(bar);
     emit latenciesChanged();
@@ -509,21 +493,18 @@ void TimelineModel::onExtractionCompleted(int index,
     row.kind = Kind::Extraction;
     row.stepIndex = index + 1;
     row.title = variableName;
-    // Producing operation + bare variable name: together they identify which
-    // downstream steps consumed this value, so a miss can name what it broke.
+    // Producing op + bare variable name identify which downstream steps consumed this value.
     row.op = op;
     row.variableName = variableName;
     const bool resolved = (outcome == QLatin1String("resolved"));
     if (resolved) {
-        // Resolved extractions read as success (green).
         row.statusToken = QStringLiteral("success");
         row.statusLabel = QStringLiteral("=");
         row.detail = value;
         row.value = value;
     } else {
-        // null / missing / invalid is a non-error condition that still demands
-        // attention  reserves status.warning (AMBER) for it,
-        // never red. Mirrors the old TimelinePanel exactly.
+        // A null/missing/invalid extraction is a non-error that still needs attention: amber, never
+        // red.
         row.statusToken = QStringLiteral("warning");
         row.statusLabel = outcome;
         row.detail = QStringLiteral("%1  (%2)").arg(outcome, sourcePath);
@@ -538,8 +519,8 @@ void TimelineModel::onAssertionCompleted(
     row.kind = Kind::Assertion;
     row.stepIndex = index + 1;
     row.title = name;
-    // Passed reads green; a failed assertion is a real failure (red), since it
-    // also fails the step (unlike a null extraction, which is amber).
+    // A failed assertion also fails the step, so it is red (unlike a null extraction, which is
+    // amber).
     row.statusToken = passed ? QStringLiteral("success") : QStringLiteral("error");
     row.statusLabel = passed ? QStringLiteral("\u2713") : QStringLiteral("\u2717");
     row.detail = expr;
@@ -555,8 +536,8 @@ void TimelineModel::onStepFailed(
     row.statusLabel = QStringLiteral("failed");
     const QString friendly = humanizeError(code);
     row.detail = detail.isEmpty() ? friendly : QStringLiteral("%1 — %2").arg(friendly, detail);
-    // Expansion: the full failure reason (often a network/auth message that is
-    // too long for the row) plus the raw code for support / bug reports.
+    // Expansion: the full failure reason (often too long for the row) plus the raw code for bug
+    // reports.
     QString expanded;
     if (!detail.isEmpty()) {
         expanded = detail + QStringLiteral("\n\n");
@@ -588,7 +569,6 @@ void TimelineModel::onStepBlocked(int index, QString op, int blockedByIndex) {
 }
 
 void TimelineModel::onRunEnded(QString outcome) {
-    // Classify the outcome once; reused for the header badge and summary row.
     QString token;
     QString summary;
     QString badge;
@@ -610,9 +590,8 @@ void TimelineModel::onRunEnded(QString outcome) {
         badge = outcome;
     }
 
-    // Settle the run header so its "running" badge reflects the final state
-    // instead of spinning forever after the run ends, and fold the total
-    // response time into its detail line ("N steps · Total time X ms · env=Y").
+    // Settle the run header's "running" badge to the final state and fold the total response time
+    // into its detail.
     if (runStartRow_ >= 0 && runStartRow_ < static_cast<int>(rows_.size())) {
         Row& header = rows_[static_cast<std::size_t>(runStartRow_)];
         header.statusToken = token;
@@ -625,8 +604,7 @@ void TimelineModel::onRunEnded(QString outcome) {
         emit dataChanged(idx, idx);
     }
 
-    // Summary row: one clean phrase, coloured by token. No redundant badge or
-    // detail (the header already carries the status badge).
+    // Summary row: one phrase coloured by token; the header already carries the badge.
     Row row;
     row.kind = Kind::RunEnd;
     row.title = summary;

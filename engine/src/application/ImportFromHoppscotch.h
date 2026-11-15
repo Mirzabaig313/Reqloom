@@ -19,13 +19,8 @@ public:
     };
 
     /// Parse a Hoppscotch collection export (JSON) into a Project.
-    ///
-    /// Top-level folders become resources; nested folders fold into their
-    /// top-level ancestor; each request becomes an operation. A request's
-    /// `endpoint` scheme+host becomes the `default` environment's `baseUrl`.
-    /// Hoppscotch `<<var>>` references are rewritten to `{{env.var}}`.
-    ///
-    /// Path containment: the export must resolve to a regular file under
+    /// Top-level folders become resources (nested ones fold into them), requests operations;
+    /// `<<var>>` becomes `{{env.var}}`. Path containment: the export must resolve under
     /// `projectRoot`. Returns `SchemaInvalid`/`YamlParse` on bad input.
     [[nodiscard]] std::expected<Outcome, ReqloomError> run(
         const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) const;

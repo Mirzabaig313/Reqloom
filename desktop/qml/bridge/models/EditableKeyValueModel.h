@@ -1,7 +1,5 @@
-// EditableKeyValueModel — an editable two-column (key, value) list with an
-// always-present trailing blank "ghost" row (Apidog pattern), per QML Migration
-// Roadmap WS-A. Used for the New Endpoint dialog's extraction table (variable +
-// path). C++ owns the row state; QML edits it via the invokables.
+// EditableKeyValueModel — editable (key, value) list with an always-present trailing blank "ghost"
+// row.
 #pragma once
 
 #include <QtQml/qqmlregistration.h>

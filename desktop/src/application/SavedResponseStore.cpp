@@ -74,7 +74,6 @@ bool SavedResponseStore::save(const QString& operationId, const SavedResponse& r
     }
     for (auto& [id, responses] : byOperation_) {
         if (id == operationId) {
-            // Overwrite an example with the same name; otherwise append.
             for (auto& existing : responses) {
                 if (existing.name == response.name) {
                     existing = response;
@@ -102,7 +101,6 @@ bool SavedResponseStore::rename(const QString& operationId,
         if (id != operationId) {
             continue;
         }
-        // Reject a clash with a different example.
         for (const auto& r : responses) {
             if (r.name == newName && r.name != oldName) {
                 return false;

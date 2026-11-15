@@ -1,8 +1,5 @@
-// BodyHighlighter — attaches a rule-based QSyntaxHighlighter to a QML
-// TextArea's text document so request / response bodies are syntax-coloured by
-// language (JSON, XML, HTML, YAML, JavaScript, Markdown). Colours are driven
-// from QML (DesignTokens) so highlighting tracks the active theme. Presentation
-// helper only; no engine state.
+// BodyHighlighter — attaches a rule-based QSyntaxHighlighter to a QML TextArea document to colour
+// bodies by language. Colours come from QML (DesignTokens) so they track the theme.
 #pragma once
 
 #include <QtQml/qqmlregistration.h>

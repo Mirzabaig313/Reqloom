@@ -1,8 +1,6 @@
 // ImportFromApidog — Apidog native export (JSON) → Project parser.
 // Sibling of ImportFromPostman.
-//
-// path/id/token helpers mirror the other importers rather than share
-// a header. Upgrade path: extract a shared ImportSupport.h once worth it.
+// Helpers mirror the other importers rather than share a header.
 
 #include "ImportFromApidog.h"
 #include "ImportFromFileRefs.h"
@@ -183,8 +181,7 @@ std::string jsonStr(const json& node, std::string_view key) {
     return {};
 }
 
-/// `node.auth.type`; empty (no auth) when absent. Apidog writes `"auth": {}`
-/// for "no auth" and for "inherit from parent".
+/// `node.auth.type`; empty when absent (Apidog writes `"auth": {}` for both no auth and inherit).
 std::string authType(const json& node) {
     const auto it = node.find("auth");
     return it != node.end() ? jsonStr(*it, "type") : std::string{};
@@ -283,7 +280,6 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
         op.pathTemplate = pathParams.path;
         is::VarMap pathValues;
 
-        // Parameters: header + query lists of {name, example, enable}.
         if (api.contains("parameters") && api["parameters"].is_object()) {
             const json& params = api["parameters"];
             auto absorb = [&](std::string_view key, std::map<std::string, std::string>& into) {
@@ -349,7 +345,6 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
             }
         }
 
-        // Expected status from the first declared response code.
         if (api.contains("responses") && api["responses"].is_array() && !api["responses"].empty()) {
             const auto& first = api["responses"].front();
             if (first.is_object() && first.contains("code") && first["code"].is_number_integer()) {
@@ -372,9 +367,8 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
         resource.operations.emplace(unique, std::move(op));
     };
 
-    // Walk a folder's `items`: sub-folders (which carry `items`) or endpoints
-    // (which carry `api`). A top-level folder becomes a resource; deeper folders
-    // fold into their top-level ancestor.
+    // Folders carry `items`, endpoints carry `api`; deeper folders fold into their top-level
+    // ancestor.
     auto walk =
         [&](const json& folder, const std::string& resourceId, int depth, auto&& self) -> void {
         if (depth > kMaxItemDepth) {
@@ -403,9 +397,8 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
         }
     };
 
-    // Apidog wraps everything in a single synthetic top folder (usually "Root").
-    // Unwrap it so its child folders become resources; a multi-folder top level
-    // means each entry is itself a resource.
+    // Apidog wraps everything in one synthetic top folder (usually "Root"); unwrap it so its child
+    // folders become resources.
     if (doc.contains("projectSetting")) {
         is::warnDroppedAuth(warnings,
                             std::format("project `{}`", outcome.project.name),
@@ -426,8 +419,7 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
         return std::unexpected(invalid("apidog import: export yielded zero importable endpoints"));
     }
 
-    // Apidog native exports carry no server URL (it lives in environments that
-    // aren't part of this file), so baseUrl can't be derived.
+    // Native exports carry no server URL (it lives in environments outside this file).
     if (!env.contains("baseUrl")) {
         warnings.push_back(
             "Apidog exports carry no server URL — set `baseUrl` in the environment before running");

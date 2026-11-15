@@ -1,12 +1,6 @@
-// Redacts secret-bearing HTTP header values (and extraction-variable
-// values) before they reach the event stream or persisted history.
-// Secrets must never hit logs, telemetry, or disk — security
-// rules.
-//
-// Policy: an exact allowlist (Authorization, Cookie, X-API-Key, …) plus
-// a substring scan (token, secret, password, key, auth). Names pass
-// through; only values are replaced — with a fixed-length placeholder,
-// so a secret's length isn't leaked as a side channel.
+// Redacts secret-bearing header and extraction-variable values before they reach events or history.
+// Exact allowlist plus substring scan; names pass, values become a fixed-length placeholder so
+// length isn't leaked.
 #pragma once
 
 #include <reqloom/engine/Events.h>
@@ -21,19 +15,15 @@ namespace reqloom::engine {
 /// True when this header's value should be redacted. Case-insensitive.
 [[nodiscard]] bool isSensitiveHeader(std::string_view name) noexcept;
 
-/// True when an identifier (e.g. an `extract:` variable name) looks
-/// secret-bearing. Shares the substring policy with isSensitiveHeader,
-/// so an `access_token` extraction and an `Authorization` header are
-/// redacted by the same rule.
+/// True when an identifier (e.g. an `extract:` variable name) looks secret-bearing; shares the
+/// substring policy with isSensitiveHeader.
 [[nodiscard]] bool isSensitiveName(std::string_view name) noexcept;
 
-/// Copy of `headers` with sensitive values replaced. Names are kept so
-/// the timeline can still show that an Authorization header was sent.
+/// Copy of `headers` with sensitive values replaced; names are kept.
 [[nodiscard]] std::map<std::string, std::string> maskHeaders(
     const std::map<std::string, std::string>& headers);
 
-/// Vector overload for response headers, which arrive order- and
-/// duplicate-preserving from libcurl.
+/// Vector overload for libcurl's order- and duplicate-preserving response headers.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> maskHeaders(
     const std::vector<std::pair<std::string, std::string>>& headers);
 

@@ -1,8 +1,5 @@
-// ProjectTreeModel — the explorer tree . Mirrors
-// the old ProjectExplorerWidget structure: an "Actors" group and a "Resources"
-// group, the latter holding resource folders → operation leaves → saved-example
-// child rows. C++ owns the tree; QML (TreeView) renders it. Populated from the
-// loaded engine::Project; the filter proxy on top reuses FuzzyMatch.
+// ProjectTreeModel — the explorer tree: Actors and Resources groups, resources → operations →
+// saved-example rows. C++ owns it; QML (TreeView) renders it.
 #pragma once
 
 #include <reqloom/engine/PublicApi.h>
@@ -20,9 +17,8 @@
 
 namespace reqloom::desktop::qml {
 
-/// Tree of actors + resources → operations → saved examples. One column. The
-/// `kind` role lets QML pick a delegate treatment per row type; ids let the
-/// controller resolve the selected/activated operation or resource.
+/// Tree of actors + resources → operations → saved examples. The `kind` role selects the delegate;
+/// ids resolve the selected operation or resource.
 class ProjectTreeModel : public QAbstractItemModel {
     Q_OBJECT
     QML_ELEMENT
@@ -50,15 +46,13 @@ public:
         PathRole,            ///< QString: operation path template (for search matching)
     };
 
-    /// One saved-example child row: its display name + the HTTP status it
-    /// captured (for the status badge in the explorer).
+    /// One saved-example child row: display name and captured HTTP status (for the badge).
     struct ExampleRow {
         QString name;
         int status{0};
     };
 
-    /// One open collection fed to the aggregated tree: its root path, display
-    /// name, the loaded project, and whether it's the active one.
+    /// One open collection fed to the aggregated tree.
     struct ProjectEntry {
         QString root;
         QString name;
@@ -66,12 +60,11 @@ public:
         bool active{false};
     };
 
-    /// Composite key for `setSavedExamples`, scoping example rows to a specific
-    /// project so identically-named operations in different collections don't
-    /// share example rows.
+    /// Composite key for `setSavedExamples`, so identically-named operations in different
+    /// collections don't share rows.
     [[nodiscard]] static QString exampleKey(const QString& projectRoot, const QString& operationId);
 
-    /// One actor's auth session as the tree should render it. FR-5.1.
+    /// One actor's auth session as the tree renders it.
     struct ActorSessionRow {
         /// none | authenticating | live | refreshing.
         QString state{QStringLiteral("none")};
@@ -81,8 +74,8 @@ public:
         [[nodiscard]] bool operator==(const ActorSessionRow&) const = default;
     };
 
-    /// Composite key for `setActorSessions`. Sessions live in a per-project run
-    /// context, so an actor name alone would blur two open collections together.
+    /// Composite key for `setActorSessions`; sessions are per-project, so an actor name alone would
+    /// blur collections.
     [[nodiscard]] static QString sessionKey(const QString& projectRoot, const QString& actorId);
 
     explicit ProjectTreeModel(QObject* parent = nullptr);
@@ -102,30 +95,24 @@ public:
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
-    /// Rebuild the whole tree from every open collection: one Project node per
-    /// entry, each holding its Actors + Resources subtrees. Saved-example child
-    /// rows (set via `setSavedExamples`) are re-applied. An empty list clears
-    /// the tree.
+    /// Rebuild the whole tree from every open collection (one Project node each); saved-example
+    /// rows are re-applied. An empty list clears the tree.
     void populate(const std::vector<ProjectEntry>& projects);
 
-    /// Rebuild from projects AND example rows in a single reset, so the tree
-    /// doesn't flash through two `beginResetModel` cycles when both change
-    /// together (a fresh load / edit). `examples` is keyed by `exampleKey`.
+    /// Rebuild from projects and examples in a single reset, avoiding two `beginResetModel` cycles.
+    /// `examples` is keyed by `exampleKey`.
     void populate(const std::vector<ProjectEntry>& projects,
                   const QMap<QString, QList<ExampleRow>>& examples);
 
     /// Clear the tree (no project loaded).
     void clear();
 
-    /// Replace the saved-example child rows under every operation. Keyed by
-    /// fully-qualified operation id. Triggers a rebuild so example rows appear
-    /// beneath their operation. (Fed by the WS-C examples bridge.)
+    /// Replace the saved-example child rows, keyed by fully-qualified operation id; triggers a
+    /// rebuild.
     void setSavedExamples(const QMap<QString, QList<ExampleRow>>& examplesByOperation);
 
-    /// Replace the per-actor session snapshot, keyed by `sessionKey`. Repaints
-    /// the actor rows in place — no reset, so expansion state and selection
-    /// survive a session change mid-session. A no-op when nothing differs, so
-    /// the caller can poll this on a timer without churning the view.
+    /// Replace the per-actor session snapshot, keyed by `sessionKey`. Repaints in place (no reset,
+    /// so expansion and selection survive); a no-op when nothing differs, so a timer can poll it.
     void setActorSessions(QMap<QString, ActorSessionRow> sessions);
 
 private:
@@ -159,11 +146,10 @@ private:
     /// The number the child-count badge shows for `node`, or 0 for rows that
     /// carry no badge.
     [[nodiscard]] static int badgeCount(const Node& node);
-    /// Operation rows anywhere beneath `node`. A project's direct children are
-    /// just the two group folders, so its badge counts endpoints instead.
+    /// Operation rows anywhere beneath `node` (a project's badge counts endpoints, not its group
+    /// folders).
     [[nodiscard]] static int operationCount(const Node& node);
-    /// Names what `badgeCount` counted ("31 endpoints", "5 actors"), so the
-    /// badge can say what it means instead of showing a bare number.
+    /// Names what `badgeCount` counted ("31 endpoints", "5 actors").
     [[nodiscard]] static QString countLabel(const Node& node, int count);
 
     [[nodiscard]] Node* nodeFor(const QModelIndex& index) const;
@@ -173,8 +159,8 @@ private:
     std::unique_ptr<Node> root_;
     std::vector<ProjectEntry> projects_;
     QMap<QString, QList<ExampleRow>> examples_;
-    // Keyed by sessionKey(projectRoot, actorId). Held outside the node tree so a
-    // rebuild doesn't drop live session state.
+    // Keyed by sessionKey(projectRoot, actorId); held outside the node tree so a rebuild keeps live
+    // state.
     QMap<QString, ActorSessionRow> actorSessions_;
 };
 

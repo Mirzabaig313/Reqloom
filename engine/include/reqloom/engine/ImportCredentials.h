@@ -74,12 +74,11 @@ struct CredentialMoveReport {
 
 /// Move `credentials` into `store` for the project that will be written to `targetDir`.
 ///
-/// Gives `project` an id first when it has none (the one in `targetDir/reqloom.yaml`, else a
-/// new one) and runs the folder check for `targetDir`. Each credential that is stored, or
-/// already stored with the same value, is replaced in `project` by `{{secret.NAME}}`. One
-/// that cannot be stored (no store, no trust store, a refused folder check, a store error, or
-/// an existing secret of that name with another value, which is never overwritten) stays in
-/// `project` exactly as it was and is listed in `kept`. Nothing is lost either way.
+/// Gives `project` an id first when it has none (the one in `targetDir/reqloom.yaml`, else a new
+/// one) and runs the folder check for `targetDir`. A credential that is stored (or already stored
+/// with the same value) is replaced in `project` by `{{secret.NAME}}`; one that cannot be stored
+/// (no store or trust store, refused folder check, store error, or an existing secret of that name
+/// with another value, never overwritten) stays as it was and is listed in `kept`.
 [[nodiscard]] CredentialMoveReport moveImportedCredentials(
     Project& project,
     const std::vector<ImportedCredential>& credentials,
@@ -100,9 +99,9 @@ struct ImportWriteResult {
 };
 
 /// Write an imported project into `targetDir` (never pruning other files), first moving its
-/// credentials into secrets as `moveImportedCredentials` does. Refuses an existing
-/// reqloom.yaml without `overwrite` before storing anything. If the write fails, the secrets
-/// this import stored are removed again and the error says whether that succeeded.
+/// credentials into secrets as `moveImportedCredentials` does. Refuses an existing reqloom.yaml
+/// without `overwrite` before storing anything; if the write fails, the secrets this import stored
+/// are removed again.
 [[nodiscard]] std::expected<ImportWriteResult, ReqloomError> writeImportedProject(
     const std::filesystem::path& targetDir,
     Project project,

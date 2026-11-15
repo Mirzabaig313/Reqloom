@@ -27,8 +27,6 @@ namespace {
 
 using Json = nlohmann::json;
 
-// AST
-
 struct LiteralNode;
 struct JsonPathNode;
 struct CompareNode;
@@ -75,15 +73,12 @@ struct ArrayNode {
 
 }  // namespace
 
-// Defined in the engine namespace so std::unique_ptr<Node> in the header
-// stays well-formed.
+// Defined in the engine namespace so std::unique_ptr<Node> in the header stays well-formed.
 struct ParsedPredicate::Node {
     std::variant<LiteralNode, JsonPathNode, CompareNode, LogicNode, TruthyNode, ArrayNode> kind;
 };
 
 namespace {
-
-// Tokenizer
 
 enum class Tok : std::uint8_t {
     End,
@@ -329,8 +324,6 @@ private:
     std::size_t pos_{0};
 };
 
-// Parser
-
 /// Deepest nesting of parentheses / array literals; the parser recurses per level, so this
 /// bounds its stack use on hostile input.
 constexpr std::size_t kMaxPredicateNesting = 64;
@@ -422,8 +415,7 @@ private:
         const bool isCompareOp = k == Tok::Eq || k == Tok::Neq || k == Tok::Lt || k == Tok::Le ||
                                  k == Tok::Gt || k == Tok::Ge || k == Tok::In || k == Tok::Matches;
         if (!isCompareOp) {
-            // Bare term — must be a JSONPath truthiness check.
-            // Bare literals cannot stand on their own as a predicate.
+            // A bare term must be a JSONPath truthiness check; bare literals can't stand alone.
             const auto* path = std::get_if<JsonPathNode>(&((*lhs)->kind));
             if (path == nullptr) {
                 return std::unexpected("expected comparison operator at position " +
@@ -487,9 +479,8 @@ private:
         switch (t.kind) {
             case Tok::Dollar:
                 return parseJsonPath();
-            // Use parens, not braces, on Json constructors — nlohmann's
-            // initializer_list constructor wraps the value in a one-element
-            // array, breaking string/bool/null comparisons silently.
+            // Parens, not braces: nlohmann's initializer_list constructor wraps the value in a
+            // one-element array.
             case Tok::String:
                 return literal(Json(consume().text));
             case Tok::Number:
@@ -615,8 +606,6 @@ private:
     std::size_t depth_{0};
 };
 
-// Evaluator
-
 std::optional<Json> walk(const Json& root, const JsonPathNode& path) {
     const Json* cur = &root;
     for (const auto& seg : path.segments) {
@@ -644,11 +633,9 @@ std::optional<Json> walk(const Json& root, const JsonPathNode& path) {
 
 std::optional<Json> resolvePath(const JsonPathNode& path, const Json& body, int statusCode) {
     if (path.isStatusCode) {
-        // Body field takes precedence if present.
         if (auto bodyHit = walk(body, path); bodyHit) {
             return bodyHit;
         }
-        // Use parens, not braces — brace form produces a one-element array.
         return std::optional<Json>{Json(statusCode)};
     }
     return walk(body, path);
@@ -679,8 +666,7 @@ std::optional<Json> evalTerm(const ParsedPredicate::Node& node, const Json& body
         node.kind);
 }
 
-/// JSON-aware comparison. Type-mismatched compares return false rather than
-/// erroring — keeps evaluation total.
+/// JSON-aware comparison; type-mismatched compares return false to keep evaluation total.
 bool compareValues(CompareOp op, const Json& lhs, const Json& rhs) {
     switch (op) {
         case CompareOp::Eq:
@@ -819,15 +805,11 @@ bool evalNode(const ParsedPredicate::Node& node, const Json& body, int statusCod
 
 }  // namespace
 
-// ParsedPredicate
-
 ParsedPredicate::ParsedPredicate() = default;
 ParsedPredicate::~ParsedPredicate() = default;
 ParsedPredicate::ParsedPredicate(ParsedPredicate&&) noexcept = default;
 ParsedPredicate& ParsedPredicate::operator=(ParsedPredicate&&) noexcept = default;
 ParsedPredicate::ParsedPredicate(std::unique_ptr<Node> root) : root_(std::move(root)) {}
-
-// ParsedBody — holds the parsed document out of the header's sight.
 
 struct ParsedBody::Impl {
     Json body{Json::object()};  ///< Empty object when the source wasn't valid JSON.
@@ -838,8 +820,6 @@ ParsedBody::~ParsedBody() = default;
 ParsedBody::ParsedBody(ParsedBody&&) noexcept = default;
 ParsedBody& ParsedBody::operator=(ParsedBody&&) noexcept = default;
 ParsedBody::ParsedBody(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
-
-// Regex guard
 
 namespace {
 
@@ -1051,8 +1031,6 @@ RegexSearchResult guardedRegexSearch(std::string_view subject, std::string_view 
     }
 }
 
-// Public API
-
 bool jsonNestingExceeds(std::string_view text, std::size_t limit) noexcept {
     std::size_t depth = 0;
     bool inString = false;
@@ -1106,9 +1084,8 @@ ParsedBody PredicateEvaluator::parseBody(std::string_view jsonBody) const noexce
         try {
             impl->body = Json::parse(jsonBody);
         } catch (...) {
-            // text/plain (or otherwise malformed) bodies still let
-            // $.status_code-only predicates evaluate — keep the empty
-            // object the Impl is default-constructed with.
+            // text/plain or malformed bodies still let `$.status_code`-only predicates evaluate;
+            // keep the default empty object.
             impl->body = Json::object();
         }
     }
@@ -1144,8 +1121,6 @@ std::expected<PredicateValue, ReqloomError> PredicateEvaluator::eval(std::string
     }
     return evaluate(*p, jsonBody, statusCode);
 }
-
-// ─── Public free functions (reqloom/engine/Predicate.h) ──────────────────────
 
 std::expected<void, ReqloomError> validatePredicate(std::string_view expression) {
     const PredicateEvaluator evaluator;

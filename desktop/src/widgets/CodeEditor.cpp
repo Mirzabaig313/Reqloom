@@ -100,13 +100,11 @@ void CodeEditor::applyTheme(const theming::Palette& palette, Language language) 
     send(SCI_STYLESETFORE, kStyleBuiltin, sciColor(palette.methodGet));
     send(SCI_STYLESETFORE, kStyleLiteral, sciColor(palette.methodPost));
 
-    // Line-number margin.
     send(SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER);
     send(SCI_SETMARGINWIDTHN, 0, 48);
     send(SCI_STYLESETFORE, STYLE_LINENUMBER, sciColor(palette.textSecondary));
     send(SCI_STYLESETBACK, STYLE_LINENUMBER, sciColor(palette.surfaceSunken));
 
-    // Caret, current line, selection.
     send(SCI_SETCARETFORE, static_cast<uptr_t>(sciColor(palette.textPrimary)));
     send(SCI_SETELEMENTCOLOUR, SC_ELEMENT_CARET_LINE_BACK, sciColorAlpha(palette.surfaceRaised));
     send(SCI_SETELEMENTCOLOUR, SC_ELEMENT_SELECTION_BACK, sciColorAlpha(palette.accentMuted));
@@ -131,8 +129,8 @@ QString CodeEditor::toPlainText() const {
 }
 
 void CodeEditor::scheduleStyling() {
-    // Coalesce bursts and, crucially, run styling outside any Scintilla
-    // modification notification (calling SCI_SETSTYLING re-entrantly crashes).
+    // Coalesce bursts and run styling outside Scintilla's modification notification (re-entrant
+    // SCI_SETSTYLING crashes).
     if (stylingScheduled_) {
         return;
     }
@@ -160,7 +158,6 @@ void CodeEditor::styleDocument() {
     };
     while (i < n) {
         const char ch = text[i];
-        // Line comment.
         if (ch == '/' && i + 1 < n && text[i + 1] == '/') {
             std::size_t j = i + 2;
             while (j < n && text[j] != '\n') {
@@ -170,7 +167,6 @@ void CodeEditor::styleDocument() {
             i = j;
             continue;
         }
-        // Block comment.
         if (ch == '/' && i + 1 < n && text[i + 1] == '*') {
             std::size_t j = i + 2;
             while (j + 1 < n && !(text[j] == '*' && text[j + 1] == '/')) {
@@ -181,7 +177,6 @@ void CodeEditor::styleDocument() {
             i = j;
             continue;
         }
-        // String (single / double / template); no nesting needed for hooks.
         if (ch == '"' || ch == '\'' || ch == '`') {
             std::size_t j = i + 1;
             while (j < n && text[j] != ch) {
@@ -195,7 +190,6 @@ void CodeEditor::styleDocument() {
             i = j;
             continue;
         }
-        // Number.
         if (ch >= '0' && ch <= '9') {
             std::size_t j = i + 1;
             while (j < n && ((text[j] >= '0' && text[j] <= '9') || text[j] == '.')) {
@@ -205,7 +199,6 @@ void CodeEditor::styleDocument() {
             i = j;
             continue;
         }
-        // Identifier / keyword.
         if (isIdentStart(ch)) {
             std::size_t j = i + 1;
             while (j < n && isIdentChar(text[j])) {

@@ -1,11 +1,7 @@
-// Drives engine runs off the GUI thread and re-emits streamed RunEvents as
-// Qt signals with native-typed payloads (QString/int/qint64) so the
-// cross-thread connections to the views queue automatically.
-//
-// Threading: engine::ExecutionEngine::run blocks (real HTTP, polling sleeps),
-// so it runs on a QtConcurrent worker. The engine's event callback fires on
-// that worker thread but only emits signals — it never calls back into the
-// engine — which is the marshalling discipline requires.
+// Drives engine runs off the GUI thread and re-emits streamed RunEvents as Qt signals with
+// native-typed payloads, so cross-thread connections queue. Threading: ExecutionEngine::run blocks,
+// so it runs on a QtConcurrent worker; the event callback fires on that worker and only emits
+// signals, never calling back into the engine.
 #pragma once
 
 #include "application/UrlTemplate.h"
@@ -32,10 +28,8 @@ namespace reqloom::desktop {
 
 class ProjectModel;
 
-/// One-shot request override for an Override-Mode run. When
-/// `active`, the controller deep-copies the project, patches the target
-/// operation with these values, and runs against the copy — the loaded project
-/// is never mutated, so the override applies to this run only.
+/// One-shot request override for an Override-Mode run: when `active`, the controller patches a deep
+/// copy of the project, so the loaded project is never mutated.
 struct RequestOverride {
     bool active{false};
 
@@ -89,8 +83,8 @@ struct RequestOverride {
             items.emplace_back(key, value);
         }
 
-        // ponytail: Keep shapes a map cannot preserve in the raw path until
-        // Operation supports ordered, multi-value query parameters.
+        // Keep shapes a map cannot preserve in the raw path until Operation supports ordered,
+        // multi-value query parameters.
         std::string previousKey;
         bool first{true};
         for (const auto& item : items) {
@@ -133,9 +127,8 @@ struct RequestOverride {
     std::optional<engine::InlineAuth> inlineAuth;
 };
 
-/// Apply a RequestOverride's fields onto an operation in place. Shared by the
-/// one-shot run path (patches a throwaway project copy) and the Save-to-Project
-/// path (patches the real operation before writing YAML).
+/// Apply a RequestOverride onto an operation in place; shared by the one-shot run path and
+/// Save-to-Project.
 void applyOverrideToOperation(engine::Operation& op, const RequestOverride& ov);
 
 /// Outcome of one run, handed from the worker back to the GUI thread.
@@ -161,55 +154,44 @@ public:
 
     [[nodiscard]] bool isRunning() const noexcept;
 
-    /// Point the controller at a different project (workspace switch). Each
-    /// Must not be called while a run is in flight (the caller blocks switches
-    /// during a run).
+    /// Point the controller at a different project (workspace switch). Must not be called while a
+    /// run is in flight.
     void setProject(const ProjectModel& project) noexcept;
 
     /// Resets the active environment's run context (sessions, cookie jar, extraction).
     /// Refused while a run is in flight.
     void resetCaches();
 
-    /// Opt into capturing full response bodies for the next run. Off by
-    /// default — the engine's redaction-first contract keeps bodies off the
-    /// event surface (and out of the history DB) unless the user asks. When
-    /// on, login/refresh bodies (tokens included) become visible too, so the
-    /// caller surfaces this as a deliberate user choice.
+    /// Capture full response bodies for the next run (off by default: the engine's redaction-first
+    /// contract keeps bodies out of events and history). Login/refresh bodies, tokens included,
+    /// become visible too, so surface it as a deliberate user choice.
     void setCaptureResponseBodies(bool capture) noexcept;
     [[nodiscard]] bool captureResponseBodies() const noexcept;
 
-    /// Pin concrete values for `{{resource.var}}` tokens (the value picker,
-    /// Option A). Each pair is ("resource.var", value). Before each run these
-    /// are seeded as the resource's most-recent instance, so the producing op
-    /// is extraction-cache-skipped and the chain uses the chosen value.
+    /// Pin concrete values for `{{resource.var}}` tokens as ("resource.var", value) pairs, seeded
+    /// before each run so the producing op is skipped and the chosen value used.
     void setVariableOverrides(std::vector<std::pair<std::string, std::string>> overrides);
 
-    /// Clear the run context's extraction cache only (sessions kept). Used when
-    /// a pin changes so a stale pinned value can't linger into the next run.
+    /// Clear the extraction cache only (sessions kept), so a changed pin can't leave a stale value.
     void clearExtractionCache();
 
-    /// Snapshot of an actor's accumulated cookie jar (name → value) for the
-    /// current run context, or empty when no run has populated a context yet.
-    /// Read-only view for a cookie inspector.
+    /// An actor's accumulated cookie jar (name → value) for the current run context; empty before
+    /// any run.
     [[nodiscard]] std::map<std::string, std::string> cookies(const engine::ActorId& actor) const;
 
     /// The same jar with each cookie's setting host, Domain, Path, Secure and expiry.
     [[nodiscard]] std::vector<engine::JarCookie> jarCookies(const engine::ActorId& actor) const;
 
-    /// Read-only view of one actor's auth session in the active run context,
-    /// for the explorer's per-actor status indicator (FR-5.1). Reuses the
-    /// engine's state enum rather than mirroring it.
+    /// Read-only view of one actor's auth session for the explorer's status indicator; reuses the
+    /// engine's state enum.
     struct ActorSessionInfo {
         engine::ActorSession::State state{engine::ActorSession::State::None};
-        /// Whole seconds until the session lapses. 0 unless `state` is `Live`
-        /// with time left, so callers can render a TTL without doing clock
-        /// arithmetic of their own.
+        /// Whole seconds until the session lapses; 0 unless `state` is `Live` with time left.
         int secondsRemaining{0};
     };
 
-    /// The actor's session in the active project's run context. A default value
-    /// (state `None`) means no run has authenticated this actor yet, the
-    /// context was reset, or the project has no context at all.
+    /// The actor's session in the active run context; a default value (state `None`) means not
+    /// authenticated, reset, or no context.
     [[nodiscard]] ActorSessionInfo sessionInfo(const engine::ActorId& actor) const;
 
     /// Select the environment whose run context the read and reset paths use; empty means
@@ -231,8 +213,8 @@ public slots:
     /// run is already in flight.
     void run(const QString& target, const QString& environment, bool clean, bool dryRun);
 
-    /// Run with a one-shot override applied to the target operation (§6.3).
-    /// When `override.active` is false this behaves exactly like `run`.
+    /// Run with a one-shot override applied; behaves exactly like `run` when `override.active` is
+    /// false.
     void runWithOverride(const QString& target,
                          const QString& environment,
                          bool clean,
@@ -261,8 +243,7 @@ signals:
     void stepBlocked(int index, QString op, int blockedByIndex);
     void runEnded(QString outcome);
 
-    /// Emitted on the GUI thread once the worker finishes. Carries the full
-    /// chain summary for the timeline/response panels.
+    /// Emitted on the GUI thread once the worker finishes, carrying the chain summary.
     void runFinished(RunReport report);
 
     /// Convenience signals for enabling/disabling controls.
@@ -293,11 +274,8 @@ private:
     // thread (cancelRun) — atomic to avoid a data race on the run id.
     std::atomic<std::uint64_t> currentRunId_{0};
 
-    // Lifetime guard for the engine event callback. The engine retains the
-    // callback for its whole life with no unsubscribe, and (per App's member
-    // order) outlives this controller. The callback captures a copy of this
-    // shared flag and skips emitting once the destructor clears it, so an
-    // event fired after `~RunController` can never touch a freed `this`.
+    // Lifetime guard for the engine event callback (which the engine retains with no unsubscribe):
+    // the callback captures a copy and skips emitting once the destructor clears it.
     std::shared_ptr<std::atomic_bool> alive_{std::make_shared<std::atomic_bool>(true)};
 };
 

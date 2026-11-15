@@ -1,11 +1,8 @@
 // Public, stateless form-body preview.
 //
-// Given an operation's `body_form` fields (and optionally its headers), reports
-// how the engine would encode the request body at run time: as
-// application/x-www-form-urlencoded, or as multipart/form-data when a field is
-// a file reference (`@/path`) or the headers ask for multipart. Lets an editor
-// show "this uploads 2 files / 3 fields" and surface a missing/oversized file
-// before a real run — without exposing file bytes to the UI.
+// Reports how the engine would encode an operation's `body_form` at run time (urlencoded or
+// multipart), so an editor can show uploads and surface missing or oversized files without exposing
+// file bytes.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>
@@ -47,17 +44,14 @@ struct FormBodyPreview {
                                   ///< multipart boundary/header framing).
 };
 
-/// Preview how `formFields` would be encoded. Each value is a `body_form` template as
-/// written; `{{var}}` is not substituted. A field is a file upload only when its template
-/// starts with a single `@`; `@@` sends text with one `@` removed. `headers` is consulted
-/// only for a `Content-Type: multipart/form-data` opt-in.
+/// Preview how `formFields` would be encoded. Each value is a `body_form` template as written
+/// (`{{var}}` is not substituted). A field is a file upload only when its template starts with a
+/// single `@`; `@@` sends text with one `@` removed. `headers` is consulted only for a
+/// `Content-Type: multipart/form-data` opt-in.
 ///
-/// A relative file path resolves against `projectRoot` (else the working directory), as a
-/// run does. Returns `ReqloomError{UploadFileUnreadable}` for a missing file, a non-regular
-/// file, or one over the 50 MiB upload cap.
-///
-/// Reads each referenced file once to validate it; intended for an on-demand
-/// preview, not per-keystroke. Pure aside from those reads; never mutates.
+/// A relative path resolves against `projectRoot` (else the working directory). Returns
+/// `ReqloomError{UploadFileUnreadable}` for a missing, non-regular or over-50 MiB file. Reads each
+/// file once; for on-demand preview, not per keystroke.
 [[nodiscard]] std::expected<FormBodyPreview, ReqloomError> previewFormBody(
     const std::map<std::string, std::string>& formFields,
     const std::map<std::string, std::string>& headers = {},

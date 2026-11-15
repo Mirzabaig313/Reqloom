@@ -25,20 +25,15 @@ class SecretRegistry;
 struct ActorSession {
     enum class State : std::uint8_t { None, Authenticating, Live, Refreshing };
 
-    /// Per-request signing scheme. Most strategies leave this as `None`
-    /// and rely on `injectHeaders` for static auth values. OAuth 1.0a
-    /// and AWS SigV4 are the exceptions — their signature depends on the
-    /// request URL / method / params / body, so the executor calls a
-    /// signer right before each send.
+    /// Per-request signing scheme. Most strategies leave `None`; OAuth 1.0a and AWS SigV4 sign over
+    /// the URL / method / params / body, so the executor calls a signer right before each send.
     enum class SigningScheme : std::uint8_t { None, OAuth1HmacSha1, AwsSigV4 };
 
     State state{State::None};
     std::map<std::string, std::string> variables;  ///< token, user_id, etc.
 
-    /// Auth strategies may pre-resolve request mutations here so the engine
-    /// adds them to every operation owned by the actor without requiring an
-    /// explicit `inject:` block. Values are already resolved — the engine
-    /// does NOT re-resolve them when merging into a request.
+    /// Request mutations an auth strategy pre-resolves for every operation of the actor; already
+    /// resolved, not re-resolved when merged.
     std::map<std::string, std::string> injectHeaders;
     std::map<std::string, std::string> injectQueryParams;
 
@@ -46,10 +41,8 @@ struct ActorSession {
     /// `signOAuth1Request`) after inject merging but before `HttpClient::send`.
     SigningScheme signingScheme{SigningScheme::None};
 
-    /// Transport-level auth (mTLS): client cert/key/CA the actor presents on
-    /// every operation it owns. Set by the mTLS authenticator; the executor
-    /// overlays the non-empty fields onto each request's transport (composing
-    /// with, not replacing, the environment transport).
+    /// Transport-level auth (mTLS): client cert/key/CA the actor presents on every operation;
+    /// non-empty fields overlay the environment transport.
     std::optional<TransportConfig> transport;
 
     std::chrono::steady_clock::time_point expiresAt;
@@ -111,7 +104,6 @@ struct StepResult {
     std::optional<int> forEachIndex;
 
     /// Results of the operation's declared assertions, in declaration order.
-    /// Empty when the operation declares none.
     std::vector<AssertionResult> assertions;
 };
 
@@ -159,7 +151,6 @@ public:
     RunContext(RunContext&&) noexcept;
     RunContext& operator=(RunContext&&) noexcept;
 
-    // Session cache — per actor
     [[nodiscard]] const ActorSession* session(const ActorId& actor) const noexcept;
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
@@ -192,7 +183,6 @@ public:
     /// Drop the actor's entire jar. Called by `invalidateSession`.
     void clearCookies(const ActorId& actor);
 
-    // Extraction cache — list of instances per resource
     [[nodiscard]] const std::vector<ResourceInstance>& instances(
         const ResourceId& resource) const noexcept;
     void appendInstance(const ResourceId& resource, ResourceInstance instance);
@@ -204,14 +194,11 @@ public:
                           std::vector<ResourceInstance> instances);
     void clearExtractions();
 
-    // For-each iteration binding. While set, a bare `{{<resource>.<field>}}`
-    // resolves to that resource's instance at the bound index (instead of the
-    // most-recent), so a for-each body iterates the list. Cleared after the
-    // loop. nullopt means "no binding" (normal most-recent resolution).
+    // For-each binding: while set, a bare `{{<resource>.<field>}}` resolves to the instance at this
+    // index instead of the most recent. Cleared after the loop; nullopt means no binding.
     void setIteration(const ResourceId& resource, std::optional<std::size_t> index);
     [[nodiscard]] std::optional<std::size_t> iteration(const ResourceId& resource) const noexcept;
 
-    // Step recording
     void record(StepResult step);
     [[nodiscard]] const std::vector<StepResult>& steps() const noexcept;
 

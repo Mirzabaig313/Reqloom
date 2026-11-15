@@ -68,7 +68,6 @@ bool endpointIsSafe(std::string_view endpoint) {
     return h == "localhost" || h == "127.0.0.1" || h == "[::1]";
 }
 
-/// An error detail with every occurrence of the API key masked.
 std::string withoutKey(std::string detail, const std::string& apiKey) {
     if (apiKey.empty()) {
         return detail;
@@ -91,8 +90,7 @@ std::string_view roleAsString(LlmMessage::Role role) noexcept {
     return "user";
 }
 
-/// OpenAI Chat Completions: every message rides in `messages[]`, system
-/// prompt included.
+/// OpenAI Chat Completions: every message, system prompt included, rides in `messages[]`.
 std::expected<HttpRequest, ReqloomError> buildOpenAiRequest(const LlmRequest& req) {
     if (req.config.apiKey.empty()) {
         return std::unexpected(requestFailed("openai: API key is required"));
@@ -123,8 +121,7 @@ std::expected<HttpRequest, ReqloomError> buildOpenAiRequest(const LlmRequest& re
     return http;
 }
 
-/// Anthropic Messages API: `system` is a top-level field; `max_tokens` is
-/// required by the spec.
+/// Anthropic Messages API: `system` is a top-level field; `max_tokens` is required by the spec.
 std::expected<HttpRequest, ReqloomError> buildAnthropicRequest(const LlmRequest& req) {
     if (req.config.apiKey.empty()) {
         return std::unexpected(requestFailed("anthropic: API key is required"));
@@ -163,7 +160,6 @@ std::expected<HttpRequest, ReqloomError> buildAnthropicRequest(const LlmRequest&
     return http;
 }
 
-/// Ollama: local-only, no API key, JSON mode via `format: "json"`.
 std::expected<HttpRequest, ReqloomError> buildOllamaRequest(const LlmRequest& req) {
     json body;
     body["model"] = req.config.model;
@@ -325,11 +321,9 @@ std::expected<LlmResponse, ReqloomError> HttpLlmClient::complete(const LlmReques
     }
 
     std::expected<LlmResponse, ReqloomError> parsed;
-    // The provider parsers below call nlohmann::json get<T>(), which throws
-    // json::type_error / json::out_of_range when an untrusted provider
-    // response has the right keys but wrong value types. Contain those here
-    // so they surface as a normal ErrorCode::LlmResponseInvalid rather than
-    // escaping complete()'s std::expected contract.
+    // Provider parsers' get<T>() throws on wrong value types in untrusted responses; contain it
+    // here so it becomes ErrorCode::LlmResponseInvalid instead of escaping complete()'s
+    // std::expected contract.
     try {
         switch (request.config.provider) {
             case LlmProvider::OpenAI:

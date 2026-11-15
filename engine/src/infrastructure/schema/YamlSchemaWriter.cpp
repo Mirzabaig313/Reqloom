@@ -41,13 +41,10 @@ namespace reqloom::engine {
 
 namespace {
 
-// ─── HttpMethod / enum mappings ──────────────────────────────────────────────
-
 using codecs::methodToString;
 
-// Note: only JsonPath round-trips through the parser today (the parser
-// detects header-style by `$.headers.` prefix). XPath / Regex / Cookie /
-// StatusCode are emit-only stubs.
+// Note: only JsonPath round-trips through the parser today (header-style is detected by the
+// `$.headers.` prefix); XPath / Regex / Cookie / StatusCode are emit-only stubs.
 
 constexpr std::string_view provenanceSourceToString(Provenance::Source s) {
     switch (s) {
@@ -127,11 +124,8 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
     return "none";
 }
 
-// ─── Atomic write helper ─────────────────────────────────────────────────────
-
-// True when `target` already holds exactly `content` — lets the writer skip
-// unchanged files so editing one operation doesn't churn (and bump the mtime
-// of) every other project file, leaving their git status and comments alone.
+// True when `target` already holds `content`, so editing one operation does not rewrite other
+// files.
 [[nodiscard]] bool fileHasContent(const fs::path& target, const std::string& content) {
     std::error_code ec;
     if (!fs::exists(target, ec) || ec) {
@@ -146,7 +140,6 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
     return existing == content;
 }
 
-// A temp name no other process saving the same project will pick: pid plus random bits.
 [[nodiscard]] fs::path uniqueTempPath(const fs::path& target) {
 #ifdef _WIN32
     const auto pid = _getpid();
@@ -159,9 +152,8 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
     return temp;
 }
 
-// Write `content` to a uniquely named temp sibling of `target` (creating parent dirs). The
-// caller commits by renaming the temp onto the target. Two-phase staging makes
-// a multi-file save near-atomic: if any file fails to stage, none is committed.
+// Write `content` to a uniquely named temp sibling of `target`; the caller commits by renaming.
+// Two-phase staging makes a multi-file save near-atomic.
 [[nodiscard]] std::expected<fs::path, ReqloomError> stageTemp(const fs::path& target,
                                                               const std::string& content) {
     std::error_code ec;
@@ -213,8 +205,6 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
     }
     return {};
 }
-
-// ─── Guarded save: only files this model loaded may be replaced or pruned ─────
 
 using SavePlan = std::vector<std::pair<fs::path, std::string>>;
 
@@ -287,7 +277,6 @@ using SavePlan = std::vector<std::pair<fs::path, std::string>>;
     return toPrune;
 }
 
-/// After a guarded commit: delete the pruned files and record what is on disk now.
 void finishGuardedSave(const SavePlan& plan,
                        const std::vector<fs::path>& toPrune,
                        std::map<fs::path, std::size_t>& loaded) {
@@ -303,13 +292,8 @@ void finishGuardedSave(const SavePlan& plan,
     }
 }
 
-// ─── Emitter helpers ─────────────────────────────────────────────────────────
-
-// Remove stale `*.yaml` files in a managed sub-directory (actors/, resources/,
-// environments/) whose stem is no longer a current entity. Without this, a
-// rename or delete leaves the old file on disk and it reloads as a ghost
-// entity on the next parse. Only `.yaml` files are touched; unrelated files
-// are left alone.
+// Remove stale `*.yaml` files in a managed sub-directory whose stem is no longer a current entity,
+// so a rename or delete does not reload as a ghost entity. Other files are left alone.
 void pruneStaleFiles(const fs::path& root,
                      const fs::path& dir,
                      const std::set<std::string>& keepStems) {
@@ -334,24 +318,16 @@ void pruneStaleFiles(const fs::path& root,
 
 void emitStringMap(YAML::Emitter& e, const std::map<std::string, std::string>& m) {
     e << YAML::BeginMap;
-    // std::map already iterates in ascending key order, so no copy/sort.
     for (const auto& [k, v] : m) {
         e << YAML::Key << k << YAML::Value << v;
     }
     e << YAML::EndMap;
 }
 
-// Emit a request `body`. The parser stores `body` verbatim for scalars and as
-// JSON text for structured (map/sequence) bodies, and never re-encodes a
-// scalar on load. So emitting the stored body as a single scalar round-trips
-// exactly: yaml-cpp escapes it once for YAML, the parser unescapes it once, and
-// repeated saves are idempotent (this is what fixed the over-escaping bug).
-//
-// Multi-line bodies (typically imported JSON examples) are far more readable as
-// a YAML block literal than a single escaped double-quoted line. We only switch
-// to the block form when the content has no trailing newline, so yaml-cpp emits
-// the strip variant (`|-`) that round-trips the exact bytes and keeps repeated
-// saves idempotent; anything ending in a newline stays on the safe scalar path.
+// Emit a request `body`. The parser stores scalar bodies verbatim and never re-encodes them, so
+// emitting the stored body as one scalar round-trips exactly and repeated saves are idempotent. A
+// multi-line body without a trailing newline uses a block literal (`|-`), which round-trips the
+// exact bytes; one ending in a newline stays on the scalar path.
 void emitBodyTemplate(YAML::Emitter& e, const std::string& bodyTemplate) {
     if (bodyTemplate.find('\n') != std::string::npos && !bodyTemplate.empty() &&
         bodyTemplate.back() != '\n') {
@@ -361,7 +337,6 @@ void emitBodyTemplate(YAML::Emitter& e, const std::string& bodyTemplate) {
     }
 }
 
-// String form of an extraction source for the explicit map form below.
 constexpr std::string_view extractionSourceToString(Extraction::Source s) {
     switch (s) {
         case Extraction::Source::JsonPath:
@@ -380,9 +355,8 @@ constexpr std::string_view extractionSourceToString(Extraction::Source s) {
     return "jsonpath";
 }
 
-// The source the parser would auto-detect from a path prefix. When the actual
-// source matches this, the compact scalar form is safe; otherwise the explicit
-// map form is required so the source survives the round-trip.
+// The source the parser would auto-detect from a path prefix; when it matches, the compact scalar
+// form is safe, otherwise the explicit map form preserves the source.
 constexpr Extraction::Source autoDetectExtractionSource(std::string_view path) {
     if (path.starts_with("$.headers.")) {
         return Extraction::Source::Header;
@@ -402,9 +376,8 @@ void emitExtractions(YAML::Emitter& e, const std::vector<Extraction>& extraction
     }
     e << YAML::Key << "extract" << YAML::Value << YAML::BeginMap;
     for (const auto& ext : extractions) {
-        // Compact `var: path` when the source is re-derivable from the path;
-        // otherwise the explicit `var: { path, source }` map form so XPath /
-        // Regex (which have no detectable prefix) don't degrade to JsonPath.
+        // Compact `var: path` when the source is derivable from the path, else the explicit map
+        // form.
         if (ext.source == autoDetectExtractionSource(ext.sourcePath)) {
             e << YAML::Key << ext.variableName << YAML::Value << ext.sourcePath;
         } else {
@@ -422,8 +395,7 @@ void emitAssertions(YAML::Emitter& e, const std::vector<Assertion>& assertions) 
     }
     e << YAML::Key << "assert" << YAML::Value << YAML::BeginSeq;
     for (const auto& assertion : assertions) {
-        // Compact scalar when unnamed; the `{ expr, name }` map form when a
-        // human label is attached, so both round-trip.
+        // Compact scalar when unnamed, `{ expr, name }` map when labelled.
         if (assertion.name) {
             e << YAML::BeginMap << YAML::Key << "expr" << YAML::Value << assertion.expr << YAML::Key
               << "name" << YAML::Value << *assertion.name << YAML::EndMap;
@@ -466,8 +438,6 @@ void emitProvenance(YAML::Emitter& e, const Provenance& p) {
     e << YAML::EndMap;
 }
 
-// Emit an `auth:` map for an operation-level or project-level default auth.
-// Only the fields relevant to the type are written.
 void emitInlineAuth(YAML::Emitter& e, const InlineAuth& a) {
     e << YAML::Key << "auth" << YAML::Value << YAML::BeginMap;
     e << YAML::Key << "type" << YAML::Value << std::string{inlineAuthTypeToString(a.type)};
@@ -611,9 +581,8 @@ void emitOperation(YAML::Emitter& e, const Operation& op) {
     if (op.force) {
         e << YAML::Key << "force" << YAML::Value << true;
     }
-    // Emit `retry` only when it diverges from the defaults (max 3, backoff
-    // 500ms, non_idempotent false), so a default-retry op gets no stray block. `max` and
-    // `backoff` are emitted together so the policy round-trips; `non_idempotent` only when true.
+    // Emit `retry` only when it differs from the defaults (max 3, backoff 500ms, non_idempotent
+    // false); `max` and `backoff` go together, `non_idempotent` only when true.
     if (op.retry.maxAttempts != RetryPolicy{}.maxAttempts ||
         op.retry.baseBackoff != RetryPolicy{}.baseBackoff || op.retry.nonIdempotent) {
         e << YAML::Key << "retry" << YAML::Value << YAML::BeginMap << YAML::Key << "max"
@@ -725,7 +694,6 @@ std::string emitActor(const Actor& actor) {
         e << YAML::EndSeq;
     } else if (actor.strategy == AuthStrategy::Basic) {
         e << YAML::Key << "strategy" << YAML::Value << "basic";
-        // Values may contain {{X.y}} references resolved at run time.
         if (auto it = actor.authConfig.find("username"); it != actor.authConfig.end()) {
             e << YAML::Key << "username" << YAML::Value << it->second;
         }
@@ -816,8 +784,7 @@ std::string emitActor(const Actor& actor) {
             e << YAML::Key << "body" << YAML::Value;
             emitBodyTemplate(e, *actor.refresh->bodyTemplate);
         }
-        // List form takes precedence over scalar — same convention as
-        // operation-level expect_status.
+        // List form takes precedence over scalar, as for operation-level expect_status.
         if (!actor.refresh->expectStatusList.empty()) {
             e << YAML::Key << "expect_status" << YAML::Value << YAML::Flow << YAML::BeginSeq;
             for (int const s : actor.refresh->expectStatusList) {
@@ -870,8 +837,7 @@ std::string emitEnvironment(const std::string& name,
     }
     if (transport) {
         e << YAML::Key << "transport" << YAML::Value << YAML::BeginMap;
-        // Emit only fields that diverge from defaults — keeps round-tripped
-        // YAMLs minimal and lets readers see what's actually overridden.
+        // Emit only fields that differ from defaults, keeping round-tripped YAML minimal.
         const TransportConfig defaults;
         if (transport->tlsVerify != defaults.tlsVerify) {
             e << YAML::Key << "tls_verify" << YAML::Value << transport->tlsVerify;
@@ -995,8 +961,7 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
 
     std::error_code ec;
     if (fs::exists(targetDir, ec) && !overwrite) {
-        // Only fail if reqloom.yaml is already there — the directory
-        // existing alone is fine (lets the writer slot into an existing project).
+        // Fail only if reqloom.yaml is already there; an existing directory alone is fine.
         if (fs::exists(targetDir / "reqloom.yaml", ec)) {
             return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
                                                 ErrorClass::Schema,
@@ -1013,9 +978,8 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
                          "writer: cannot create " + targetDir.string() + ": " + ec.message()});
     }
 
-    // Build the full (target, content) plan up front, then stage + commit in
-    // two phases so a multi-file save is near-atomic: if any file fails to
-    // stage, nothing is committed and no target file is touched.
+    // Build the full (target, content) plan first, then stage and commit in two phases so a failure
+    // leaves no target touched.
     SavePlan plan;
     plan.emplace_back(targetDir / "reqloom.yaml",
                       emitRoot(project, effectiveProjectId(project, targetDir / "reqloom.yaml")));
@@ -1052,8 +1016,7 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
         guardedPrune = std::move(*checked);
     }
 
-    // Phase 1 — stage: write a .tmp for each changed file. Skip unchanged
-    // files. On any failure, remove every staged temp and abort untouched.
+    // Phase 1: stage a .tmp per changed file; on failure remove them all and abort untouched.
     struct Staged {
         fs::path target;
         fs::path temp;
@@ -1077,7 +1040,6 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
         staged.push_back({target, *temp});
     }
 
-    // Phase 2 — commit: rename each staged temp onto its target.
     for (const auto& s : staged) {
         fs::rename(s.temp, s.target, ec);
         if (ec) {
@@ -1094,11 +1056,9 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
         return targetDir / "reqloom.yaml";
     }
 
-    // Prune files for entities that no longer exist (rename/delete), so a
-    // stale actor/resource/environment .yaml doesn't reload as a ghost. Gated
-    // on overwrite — the in-place "save the project" path — so the slot-into-
-    // an-existing-directory case (overwrite=false) never deletes pre-existing
-    // files the writer didn't create. `pruneStale=false` (`reqloom import --force`) never deletes.
+    // Prune files of entities that no longer exist so they do not reload as ghosts. Only with
+    // `overwrite`, so slotting into an existing directory never deletes files the writer did not
+    // create; `pruneStale=false` (`reqloom import --force`) never deletes.
     if (overwrite && pruneStale) {
         std::set<std::string> actorStems;
         for (const auto& [id, _] : project.actors) {

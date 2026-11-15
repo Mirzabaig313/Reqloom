@@ -1,12 +1,5 @@
-// JUnit XML renderer for `reqloom run --format junit`.
-//
-// Output mirrors the surface JUnit consumers (Jenkins, GitLab, Buildkite)
-// expect: one `<testsuites>` wrapping one `<testsuite>` per chain, with
-// one `<testcase>` per step. Failed steps emit `<failure>`, skipped or
-// cached steps emit `<skipped>`, blocked / cancelled steps emit
-// `<error>`. Poll-attempt rows are folded into their parent testcase as
-// `<system-out>` so the suite count matches the number of declared
-// operations rather than physical step rows.
+// JUnit XML renderer for `reqloom run --format junit`: one `<testsuite>` per chain, one
+// `<testcase>` per step; poll-attempt rows fold into their parent's `<system-out>`.
 
 #pragma once
 

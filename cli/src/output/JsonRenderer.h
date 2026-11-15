@@ -9,9 +9,7 @@
 
 namespace reqloom::cli {
 
-/// Emits a single JSON document describing the run: outcome, target,
-/// environment, per-step status / elapsed / error code, and aggregate
-/// counts. Schema is stable and intended for CI consumers.
+/// Emits a single JSON document describing the run. The schema is stable for CI consumers.
 class JsonRenderer {
 public:
     explicit JsonRenderer(std::ostream& out);

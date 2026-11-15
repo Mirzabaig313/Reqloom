@@ -1,5 +1,4 @@
-// ProjectModel — see header. Wraps engine::parseProject and exposes the
-// validated Project to the views.
+// ProjectModel — see header. Wraps engine::parseProject.
 #include "ProjectModel.h"
 
 #include <reqloom/engine/Factories.h>
@@ -22,16 +21,15 @@ namespace reqloom::desktop {
 
 namespace {
 
-/// Reject names that would break the dotted id scheme (ids are joined with '.'
-/// and parsed by the first dot) or escape the resources/ directory (a resource
-/// name also becomes a file name). Empty is checked separately by the caller.
+/// Reject names that would break the dotted id scheme or escape resources/ (a resource name is also
+/// a file name). Empty is checked by the caller.
 [[nodiscard]] bool hasIdBreakingChars(const std::string& name) {
     return name.find('.') != std::string::npos || name.find('/') != std::string::npos ||
            name.find('\\') != std::string::npos;
 }
 
-/// Rewrite every depends_on entry equal to `from` to `to` across all
-/// operations, so renaming an operation keeps cross-references valid.
+/// Rewrite every depends_on entry equal to `from` to `to`, so renaming an operation keeps
+/// references valid.
 void remapDependencies(engine::Project& draft, const std::string& from, const std::string& to) {
     for (auto& [resId, resource] : draft.resources) {
         for (auto& [opName, op] : resource.operations) {
@@ -44,8 +42,7 @@ void remapDependencies(engine::Project& draft, const std::string& from, const st
     }
 }
 
-/// Rewrite depends_on entries using an old-id → new-id map in a single pass
-/// (used when a resource rename re-qualifies many operation ids at once).
+/// Same, using an old-id → new-id map in one pass (for a resource rename).
 void remapDependencies(engine::Project& draft, const std::map<std::string, std::string>& rename) {
     for (auto& [resId, resource] : draft.resources) {
         for (auto& [opName, op] : resource.operations) {
@@ -58,8 +55,7 @@ void remapDependencies(engine::Project& draft, const std::map<std::string, std::
     }
 }
 
-/// Re-qualify a resource's operations under `newId` (setting each op's resource
-/// and fully-qualified id) and return the old-id → new-id map for remapping
+/// Re-qualify a resource's operations under `newId`; returns the old-id → new-id map for
 /// cross-resource depends_on.
 [[nodiscard]] std::map<std::string, std::string> requalifyResourceOps(
     engine::Resource& resource, const engine::ResourceId& oldId, const engine::ResourceId& newId) {
@@ -72,8 +68,7 @@ void remapDependencies(engine::Project& draft, const std::map<std::string, std::
     return rename;
 }
 
-/// Drop every depends_on entry whose target is in `removed`, so deleting an
-/// operation/resource doesn't leave dangling references that fail to parse.
+/// Drop depends_on entries targeting `removed`, so deletes leave no dangling references.
 void dropDependencies(engine::Project& draft, const std::set<std::string>& removed) {
     for (auto& [resId, resource] : draft.resources) {
         for (auto& [opName, op] : resource.operations) {
@@ -84,10 +79,8 @@ void dropDependencies(engine::Project& draft, const std::set<std::string>& remov
     }
 }
 
-/// Remove a resource's now-orphaned `resources/<id>.yaml`. writeProject only
-/// emits current resources, so a leftover file would resurrect the resource on
-/// reload. Returns an error string only on a genuine removal failure (a
-/// missing file is fine — `remove` reports that without setting `ec`).
+/// Remove a resource's orphaned `resources/<id>.yaml` (writeProject only emits current ones, so it
+/// would resurrect on reload). Returns an error only on a genuine failure; a missing file is fine.
 [[nodiscard]] QString removeResourceFile(const std::filesystem::path& root,
                                          const std::string& resourceId) {
     std::error_code ec;
@@ -153,8 +146,8 @@ void ProjectModel::loadFromDirectory(const QString& directory) {
         return;
     }
 
-    // Secrets are keyed by project id, so persist one before any secret is stored; if that
-    // is unsafe, open without an id (an id not on disk would orphan its secrets).
+    // Secrets are keyed by project id, so persist one before any secret is stored; if unsafe, open
+    // without an id.
     if (parsed->id.empty()) {
         if (auto withId = insertIdInPlace(yaml)) {
             parsed = std::move(*withId);
@@ -181,22 +174,19 @@ bool ProjectModel::createProject(const QString& directory, const QString& name, 
 
     engine::Project draft;
     const std::string trimmed = name.trimmed().toStdString();
-    // A blank name falls back to the folder's own name so the project is never
-    // nameless; the writer round-trips it into reqloom.yaml's `name:` field.
+    // A blank name falls back to the folder name; the writer round-trips it into `name:`.
     draft.name = trimmed.empty() ? dir.filename().string() : trimmed;
 
-    // overwrite=false: the writer refuses to clobber an existing reqloom.yaml,
-    // so re-scaffolding over a real project surfaces an error instead of data
-    // loss. The caller shows the message and keeps its dialog open.
+    // overwrite=false: re-scaffolding over a real project errors instead of losing data; the caller
+    // shows the message.
     auto written = engine::writeProject(dir, draft, /*overwrite=*/false);
     if (!written) {
         error = QString::fromStdString(written.error().detail);
         return false;
     }
 
-    // Reuse the normal load path so the model rebinds and `loaded` fires,
-    // driving the same UI refresh an Open Project would. root_ is only set to
-    // `dir` on a successful parse, so it doubles as the success signal.
+    // Reuse the normal load path so `loaded` fires; root_ is only set on a successful parse, so it
+    // doubles as the success signal.
     loadFromDirectory(directory);
     return root_ == dir;
 }
@@ -226,7 +216,6 @@ QStringList ProjectModel::environmentNames() const {
     if (!project_) {
         return names;
     }
-    // Default environment first so the UI's combo defaults sensibly.
     const auto& def = project_->defaultEnvironment;
     if (!def.empty() && project_->environments.contains(def)) {
         names.append(QString::fromStdString(def));
@@ -259,10 +248,9 @@ bool ProjectModel::saveOperation(const engine::OperationId& id,
     const engine::ResourceId resId{id.value.substr(0, dot)};
     const auto opName = id.value.substr(dot + 1);
 
-    // Edit a copy, persist it, then publish the copy only if the write
-    // succeeds. On write failure project_ keeps the last good in-memory state;
-    // the on-disk files may be partially written (writeProject is not atomic),
-    // so the caller surfaces the error and the user can retry or reload.
+    // Edit a copy, persist it, then publish only if the write succeeds; on failure project_ keeps
+    // the last good state (writeProject is not atomic, so disk may be partial; the caller surfaces
+    // the error).
     engine::Project draft = *project_;
     auto resIt = draft.resources.find(resId);
     if (resIt == draft.resources.end() || !resIt->second.operations.contains(opName)) {
@@ -271,9 +259,8 @@ bool ProjectModel::saveOperation(const engine::OperationId& id,
     }
     resIt->second.operations[opName] = updated;
 
-    // A saved chain edit (depends_on / extract) can introduce a cycle or an
-    // undefined reference; validate the draft before writing so a bad edit
-    // never lands an unloadable project.
+    // Validate before writing: a chain edit can introduce a cycle or undefined reference, which
+    // must never land an unloadable project.
     if (auto valid = engine::validateProject(draft); !valid) {
         error = QString::fromStdString(valid.error().detail);
         return false;
@@ -339,8 +326,8 @@ bool ProjectModel::saveOperations(const std::map<std::string, engine::Operation>
         resIt->second.operations[opName] = updated;
     }
 
-    // Validate the whole draft once: a chain edit can introduce a cycle or an
-    // undefined reference across operations, which only a full-graph check sees.
+    // Validate the whole draft once: only a full-graph check sees cross-operation cycles or
+    // undefined references.
     if (auto valid = engine::validateProject(draft); !valid) {
         error = QString::fromStdString(valid.error().detail);
         return false;
@@ -396,12 +383,10 @@ bool ProjectModel::renameOperation(const engine::OperationId& id,
         return false;
     }
 
-    // Move the operation under its new name, updating its fully-qualified id.
     engine::Operation moved = resIt->second.operations.at(opName);
     moved.id = engine::OperationId{resId.value + "." + trimmed};
     resIt->second.operations.erase(opName);
     resIt->second.operations[trimmed] = std::move(moved);
-    // Keep other operations' depends_on pointing at the renamed operation.
     remapDependencies(draft, id.value, resId.value + "." + trimmed);
 
     auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
@@ -434,7 +419,6 @@ bool ProjectModel::deleteOperation(const engine::OperationId& id, QString& error
         return false;
     }
     resIt->second.operations.erase(opName);
-    // Drop any other operation's now-dangling depends_on entry for it.
     dropDependencies(draft, {id.value});
 
     auto written = engine::writeProject(root_, draft, /*overwrite=*/true);
@@ -479,9 +463,8 @@ bool ProjectModel::renameResource(const engine::ResourceId& id,
         return false;
     }
 
-    // Move the resource under its new id, re-qualifying every operation's id
-    // and resource reference, then re-point cross-resource depends_on in one
-    // pass via the old-id → new-id map (op-name map keys stay the same).
+    // Move the resource under its new id, re-qualifying every operation, then re-point
+    // cross-resource depends_on in one pass.
     engine::Resource moved = resIt->second;
     moved.id = newId;
     const auto rename = requalifyResourceOps(moved, id, newId);
@@ -494,8 +477,8 @@ bool ProjectModel::renameResource(const engine::ResourceId& id,
         error = QString::fromStdString(written.error().detail);
         return false;
     }
-    // Publish first so the UI reflects the rename, then surface any failure to
-    // remove the now-orphaned old file (which would resurrect on reload).
+    // Publish first so the UI reflects the rename, then surface a failure to remove the orphaned
+    // old file.
     const QString removeError = removeResourceFile(root_, id.value);
     project_ = std::make_shared<const engine::Project>(std::move(draft));
     emit saved();
@@ -517,8 +500,8 @@ bool ProjectModel::deleteResource(const engine::ResourceId& id, QString& error) 
         error = QStringLiteral("Resource not found: %1").arg(QString::fromStdString(id.value));
         return false;
     }
-    // Gather the resource's operation ids so cross-resource depends_on entries
-    // pointing into it can be dropped (they'd otherwise dangle on reload).
+    // Gather the resource's operation ids so cross-resource depends_on entries into it can be
+    // dropped.
     std::set<std::string> removedOps;
     for (const auto& [opName, op] : resIt->second.operations) {
         removedOps.insert(id.value + "." + opName);
@@ -531,8 +514,7 @@ bool ProjectModel::deleteResource(const engine::ResourceId& id, QString& error) 
         error = QString::fromStdString(written.error().detail);
         return false;
     }
-    // Publish first so the UI reflects the delete, then surface any failure to
-    // remove the now-orphaned file (which would resurrect on reload).
+    // Publish first, then surface a failure to remove the orphaned file.
     const QString removeError = removeResourceFile(root_, id.value);
     project_ = std::make_shared<const engine::Project>(std::move(draft));
     emit saved();
@@ -569,8 +551,8 @@ bool ProjectModel::createResource(const QString& name, const QString& descriptio
     res.description = description.trimmed().toStdString();
     draft.resources[id] = std::move(res);
 
-    // An empty resource can't break the graph, but route every mutating path
-    // through the same validation gate so the invariant is uniform.
+    // Route every mutating path through the same validation gate, even though an empty resource
+    // can't break the graph.
     if (auto valid = engine::validateProject(draft); !valid) {
         error = QString::fromStdString(valid.error().detail);
         return false;
@@ -656,7 +638,6 @@ bool ProjectModel::deleteActor(const engine::ActorId& id, QString& error) {
         return false;
     }
     draft.actors.erase(it);
-    // No operation may point at a now-missing actor.
     for (auto& [resId, res] : draft.resources) {
         for (auto& [opName, op] : res.operations) {
             if (op.actor.value == id.value) {
@@ -714,8 +695,8 @@ bool ProjectModel::saveEnvironment(const QString& originalName,
     draft.environments[nameStd] = variables;
 
     if (!creating && origStd != nameStd) {
-        // Move the per-env transport config and the project default onto the
-        // new name so neither dangles after the rename.
+        // Move the per-env transport config and project default onto the new name so neither
+        // dangles.
         if (const auto t = draft.transport.find(origStd); t != draft.transport.end()) {
             draft.transport[nameStd] = t->second;
             draft.transport.erase(t);
@@ -853,7 +834,6 @@ std::optional<engine::OperationId> ProjectModel::createOperation(
     complete.resource = resourceId;
     resIt->second.operations[trimmed] = std::move(complete);
 
-    // Validate before writing so invalid references or cycles never reach disk.
     if (auto valid = engine::validateProject(draft); !valid) {
         error = QString::fromStdString(valid.error().detail);
         return std::nullopt;

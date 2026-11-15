@@ -1,10 +1,5 @@
 // ImportFromHttpie — HTTPie client export (JSON) → Project parser.
-// Sibling of ImportFromPostman. Export shape (per HTTPie's export schema):
-//   { "meta": {"format":"httpie","contentType":<...>}, "entry": <entry> }
-// where entry is a Workspace / Collection / Request / Environment.
-//
-// ponytail: path/id/url helpers mirror the other importers rather than share a
-// header. Upgrade path: extract a shared ImportSupport.h once worth it.
+// Export shape: { "meta": {...}, "entry": <Workspace|Collection|Request|Environment> }.
 
 #include "ImportFromHttpie.h"
 #include "ImportFromFileRefs.h"
@@ -331,7 +326,6 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         env = &envs.at(outcome.project.defaultEnvironment);
     };
 
-    // Build one operation from an HTTPie Request object.
     auto buildRequest = [&](const std::string& resourceId, const json& req) {
         auto& resource = outcome.project.resources[ResourceId{resourceId}];
         if (resource.id.value.empty()) {
@@ -369,7 +363,6 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         }
         op.pathTemplate = rewrite(split.path);
 
-        // Headers + query params are List = [{name, value, enabled}].
         auto absorbList = [&](std::string_view key, std::map<std::string, std::string>& into) {
             const auto it = req.find(key);
             if (it != req.end() && it->is_array()) {
@@ -387,7 +380,6 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         absorbList("headers", op.headers);
         absorbList("queryParams", op.queryParams);
 
-        // Body.
         if (req.contains("body") && req["body"].is_object()) {
             const json& body = req["body"];
             const auto type = jsonStr(body, "type");
@@ -453,7 +445,6 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         resource.operations.emplace(unique, std::move(op));
     };
 
-    // A collection becomes a resource named after it; its requests are ops.
     auto absorbCollection = [&](const json& col) {
         const std::string resourceId = sanitizeId(jsonStr(col, "name"), "requests");
         if (col.contains("auth")) {
@@ -507,7 +498,6 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         absorbEnvironment(entry);
         ensureDefaultEnvironment();
     } else {
-        // A bare Request entry.
         outcome.project.name =
             jsonStr(entry, "name").empty() ? "Imported Request" : jsonStr(entry, "name");
         ensureDefaultEnvironment();

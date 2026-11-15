@@ -1,5 +1,4 @@
-// AppController — variables, extraction, and chain-editor methods.
-// Split from AppController.cpp; see AppController.h
+// AppController — variables, extraction and chain-editor methods (split from AppController.cpp).
 #include "AppController.h"
 
 #include "ThemeController.h"
@@ -49,7 +48,6 @@
 namespace reqloom::desktop::qml {
 
 QStringList AppController::editDependencyCandidates() const {
-    // Every operation except the open one (no self-dependency).
     const QString self = currentOperationId();
     QStringList out;
     for (const QString& id : operationIds()) {
@@ -73,7 +71,6 @@ QStringList AppController::extractedVariablesFor(const QString& operationId) con
     const QString resource = dot > 0 ? operationId.left(dot) : QString{};
     for (const auto& ext : op->extractions) {
         const QString name = QString::fromStdString(ext.variableName);
-        // variableName is the bare name; reference it namespaced by resource.
         const QString full = name.contains(QLatin1Char('.')) || resource.isEmpty()
                                  ? name
                                  : (resource + QLatin1Char('.') + name);
@@ -166,8 +163,6 @@ std::pair<QString, QString> AppController::findVariableProducer(const QString& t
         for (const auto& [opName, op] : resource.operations) {
             for (const auto& ext : op.extractions) {
                 const QString var = QString::fromStdString(ext.variableName);
-                // Match both the namespaced form (resource.var) and the bare
-                // variable name (covers variables named with dots).
                 if (token == (resName + QLatin1Char('.') + var) || token == var) {
                     return {resName + QLatin1Char('.') + QString::fromStdString(opName),
                             QString::fromStdString(ext.sourcePath)};
@@ -185,8 +180,7 @@ QStringList AppController::candidateValues(const QString& token) const {
         return out;
     }
 
-    // Turn a single-item extract path into its list form so every id surfaces:
-    // `$.data[0].id` → `$.data[*].id`.
+    // Turn a single-item path into list form so every id surfaces: `$.data[0].id` → `$.data[*].id`.
     static const QRegularExpression indexRe(QStringLiteral("\\[\\d+\\]"));
     QString listPath = sourcePath;
     listPath.replace(indexRe, QStringLiteral("[*]"));
@@ -253,8 +247,7 @@ void AppController::setVariableOverride(const QString& token, const QString& val
         variableOverrides_.insert(token, value);
     }
 
-    // Push the full pin set to the run controller and drop the extraction
-    // cache so a removed/changed pin can't survive into the next run.
+    // Push the full pin set and drop the extraction cache so a stale pin can't survive.
     std::vector<std::pair<std::string, std::string>> overrides;
     overrides.reserve(static_cast<std::size_t>(variableOverrides_.size()));
     for (auto it = variableOverrides_.constBegin(); it != variableOverrides_.constEnd(); ++it) {
@@ -279,7 +272,6 @@ void AppController::refreshCandidates(const QString& token) {
     if (producerOpId.isEmpty()) {
         return;
     }
-    // Capture is on by default; the response lands in the auto-save handler.
     pendingCandidateOp_ = producerOpId;
     runController_->run(producerOpId, environment_, false, false);
 }
@@ -294,8 +286,7 @@ EditableKeyValueModel* AppController::chainExtractModelFor(const QString& operat
 }
 
 QStringList AppController::chainForEachOptions(const QString& operationId) const {
-    // A step can fan out over any resource produced by another step in the
-    // chain. Offer the distinct resources of every other step, discovery order.
+    // A step can fan out over any resource produced by another step.
     QStringList resources;
     for (int i = 0; i < chainEditor_.count(); ++i) {
         const QString id = chainEditor_.operationIdAt(i);
@@ -366,7 +357,6 @@ bool AppController::addExtraction(const QString& variableName, const QString& so
     engine::Operation updated = *op;
     const std::string varStd = var.toStdString();
     const std::string pathStd = path.toStdString();
-    // Replace a same-named extraction in place, otherwise append a new one.
     bool replaced = false;
     for (auto& ext : updated.extractions) {
         if (ext.variableName == varStd) {
@@ -533,11 +523,8 @@ int AppController::editAssertionsCount() const {
 }
 
 QVariantList AppController::chainNodes() const {
-    // Static view of the operation's declared dependencies in declared order,
-    // then the target itself last (mirrors the old RequestEditorPanel chain
-    // preview). In Edit mode the deps come from the live picker so the preview
-    // updates as the user wires the chain. Implicit ({{var}}) deps and the
-    // full topological order are resolved by the engine after a Dry Run.
+    // Static view of the declared dependencies, then the target. In Edit mode deps come from the
+    // live picker; implicit ({{var}}) deps and the full order resolve after a Dry Run.
     QVariantList nodes;
     if (!activeProject().hasProject() || !hasOperation_) {
         return nodes;
@@ -579,13 +566,8 @@ QVariantList AppController::chainNodes() const {
 }
 
 QVariantMap AppController::chainGraph() const {
-    // Draw the target's resolved dependency chain. The engine is the single
-    // source of truth for resolution: resolvePlan() returns the topological
-    // execution order plus the explicit/implicit edges (each implicit edge
-    // tagged with the variable that flows along it). We only lay the result
-    // out and translate it to the QML node/edge shape — no dependency
-    // re-derivation here, so the drawn graph always matches what the engine
-    // actually executes.
+    // Draw the target's resolved chain. The engine is the single source of truth: resolvePlan()
+    // gives the order and edges; we only lay it out, so the graph always matches what runs.
     QVariantMap graph;
     if (!activeProject().hasProject() || (!hasOperation_ && !creatingOperation_) ||
         !bootstrapper_) {
@@ -594,9 +576,8 @@ QVariantMap AppController::chainGraph() const {
     const QString targetId = currentOperationId();
     const engine::OperationId targetOpId{targetId.toStdString()};
 
-    // Creation inserts one synthetic target into a project copy. This lets the
-    // existing resolver and graph layout preview the draft without publishing
-    // a placeholder operation to disk.
+    // Creation inserts a synthetic target into a project copy so the resolver can preview the draft
+    // without writing a placeholder to disk.
     engine::Project patched;
     const engine::Project* proj = &activeProject().project();
     if (creatingOperation_) {
@@ -617,9 +598,7 @@ QVariantMap AppController::chainGraph() const {
         return graph;
     }
 
-    // In edit mode the chain picker holds unsaved depends_on edits. Resolve
-    // against a patched copy so the preview tracks the live wiring; otherwise
-    // resolve the persisted project directly.
+    // In edit mode, resolve against a patched copy so the preview tracks unsaved depends_on edits.
     if (!creatingOperation_ && editing_ && chainFieldsLoaded_) {
         patched = activeProject().project();
         const qsizetype dot = targetId.indexOf(QLatin1Char('.'));
@@ -641,12 +620,9 @@ QVariantMap AppController::chainGraph() const {
 
     const auto plan = bootstrapper_->engine().resolvePlan(*proj, targetOpId);
     if (!plan || plan->order.size() <= 1) {
-        // No chain to draw (or an edit-time cycle); ChainView shows empty text.
         return graph;
     }
 
-    // Node index = position in the engine's topological order (deps first,
-    // target last).
     QHash<QString, int> indexOf;
     QStringList ids;
     ids.reserve(static_cast<qsizetype>(plan->order.size()));
@@ -656,9 +632,8 @@ QVariantMap AppController::chainGraph() const {
         ids.append(id);
     }
 
-    // Aggregate engine edges by (producer → consumer) pair so a pair draws
-    // once, not in parallel: an explicit edge wins (solid, no label); otherwise
-    // join the implicit edges' flowing variables into one labeled edge.
+    // Aggregate edges per (producer → consumer) pair so a pair draws once: an explicit edge wins,
+    // else join the implicit edges' variables into one label.
     struct EdgeAgg {
         bool isExplicit{false};
         QStringList vars;
@@ -703,8 +678,7 @@ QVariantMap AppController::chainGraph() const {
     const layout::LayoutResult laid =
         layout::layeredLayout(static_cast<int>(ids.size()), layoutEdges, options);
 
-    // Resolve a node's operation against the same project the plan came from,
-    // so an edit-mode target reflects the patched copy.
+    // Resolve against the plan's own project so an edit-mode target reflects the patched copy.
     const auto findOp = [proj](const QString& id) -> const engine::Operation* {
         const qsizetype dot = id.indexOf(QLatin1Char('.'));
         if (dot <= 0) {
@@ -728,7 +702,6 @@ QVariantMap AppController::chainGraph() const {
         node.insert(QStringLiteral("isTarget"), id == targetId);
         node.insert(QStringLiteral("x"), laid.nodes[static_cast<std::size_t>(i)].x);
         node.insert(QStringLiteral("y"), laid.nodes[static_cast<std::size_t>(i)].y);
-        // Detail surfaced when a node is clicked in the graph.
         node.insert(QStringLiteral("path"),
                     op != nullptr ? QString::fromStdString(op->pathTemplate) : QString{});
         node.insert(QStringLiteral("actor"),
@@ -778,9 +751,7 @@ QVariantList AppController::executionPreview() const {
         return preview;
     }
 
-    // Resolved against the persisted project, not the edit-mode patched copy the
-    // chain graph builds: this previews what a run would do now. An unresolvable
-    // chain (cycle) yields an empty list, and the caller keeps its empty state.
+    // Resolved against the persisted project, not the edit-mode copy; a cycle yields an empty list.
     const auto plan = bootstrapper_->engine().resolvePlan(project, targetOpId);
     if (!plan) {
         return preview;
@@ -828,11 +799,8 @@ QStringList AppController::extractionConsumers(const QString& producerOperationI
         return {};
     }
 
-    // ponytail: resolves the plan per call, so a run with many missed extractions
-    // re-resolves once per row. Measured cheap on real projects (the whole
-    // marketplace sample resolves in well under a second). If a large project
-    // ever makes this show up, cache the plan per (target, chainChanged) instead
-    // of widening the API.
+    // Resolves the plan per call: cheap on real projects. If it ever shows up, cache per (target,
+    // chainChanged).
     const auto plan = bootstrapper_->engine().resolvePlan(project, targetOpId);
     if (!plan) {
         return {};
@@ -872,7 +840,6 @@ void AppController::prepareChainEditor() {
         return;
     }
 
-    // BFS the declared transitive dependency closure, in discovery order.
     QStringList ids;
     QHash<QString, bool> seen;
     std::queue<QString> pending;
@@ -935,7 +902,6 @@ void AppController::syncChainEditorMembership() {
     }
     const QString targetId = currentOperationId();
 
-    // Snapshot current edits so a rebuild preserves in-progress work.
     QHash<QString, std::vector<std::string>> editedDeps;
     QHash<QString, std::vector<std::pair<QString, QString>>> editedExtracts;
     QHash<QString, QString> editedForEach;
@@ -948,8 +914,7 @@ void AppController::syncChainEditorMembership() {
         editedForEachContinue.insert(id, chainEditor_.forEachContinueOnErrorAt(i));
     }
 
-    // BFS the transitive closure from the target using edited deps where we
-    // have them, falling back to the saved project for not-yet-edited steps.
+    // BFS the transitive closure using edited deps, falling back to the saved project.
     QStringList ids;
     QHash<QString, bool> seen;
     std::queue<QString> pending;
@@ -978,8 +943,7 @@ void AppController::syncChainEditorMembership() {
         }
     }
 
-    // Membership unchanged → live models are already correct, skip the rebuild
-    // (avoids resetting focus and re-entrancy).
+    // Membership unchanged: skip the rebuild to avoid resetting focus and re-entrancy.
     QSet<QString> current;
     for (int i = 0; i < chainEditor_.count(); ++i) {
         current.insert(chainEditor_.operationIdAt(i));
@@ -1055,7 +1019,6 @@ void AppController::chainRemoveStep(const QString& operationId) {
     if (operationId.isEmpty()) {
         return;
     }
-    // Drop it as a dependency of every step so it is no longer referenced.
     for (int i = 0; i < chainEditor_.count(); ++i) {
         auto* deps = chainEditor_.depModelAt(i);
         for (int row = 0; row < deps->rowCount(); ++row) {
@@ -1092,8 +1055,7 @@ bool AppController::saveChainEdits() {
             updated.explicitDependencies.push_back(engine::OperationId{dep});
         }
 
-        // Preserve each extraction's source kind by variable name; new rows
-        // default to JSONPath (the common case).
+        // Preserve each extraction's source kind by variable name; new rows default to JSONPath.
         std::map<std::string, engine::Extraction::Source> sourceByVar;
         for (const auto& ext : op->extractions) {
             sourceByVar[ext.variableName] = ext.source;
@@ -1114,7 +1076,6 @@ bool AppController::saveChainEdits() {
             updated.extractions.push_back(std::move(extraction));
         }
 
-        // For-each fan-out: set or clear based on the chain editor's choice.
         const QString overResource = chainEditor_.forEachOverAt(i).trimmed();
         if (overResource.isEmpty()) {
             updated.forEach.reset();
@@ -1134,9 +1095,8 @@ bool AppController::saveChainEdits() {
     }
     emit notify(QStringLiteral("Chain saved."), false);
 
-    // Save chain rewrote the target's depends_on / extract on disk; refresh the
-    // endpoint editor's edit-mode models so a later endpoint Save (which writes
-    // from those models) reflects — rather than clobbers — what we just saved.
+    // Save chain rewrote depends_on / extract on disk; refresh the edit models so a later endpoint
+    // Save doesn't clobber it.
     if (editing_) {
         seedEditChainFromProject();
         emit editChanged();

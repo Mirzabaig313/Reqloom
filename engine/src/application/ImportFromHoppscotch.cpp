@@ -1,9 +1,6 @@
 // ImportFromHoppscotch — Hoppscotch collection export (JSON) → Project parser.
 // Sibling of ImportFromPostman.
-//
-// path/id/url helpers mirror ImportFromPostman rather than share a
-// header (the existing importers do the same). Upgrade path: extract a shared
-// ImportSupport.h once the duplication is worth removing.
+// Helpers mirror ImportFromPostman rather than share a header.
 
 #include "ImportFromHoppscotch.h"
 #include "ImportFromFileRefs.h"
@@ -288,8 +285,7 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
                          std::string{"hoppscotch import: invalid JSON: "} + e.what()});
     }
 
-    // Hoppscotch exports a single collection object (or, from "export all", an
-    // array of them). A collection has `requests` and/or `folders`.
+    // A single collection object, or an array of them from "export all".
     std::vector<const json*> collections;
     if (doc.is_array()) {
         for (const auto& c : doc) {
@@ -370,7 +366,6 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
         }
         op.pathTemplate = rewrite(split.path);
 
-        // Query params.
         if (item.contains("params") && item["params"].is_array()) {
             for (const auto& q : item["params"]) {
                 if (!q.is_object() || !import_json::boolOr(q, "active", true)) {
@@ -383,7 +378,6 @@ std::expected<ImportFromHoppscotch::Outcome, ReqloomError> ImportFromHoppscotch:
             }
         }
 
-        // Headers.
         if (item.contains("headers") && item["headers"].is_array()) {
             for (const auto& h : item["headers"]) {
                 if (!h.is_object() || !import_json::boolOr(h, "active", true)) {

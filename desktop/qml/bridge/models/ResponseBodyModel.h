@@ -1,10 +1,6 @@
-// ResponseBodyModel — a C++-parsed, virtualized view of a JSON response body
-// for the Body (Tree) view. Replaces the per-response JavaScript tree build
-// (which re-parsed and flattened the whole payload on every response and
-// stuttered on large bodies). The body is parsed once with QJsonDocument, the
-// tree is flattened into a pre-order node vector in C++, and only the rows
-// whose ancestors are all expanded are exposed to QML — so the ListView stays
-// virtualized and the GUI thread never walks the JSON in script.
+// ResponseBodyModel — C++-parsed, virtualized view of a JSON response body for the Body (Tree)
+// view. The body is parsed once into a pre-order node vector; only rows whose ancestors are
+// expanded reach QML.
 #pragma once
 
 #include <QtQml/qqmlregistration.h>
@@ -49,8 +45,7 @@ public:
     [[nodiscard]] bool isJson() const noexcept { return isJson_; }
     [[nodiscard]] int nodeCount() const noexcept { return static_cast<int>(nodes_.size()); }
 
-    /// Parse `body` and rebuild the tree. Cheap to call on every response; the
-    /// parse + flatten happen once here in C++ rather than in QML per binding.
+    /// Parse `body` and rebuild the tree; cheap to call on every response.
     void setBody(const QString& body);
     void reset();
 

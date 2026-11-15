@@ -42,11 +42,10 @@ class ProjectTrustStore;
 /// no longer exists, so the file system cannot decide.
 [[nodiscard]] bool windowsFolderPathsEqual(std::string_view a, std::string_view b);
 
-/// Gate every secret read or write for `project`: it must have a valid id and a folder
-/// (`rootDir`), and that folder must be the one `trust` records for the id: the same
-/// directory on disk (links, letter case on a case-insensitive volume and other spellings
-/// resolve to it), or, when the recorded folder no longer exists, the same normalised path. An id
-/// with no record is bound to this folder now (trust on first use).
+/// Gate every secret read or write for `project`: it needs a valid id and a folder (`rootDir`), and
+/// that folder must be the one `trust` records for the id (same directory on disk, or the same
+/// normalised path when the recorded one no longer exists). An id with no record is bound to this
+/// folder now (trust on first use).
 ///
 /// @return void when secrets may be used; otherwise `ReqloomError`: `SchemaInvalid` for a
 ///         missing/invalid id, `SecretAccessFailed` for no folder, no store, a store failure,

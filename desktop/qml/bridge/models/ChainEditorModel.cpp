@@ -1,5 +1,4 @@
-// ChainEditorModel — see header. Owns per-operation dependency + extraction
-// editors for the whole-chain editor.
+// ChainEditorModel — see header.
 #include "ChainEditorModel.h"
 
 namespace reqloom::desktop::qml {
@@ -62,8 +61,7 @@ void ChainEditorModel::rebuild(const std::vector<OpSeed>& seeds) {
         row.candidates = seed.candidates;
         row.forEachOver = seed.forEachOver;
         row.forEachContinueOnError = seed.forEachContinueOnError;
-        // Per-row models are parented to this model (C++ ownership), so QML
-        // never deletes them when a delegate is destroyed.
+        // Parented to this model so QML never deletes them with a delegate.
         row.deps = std::make_unique<DependencyEditModel>(this);
         row.deps->setCandidates(seed.candidates);
         row.deps->setDependencies(seed.dependencies);

@@ -91,7 +91,6 @@ void EditableKeyValueModel::removeRow(int row) {
     if (row < 0 || row >= static_cast<int>(rows_.size())) {
         return;
     }
-    // Never remove the trailing ghost row.
     if (row == static_cast<int>(rows_.size()) - 1 && rowIsBlank(static_cast<std::size_t>(row))) {
         return;
     }

@@ -1,14 +1,8 @@
-// Desktop-side facade over the engine's keychain-backed SecretStore.
-// Answers "which {{secret.NAME}} does this project reference, and which are
-// already present in the OS keychain?" and lets the user set / clear them.
-//
-// Every read or write first checks the project's folder against the per-user trust record,
-// so a project copying another's id cannot touch its secrets.
-//
-// Security posture (PRD FR-11.3/11.4): values are written straight to the OS
-// keychain via the engine's QtKeychain backend. This class never returns a
-// stored secret's value to the UI — only presence — so a value can't leak
-// into a log, a screenshot, or the clipboard by accident.
+// Desktop-side facade over the engine's keychain-backed SecretStore: lists the `{{secret.NAME}}`
+// references a project makes, which are present in the keychain, and sets / clears them. Every
+// access first checks the folder against the per-user trust record, so a project copying another's
+// id can't touch its secrets. Never returns a stored value to the UI, only presence, so a value
+// can't leak into a log or clipboard.
 #pragma once
 
 #include <reqloom/engine/ProjectTrustStore.h>
@@ -79,9 +73,8 @@ public:
     /// `error` carries the reason on failure.
     [[nodiscard]] bool confirmMove(const ProjectModel& project, QString& error);
 
-    /// Whether a real keychain backend is available. False when the engine
-    /// was built without QtKeychain (the no-op store) — the UI warns rather
-    /// than silently dropping writes.
+    /// Whether a real keychain backend is available; false when built without QtKeychain, so the UI
+    /// warns instead of silently dropping writes.
     [[nodiscard]] bool backendAvailable() const noexcept;
 
 private:

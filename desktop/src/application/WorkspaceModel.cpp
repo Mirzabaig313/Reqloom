@@ -1,4 +1,4 @@
-// WorkspaceModel — see header. Multi-Project Workspace Plan, Phase 1.
+// WorkspaceModel — see header.
 
 #include "WorkspaceModel.h"
 
@@ -12,8 +12,7 @@
 namespace reqloom::desktop {
 
 WorkspaceModel::WorkspaceModel(QObject* parent) : QObject(parent) {
-    // Start with one project so `active()` is always valid, matching the
-    // single-project lifetime the app relied on before the workspace existed.
+    // Start with one project so `active()` is always valid.
     projects_.push_back(std::make_unique<ProjectModel>());
 }
 
@@ -70,19 +69,17 @@ void WorkspaceModel::removeProject(int index) {
     }
     projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(index));
     if (projects_.empty()) {
-        // Never leave the workspace empty — a fresh sentinel keeps active()
-        // valid so every hasProject() guard still holds.
+        // Never leave the workspace empty: a fresh sentinel keeps active() valid.
         projects_.push_back(std::make_unique<ProjectModel>());
         activeIndex_ = 0;
         emit activeChanged();
         return;
     }
     if (activeIndex_ == index) {
-        // The active project was removed: clamp to a surviving neighbour.
         activeIndex_ = std::min(index, count() - 1);
         emit activeChanged();
     } else if (activeIndex_ > index) {
-        // Same active project, its index just shifted down — not a change.
+        // Same active project with its index shifted down: not a change.
         --activeIndex_;
     }
 }

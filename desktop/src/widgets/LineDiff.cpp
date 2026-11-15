@@ -8,8 +8,7 @@ namespace reqloom::desktop::widgets::diff {
 
 namespace {
 
-// Split on '\n', preserving empty trailing segments so a blank final line is
-// not silently dropped from the comparison.
+// Split on newline, keeping empty trailing segments so a blank final line isn't dropped.
 [[nodiscard]] QStringList splitLines(const QString& text) {
     return text.split(QLatin1Char('\n'));
 }
@@ -22,10 +21,8 @@ std::vector<DiffLine> lineDiff(const QString& oldText, const QString& newText) {
     const int rows = static_cast<int>(oldLines.size());
     const int cols = static_cast<int>(newLines.size());
 
-    // lcs[i][j] = length of the longest common subsequence of oldLines[i:] and
-    // newLines[j:]. Built bottom-up so the forward walk below can greedily
-    // follow the longest match. `at(i, j)` hides the size_t indexing so the
-    // -Wconversion-clean call sites read in plain ints.
+    // lcs[i][j] = LCS length of oldLines[i:] and newLines[j:], built bottom-up so the forward walk
+    // can follow the longest match. `at(i, j)` hides size_t indexing.
     const auto idx = [](int v) {
         return static_cast<std::size_t>(v);
     };
@@ -53,7 +50,6 @@ std::vector<DiffLine> lineDiff(const QString& oldText, const QString& newText) {
             ++i;
             ++j;
         } else if (at(i + 1, j) >= at(i, j + 1)) {
-            // Dropping the old line keeps an LCS at least as long → removal.
             out.push_back(DiffLine{DiffLine::Kind::Removed, oldLines[i]});
             ++i;
         } else {

@@ -1,7 +1,5 @@
-// Resolved dependency plan — the engine's view of a target's execution chain,
-// including edges derived from both explicit `depends_on` and implicit
-// `{{resource.var}}` usage. Lets embedders (the desktop graph) draw the *real*
-// resolved chain instead of re-deriving only the declared edges.
+// Resolved dependency plan: a target's execution chain with explicit `depends_on` and implicit
+// `{{resource.var}}` edges.
 #pragma once
 
 #include <reqloom/engine/Operation.h>
@@ -11,10 +9,9 @@
 
 namespace reqloom::engine {
 
-/// One resolved dependency: `consumer` runs after `producer`. `implicit` is
-/// true when the edge was derived from a `{{resource.var}}` reference rather
-/// than a declared `depends_on`; `variable` then names the flowing value
-/// (e.g. "product.product_id"). For explicit edges `variable` is empty.
+/// One resolved dependency: `consumer` runs after `producer`. `implicit` marks an edge derived from
+/// a `{{resource.var}}` reference; `variable` then names the flowing value (e.g.
+/// "product.product_id").
 struct DependencyEdge {
     OperationId consumer;
     OperationId producer;

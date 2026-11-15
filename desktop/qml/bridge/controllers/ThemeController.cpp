@@ -21,7 +21,6 @@ constexpr auto kLegacyDensityKey = "layout/density";
 
 ThemeController::ThemeController(QObject* parent) : QObject(parent) {
     loadSettings();
-    // Follow live OS appearance changes when in System mode.
     connect(QGuiApplication::styleHints(),
             &QStyleHints::colorSchemeChanged,
             this,
@@ -35,15 +34,10 @@ ThemeController::ThemeController(QObject* parent) : QObject(parent) {
 ThemeController::~ThemeController() = default;
 
 ThemeController* ThemeController::create(QQmlEngine*, QJSEngine*) {
-    // The instance lives in this single translation unit so QML and every C++
-    // consumer (e.g. DesignTokens) share one object. Defining it inline in the
-    // header emitted a separate function-local static per TU that failed to
-    // merge across the static-library boundary — two singletons, so theme
-    // changes on the QML instance never reached the DesignTokens-bound one.
+    // Defined in one TU: an inline header definition emitted a function-local static per TU that
+    // didn't merge across the static-library boundary, giving two singletons.
     static ThemeController instance;
-    // The QML engine deletes singleton instances at teardown; this one has
-    // static storage (shared across QML + C++ consumers), so hand the engine
-    // CppOwnership to stop it from calling delete on non-heap memory.
+    // CppOwnership: static storage must not be deleted by the QML engine at teardown.
     QQmlEngine::setObjectOwnership(&instance, QQmlEngine::CppOwnership);
     return &instance;
 }
@@ -73,7 +67,6 @@ theming::Appearance ThemeController::resolvedAppearance() const {
     if (mode_ == QLatin1String("dark")) {
         return theming::Appearance::Dark;
     }
-    // System: follow the platform.
     const auto scheme = QGuiApplication::styleHints()->colorScheme();
     return (scheme == Qt::ColorScheme::Light) ? theming::Appearance::Light
                                               : theming::Appearance::Dark;

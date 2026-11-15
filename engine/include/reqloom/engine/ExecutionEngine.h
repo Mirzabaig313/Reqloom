@@ -25,8 +25,7 @@
 
 namespace reqloom::engine {
 
-// Forward-declared infrastructure interfaces. Concrete implementations
-// live in `engine/src/infrastructure/` and are not part of the public ABI.
+// Forward-declared infrastructure interfaces; not part of the public ABI.
 class HttpClient;
 class SchemaParser;
 class HistoryStore;
@@ -43,9 +42,7 @@ struct RunResult {
     [[nodiscard]] bool succeeded() const noexcept { return outcome == RunOutcome::Succeeded; }
 };
 
-/// A loaded, validated project. The schema parser produces this; the engine
-/// consumes it. Cycles, undefined references, and unsupported versions are
-/// caught at parse time and surfaced as `ReqloomError`.
+/// A loaded, validated project, produced by the schema parser and consumed by the engine.
 struct Project {
     std::string name;
     std::string defaultEnvironment;
@@ -62,24 +59,19 @@ struct Project {
     /// stay unresolved so a project file cannot exfiltrate them.
     std::vector<std::string> allowedEnv;
 
-    /// Project-wide default auth. Operations whose inline auth is
-    /// `InlineAuthType::Inherit` resolve to this (the "inherit from parent"
-    /// behavior). Empty means those operations run with no auth.
+    /// Project-wide default auth for operations whose inline auth is `InlineAuthType::Inherit`.
+    /// Empty means no auth.
     std::optional<InlineAuth> defaultAuth;
 
     std::map<ActorId, Actor> actors;
     std::map<ResourceId, Resource> resources;
     std::map<std::string, std::map<std::string, std::string>> environments;
-    /// Per-environment transport overrides. Keyed by environment name
-    /// (matches the keys of `environments`). Missing entries fall back
-    /// to a default-constructed `TransportConfig` (TLS verified, no
-    /// proxy, 5s connect timeout) — which is byte-for-byte equivalent
-    /// to the engine's behavior before this map existed.
+    /// Per-environment transport overrides keyed by environment name; a missing entry means a
+    /// default `TransportConfig`.
     std::map<std::string, TransportConfig> transport;
 
-    /// Optional latency budget for the run's p95 response time, in
-    /// milliseconds. 0 means unset (no SLO). Surfaced on the timeline's
-    /// latency chart: the p95 marker turns red when the run breaches it.
+    /// Optional p95 latency budget in milliseconds; 0 means unset. The timeline's p95 marker turns
+    /// red on breach.
     int latencySloP95Ms{0};
 
     /// Root `failure_message.show`: JSONPaths of the response parts a status-mismatch failure
@@ -114,27 +106,21 @@ struct RunOptions {
     bool resetSessions{false};     ///< Invalidates all sessions before running.
     std::string environment;       ///< Empty → use project default.
 
-    /// Opt-in: include the response body on `ResponseReceived` events, including auth
-    /// responses. The body is the person's own view: it reaches subscribers and the history
-    /// store exactly as received (tokens included), capped at `kMaxCapturedBodyBytes`. A
-    /// surface an AI agent or the CLI can read must pass it through `maskCapturedBody` first.
+    /// Opt-in: include the response body (auth responses too) on `ResponseReceived` events, capped
+    /// at `kMaxCapturedBodyBytes`. It is unmasked; any surface an AI agent or the CLI can read must
+    /// pass it through `maskCapturedBody` first.
     bool captureResponseBodies{false};
 
-    /// Most bytes of the (masked) response body quoted in a failed step's detail when the
-    /// status does not match, and in auth login / token endpoint errors. 0 quotes nothing;
-    /// values above `kMaxFailureExcerptBytes` are clamped.
+    /// Most bytes of the (masked) response body quoted in a failed step's detail and auth endpoint
+    /// errors; 0 quotes nothing, values above `kMaxFailureExcerptBytes` are clamped.
     std::size_t failureExcerptBytes{kDefaultFailureExcerptBytes};
 };
 
-/// Upper bound on a captured response body (5 MiB). Larger bodies are
-/// truncated to this many bytes on the `ResponseReceived` event.
+/// Upper bound on a captured response body (5 MiB); larger bodies are truncated.
 inline constexpr std::size_t kMaxCapturedBodyBytes = std::size_t{5} * 1024 * 1024;
 
-/// One past run, as surfaced to a history view. A public value type
-/// mirroring the engine-internal history row, so the desktop/CLI can
-/// list prior runs without reaching into infrastructure headers.
-/// Timestamps are ISO-8601 UTC strings; `endedAt`/`outcome` are empty
-/// until the run terminates (`RunEnded` lands).
+/// One past run for a history view. Timestamps are ISO-8601 UTC; `endedAt`/`outcome` are empty
+/// until `RunEnded` lands.
 struct RunHistoryEntry {
     RunId runId;
     OperationId target;
@@ -148,8 +134,8 @@ struct RunHistoryEntry {
 
 class ExecutionEngine {
 public:
-    /// Dependencies are constructor-injected. Tests substitute fakes;
-    /// production wiring lives in `Bootstrapper.cpp` (desktop) or `main.cpp` (CLI).
+    /// Dependencies are constructor-injected; wiring lives in `Bootstrapper.cpp` (desktop) or
+    /// `main.cpp` (CLI).
     struct Dependencies {
         Dependencies();
         Dependencies(std::unique_ptr<HttpClient> http,
@@ -170,9 +156,8 @@ public:
         std::unique_ptr<HistoryStore> history;
         std::unique_ptr<SecretStore> secrets;
         std::unique_ptr<HookRunner> hooks;
-        /// Which folder each project id belongs to, checked before any secret. With `secrets` set
-        /// and no `trust`, a run that references secrets fails. `makeDefaultDependencies()` sets
-        /// it.
+        /// Which folder each project id belongs to, checked before any secret; with `secrets` but
+        /// no `trust`, a run that references secrets fails.
         std::unique_ptr<ProjectTrustStore> trust;
     };
 
@@ -186,29 +171,21 @@ public:
 
     /// Execute a single operation, auto-resolving its dependency chain.
     ///
-    /// Returns a populated `RunResult` on success or a `ReqloomError` on
-    /// schema-time failures (cycle, undefined reference, etc.). A chain
-    /// whose target step fails at runtime returns a `RunResult` with
-    /// `outcome == Failed`, not an error — inspect `steps` to find which
-    /// step failed.
+    /// Returns `ReqloomError` for schema-time failures (cycle, undefined reference). A chain whose
+    /// target fails at runtime returns a `RunResult` with `outcome == Failed`; inspect `steps`.
     [[nodiscard]] std::expected<RunResult, ReqloomError> run(const Project& project,
                                                              const OperationId& target,
                                                              RunContext& ctx,
                                                              const RunOptions& options = {});
 
-    /// Resolve a target's execution chain without running it: the
-    /// topological order plus the resolved dependency edges (explicit +
-    /// implicit `{{var}}`, each tagged with the flowing variable). Lets the
-    /// UI draw the real resolved graph. Returns the same schema-time errors
-    /// as `run` (cycle, undefined reference).
+    /// Resolve a target's execution chain without running it: topological order plus resolved
+    /// edges, each tagged with the flowing variable. Same schema-time errors as `run`.
     [[nodiscard]] std::expected<ResolvedPlan, ReqloomError> resolvePlan(
         const Project& project, const OperationId& target) const;
 
-    /// Enumerate the `{{...}}` references usable at `target`: upstream
-    /// extracts, the target actor's session tokens, env vars, declared
-    /// secrets, and `$.` built-ins. Pure (resolves the chain, no I/O) so the
-    /// editor can call it for `{{` autocomplete. `environment` empty → the
-    /// project default. Returns the same schema-time errors as `run`.
+    /// Enumerate the `{{...}}` references usable at `target` (upstream extracts, actor session
+    /// tokens, env vars, secrets, `$.` built-ins) for `{{` autocomplete. No I/O; `environment`
+    /// empty means the project default. Same schema-time errors as `run`.
     [[nodiscard]] std::expected<std::vector<VariableSuggestion>, ReqloomError> suggestVariables(
         const Project& project,
         const OperationId& target,
@@ -221,26 +198,20 @@ public:
     using EventCallback = std::function<void(const RunEvent&)>;
     void subscribe(EventCallback callback);
 
-    /// Open (creating if missing) the run-history database at `dbPath`.
-    /// Once open, every subsequent run's events are persisted, and the
-    /// read methods below replay prior runs. Idempotent across repeated
-    /// opens of the same path. A no-op `ReqloomError` is returned if the
-    /// engine was built without a history store.
+    /// Open (creating if missing) the run-history database at `dbPath`; afterwards every run is
+    /// persisted. Idempotent for the same path. Errors if the engine was built without a history
+    /// store.
     [[nodiscard]] std::expected<void, ReqloomError> openHistory(
         const std::filesystem::path& dbPath);
 
-    /// Past runs, newest-first, capped at `limit` (0 = no limit). Requires
-    /// an opened history store (see `openHistory`).
+    /// Past runs, newest-first, capped at `limit` (0 = no limit). Requires `openHistory`.
     [[nodiscard]] std::expected<std::vector<RunHistoryEntry>, ReqloomError> listRuns(
         std::size_t limit = 100) const;
 
-    /// Replay every persisted event for one run, in emission order. Lets a
-    /// history view reconstruct a past run's timeline. Requires an opened
-    /// history store.
+    /// Replay every persisted event for one run in emission order. Requires `openHistory`.
     [[nodiscard]] std::expected<std::vector<RunEvent>, ReqloomError> historyEvents(RunId run) const;
 
-    /// Delete all runs from the open history database. Requires an opened
-    /// history store.
+    /// Delete all runs from the open history database. Requires `openHistory`.
     std::expected<void, ReqloomError> clearHistory();
 
 private:

@@ -9,8 +9,6 @@
 
 namespace reqloom::engine::codecs {
 
-// ─── base64 ─────────────────────────────────────────────────────────────────
-
 namespace {
 
 constexpr std::string_view kBase64Alphabet =
@@ -23,8 +21,7 @@ constexpr std::array<std::uint8_t, 256> makeBase64DecodeTable() {
     for (auto& v : t) {
         v = 0xFF;
     }
-    // Loop counter is std::size_t to satisfy bugprone-too-small-loop-variable;
-    // the static_assert above guarantees the cast back to uint8_t is lossless.
+    // std::size_t counter satisfies bugprone-too-small-loop-variable.
     for (std::size_t i = 0; i < kBase64Alphabet.size(); ++i) {
         t[static_cast<std::uint8_t>(kBase64Alphabet[i])] = static_cast<std::uint8_t>(i);
     }
@@ -126,8 +123,6 @@ std::optional<std::string> base64Decode(std::string_view input) {
     return out;
 }
 
-// ─── hex ────────────────────────────────────────────────────────────────────
-
 std::string hexEncode(std::string_view input) {
     constexpr std::string_view kHex = "0123456789abcdef";
     std::string out;
@@ -170,8 +165,6 @@ std::optional<std::string> hexDecode(std::string_view input) {
     }
     return out;
 }
-
-// ─── url ────────────────────────────────────────────────────────────────────
 
 std::string urlEncode(std::string_view input) {
     constexpr char kHexUpper[] = "0123456789ABCDEF";

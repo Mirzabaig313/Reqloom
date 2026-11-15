@@ -38,8 +38,6 @@ namespace reqloom::engine {
 
 namespace {
 
-// ─── Faults, locations, warnings ─────────────────────────────────────────────
-
 /// A schema mistake at a YAML position, thrown inside one file's parse and turned into a
 /// `ReqloomError` naming that file by `ProjectLoader::guarded`.
 class SchemaFault : public std::runtime_error {
@@ -69,7 +67,6 @@ private:
 /// aliased node on every use, so the depth cap alone does not bound the work.
 constexpr std::size_t kMaxBodyJsonNodes = 1'000'000;
 
-/// Per-file parse state.
 struct ParseCtx {
     std::string file;
     std::vector<std::string>* warnings{nullptr};
@@ -114,8 +111,6 @@ void warnUnknownKeys(const ParseCtx& ctx,
                      std::string_view where) {
     warnUnknownKeys(ctx, node, std::span{known.begin(), known.size()}, where);
 }
-
-// ─── Typed readers: a wrong type is a fault, absent or null is the fallback ──
 
 [[nodiscard]] std::string readString(const YAML::Node& parent,
                                      const char* key,
@@ -162,7 +157,6 @@ void warnUnknownKeys(const ParseCtx& ctx,
     return value;
 }
 
-/// `parent[key]` when it is a map; absent/null passes through; any other type is a fault.
 [[nodiscard]] YAML::Node mapAt(const YAML::Node& parent, const char* key) {
     auto node = parent[key];
     if (present(node) && !node.IsMap()) {
@@ -215,7 +209,6 @@ template <typename E>
     return names;
 }
 
-/// Read `parent[key]` as one of `table`'s names; absent/null → `fallback`.
 template <typename E>
 [[nodiscard]] E readEnum(const YAML::Node& parent,
                          const char* key,
@@ -250,8 +243,6 @@ constexpr std::array<EnumName<HttpMethod>, 7> kMethods{{
 [[nodiscard]] HttpMethod readMethod(const YAML::Node& parent, HttpMethod fallback) {
     return readEnum<HttpMethod>(parent, "method", kMethods, fallback, /*caseInsensitive=*/true);
 }
-
-// ─── Durations and sizes ─────────────────────────────────────────────────────
 
 [[nodiscard]] std::optional<long long> parseNonNegative(std::string_view digits) {
     long long value{};
@@ -331,8 +322,6 @@ constexpr std::array<EnumName<HttpMethod>, 7> kMethods{{
     return static_cast<std::size_t>(*value * scale);
 }
 
-// ─── Strings, maps, bodies ───────────────────────────────────────────────────
-
 [[nodiscard]] std::map<std::string, std::string> readStringMap(const YAML::Node& parent,
                                                                const char* key) {
     std::map<std::string, std::string> result;
@@ -343,8 +332,7 @@ constexpr std::array<EnumName<HttpMethod>, 7> kMethods{{
     for (const auto& kv : node) {
         auto name = kv.first.as<std::string>();
         if (kv.second.IsNull()) {
-            // `key:` with no value (or `key: ~`) is an empty string, not the
-            // literal "~" that emitting a null node would round-trip to.
+            // `key:` with no value (or `key: ~`) is an empty string, not a literal "~".
             result[name] = "";
         } else if (kv.second.IsScalar()) {
             result[name] = kv.second.Scalar();
@@ -357,10 +345,7 @@ constexpr std::array<EnumName<HttpMethod>, 7> kMethods{{
     return result;
 }
 
-/// Read an environment-variable scalar, honoring the `!secret` YAML tag.
-///
-/// `key: !secret NAME` binds the variable to a keychain secret: the value becomes
-/// `{{secret.NAME}}`, which `collectSecretReferences` pre-loads — PRD §5.4.
+/// Read an environment-variable scalar; `key: !secret NAME` becomes `{{secret.NAME}}` (PRD §5.4).
 [[nodiscard]] std::string readEnvScalar(const std::string& name, const YAML::Node& scalar) {
     if (scalar.IsNull()) {
         return {};
@@ -370,8 +355,7 @@ constexpr std::array<EnumName<HttpMethod>, 7> kMethods{{
               std::format(
                   "environment variable '{}' must be a string, got {}", name, describe(scalar)));
     }
-    // yaml-cpp reports an explicit local tag as "!secret"; the implicit
-    // tags for plain scalars are "?"/"!", which we treat as untagged.
+    // yaml-cpp reports a local tag as "!secret"; implicit tags ("?"/"!") count as untagged.
     if (scalar.Tag() == "!secret") {
         const auto& secret = scalar.Scalar();
         return secret.empty() ? std::string{} : "{{secret." + secret + "}}";
@@ -383,14 +367,12 @@ constexpr int kMaxYamlDepth = 64;  // prevent stack overflow on malicious input
 
 nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
     const auto& raw = scalar.Scalar();
-    // A quoted scalar (yaml-cpp reports the non-specific "!" tag) is always a
-    // string — never coerce it to a number/bool. This preserves values like a
-    // zip code "01234" or a flag-shaped string "true" inside a JSON body.
+    // A quoted scalar (non-specific "!" tag) stays a string, so "01234" or "true" survive in JSON
+    // bodies.
     if (scalar.Tag() == "!") {
         return nlohmann::json(raw);
     }
-    // Use parens, not braces — nlohmann::json{x} treats braces as an
-    // initializer-list and produces a one-element array.
+    // Parens, not braces: nlohmann::json{x} would build a one-element array.
     if (raw == "true") {
         return nlohmann::json(true);
     }
@@ -415,8 +397,7 @@ nlohmann::json yamlScalarToJsonValue(const YAML::Node& scalar) {
             if (pos == raw.size()) {
                 return nlohmann::json(d);
             }
-            // std::stod throws on non-numeric input; that's our signal to
-            // fall through and treat the scalar as a string.
+            // std::stod throws on non-numeric input: treat the scalar as a string.
             // NOLINTNEXTLINE(bugprone-empty-catch)
         } catch (...) {
         }
@@ -517,8 +498,6 @@ std::string nodeToJsonString(ParseCtx& ctx, const YAML::Node& node) {
     return out;
 }
 
-// ─── Extractions, assertions, expect_status ──────────────────────────────────
-
 constexpr std::array<EnumName<Extraction::Source>, 6> kExtractionSources{{
     {"jsonpath", Extraction::Source::JsonPath},
     {"xpath", Extraction::Source::XPath},
@@ -528,8 +507,7 @@ constexpr std::array<EnumName<Extraction::Source>, 6> kExtractionSources{{
     {"cookie", Extraction::Source::Cookie},
 }};
 
-// Source implied by the path prefix when no explicit `source:` is present.
-// XPath/Regex are NOT auto-detectable — they require the explicit map form.
+// Source implied by the path prefix; XPath/Regex need the explicit map form.
 Extraction::Source autoDetectExtractionSource(const std::string& path) {
     if (path.starts_with("$.headers.")) {
         return Extraction::Source::Header;
@@ -553,8 +531,8 @@ std::vector<Extraction> parseExtractions(const ParseCtx& ctx, const YAML::Node& 
         Extraction ext;
         ext.variableName = kv.first.as<std::string>();
         const auto& value = kv.second;
-        // A bare scalar path (source auto-detected from the prefix) or a map
-        // `{ path, source }` for sources the prefix can't express (XPath, Regex).
+        // A bare scalar path, or `{ path, source }` for sources a prefix cannot express (XPath,
+        // Regex).
         if (value.IsMap()) {
             warnUnknownKeys(ctx, value, {"path", "source"}, "extract." + ext.variableName);
             ext.sourcePath = readString(value, "path");
@@ -618,8 +596,6 @@ void readExpectStatus(const YAML::Node& parent,
     }
 }
 
-// ─── Inline auth ─────────────────────────────────────────────────────────────
-
 constexpr std::array<EnumName<InlineAuthType>, 18> kInlineAuthTypes{{
     {"none", InlineAuthType::None},
     {"bearer", InlineAuthType::Bearer},
@@ -682,7 +658,6 @@ constexpr std::array<EnumName<bool>, 2> kApiKeyLocations{{
     return {"type"};
 }
 
-/// Parse an `auth:` map (operation-level or project default). Nullopt when absent or `none`.
 std::optional<InlineAuth> parseInlineAuth(const ParseCtx& ctx, const YAML::Node& parent) {
     const auto node = mapAt(parent, "auth");
     if (!present(node)) {
@@ -723,22 +698,18 @@ std::optional<InlineAuth> parseInlineAuth(const ParseCtx& ctx, const YAML::Node&
     auth.oauth2AuthUrl = readString(node, "auth_url");
     auth.oauth2CallbackUrl = readString(node, "callback_url");
     auth.oauth2PkceMethod = readString(node, "pkce_method");
-    // oauth2AccessToken is intentionally never read/written — it is an
-    // ephemeral secret obtained at runtime, not project configuration.
+    // oauth2AccessToken is never read or written: it is an ephemeral runtime secret.
     auth.jwtAlgorithm = readString(node, "algorithm");
     auth.jwtSecret = readString(node, "secret");
     auth.jwtPayload = readString(node, "payload");
     auth.mtlsFormat = readString(node, "format");
-    // Same key names as the actor-level mTLS block (parseActor) so the two
-    // YAML surfaces for the same mechanism stay consistent.
+    // Same key names as the actor-level mTLS block (parseActor).
     auth.mtlsCertPath = readString(node, "cert_path");
     auth.mtlsKeyPath = readString(node, "key_path");
     auth.mtlsKeyPassword = readString(node, "key_password");
     auth.mtlsCaCertPath = readString(node, "ca_cert_path");
     return auth;
 }
-
-// ─── Transport ───────────────────────────────────────────────────────────────
 
 /// Parse a `transport:` block (absent → a default `TransportConfig`).
 ///
@@ -784,11 +755,8 @@ TransportConfig parseTransport(const ParseCtx& ctx, const YAML::Node& parent) {
     return out;
 }
 
-// ─── Hook scripts ────────────────────────────────────────────────────────────
-
-// A hook value is a file reference (not inline JS) when it looks like a
-// relative path to a .js/.mjs file. Single-sourced so the parser can both load
-// the referenced file and remember the reference for a faithful round-trip.
+// A hook value is a file reference when it looks like a relative path to a .js/.mjs file; shared so
+// the parser can load it and remember it for a faithful round-trip.
 [[nodiscard]] bool hookValueIsFileRef(std::string_view s) {
     if (s.starts_with("./") || s.starts_with("../")) {
         return true;
@@ -813,10 +781,8 @@ TransportConfig parseTransport(const ParseCtx& ctx, const YAML::Node& parent) {
         ReqloomError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(message)});
 }
 
-// Resolve a hook-script value: if it looks like a relative path to a .js/.mjs
-// file, load the file content; otherwise treat as inline JS. Paths are
-// canonicalised via weakly_canonical against baseDir and rejected if outside
-// root. File size capped at 1 MiB.
+// Resolve a hook value: a relative .js/.mjs path is loaded (canonicalised against baseDir, rejected
+// if outside root, capped at 1 MiB); anything else is inline JS.
 [[nodiscard]] std::expected<std::string, ReqloomError> resolveHookScript(const std::string& value,
                                                                          const fs::path& baseDir) {
     if (value.empty() || !hookValueIsFileRef(value)) {
@@ -824,9 +790,8 @@ TransportConfig parseTransport(const ParseCtx& ctx, const YAML::Node& parent) {
     }
 
     const fs::path raw{value};
-    // is_absolute() is host-dependent: on Windows it returns false for a
-    // POSIX-rooted path like "/etc/passwd.js". Reject any leading separator or
-    // drive prefix regardless of the host OS so the guard behaves identically.
+    // is_absolute() is host-dependent (false for "/etc/passwd.js" on Windows), so reject any
+    // leading separator or drive prefix on every OS.
     const auto hasRootedPrefix = [](std::string_view s) {
         if (s.starts_with('/') || s.starts_with('\\')) {
             return true;
@@ -891,8 +856,6 @@ TransportConfig parseTransport(const ParseCtx& ctx, const YAML::Node& parent) {
     return contents;
 }
 
-// ─── Actor parsing ───────────────────────────────────────────────────────────
-
 constexpr std::array<EnumName<AuthStrategy>, 11> kStrategies{{
     {"simple", AuthStrategy::Simple},
     {"chain", AuthStrategy::Chain},
@@ -907,7 +870,6 @@ constexpr std::array<EnumName<AuthStrategy>, 11> kStrategies{{
     {"mtls", AuthStrategy::Mtls},
 }};
 
-/// Required and optional config keys of each config-map strategy, copied into `authConfig`.
 struct StrategyKeys {
     std::vector<std::string_view> required;
     std::vector<std::string_view> optional;
@@ -943,7 +905,6 @@ struct StrategyKeys {
 constexpr std::array<std::string_view, 7> kAuthStepKeys{
     "id", "method", "path", "headers", "body", "expect_status", "extract"};
 
-/// One auth request; a chain step reads its `id`, the single `simple` step is "login".
 AuthStep parseAuthStep(ParseCtx& ctx, const YAML::Node& node, bool chainStep) {
     AuthStep step;
     step.id = chainStep ? readString(node, "id") : std::string{"login"};
@@ -1053,8 +1014,6 @@ Actor parseActor(ParseCtx& ctx, const std::string& actorId, const YAML::Node& no
     }
     return actor;
 }
-
-// ─── Resource/Operation parsing ──────────────────────────────────────────────
 
 constexpr std::array<EnumName<Provenance::Source>, 12> kProvenanceSources{{
     {"hand_written", Provenance::Source::HandWritten},
@@ -1192,7 +1151,6 @@ void parseRetry(const ParseCtx& ctx, Operation& op, const YAML::Node& retryNode)
     op.retry.nonIdempotent = readBool(retryNode, "non_idempotent", false);
 }
 
-/// Load a `pre_request` / `post_response` hook into `script`, remembering a file reference.
 void parseHook(const YAML::Node& opNode,
                const char* key,
                const OperationId& opId,
@@ -1231,7 +1189,6 @@ void parseOperationFlow(ParseCtx& ctx, Operation& op, const YAML::Node& opNode) 
         op.forEach = forEach;
     }
     if (const auto deps = opNode["depends_on"]; present(deps)) {
-        // A single scalar is unambiguous: one dependency.
         if (deps.IsScalar()) {
             op.explicitDependencies.push_back(OperationId{deps.Scalar()});
         } else if (deps.IsSequence()) {
@@ -1325,10 +1282,8 @@ Resource parseResource(ParseCtx& ctx,
     return resource;
 }
 
-// ─── File loading ────────────────────────────────────────────────────────────
-
-// Cap raw schema document size before handing bytes to yaml-cpp. The YAML layer is an
-// attacker-controlled surface; 8 MiB is far above any legitimate hand-written schema.
+// Cap raw document size before yaml-cpp: the YAML layer is attacker-controlled and 8 MiB is far
+// above any real schema.
 constexpr std::uintmax_t kMaxYamlBytes = std::uintmax_t{8} * 1024 * 1024;
 
 struct LoadedYaml {
@@ -1340,7 +1295,6 @@ struct LoadedYaml {
     return ReqloomError{code, ErrorClass::Schema, std::move(detail)};
 }
 
-/// Read and parse one schema file. Syntax errors keep yaml-cpp's line and column.
 [[nodiscard]] std::expected<LoadedYaml, ReqloomError> loadYamlCapped(const fs::path& file) {
     std::error_code ec;
     const auto size = fs::file_size(file, ec);
@@ -1477,7 +1431,6 @@ constexpr std::array<std::string_view, 13> kRootKeys{"version",
                                                      "transport",
                                                      "failure_message"};
 
-/// Builds a Project from reqloom.yaml and the files it imports, one file at a time.
 class ProjectLoader {
 public:
     explicit ProjectLoader(fs::path rootYaml)
@@ -1486,7 +1439,6 @@ public:
     [[nodiscard]] std::expected<Project, ReqloomError> load();
 
 private:
-    /// Run `body` for one file, mapping a fault or yaml-cpp error to an error naming `file`.
     template <typename Body>
     [[nodiscard]] std::optional<ReqloomError> guarded(const std::string& file, Body&& body) {
         try {
@@ -1784,8 +1736,7 @@ std::expected<Project, ReqloomError> ProjectLoader::load() {
         return std::unexpected(*err);
     }
 
-    // Reject undefined references, missing depends_on targets, and
-    // dependency cycles at load time (AC-3.1.4 / 3.1.5 / 3.1.6).
+    // Reject undefined references, missing depends_on targets and cycles at load.
     if (auto valid = DependencyResolver{}.validate(project_); !valid) {
         return std::unexpected(valid.error());
     }
@@ -1793,8 +1744,6 @@ std::expected<Project, ReqloomError> ProjectLoader::load() {
 }
 
 }  // namespace
-
-// ─── Public ──────────────────────────────────────────────────────────────────
 
 YamlSchemaParser::YamlSchemaParser() = default;
 YamlSchemaParser::~YamlSchemaParser() = default;

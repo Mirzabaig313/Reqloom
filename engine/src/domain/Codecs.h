@@ -1,10 +1,4 @@
 // Codecs — pure-stdlib string codecs shared across the engine.
-//
-// Previously duplicated in AuthStrategy.cpp, ExecutionEngine.cpp, and
-// VariableResolver.cpp. Domain-layer placement is correct because:
-//   - No I/O, no allocation outside std::string.
-//   - No third-party deps beyond stdlib.
-//   - Pure functions of their input.
 #pragma once
 
 #include <reqloom/engine/Operation.h>
@@ -15,17 +9,12 @@
 
 namespace reqloom::engine::codecs {
 
-// ─── base64 (RFC 4648, standard alphabet, with padding) ─────────────────────
-
 /// Encode arbitrary bytes as base64 with padding. Empty input → empty output.
 [[nodiscard]] std::string base64Encode(std::string_view input);
 
-/// Decode a base64 string. Returns nullopt for any non-alphabet character
-/// (other than padding `=` and ASCII whitespace, which are tolerated),
-/// invalid padding placement, or trailing orphan bytes.
+/// Decode a base64 string; nullopt for a non-alphabet character (padding `=` and ASCII whitespace
+/// are tolerated), bad padding or trailing orphan bytes.
 [[nodiscard]] std::optional<std::string> base64Decode(std::string_view input);
-
-// ─── hex (lowercase, no separator) ──────────────────────────────────────────
 
 [[nodiscard]] std::string hexEncode(std::string_view input);
 
@@ -33,29 +22,16 @@ namespace reqloom::engine::codecs {
 /// length or any non-hex character.
 [[nodiscard]] std::optional<std::string> hexDecode(std::string_view input);
 
-// ─── URL component encoding (RFC 3986) ──────────────────────────────────────
-
-/// Percent-encode for URL path / query component scope. Unreserved
-/// characters (A-Z a-z 0-9 - _ . ~) pass through; everything else is
-/// %HH-encoded with uppercase hex.
+/// Percent-encode for a URL path / query component; unreserved characters pass through, the rest
+/// become uppercase %HH.
 [[nodiscard]] std::string urlEncode(std::string_view input);
 
-/// Decode percent-escapes. Accepts both `+` and `%20` for space
-/// (application/x-www-form-urlencoded convention). Returns nullopt on
-/// any malformed `%`-escape (truncated or non-hex).
+/// Decode percent-escapes, accepting `+` or `%20` for space; nullopt on a malformed escape.
 [[nodiscard]] std::optional<std::string> urlDecode(std::string_view input);
 
-// ─── UTF-8-aware truncation ──────────────────────────────────────────────────
-
-/// Truncate `input` to at most `maxBytes` bytes without splitting a
-/// trailing multibyte UTF-8 sequence: if the cut would land mid-character,
-/// backs off to the start of that character. Returns `input` unchanged
-/// when it already fits. Pure byte logic — invalid UTF-8 is left as-is up
-/// to the (possibly backed-off) boundary; the result is never longer than
-/// `maxBytes`.
+/// Truncate `input` to at most `maxBytes` bytes without splitting a trailing multibyte UTF-8
+/// character; pure byte logic, invalid UTF-8 is left as-is.
 [[nodiscard]] std::string truncateUtf8(std::string_view input, std::size_t maxBytes);
-
-// ─── HTTP method ─────────────────────────────────────────────────────────────
 
 /// HTTP method as a string literal (e.g. `HttpMethod::Post` → `"POST"`).
 /// Shared by the schema writer and the OAuth1 signer.

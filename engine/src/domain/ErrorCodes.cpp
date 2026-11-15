@@ -139,9 +139,7 @@ std::string_view humanize(ErrorCode code) noexcept {
 }
 
 std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
-    // Reverse of toCodeString, matched against the full enumerator list.
-    // The drift guard below fails the build if a code is added without
-    // growing this array.
+    // Reverse of toCodeString; the drift guard below fails the build if this array lags the enum.
     constexpr std::array<ErrorCode, 30> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,

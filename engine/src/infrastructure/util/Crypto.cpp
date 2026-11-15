@@ -31,8 +31,6 @@ namespace reqloom::engine::crypto {
 
 namespace {
 
-/// HMAC via the legacy convenience wrapper. `HMAC()` is documented to
-/// remain in OpenSSL 3.x and is simpler than EVP_MAC.
 std::string hmacWith(const EVP_MD* md, std::string_view key, std::string_view data) {
     if (md == nullptr) {
         return {};
@@ -40,8 +38,7 @@ std::string hmacWith(const EVP_MD* md, std::string_view key, std::string_view da
 
     unsigned int outLen = 0;
     std::array<unsigned char, EVP_MAX_MD_SIZE> buf{};
-    // Cap keyLen defensively — no real key is anywhere near INT_MAX, but
-    // the cast is UB on overflow.
+    // Cap keyLen: the int cast is UB on overflow.
     const auto keyLen = static_cast<int>(std::min(key.size(), static_cast<std::size_t>(INT_MAX)));
     const auto* result = HMAC(md,
                               key.data(),
@@ -56,8 +53,7 @@ std::string hmacWith(const EVP_MD* md, std::string_view key, std::string_view da
     return {reinterpret_cast<const char*>(buf.data()), outLen};
 }
 
-/// One-shot SHA via EVP_Digest. Returns empty on the (vanishingly unlikely)
-/// OpenSSL failure path.
+/// One-shot SHA via EVP_Digest; empty on OpenSSL failure.
 std::string hashWith(const EVP_MD* md, std::string_view data) {
     if (md == nullptr) {
         return {};
@@ -88,13 +84,10 @@ std::string base64UrlEncode(std::string_view data) {
     return s;
 }
 
-/// JWT signature flow shared by HS256 and HS512.
 std::string jwtSignHs(std::string_view payloadJson,
                       std::string_view key,
                       const EVP_MD* md,
                       std::string_view algName) {
-    // Stable header order aids predictability across implementations even
-    // though JWT itself is order-insensitive.
     std::string header = R"({"alg":")";
     header.append(algName);
     header.append(R"(","typ":"JWT"})");

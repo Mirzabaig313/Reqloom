@@ -1,5 +1,5 @@
-// AppController — actor, environment, history, and resource/operation CRUD.
-// Split from AppController.cpp; see AppController.h.
+// AppController — actor, environment, history, and resource/operation CRUD (split from
+// AppController.cpp).
 #include "AppController.h"
 
 #include "ThemeController.h"
@@ -156,9 +156,8 @@ QVariantMap AppController::actorConfigMap() const {
 void AppController::setActorConfigValue(const QString& key, const QString& value) {
     auto pairs = actorConfig_.pairs();
 
-    // Contract: an empty value clears the key. Drop it if present; if it was
-    // absent, nothing changed. (Otherwise a cleared field would persist as an
-    // empty config entry via saveActorInline instead of being removed.)
+    // An empty value clears the key; otherwise a cleared field would persist as an empty config
+    // entry.
     if (value.isEmpty()) {
         if (std::erase_if(pairs, [&key](const auto& kv) { return kv.first == key; }) == 0) {
             return;
@@ -207,7 +206,6 @@ void AppController::prepareNewActor() {
     actorConfig_.clearRows();
     actorAuthExtract_.clearRows();
     actorRefreshExtract_.clearRows();
-    // One blank login step so the N-step editor always has a row to edit.
     actorAuthSteps_.rebuild({AuthStepListModel::StepSeed{
         QStringLiteral("login"), QStringLiteral("POST"), {}, {}, {}, {}}});
     emit actorEditChanged();
@@ -236,7 +234,6 @@ void AppController::prepareEditActor(const QString& actorId) {
             for (const auto& [key, value] : actor.authConfig) {
                 config.emplace_back(QString::fromStdString(key), QString::fromStdString(value));
             }
-            // Full N-step chain for the step-list editor.
             for (const auto& step : actor.authSteps) {
                 AuthStepListModel::StepSeed seed;
                 seed.id = QString::fromStdString(step.id);
@@ -281,8 +278,7 @@ void AppController::prepareEditActor(const QString& actorId) {
     actorConfig_.setPairs(std::move(config));
     actorAuthExtract_.setPairs(std::move(authEx));
     actorRefreshExtract_.setPairs(std::move(refreshEx));
-    // Guarantee the step editor always has a row (a step-based actor with no
-    // steps yet, or a non-step strategy the user may switch to step-based).
+    // Guarantee the step editor always has a row.
     if (stepSeeds.empty()) {
         stepSeeds.push_back(AuthStepListModel::StepSeed{
             QStringLiteral("login"), QStringLiteral("POST"), {}, {}, {}, {}});
@@ -296,8 +292,6 @@ void AppController::newActor() {
         emit notify(QStringLiteral("Open a project before creating an actor."), true);
         return;
     }
-    // Open a fresh actor draft as its own tab (blank id → the inline panel
-    // opens straight in edit mode).
     openActorTab(activeProject().rootPath(), QString{}, /*isNewDraft=*/true);
 }
 
@@ -309,7 +303,6 @@ void AppController::requestActorEdit(const QString& projectRoot, const QString& 
 }
 
 void AppController::cancelActorDraft() {
-    // Cancelling a never-saved draft closes its tab.
     if (tabModel()->valid(activeTabIndex())) {
         closeTab(activeTabIndex());
     }
@@ -323,7 +316,7 @@ bool AppController::saveActorInline(const QString& originalId,
                                     const QString& refreshMethod,
                                     const QString& refreshPath,
                                     const QString& refreshBody) {
-    // Start from the existing actor (preserving inject headers + session TTL).
+    // Start from the existing actor to preserve inject headers and session TTL.
     engine::Actor actor;
     if (!originalId.isEmpty() && activeProject().hasProject()) {
         const auto& actors = activeProject().project().actors;
@@ -348,7 +341,6 @@ bool AppController::saveActorInline(const QString& originalId,
     const bool stepBased =
         (strategy == engine::AuthStrategy::Simple || strategy == engine::AuthStrategy::Chain);
     if (stepBased) {
-        // Rebuild the whole login chain from the step-list editor.
         actor.authSteps.clear();
         for (int i = 0; i < actorAuthSteps_.count(); ++i) {
             engine::AuthStep step;
@@ -391,19 +383,15 @@ bool AppController::saveActorInline(const QString& originalId,
     }
 
     QString error;
-    // Point the read-only selection at the (about-to-exist) actor so onSaved —
-    // which runs synchronously inside saveActor on success — re-seeds it (covers
-    // create with an empty originalId, and rename). Restore on failure so a
-    // rejected save leaves the draft identity intact (an empty name still reads
-    // as a "New actor" draft in the panel).
+    // Point the selection at the about-to-exist actor so onSaved (synchronous inside saveActor)
+    // re-seeds it; restore on failure so a rejected save keeps the draft identity.
     const QString savedName = name.trimmed();
     const QString prevId = selectedActorId_;
     const QString prevName = selectedActorName_;
     selectedActorId_ = savedName;
     selectedActorName_ = savedName;
     if (activeProject().saveActor(originalId, actor, error)) {
-        // Point the active actor tab at the saved id (a draft's blank id
-        // becomes the real name) so switching away/back finds it.
+        // A draft's blank id becomes the real name, so point the actor tab at it.
         if (tabModel()->valid(activeTabIndex()) &&
             tabModel()->stateAt(activeTabIndex()).kind == TabState::Kind::Actor) {
             TabState& tab = tabModel()->stateAt(activeTabIndex());
@@ -469,7 +457,6 @@ void AppController::prepareEditEnvironment(const QString& name) {
 bool AppController::saveEnvironmentEdits(const QString& originalName, const QString& name) {
     std::map<std::string, std::string> variables;
     for (const auto& [key, value] : envVars_.pairs()) {
-        // Skip a stray baseUrl row — the dedicated field is authoritative.
         if (!key.isEmpty() && key != QStringLiteral("baseUrl")) {
             variables.insert_or_assign(key.toStdString(), value.toStdString());
         }
@@ -505,8 +492,8 @@ void AppController::openProjectHistory(const QString& projectRoot) {
     if (base.isEmpty() || projectRoot.isEmpty()) {
         return;
     }
-    // Hash the canonical project path so each project maps to a stable,
-    // filesystem-safe database name without leaking the path or colliding.
+    // Hash the canonical path for a stable, filesystem-safe database name that doesn't leak the
+    // path.
     const QString canonical = QFileInfo(projectRoot).canonicalFilePath();
     const QString key = canonical.isEmpty() ? projectRoot : canonical;
     const QString digest = QString::fromLatin1(
@@ -528,8 +515,7 @@ void AppController::refreshHistory() {
     }
     auto runs = bootstrapper_->engine().listRuns(100);
     if (!runs) {
-        // History is best-effort UI; an unopened/unavailable store just
-        // shows an empty list rather than surfacing an error to the user.
+        // History is best-effort UI: an unavailable store shows an empty list.
         history_.reset();
         return;
     }
@@ -559,8 +545,7 @@ void AppController::replayRun(qulonglong runId) {
         return;
     }
 
-    // Rebuild the live timeline from the persisted events, reusing the same
-    // formatting the live run path applies so a replayed run reads identically.
+    // Reuse the live run path's formatting so a replayed run reads identically.
     timeline_.reset();
     const auto joinHeaders = [](const std::vector<std::pair<std::string, std::string>>& headers) {
         QString out;
@@ -672,8 +657,7 @@ void AppController::selectOperationById(const QString& operationId) {
     }
     const QString module = operationId.left(dot);
     const QString opName = operationId.mid(dot + 1);
-    // openOperationTab (via selectOperation) sets the module context itself;
-    // no separate selectModule (which would blank the active tab).
+    // openOperationTab sets the module context itself; selectModule would blank the active tab.
     selectOperation(module, opName);
 }
 
@@ -758,8 +742,7 @@ void AppController::prepareNewEndpoint(const QString& preselectedResource) {
     }
     newOperationName_.clear();
 
-    // A default TabState is the canonical empty edit buffer. Reusing its
-    // restore path resets every request/auth/body/option/assertion field.
+    // A default TabState is the canonical empty edit buffer; its restore path resets every field.
     restoreOperationEditFrom(TabState{});
     editMethod_ = QStringLiteral("GET");
     editing_ = true;
@@ -921,7 +904,6 @@ void AppController::deleteResource(const QString& resourceId) {
 }
 
 void AppController::selectExample(const QString& operationId, const QString& exampleName) {
-    // Open the operation, then show the stored example response in the panel.
     selectOperationById(operationId);
     const QList<SavedResponse> saved = exampleStore_.list(operationId);
     for (const SavedResponse& r : saved) {
@@ -947,7 +929,6 @@ void AppController::renameExample(const QString& operationId,
                                   const QString& oldName,
                                   const QString& newName) {
     if (exampleStore_.rename(operationId, oldName, newName.trimmed())) {
-        // If the renamed example is the one on screen, keep the label in sync.
         if (shownExample_ == oldName) {
             shownExample_ = newName.trimmed();
             emit responseChanged();

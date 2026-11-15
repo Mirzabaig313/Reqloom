@@ -1,5 +1,4 @@
-// ConstraintLayout — see header. Distributes a 1-D length across segments
-// honouring min/preferred/max + stretch weights.
+// ConstraintLayout — see header.
 #include "ConstraintLayout.h"
 
 #include <algorithm>
@@ -15,9 +14,8 @@ constexpr double kEpsilon = 1e-6;
     return std::max(lo, std::min(value, hi));
 }
 
-/// Grow segments by `surplus` total, weighted by stretch, capped at maximum.
-/// Iterates so that length freed by a capped segment is re-shared among the
-/// rest — converges in at most one pass per segment.
+/// Grow segments by `surplus`, weighted by stretch and capped at maximum; length freed by a capped
+/// segment is re-shared (at most one pass per segment).
 void grow(std::vector<double>& sizes, const std::vector<Constraint>& cons, double surplus) {
     const std::size_t n = sizes.size();
     for (std::size_t guard = 0; guard <= n && surplus > kEpsilon; ++guard) {
@@ -52,9 +50,8 @@ void grow(std::vector<double>& sizes, const std::vector<Constraint>& cons, doubl
     }
 }
 
-/// Shrink segments by `deficit` total, weighted by stretch where any stretch
-/// exists among the shrinkable set, otherwise by the room above their minima.
-/// Capped at minimum; iterates to converge.
+/// Shrink segments by `deficit`, weighted by stretch if any shrinkable segment stretches, else by
+/// room above minima; capped at minimum.
 void shrink(std::vector<double>& sizes, const std::vector<Constraint>& cons, double deficit) {
     const std::size_t n = sizes.size();
     for (std::size_t guard = 0; guard <= n && deficit > kEpsilon; ++guard) {
