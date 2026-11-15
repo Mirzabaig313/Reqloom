@@ -8,6 +8,8 @@
 #include <QtCore/QJsonObject>
 #include <QtCore/QJsonValue>
 
+#include <algorithm>
+
 namespace reqloom::desktop {
 
 namespace {
@@ -165,6 +167,25 @@ void SavedResponseStore::remove(const QString& operationId, const QString& name)
             return;
         }
     }
+}
+
+bool SavedResponseStore::renameOperation(const QString& oldId, const QString& newId) {
+    const auto from =
+        std::ranges::find_if(byOperation_, [&](const auto& e) { return e.first == oldId; });
+    if (oldId == newId || from == byOperation_.end()) {
+        return false;
+    }
+    QList<SavedResponse> moved = from->second;
+    byOperation_.erase(from);
+    const auto to =
+        std::ranges::find_if(byOperation_, [&](const auto& e) { return e.first == newId; });
+    if (to == byOperation_.end()) {
+        byOperation_.append({newId, moved});
+    } else {
+        to->second.append(moved);
+    }
+    persist();
+    return true;
 }
 
 void SavedResponseStore::load() {

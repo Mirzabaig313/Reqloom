@@ -322,7 +322,8 @@ Dialog {
                 destructive: true
                 // Stay on the first line when the actions opposite it wrap.
                 Layout.alignment: Qt.AlignTop
-                enabled: dialog.editingOriginal.length > 0
+                // The project keeps at least one environment to run against.
+                enabled: dialog.editingOriginal.length > 0 && AppController.environments.length > 1
                 onClicked: envConfirmDelete.open()
             }
             // Right-to-left Flow so the three save/cancel actions wrap onto

@@ -3,9 +3,13 @@
 // when n < 2 or IQR is zero.
 #pragma once
 
+#include <cstddef>
 #include <vector>
 
 namespace reqloom::desktop::stats {
+
+/// Most bins histogram() returns, so one slow outlier cannot produce thousands of bars.
+inline constexpr int kMaxHistogramBins = 64;
 
 /// Summary of a latency sample set (all values in the input unit, e.g. ms).
 struct Summary {
@@ -31,7 +35,8 @@ struct Histogram {
 [[nodiscard]] Summary summarize(std::vector<double> samples);
 
 /// Freedman–Diaconis histogram of `samples`. Falls back to ⌈√n⌉ bins when the
-/// IQR is zero or n < 2. A single distinct value yields one unit-width bin.
+/// IQR is zero or n < 2, and widens the bins when more than kMaxHistogramBins
+/// would be needed. A single distinct value yields one unit-width bin.
 [[nodiscard]] Histogram histogram(std::vector<double> samples);
 
 /// Linear-interpolated percentile (`q` in [0,1]) of an already-sorted,

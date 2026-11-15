@@ -150,7 +150,8 @@ Rectangle {
                     }
                     TapHandler {
                         gesturePolicy: TapHandler.ReleaseWithinBounds
-                        onTapped: AppController.activateOperationInProject(AppController.projectRoot, stepRoot.opId)
+                        // Opening only: a prerequisite can be a destructive call.
+                        onTapped: AppController.selectOperationInProject(AppController.projectRoot, stepRoot.opId)
                     }
                     GlassToolTip {
                         active: stepHover.hovered

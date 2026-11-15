@@ -2,6 +2,7 @@
 // ones don't warn.
 #pragma once
 
+#include "application/ProjectEdits.h"
 #include "application/UrlTemplate.h"
 
 #include <reqloom/engine/Factories.h>
@@ -446,24 +447,8 @@ inline void appendRawQuerySegment(QString& query, bool& hasOutputSegment, const 
     return engine::HttpMethod::Get;
 }
 
-/// Derive the extraction source from the path prefix, as the engine's YamlSchemaParser does.
 [[nodiscard]] inline engine::Extraction::Source sourceForPath(const std::string& path) {
-    if (path.starts_with("$.headers.")) {
-        return engine::Extraction::Source::Header;
-    }
-    if (path.starts_with("$.cookies.")) {
-        return engine::Extraction::Source::Cookie;
-    }
-    if (path == "$.status_code") {
-        return engine::Extraction::Source::StatusCode;
-    }
-    return engine::Extraction::Source::JsonPath;
-}
-
-/// Mirror of ProjectModel's id-breaking guard for live dialog validation.
-[[nodiscard]] inline bool hasIdBreakingChars(const QString& name) {
-    return name.contains(QLatin1Char('.')) || name.contains(QLatin1Char('/')) ||
-           name.contains(QLatin1Char('\\'));
+    return impliedExtractionSource(path);
 }
 
 /// Convert an ordered string map to QString pairs for an EditableKeyValueModel.

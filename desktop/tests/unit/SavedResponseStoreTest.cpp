@@ -110,6 +110,21 @@ TEST(SavedResponseStore, duplicate_creates_a_uniquely_named_copy) {
     EXPECT_EQ(store.list(QStringLiteral("a.b")).size(), 3);
 }
 
+TEST(SavedResponseStore, rename_operation_moves_its_examples_and_persists) {
+    QTemporaryDir dir;
+    SavedResponseStore store;
+    store.setProjectRoot(dir.path());
+    store.save(QStringLiteral("a.b"), makeResponse(QStringLiteral("Success"), 200));
+
+    EXPECT_TRUE(store.renameOperation(QStringLiteral("a.b"), QStringLiteral("a.c")));
+
+    EXPECT_TRUE(store.list(QStringLiteral("a.b")).isEmpty());
+    SavedResponseStore reopened;
+    reopened.setProjectRoot(dir.path());
+    ASSERT_EQ(reopened.list(QStringLiteral("a.c")).size(), 1);
+    EXPECT_FALSE(store.renameOperation(QStringLiteral("missing"), QStringLiteral("a.d")));
+}
+
 TEST(SavedResponseStore, save_without_project_root_fails) {
     SavedResponseStore store;  // no setProjectRoot
     EXPECT_FALSE(store.save(QStringLiteral("a.b"), makeResponse(QStringLiteral("x"), 200)));

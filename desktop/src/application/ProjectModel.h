@@ -79,35 +79,48 @@ public:
     [[nodiscard]] bool saveProjectDefaultAuth(const std::optional<engine::InlineAuth>& defaultAuth,
                                               QString& error);
 
-    /// Rename operation `id` to `newName` (the part after the resource dot). Fails if empty,
-    /// malformed or already used. Emits `saved` on success.
+    /// Rename operation `id` to `newName` (the part after the resource dot), re-pointing
+    /// depends_on. Fails if the name is invalid or used by another operation of the resource,
+    /// ignoring case. Emits `operationRenamed` then `saved` on success.
     [[nodiscard]] bool renameOperation(const engine::OperationId& id,
                                        const QString& newName,
                                        QString& error);
 
-    /// Delete operation `id`, persist the project, and rebind. Emits `saved`
-    /// on success.
-    [[nodiscard]] bool deleteOperation(const engine::OperationId& id, QString& error);
+    /// Delete operation `id`. Refused while another operation consumes a `{{res.var}}` only this
+    /// one extracts; depends_on entries naming it are dropped and their operations listed in
+    /// `droppedFrom`. Emits `operationRemoved` then `saved` on success.
+    [[nodiscard]] bool deleteOperation(const engine::OperationId& id,
+                                       QString& error,
+                                       QStringList* droppedFrom = nullptr);
 
-    /// Rename resource `id` to `newName`, updating every operation's id and
-    /// resource reference, persisting, and removing the stale `<old>.yaml`
-    /// file. Fails on empty/duplicate names. Emits `saved` on success.
+    /// Rename resource `id` to `newName`: re-qualifies its operations and rewrites depends_on,
+    /// for_each and every `{{id.…}}` reference. A rename that changes only letter case keeps the
+    /// file. Fails on an invalid name or one used by another resource, ignoring case. Emits
+    /// `operationRenamed` for each operation, then `saved`.
     [[nodiscard]] bool renameResource(const engine::ResourceId& id,
                                       const QString& newName,
                                       QString& error);
 
-    /// Delete resource `id` (and all its operations), persist, and remove its
-    /// `<id>.yaml` file. Emits `saved` on success.
-    [[nodiscard]] bool deleteResource(const engine::ResourceId& id, QString& error);
+    /// Delete resource `id` and its operations. Refused while a template or for_each elsewhere
+    /// refers to it; depends_on entries into it are dropped and their operations listed in
+    /// `droppedFrom`. Emits `operationRemoved` for each operation, then `saved`.
+    [[nodiscard]] bool deleteResource(const engine::ResourceId& id,
+                                      QString& error,
+                                      QStringList* droppedFrom = nullptr);
+
+    /// Operations a delete would change: for `kind` "operation" or "resource", those whose
+    /// depends_on names it (or one of its operations); for "actor", those that run as it.
+    [[nodiscard]] QStringList dependentsOf(const QString& kind, const QString& id) const;
 
     /// Create or update an actor (`originalId` empty → create; else update, renaming to `actor.id`
-    /// and remapping references). The caller supplies the full actor. Emits `saved` on success.
+    /// and remapping operation actors, poll_until actors and `{{actor.…}}` references). The caller
+    /// supplies the full actor. Emits `saved` on success.
     [[nodiscard]] bool saveActor(const QString& originalId,
                                  const engine::Actor& actor,
                                  QString& error);
 
-    /// Delete actor `id`, clear it from operations that referenced it, persist and rebind. Emits
-    /// `saved` on success.
+    /// Delete actor `id` and clear it from operations that run as it. Refused while a template or
+    /// a poll_until refers to it. Emits `saved` on success.
     [[nodiscard]] bool deleteActor(const engine::ActorId& id, QString& error);
 
     /// Create or update an environment (`originalName` empty → create; else update, renaming to
@@ -118,9 +131,9 @@ public:
                                        const std::map<std::string, std::string>& variables,
                                        QString& error);
 
-    /// Delete environment `name` (and its transport config); if it was the
-    /// project default, reassign the default to another environment (or empty).
-    /// Persists + rebinds; emits `saved` on success.
+    /// Delete environment `name` (and its transport config); if it was the project default, the
+    /// first remaining environment becomes the default. Deleting the only environment is refused.
+    /// Emits `saved` on success.
     [[nodiscard]] bool deleteEnvironment(const QString& name, QString& error);
     /// Set the project-level p95 latency SLO budget (ms); 0 clears it. Emits `saved` on success.
     [[nodiscard]] bool setLatencySloP95Ms(int ms, QString& error);
@@ -157,8 +170,22 @@ signals:
     void loaded();
     void loadFailed(QString code, QString detail);
     void saved();
+    /// An operation's id changed (its own rename or its resource's); emitted before `saved`.
+    void operationRenamed(QString oldId, QString newId);
+    /// An operation was deleted (alone or with its resource); emitted before `saved`.
+    void operationRemoved(QString operationId);
 
 private:
+    /// Validate and write `draft`; on failure `error` is set and nothing is published.
+    [[nodiscard]] bool validateAndWrite(const engine::Project& draft, QString& error) const;
+    /// Like `validateAndWrite` for a rename of `<folder>/<from>.yaml` to `to`, keeping the file
+    /// when the names differ only in letter case.
+    [[nodiscard]] bool writeRenamed(const engine::Project& draft,
+                                    const std::string& folder,
+                                    const std::string& from,
+                                    const std::string& to,
+                                    QString& error) const;
+
     std::shared_ptr<const engine::Project> project_;
     std::filesystem::path root_;
 };

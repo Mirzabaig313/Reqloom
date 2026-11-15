@@ -651,6 +651,9 @@ struct EventEnvelope {
 }  // namespace
 
 struct SqliteHistoryStore::Impl {
+    // The engine worker appends while the GUI thread lists, reads and clears; one lock per public
+    // call serialises the connection and its shared prepared statements.
+    mutable std::mutex mutex;
     DbPtr db;
 
     StmtPtr insertEventStmt;
@@ -795,6 +798,16 @@ struct SqliteHistoryStore::Impl {
         return {};
     }
 
+    void close() {
+        insertEventStmt.reset();
+        insertRunStmt.reset();
+        updateRunStartedStmt.reset();
+        updateRunEndedStmt.reset();
+        nextSeqStmt.reset();
+        rejectedRuns.clear();
+        db.reset();
+    }
+
     [[nodiscard]] std::int64_t nextSeq(std::uint64_t runId) const {
         sqlite3_reset(nextSeqStmt.get());
         sqlite3_bind_int64(nextSeqStmt.get(), 1, static_cast<sqlite3_int64>(runId));
@@ -809,8 +822,9 @@ SqliteHistoryStore::SqliteHistoryStore() : impl_(std::make_unique<Impl>()) {}
 SqliteHistoryStore::~SqliteHistoryStore() = default;
 
 std::expected<void, ReqloomError> SqliteHistoryStore::open(const fs::path& dbPath) {
+    const std::lock_guard lock(impl_->mutex);
     // Re-openable: drop any previous connection and statements so switching projects leaks nothing.
-    close();
+    impl_->close();
 
     if (dbPath.has_parent_path()) {
         std::error_code ec;
@@ -847,6 +861,7 @@ std::expected<void, ReqloomError> SqliteHistoryStore::open(const fs::path& dbPat
 }
 
 std::expected<RunId, ReqloomError> SqliteHistoryStore::allocateRunId() {
+    const std::lock_guard lock(impl_->mutex);
     if (!impl_->db) {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: allocateRunId before open"});
@@ -880,6 +895,7 @@ std::expected<RunId, ReqloomError> SqliteHistoryStore::allocateRunId() {
 }
 
 std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& event) {
+    const std::lock_guard lock(impl_->mutex);
     if (!impl_->db) {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: append before open"});
@@ -1006,6 +1022,7 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
 }
 
 std::expected<std::vector<RunEvent>, ReqloomError> SqliteHistoryStore::eventsFor(RunId run) const {
+    const std::lock_guard lock(impl_->mutex);
     if (!impl_->db) {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: eventsFor before open"});
@@ -1052,6 +1069,7 @@ std::expected<std::vector<RunEvent>, ReqloomError> SqliteHistoryStore::eventsFor
 
 std::expected<std::vector<RunHistoryRow>, ReqloomError> SqliteHistoryStore::listRuns(
     std::size_t limit) const {
+    const std::lock_guard lock(impl_->mutex);
     if (!impl_->db) {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: listRuns before open"});
@@ -1092,6 +1110,7 @@ std::expected<std::vector<RunHistoryRow>, ReqloomError> SqliteHistoryStore::list
 }
 
 std::expected<void, ReqloomError> SqliteHistoryStore::clear() {
+    const std::lock_guard lock(impl_->mutex);
     if (!impl_->db) {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: clear before open"});
@@ -1113,13 +1132,8 @@ std::expected<void, ReqloomError> SqliteHistoryStore::clear() {
 }
 
 void SqliteHistoryStore::close() {
-    impl_->insertEventStmt.reset();
-    impl_->insertRunStmt.reset();
-    impl_->updateRunStartedStmt.reset();
-    impl_->updateRunEndedStmt.reset();
-    impl_->nextSeqStmt.reset();
-    impl_->rejectedRuns.clear();
-    impl_->db.reset();
+    const std::lock_guard lock(impl_->mutex);
+    impl_->close();
 }
 
 }  // namespace reqloom::engine

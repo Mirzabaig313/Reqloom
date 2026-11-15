@@ -676,13 +676,9 @@ ApplicationWindow {
         onDiagnosticNavigationFailed: message => toast.show(message, true)
     }
 
-    // ── Toast overlay (bottom centre) ──────────────────────────────────────
+    // ── Toast overlay (bottom centre, above dialogs) ───────────────────────
     Toast {
         id: toast
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: DesignTokens.spaceLg
-        z: 100
     }
 
     // ── Dialogs ────────────────────────────────────────────────────────────

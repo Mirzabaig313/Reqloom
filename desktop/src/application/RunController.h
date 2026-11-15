@@ -21,6 +21,7 @@
 #include <vector>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <map>
 
@@ -176,7 +177,9 @@ public:
     void clearExtractionCache();
 
     /// An actor's accumulated cookie jar (name → value) for the current run context; empty before
-    /// any run.
+    /// any run. While a run uses that context, this and the other read paths below answer from the
+    /// copy taken just before the run started, so the GUI thread never reads what the worker
+    /// writes.
     [[nodiscard]] std::map<std::string, std::string> cookies(const engine::ActorId& actor) const;
 
     /// The same jar with each cookie's setting host, Domain, Path, Secure and expiry.
@@ -201,7 +204,8 @@ public:
     /// Drop every run context of the project at `rootPath`. Refused for an in-flight run's project.
     void forgetProject(const QString& rootPath);
 
-    /// The active run context, or nullptr when none exists yet.
+    /// The active run context, or nullptr when none exists yet. Not for the GUI thread while a run
+    /// uses that context.
     [[nodiscard]] engine::RunContext* findActiveContext() const;
     /// The active run context, created on first use.
     engine::RunContext& contextForActive();
@@ -221,7 +225,8 @@ public slots:
                          bool dryRun,
                          const RequestOverride& requestOverride);
 
-    /// Cancel the in-flight run, if any.
+    /// Cancel the in-flight run, if any. A cancel issued before the engine has announced the run
+    /// id is held and applied as soon as it does.
     void cancelRun();
 
 signals:
@@ -250,7 +255,28 @@ signals:
     void runningChanged(bool running);
 
 private:
+    // Shared with the engine callback, which the engine keeps after this controller is gone.
+    struct EventGate {
+        std::atomic_bool alive{true};
+        std::atomic<std::uint64_t> runId{0};
+        std::atomic_bool cancelPending{false};
+    };
+
+    // What the GUI may read about one actor while a run owns its context.
+    struct ActorView {
+        engine::ActorSession::State state{engine::ActorSession::State::None};
+        std::chrono::steady_clock::time_point expiresAt{};
+        std::map<std::string, std::string> cookies;
+        std::vector<engine::JarCookie> jar;
+    };
+
     void publishEvent(const engine::RunEvent& event);
+    void requestCancel();
+    void snapshotForRun(const engine::RunContext& ctx);
+    // The pre-run copy of `actor` when a run is using the active context, else nullptr.
+    [[nodiscard]] const ActorView* runSnapshotFor(const engine::ActorId& actor) const;
+    [[nodiscard]] static ActorSessionInfo sessionInfoOf(
+        engine::ActorSession::State state, std::chrono::steady_clock::time_point expiresAt);
 
     engine::ExecutionEngine& engine_;
     const ProjectModel* project_;
@@ -263,20 +289,16 @@ private:
     // holding `&ctx` stays valid across a switch. Evicted only by forgetProject.
     std::map<ContextKey, std::unique_ptr<engine::RunContext>> contexts_;
     std::string environment_;
-    // Root of the project an in-flight run belongs to; forgetProject refuses it.
-    std::string runningRoot_;
+    // Context of the in-flight run: forgetProject refuses its project, reads of it use
+    // runSnapshot_.
+    ContextKey runningKey_;
+    std::map<std::string, ActorView> runSnapshot_;
     QFutureWatcher<RunReport> watcher_;
     bool running_{false};
     bool captureResponseBodies_{false};
     // Pinned `{{resource.var}}` → value, seeded before each run (value picker).
     std::vector<std::pair<std::string, std::string>> variableOverrides_;
-    // Written on the worker thread (RunStarted handler), read on the GUI
-    // thread (cancelRun) — atomic to avoid a data race on the run id.
-    std::atomic<std::uint64_t> currentRunId_{0};
-
-    // Lifetime guard for the engine event callback (which the engine retains with no unsubscribe):
-    // the callback captures a copy and skips emitting once the destructor clears it.
-    std::shared_ptr<std::atomic_bool> alive_{std::make_shared<std::atomic_bool>(true)};
+    std::shared_ptr<EventGate> gate_{std::make_shared<EventGate>()};
 };
 
 }  // namespace reqloom::desktop

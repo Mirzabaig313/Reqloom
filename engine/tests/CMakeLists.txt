@@ -46,6 +46,7 @@ add_executable(reqloom-engine-unit-tests
     unit/HeaderMaskingTest.cpp
     unit/SecretRedactionTest.cpp
     unit/SqliteHistoryStoreTest.cpp
+    unit/SqliteHistoryStoreConcurrencyTest.cpp
     unit/SchemaValidationTest.cpp
     unit/SchemaStrictnessTest.cpp
     unit/SchemaWriterSafetyTest.cpp

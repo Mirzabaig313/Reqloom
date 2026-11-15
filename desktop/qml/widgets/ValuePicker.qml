@@ -1,11 +1,12 @@
 // ValuePicker — a concrete-value dropdown for a `{{resource.var}}` reference.
-// Two ways in: (a) attached to a text field, it opens when the caret sits
-// inside a complete `{{resource.var}}`; (b) `openAt(token, item)` opens it
-// anchored under an item (the view-mode path token chip). It lists the values
-// captured from the producing (list) endpoint (AppController.candidateValues),
-// lets the user search / pick / add a custom one, and pins the choice
-// (AppController.setVariableOverride, Option A). Re-fetch re-runs the producer
-// for fresh ids; the reference text is never modified.
+// Two ways in: (a) attached to a text field, it appears as a hint when the caret
+// sits inside a complete `{{resource.var}}`, leaving focus and typing with the
+// field; (b) `openAt(token, item)` opens it focused, anchored under an item (the
+// view-mode path token chip). It lists the values captured from the producing
+// (list) endpoint (AppController.candidateValues), lets the user search / pick /
+// add a custom one, and pins the choice (AppController.setVariableOverride,
+// Option A). Re-fetch re-runs the producer for fresh ids; the reference text is
+// never modified.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -23,6 +24,9 @@ Item {
     property var _all: []
     property var _filtered: []
     property int _index: 0
+    // Caret-driven hint: the popup must not take focus, so keys typed in the
+    // field never reach its search box and nothing is pinned without a click.
+    property bool _hint: false
 
     implicitWidth: 0
     implicitHeight: 0
@@ -79,6 +83,10 @@ Item {
             popup.close();
             return;
         }
+        if (popup.visible && !root._hint && root._token === token) {
+            return;
+        }
+        root._hint = true;
         root._token = token;
         root._all = AppController.candidateValues(token);
         _applyFilter();
@@ -93,6 +101,8 @@ Item {
 
     // Explicit open anchored under `anchorItem` (view-mode token chip).
     function openAt(token, anchorItem) {
+        popup.close();
+        root._hint = false;
         root._token = token;
         root._all = AppController.candidateValues(token);
         _applyFilter();
@@ -100,6 +110,12 @@ Item {
         popup.x = 0;
         popup.y = anchorItem.height + 2;
         popup.open();
+    }
+
+    function _closeIfAbandoned() {
+        if (root.field && !root.field.activeFocus && !popup.activeFocus) {
+            popup.close();
+        }
     }
 
     function pin(value) {
@@ -113,9 +129,9 @@ Item {
             Qt.callLater(root.refresh);
         }
         function onActiveFocusChanged() {
-            if (!root.field.activeFocus && !popup.activeFocus) {
-                popup.close();
-            }
+            // Deferred: a click inside the popup moves focus there only after
+            // the field has reported losing it.
+            Qt.callLater(root._closeIfAbandoned);
         }
     }
 
@@ -136,15 +152,17 @@ Item {
         // narrow (e.g. 320-DIP) editor.
         margins: DesignTokens.spaceSm
         width: Math.min(360, (Overlay.overlay ? Overlay.overlay.width : 640) - 2 * DesignTokens.spaceSm)
-        focus: true
+        focus: !root._hint
         padding: DesignTokens.spaceXs
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: root._hint ? Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent : Popup.CloseOnEscape | Popup.CloseOnPressOutside
         enter: PopupEnter {}
         exit: PopupExit {}
         onOpened: {
             search.text = "";
             root._applyFilter();
-            search.forceActiveFocus();
+            if (!root._hint) {
+                search.forceActiveFocus();
+            }
         }
         background: Rectangle {
             radius: DesignTokens.radiusSm
@@ -158,7 +176,7 @@ Item {
 
             Label {
                 Layout.fillWidth: true
-                text: qsTr("Value for {{%1}}").arg(root._token)
+                text: root._hint ? qsTr("Value for {{%1}} — click one to pin it").arg(root._token) : qsTr("Value for {{%1}}").arg(root._token)
                 color: DesignTokens.textSecondary
                 font.pixelSize: DesignTokens.fontCaption
                 elide: Text.ElideRight

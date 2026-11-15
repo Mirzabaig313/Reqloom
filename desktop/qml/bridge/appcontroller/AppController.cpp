@@ -2,6 +2,7 @@
 #include "AppController.h"
 
 #include "ThemeController.h"
+#include "application/EditBody.h"
 #include "application/EnvironmentSettings.h"
 #include "application/OAuth2AuthCodeFlow.h"
 #include "application/ProjectModel.h"
@@ -9,6 +10,7 @@
 #include "views/Formatting.h"
 #include "views/HookEditorDialog.h"
 #include "views/PathEval.h"
+#include "widgets/BodyText.h"
 #include "widgets/GraphLayout.h"
 #include "widgets/LineDiff.h"
 
@@ -140,59 +142,7 @@ AppController::AppController(QObject* parent)
     // to off.
     runController_->setCaptureResponseBodies(captureBodies_);
 
-    connect(runController_.get(), &RunController::runningChanged, this, [this](bool running) {
-        running_ = running;
-        emit runningChanged();
-    });
-    connect(runController_.get(),
-            &RunController::responseReceived,
-            this,
-            [this](int,
-                   int status,
-                   const QString& headers,
-                   int bodySize,
-                   qint64 elapsedMs,
-                   const QString& body) {
-                hasResponse_ = true;
-                shownExample_.clear();
-                respStatus_ = status;
-                respHeaders_ = headers;
-                respBodySize_ = bodySize;
-                respElapsedMs_ = static_cast<int>(elapsedMs);
-                respBody_ = body;
-                responseBody_.setBody(body);
-                emit responseChanged();
-            });
-    // When the refreshCandidates producer returns, store its body as an example so the picker
-    // updates.
-    connect(runController_.get(),
-            &RunController::responseReceived,
-            this,
-            [this](int index, int status, const QString&, int, qint64, const QString& body) {
-                if (pendingCandidateOp_.isEmpty()) {
-                    return;
-                }
-                if (runStepOp_.value(index) != pendingCandidateOp_) {
-                    return;
-                }
-                if (status >= 200 && status < 300 && !body.isEmpty()) {
-                    SavedResponse example;
-                    example.name = QStringLiteral("Latest (auto)");
-                    example.status = status;
-                    example.body = body;
-                    exampleStore_.save(pendingCandidateOp_, example);
-                }
-                pendingCandidateOp_.clear();
-                emit variableOverridesChanged();
-            });
-    connect(runController_.get(), &RunController::runEnded, this, [this](const QString& outcome) {
-        runOutcome_ = outcome;
-        emit responseChanged();
-        refreshHistory();
-        emit cookiesChanged();
-        // Only a run authenticates an actor, so session dots change only here.
-        refreshActorSessions();
-    });
+    wireRunEvents();
 
     sessionTicker_.setInterval(kSessionTickMs);
     connect(&sessionTicker_, &QTimer::timeout, this, &AppController::refreshActorSessions);
@@ -202,99 +152,6 @@ AppController::AppController(QObject* parent)
         refreshActorSessions();
         emit cookiesChanged();
     });
-
-    // Bridge every streamed RunController signal into the timeline model (receiver-bound,
-    // function-pointer form).
-    connect(
-        runController_.get(), &RunController::runStarted, &timeline_, &TimelineModel::onRunStarted);
-    connect(runController_.get(),
-            &RunController::stepStarted,
-            &timeline_,
-            &TimelineModel::onStepStarted);
-    connect(runController_.get(),
-            &RunController::stepSkipped,
-            &timeline_,
-            &TimelineModel::onStepSkipped);
-    connect(runController_.get(),
-            &RunController::requestPrepared,
-            &timeline_,
-            &TimelineModel::onRequestPrepared);
-    connect(runController_.get(),
-            &RunController::responseReceived,
-            &timeline_,
-            &TimelineModel::onResponseReceived);
-    connect(runController_.get(),
-            &RunController::extractionCompleted,
-            &timeline_,
-            &TimelineModel::onExtractionCompleted);
-    connect(runController_.get(),
-            &RunController::assertionCompleted,
-            &timeline_,
-            &TimelineModel::onAssertionCompleted);
-    connect(
-        runController_.get(), &RunController::stepFailed, &timeline_, &TimelineModel::onStepFailed);
-    connect(runController_.get(),
-            &RunController::stepBlocked,
-            &timeline_,
-            &TimelineModel::onStepBlocked);
-    connect(runController_.get(), &RunController::runEnded, &timeline_, &TimelineModel::onRunEnded);
-
-    // Run events name an op (stepStarted/stepFailed) or only a step index (responseReceived);
-    // map index → op from stepStarted so every event can colour its node.
-    connect(runController_.get(),
-            &RunController::runStarted,
-            this,
-            [this](const QString&, int, const QString&) {
-                runStepOp_.clear();
-                chainStatus_.clear();
-                emit chainStatusChanged();
-            });
-    connect(runController_.get(),
-            &RunController::stepStarted,
-            this,
-            [this](int index, const QString& op, int) {
-                runStepOp_.insert(index, op);
-                chainStatus_.insert(op, QStringLiteral("running"));
-                emit chainStatusChanged();
-            });
-    connect(runController_.get(),
-            &RunController::stepSkipped,
-            this,
-            [this](int index, const QString& op, const QString&) {
-                runStepOp_.insert(index, op);
-                chainStatus_.insert(op, QStringLiteral("skipped"));
-                emit chainStatusChanged();
-            });
-    connect(runController_.get(),
-            &RunController::responseReceived,
-            this,
-            [this](int index, int status, const QString&, int, qint64, const QString&) {
-                const QString op = runStepOp_.value(index);
-                if (!op.isEmpty()) {
-                    chainStatus_.insert(op,
-                                        status >= 500   ? QStringLiteral("error")
-                                        : status >= 300 ? QStringLiteral("warning")
-                                                        : QStringLiteral("success"));
-                    emit chainStatusChanged();
-                }
-            });
-    connect(
-        runController_.get(),
-        &RunController::stepFailed,
-        this,
-        [this](int index, const QString& op, const QString&, const QString&, const QVariantList&) {
-            runStepOp_.insert(index, op);
-            chainStatus_.insert(op, QStringLiteral("error"));
-            emit chainStatusChanged();
-        });
-    connect(runController_.get(),
-            &RunController::stepBlocked,
-            this,
-            [this](int index, const QString& op, int) {
-                runStepOp_.insert(index, op);
-                chainStatus_.insert(op, QStringLiteral("blocked"));
-                emit chainStatusChanged();
-            });
 
     treeFilter_.setSourceModel(&tree_);
 
@@ -632,18 +489,17 @@ void AppController::rebindActiveProject(bool repopulateTree) {
     // Per-project run-history database, keyed by a hash of the project root.
     openProjectHistory(activeProject().rootPath());
     environments_ = activeProject().environmentNames();
-    if (environment_.isEmpty() || !environments_.contains(environment_)) {
+    {
+        // Each project restores its own selection; the previous project's says nothing about it.
         QSettings settings;
-        const QString saved = EnvironmentSettings::load(settings, activeProject().rootPath());
-        if (!saved.isEmpty() && environments_.contains(saved)) {
-            environment_ = saved;
-        } else {
-            environment_ = activeProject().defaultEnvironment();
-            if (environment_.isEmpty() && !environments_.isEmpty()) {
-                environment_ = environments_.front();
-            }
+        const QString chosen =
+            chooseEnvironment(environments_,
+                              EnvironmentSettings::load(settings, activeProject().rootPath()),
+                              activeProject().defaultEnvironment());
+        if (chosen != environment_) {
+            environment_ = chosen;
+            emit environmentChanged();
         }
-        emit environmentChanged();
     }
     // The previously open op belonged to the prior project; callers select what comes next.
     selectedModule_.clear();
@@ -948,11 +804,26 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
 }
 
 void AppController::onLoaded() {
+    connect(&activeProject(),
+            &ProjectModel::operationRenamed,
+            this,
+            &AppController::onOperationRenamed,
+            Qt::UniqueConnection);
+    connect(&activeProject(),
+            &ProjectModel::operationRemoved,
+            this,
+            &AppController::onOperationRemoved,
+            Qt::UniqueConnection);
     recordRecentProject(activeProject().name(), activeProject().rootPath());
     persistOpenProjects();
     persistActiveProject();
     rebindActiveProject(/*repopulateTree=*/true);
     selectFirstModule();
+    if (const QStringList warnings = loadWarnings(); !warnings.isEmpty()) {
+        emit notify(tr("“%1” loaded with %n warning(s); the first: %2", nullptr, warnings.size())
+                        .arg(activeProject().name(), warnings.front()),
+                    true);
+    }
 }
 
 void AppController::onSaved() {
@@ -964,6 +835,7 @@ void AppController::onSaved() {
     exampleStore_.setProjectRoot(activeProject().rootPath());
 
     environments_ = activeProject().environmentNames();
+    ensureEnvironmentExists();
 
     // Keep an open actor detail in sync; clear it if the actor was renamed or deleted.
     if (hasActor_) {
@@ -1120,10 +992,15 @@ void AppController::setCaptureBodies(bool capture) {
 }
 
 void AppController::runSelected(bool clean, bool dryRun) {
-    if (!hasOperation_ || running_) {
+    if (!hasOperation_) {
+        return;
+    }
+    if (running_) {
+        emit notify(tr("A run is already in progress. Wait for it to finish or cancel it."), true);
         return;
     }
     const QString target = selectedModule_ + '.' + opName_;
+    pendingCandidateOp_.clear();
     runController_->run(target, environment_, clean, dryRun);
 }
 
@@ -1243,6 +1120,14 @@ void AppController::setEditBodyType(const QString& type) {
     }
     if (!desired.isEmpty()) {
         setManagedContentType(desired);
+    } else if (type == QStringLiteral("none")) {
+        // editBody_ and editForm_ stay in memory so switching back restores them; buildOverride
+        // sends neither.
+        auto headers = editHeaders_.pairs();
+        auto kept = withoutManagedContentType(headers);
+        if (kept.size() != headers.size()) {
+            editHeaders_.setPairs(std::move(kept));
+        }
     }
     emit editChanged();
     emit chainChanged();
@@ -1944,14 +1829,7 @@ RequestOverride AppController::buildOverride() const {
     // "none" leaves nullopt so applyOverrideToOperation clears prior auth.
     ov.inlineAuth = buildInlineAuthFromEdit();
 
-    ov.bodyIsForm = editBodyIsForm_;
-    if (editBodyIsForm_) {
-        for (const auto& [key, value] : editForm_.pairs()) {
-            ov.formFields.insert_or_assign(key.toStdString(), value.toStdString());
-        }
-    } else {
-        ov.body = editBody_;
-    }
+    applyEditBody(ov, editBodyType_, editBody_, editForm_.pairs());
 
     // Chain edits are opt-in: a request-only override never wipes depends_on / extract.
     ov.chainEdited = chainFieldsLoaded_;
@@ -2008,10 +1886,15 @@ RequestOverride AppController::buildOverride() const {
 }
 
 void AppController::applyAndRun(bool clean, bool dryRun) {
-    if (creatingOperation_ || !hasOperation_ || running_) {
+    if (creatingOperation_ || !hasOperation_) {
+        return;
+    }
+    if (running_) {
+        emit notify(tr("A run is already in progress. Wait for it to finish or cancel it."), true);
         return;
     }
     const QString target = selectedModule_ + '.' + opName_;
+    pendingCandidateOp_.clear();
     runController_->runWithOverride(target, environment_, clean, dryRun, buildOverride());
 }
 
@@ -2250,8 +2133,18 @@ QString AppController::exampleBody(const QString& name) const {
 }
 
 QVariantList AppController::lineDiff(const QString& oldText, const QString& newText) const {
+    const widgets::diff::LineDiffResult diff = widgets::diff::boundedLineDiff(oldText, newText);
+    if (diff.tooLarge) {
+        return {QVariantMap{
+            {QStringLiteral("sign"), QString{}},
+            {QStringLiteral("text"),
+             tr("These bodies are too large to diff (more than %1 changed lines, or too many "
+                "differences).")
+                 .arg(widgets::diff::kMaxDiffLines)},
+            {QStringLiteral("tooLarge"), true}}};
+    }
     QVariantList rows;
-    for (const auto& line : widgets::diff::lineDiff(oldText, newText)) {
+    for (const auto& line : diff.lines) {
         using Kind = widgets::diff::DiffLine::Kind;
         QString sign = QStringLiteral(" ");
         if (line.kind == Kind::Added) {
@@ -2263,6 +2156,14 @@ QVariantList AppController::lineDiff(const QString& oldText, const QString& newT
             QVariantMap{{QStringLiteral("sign"), sign}, {QStringLiteral("text"), line.text}});
     }
     return rows;
+}
+
+QString AppController::prettyJson(const QString& text, bool unwrapEncoded) const {
+    return widgets::body::prettyJson(text, unwrapEncoded);
+}
+
+QString AppController::inertPreviewHtml(const QString& source, bool markdown) const {
+    return widgets::body::inertRichText(source, markdown);
 }
 
 void AppController::copyToClipboard(const QString& text, const QString& label) {
@@ -2287,6 +2188,31 @@ QString AppController::formValueText(const QString& value) const {
 
 QString AppController::formTextValue(const QString& text) const {
     return QString::fromStdString(engine::formTextTemplate(text.toStdString()));
+}
+
+QVariantList AppController::readBodyFormRows() const {
+    QVariantList rows;
+    if (!activeProject().hasProject()) {
+        return rows;
+    }
+    const auto& resources = activeProject().project().resources;
+    const auto resIt = resources.find(engine::ResourceId{selectedModule_.toStdString()});
+    if (resIt == resources.end()) {
+        return rows;
+    }
+    const auto opIt = resIt->second.operations.find(opName_.toStdString());
+    if (opIt == resIt->second.operations.end() || !opIt->second.bodyForm) {
+        return rows;
+    }
+    for (const auto& [key, value] : *opIt->second.bodyForm) {
+        const bool isFile = engine::isFormFileTemplate(value);
+        rows.append(QVariantMap{{QStringLiteral("key"), QString::fromStdString(key)},
+                                {QStringLiteral("text"),
+                                 isFile ? QString::fromStdString(value.substr(1))
+                                        : QString::fromStdString(engine::formTemplateText(value))},
+                                {QStringLiteral("isFile"), isFile}});
+    }
+    return rows;
 }
 
 void AppController::refreshExamples() {
@@ -2340,6 +2266,8 @@ void AppController::onLoadFailed(const QString& code, const QString& detail) {
     status_ = QStringLiteral("Load failed (%1): %2").arg(code, detail);
     emit projectChanged();
     emit selectionChanged();
+    // status_ is replaced as soon as another open project rebinds, so say it where it is seen.
+    emit notify(tr("Could not open the project: %1").arg(detail), true);
 }
 
 void AppController::loadSampleIfPresent() {

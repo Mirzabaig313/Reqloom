@@ -6,6 +6,7 @@
 
 #include <ostream>
 #include <string>
+#include <string_view>
 
 namespace reqloom::cli {
 
@@ -33,6 +34,9 @@ public:
                 const engine::RunResult& result);
 
 private:
+    void printChildRow(const engine::StepResult& row);
+    void printAssertions(const engine::StepResult& row, std::string_view attribution);
+
     std::ostream& summary_;
     std::ostream& progress_;
     std::ostream& err_;

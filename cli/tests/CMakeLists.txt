@@ -6,10 +6,12 @@ include(GoogleTest)
 add_executable(reqloom-cli-renderer-tests
     unit/RendererTest.cpp
 )
+# Qt6::Core parses the rendered JSON and XML to check that they are well formed.
 target_link_libraries(reqloom-cli-renderer-tests
     PRIVATE
         reqloom-cli-renderers
         reqloom::engine
+        Qt6::Core
         GTest::gtest
         GTest::gtest_main
 )
@@ -41,6 +43,7 @@ target_include_directories(reqloom-cli-import-tests
 )
 target_link_libraries(reqloom-cli-import-tests
     PRIVATE
+        reqloom-cli-support
         reqloom::engine
         Qt6::Core
         GTest::gtest
@@ -62,7 +65,7 @@ gtest_discover_tests(reqloom-cli-import-tests
     DISCOVERY_TIMEOUT 60
 )
 
-# Run command argument tests — compile the command directly, like the import tests.
+# Run command tests — compile the command directly, like the import tests.
 add_executable(reqloom-cli-run-tests
     unit/RunCommandTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/RunCommand.cpp
@@ -73,6 +76,7 @@ target_include_directories(reqloom-cli-run-tests
 target_link_libraries(reqloom-cli-run-tests
     PRIVATE
         reqloom-cli-renderers
+        reqloom-cli-support
         reqloom::engine
         Qt6::Core
         GTest::gtest
@@ -90,6 +94,72 @@ reqloom_forbid_dependencies(reqloom-cli-run-tests
 )
 
 gtest_discover_tests(reqloom-cli-run-tests
+    PROPERTIES LABELS "cli_unit"
+    DISCOVERY_TIMEOUT 60
+)
+
+# Lint command tests — compile the command directly, like the import tests.
+add_executable(reqloom-cli-lint-tests
+    unit/LintCommandTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/LintCommand.cpp
+)
+target_include_directories(reqloom-cli-lint-tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+target_link_libraries(reqloom-cli-lint-tests
+    PRIVATE
+        reqloom-cli-renderers
+        reqloom-cli-support
+        reqloom::engine
+        Qt6::Core
+        GTest::gtest
+        GTest::gtest_main
+)
+reqloom_set_warnings(reqloom-cli-lint-tests)
+reqloom_apply_sanitizers(reqloom-cli-lint-tests)
+reqloom_isolate_test_config(reqloom-cli-lint-tests)
+
+reqloom_forbid_dependencies(reqloom-cli-lint-tests
+    Qt6::Widgets
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::QuickWidgets
+)
+
+gtest_discover_tests(reqloom-cli-lint-tests
+    PROPERTIES LABELS "cli_unit"
+    DISCOVERY_TIMEOUT 60
+)
+
+# Argument parser, report writer and signal handling tests.
+add_executable(reqloom-cli-support-tests
+    unit/ArgParserTest.cpp
+    unit/ReportWriterTest.cpp
+    unit/RunInterruptTest.cpp
+)
+target_include_directories(reqloom-cli-support-tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+target_link_libraries(reqloom-cli-support-tests
+    PRIVATE
+        reqloom-cli-support
+        reqloom::engine
+        Qt6::Core
+        GTest::gtest
+        GTest::gtest_main
+)
+reqloom_set_warnings(reqloom-cli-support-tests)
+reqloom_apply_sanitizers(reqloom-cli-support-tests)
+reqloom_isolate_test_config(reqloom-cli-support-tests)
+
+reqloom_forbid_dependencies(reqloom-cli-support-tests
+    Qt6::Widgets
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::QuickWidgets
+)
+
+gtest_discover_tests(reqloom-cli-support-tests
     PROPERTIES LABELS "cli_unit"
     DISCOVERY_TIMEOUT 60
 )

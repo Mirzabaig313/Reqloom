@@ -2,20 +2,27 @@
 
 #include "ImportCommand.h"
 
+#include "ArgParser.h"
+#include "ExitCodes.h"
+#include "PathText.h"
+
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/ImportCredentials.h>
 #include <reqloom/engine/ProjectTrustStore.h>
 #include <reqloom/engine/PublicApi.h>
 #include <reqloom/engine/SecretStore.h>
 
+#include <array>
 #include <cstddef>
+#include <cstdio>
 #include <expected>
 #include <filesystem>
-#include <fstream>
+#include <format>
 #include <memory>
 #include <print>
 #include <ranges>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace fs = std::filesystem;
@@ -33,6 +40,13 @@ struct ImportArgs {
     bool noSecrets{false};
 };
 
+constexpr std::array kOptions{
+    OptionSpec{.name = "--out", .takesValue = true},
+    OptionSpec{.name = "--project-root", .takesValue = true},
+    OptionSpec{.name = "--force"},
+    OptionSpec{.name = "--no-secrets"},
+};
+
 void printUsage(std::FILE* stream) {
     std::println(stream,
                  "Usage: reqloom import <spec> [options]\n"
@@ -41,7 +55,8 @@ void printUsage(std::FILE* stream) {
                  "Insomnia v4, Thunder Client, Hoppscotch, HTTPie, Apidog, REST Client\n"
                  "(.http/.rest), and Bruno (a collection directory, its bruno.json, or a\n"
                  ".bru file).\n"
-                 "Options:\n"
+                 "Options may come before or after <spec>; --name=value also works, and\n"
+                 "-- ends the options.\n"
                  "  --out <dir>           Directory to write the project into (default: cwd)\n"
                  "  --project-root <dir>  Containment root the spec must resolve under\n"
                  "                        (default: the spec's parent directory)\n"
@@ -54,45 +69,45 @@ void printUsage(std::FILE* stream) {
                  "                        variables the source marks secret) in the YAML in\n"
                  "                        plain text instead of moving them into the\n"
                  "                        project's secrets in the OS keychain.\n"
-                 "Exit codes: 0 success, 1 import/write failure, 2 invalid arguments.");
+                 "Exit codes:\n"
+                 "  0  imported\n"
+                 "  1  the input could not be converted, or <dir> already has a reqloom.yaml\n"
+                 "     and --force was not given\n"
+                 "  2  invalid invocation: unknown option, missing value, <spec> not found\n"
+                 "  3  the project could not be written to <dir>, or an unexpected error");
+}
+
+[[nodiscard]] std::expected<ImportArgs, int> usageError(const std::string& message) {
+    std::println(stderr, "reqloom import: {}", message);
+    std::println(stderr, "Run 'reqloom import --help' for usage.");
+    return std::unexpected(kExitUsage);
 }
 
 [[nodiscard]] std::expected<ImportArgs, int> parseArgs(const QStringList& args) {
-    if (args.isEmpty()) {
-        std::println(stderr, "reqloom import: missing <spec>");
-        printUsage(stderr);
-        return std::unexpected(2);
+    const auto parsed = parseArguments(args, kOptions);
+    if (!parsed) {
+        return usageError(parsed.error());
     }
-    if (args.first() == QStringLiteral("--help") || args.first() == QStringLiteral("-h")) {
+    if (parsed->help) {
         printUsage(stdout);
-        return std::unexpected(0);
+        return std::unexpected(kExitSuccess);
     }
-
+    if (parsed->positionals.empty()) {
+        return usageError("missing <spec>");
+    }
+    if (parsed->positionals.size() > 1) {
+        return usageError(std::format("unexpected argument '{}'", parsed->positionals[1]));
+    }
     ImportArgs out;
-    out.spec = args.first().toStdString();
-
-    for (int i = 1; i < args.size(); ++i) {
-        const auto& flag = args[i];
-        if (flag == QStringLiteral("--out") && i + 1 < args.size()) {
-            out.outDir = args[++i].toStdString();
-        } else if (flag == QStringLiteral("--project-root") && i + 1 < args.size()) {
-            out.projectRoot = args[++i].toStdString();
-        } else if (flag == QStringLiteral("--force")) {
-            out.force = true;
-        } else if (flag == QStringLiteral("--no-secrets")) {
-            out.noSecrets = true;
-        } else if (flag == QStringLiteral("--help") || flag == QStringLiteral("-h")) {
-            printUsage(stdout);
-            return std::unexpected(0);
-        } else if (flag == QStringLiteral("--out") || flag == QStringLiteral("--project-root")) {
-            std::println(stderr, "reqloom import: missing value for '{}'", flag.toStdString());
-            return std::unexpected(2);
-        } else {
-            std::println(stderr, "reqloom import: unknown argument '{}'", flag.toStdString());
-            printUsage(stderr);
-            return std::unexpected(2);
-        }
+    out.spec = pathFromUtf8(parsed->positionals.front());
+    if (const auto outDir = parsed->value("--out")) {
+        out.outDir = pathFromUtf8(*outDir);
     }
+    if (const auto root = parsed->value("--project-root")) {
+        out.projectRoot = pathFromUtf8(*root);
+    }
+    out.force = parsed->has("--force");
+    out.noSecrets = parsed->has("--no-secrets");
     return out;
 }
 
@@ -142,9 +157,10 @@ int importCommand(const QStringList& args, ce::SecretStore* store, ce::ProjectTr
     }
     auto& cfg = *parsed;
 
-    if (!fs::exists(cfg.spec)) {
-        std::println(stderr, "reqloom import: spec not found: {}", cfg.spec.string());
-        return 1;
+    std::error_code ec;
+    if (!fs::exists(cfg.spec, ec)) {
+        std::println(stderr, "reqloom import: spec not found: {}", pathToUtf8(cfg.spec));
+        return kExitUsage;
     }
 
     // Default the containment root to the spec's parent; `--project-root` tightens it.
@@ -156,7 +172,13 @@ int importCommand(const QStringList& args, ce::SecretStore* store, ce::ProjectTr
                      "Import error [{}]: {}",
                      ce::toCodeString(imported.error().code),
                      imported.error().detail);
-        return 1;
+        return kExitFailed;
+    }
+    if (!cfg.force && fs::exists(cfg.outDir / "reqloom.yaml", ec)) {
+        std::println(stderr,
+                     "reqloom import: {} already has a reqloom.yaml (pass --force to overwrite it)",
+                     pathToUtf8(cfg.outDir));
+        return kExitFailed;
     }
 
     // Never prunes other actors/resources/environments in <dir>: they may be hand-written.
@@ -172,16 +194,13 @@ int importCommand(const QStringList& args, ce::SecretStore* store, ce::ProjectTr
                      "Write error [{}]: {}",
                      ce::toCodeString(written.error().code),
                      written.error().detail);
-        if (!cfg.force) {
-            std::println(stderr, "  (pass --force to overwrite an existing reqloom.yaml)");
-        }
-        return 1;
+        return kExitSystem;
     }
 
     std::println("Imported {} resources, {} operations into {}",
                  imported->project.resources.size(),
                  operationCount(imported->project),
-                 written->reqloomYaml.string());
+                 pathToUtf8(written->reqloomYaml));
     printCredentialSummary(written->credentials);
 
     // Warnings go to stderr so the stdout success line stays machine-friendly.
@@ -189,7 +208,7 @@ int importCommand(const QStringList& args, ce::SecretStore* store, ce::ProjectTr
         std::println(stderr, "\nReview notes:\n{}", imported->warnings);
     }
 
-    return 0;
+    return kExitSuccess;
 }
 
 }  // namespace reqloom::cli

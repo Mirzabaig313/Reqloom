@@ -52,10 +52,59 @@ TEST(EditableKeyValueModel, clearing_non_trailing_row_removes_it_and_keeps_ghost
 
     model.setKey(0, QString{});
     model.setValue(0, QString{});
+    model.pruneBlankRows();
 
     EXPECT_TRUE(model.pairs().empty());
     ASSERT_EQ(model.rowCount(), 1);
     EXPECT_TRUE(model.data(model.index(0), EditableKeyValueModel::IsGhostRole).toBool());
+}
+
+TEST(EditableKeyValueModel, row_cleared_while_typing_stays_until_pruned) {
+    EditableKeyValueModel model;
+    model.setKey(0, QStringLiteral("x"));
+    ASSERT_EQ(model.rowCount(), 2);
+
+    model.setKey(0, QString{});
+
+    ASSERT_EQ(model.rowCount(), 2);
+    EXPECT_FALSE(model.data(model.index(0), EditableKeyValueModel::IsGhostRole).toBool());
+    EXPECT_TRUE(model.data(model.index(1), EditableKeyValueModel::IsGhostRole).toBool());
+    EXPECT_TRUE(model.pairs().empty());
+}
+
+TEST(EditableKeyValueModel, prune_drops_every_blank_row_and_keeps_one_ghost) {
+    EditableKeyValueModel model;
+    model.setPairs({{QStringLiteral("a"), QStringLiteral("1")},
+                    {QStringLiteral("b"), QStringLiteral("2")},
+                    {QStringLiteral("c"), QStringLiteral("3")}});
+    model.setKey(0, QString{});
+    model.setValue(0, QString{});
+    model.setKey(2, QString{});
+    model.setValue(2, QString{});
+    ASSERT_EQ(model.rowCount(), 4);
+
+    model.pruneBlankRows();
+
+    ASSERT_EQ(model.rowCount(), 2);
+    EXPECT_EQ(model.data(model.index(0), EditableKeyValueModel::KeyRole).toString(),
+              QStringLiteral("b"));
+    EXPECT_TRUE(model.data(model.index(1), EditableKeyValueModel::IsGhostRole).toBool());
+}
+
+TEST(EditableKeyValueModel, prune_keeps_the_row_that_still_has_focus) {
+    EditableKeyValueModel model;
+    model.setPairs(
+        {{QStringLiteral("a"), QStringLiteral("1")}, {QStringLiteral("b"), QStringLiteral("2")}});
+    model.setKey(0, QString{});
+    model.setValue(0, QString{});
+    model.setKey(1, QString{});
+    model.setValue(1, QString{});
+
+    model.pruneBlankRows(1);
+
+    ASSERT_EQ(model.rowCount(), 2);
+    EXPECT_FALSE(model.data(model.index(0), EditableKeyValueModel::IsGhostRole).toBool());
+    EXPECT_TRUE(model.data(model.index(1), EditableKeyValueModel::IsGhostRole).toBool());
 }
 
 TEST(AuthStepListModel, setters_update_fields_via_data_roles) {

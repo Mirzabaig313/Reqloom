@@ -60,10 +60,6 @@ void EditableKeyValueModel::setKey(int row, const QString& key) {
         return;
     }
     item.first = key;
-    if (row < static_cast<int>(rows_.size()) - 1 && rowIsBlank(static_cast<std::size_t>(row))) {
-        removeRow(row);
-        return;
-    }
     const QModelIndex idx = index(row, 0);
     emit dataChanged(idx, idx, {KeyRole, IsGhostRole});
     ensureTrailingGhost();
@@ -78,10 +74,6 @@ void EditableKeyValueModel::setValue(int row, const QString& value) {
         return;
     }
     item.second = value;
-    if (row < static_cast<int>(rows_.size()) - 1 && rowIsBlank(static_cast<std::size_t>(row))) {
-        removeRow(row);
-        return;
-    }
     const QModelIndex idx = index(row, 0);
     emit dataChanged(idx, idx, {ValueRole, IsGhostRole});
     ensureTrailingGhost();
@@ -97,6 +89,17 @@ void EditableKeyValueModel::removeRow(int row) {
     beginRemoveRows({}, row, row);
     rows_.erase(rows_.begin() + row);
     endRemoveRows();
+    ensureTrailingGhost();
+}
+
+void EditableKeyValueModel::pruneBlankRows(int keepRow) {
+    for (int row = static_cast<int>(rows_.size()) - 2; row >= 0; --row) {
+        if (row != keepRow && rowIsBlank(static_cast<std::size_t>(row))) {
+            beginRemoveRows({}, row, row);
+            rows_.erase(rows_.begin() + row);
+            endRemoveRows();
+        }
+    }
     ensureTrailingGhost();
 }
 

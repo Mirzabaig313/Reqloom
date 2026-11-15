@@ -52,6 +52,10 @@ class SecretsController : public QObject {
     /// The folder this machine records for the open project's id when the
     /// project now lives elsewhere (moved or copied). Empty = no conflict.
     Q_PROPERTY(QString folderConflict READ folderConflict NOTIFY folderConflictChanged)
+    /// The folder the open project is loaded from. Empty when none is loaded.
+    Q_PROPERTY(QString currentFolder READ currentFolder NOTIFY currentFolderChanged)
+    /// Why the last store/clear/confirmMove failed; empty after a success.
+    Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
 
 public:
     explicit SecretsController(QObject* parent = nullptr);
@@ -72,29 +76,37 @@ public:
     [[nodiscard]] SecretListModel* secrets() { return &list_; }
     [[nodiscard]] bool backendAvailable() const noexcept { return manager_.backendAvailable(); }
     [[nodiscard]] QString folderConflict() const { return folderConflict_; }
+    [[nodiscard]] QString currentFolder() const { return currentFolder_; }
+    [[nodiscard]] QString lastError() const { return lastError_; }
 
     /// Refresh the list against `project`. Call when a project loads or the
     /// dialog opens.
     Q_INVOKABLE void refresh();
-    /// Store/update a secret value. Emits notify on result.
+    /// Store/update a secret value. Emits notify on success; a failure sets lastError.
     Q_INVOKABLE bool store(const QString& name, const QString& value);
-    /// Clear a secret. Emits notify on result.
+    /// Clear a secret. Emits notify on success; a failure sets lastError.
     Q_INVOKABLE bool clear(const QString& name);
     /// The user confirms the open project was moved here: bind its id to
-    /// this folder so its secrets work here. Emits notify on result.
+    /// this folder so its secrets work here. Emits notify on success; a failure
+    /// sets lastError.
     Q_INVOKABLE bool confirmMove();
 
 signals:
     void notify(QString message, bool isError);
     void folderConflictChanged();
+    void currentFolderChanged();
+    void lastErrorChanged();
 
 private:
     SecretManager manager_;
     SecretListModel list_;
     const ProjectModel* project_{nullptr};
     QString folderConflict_;
+    QString currentFolder_;
+    QString lastError_;
 
     void reloadList();
+    void setLastError(const QString& error);
 };
 
 }  // namespace reqloom::desktop::qml

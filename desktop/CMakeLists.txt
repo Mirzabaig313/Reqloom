@@ -52,8 +52,14 @@ qt_add_executable(reqloom-desktop
     qml/bridge/appcontroller/AppControllerChain.cpp
     qml/bridge/appcontroller/AppControllerEntities.cpp
     qml/bridge/appcontroller/AppControllerTabs.cpp
+    qml/bridge/appcontroller/AppControllerRun.cpp
+    qml/bridge/appcontroller/RunTabRouter.cpp
+    qml/bridge/appcontroller/RunTabRouter.h
     src/application/ProjectModel.cpp
     src/application/ProjectModel.h
+    src/application/ProjectEdits.cpp
+    src/application/ProjectModelEntities.cpp
+    src/application/ProjectEdits.h
     src/application/WorkspaceModel.cpp
     src/application/WorkspaceModel.h
     src/application/Bootstrapper.cpp
@@ -80,6 +86,8 @@ qt_add_executable(reqloom-desktop
     src/widgets/FuzzyMatch.h
     src/widgets/LineDiff.cpp
     src/widgets/LineDiff.h
+    src/widgets/BodyText.cpp
+    src/widgets/BodyText.h
     src/widgets/GraphLayout.cpp
     src/widgets/GraphLayout.h
     src/widgets/ConstraintLayout.cpp
@@ -199,6 +207,8 @@ target_link_libraries(reqloom-desktop
         # QScintilla code editor) can be shown as a standalone dialog window.
         # QML-first; Widgets only as a fallback .
         Qt6::Widgets
+        # Response bodies are parsed with nlohmann so 64-bit integers keep their digits.
+        nlohmann_json::nlohmann_json
 )
 
 target_include_directories(reqloom-desktop

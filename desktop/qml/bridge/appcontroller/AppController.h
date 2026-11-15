@@ -14,10 +14,12 @@
 #include "ProjectTreeModel.h"
 #include "ResourceListModel.h"
 #include "ResponseBodyModel.h"
+#include "RunTabRouter.h"
 #include "TabModel.h"
 #include "TimelineModel.h"
 #include "application/Bootstrapper.h"
 #include "application/EnvironmentSettings.h"
+#include "application/ProjectEdits.h"
 #include "application/RunController.h"
 #include "application/SavedResponseStore.h"
 
@@ -35,9 +37,12 @@
 #include <QtCore/QUrl>
 #include <QtCore/QVariant>
 
+#include <expected>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include <cstdint>
 
@@ -264,6 +269,12 @@ class AppController : public QObject {
     Q_PROPERTY(QVariantList chainNodes READ chainNodes NOTIFY chainChanged)
     // Layered DAG of the target's dependency chain, with node coordinates and edges.
     Q_PROPERTY(QVariantMap chainGraph READ chainGraph NOTIFY chainChanged)
+    // Why the target's chain can't be resolved (a cycle, an ambiguous producer), or empty; the
+    // chain graph and execution preview are empty while it is set.
+    Q_PROPERTY(QString chainResolveError READ chainResolveError NOTIFY chainChanged)
+    // Non-fatal findings from loading the active project (unknown keys, empty imports), each
+    // prefixed with `file:line:column:`.
+    Q_PROPERTY(QStringList loadWarnings READ loadWarnings NOTIFY projectChanged)
     // operationId → status token, so the chain graph colours nodes as a run streams.
     Q_PROPERTY(QVariantMap chainStatus READ chainStatus NOTIFY chainStatusChanged)
     // Whole-chain editor: every op in the target's chain, each with editable depends_on + extract.
@@ -373,10 +384,12 @@ public:
     /// Reload the history view from the run-history store, newest first.
     Q_INVOKABLE void refreshHistory();
 
-    /// Replay a past run into the live timeline by its history runId.
+    /// Replay a past run into the timeline of its operation's tab (opened or focused first).
+    /// Refused while that tab has a run in flight.
     Q_INVOKABLE void replayRun(qulonglong runId);
 
-    /// Delete all runs for the current project's history, then refresh the view.
+    /// Delete all runs for the current project's history, then refresh the view. Refused while a
+    /// run is in flight.
     Q_INVOKABLE void clearHistory();
 
     [[nodiscard]] QString actorAuthMethod() const { return actorAuthMethod_; }
@@ -558,6 +571,8 @@ public:
     [[nodiscard]] int editAssertionsCount() const;
     [[nodiscard]] QVariantList chainNodes() const;
     [[nodiscard]] QVariantMap chainGraph() const;
+    [[nodiscard]] QString chainResolveError() const;
+    [[nodiscard]] QStringList loadWarnings() const;
     [[nodiscard]] Q_INVOKABLE QVariantList executionPreview() const;
     [[nodiscard]] Q_INVOKABLE QStringList extractionConsumers(const QString& producerOperationId,
                                                               const QString& variable) const;
@@ -742,9 +757,18 @@ public:
     Q_INVOKABLE [[nodiscard]] QString exampleBody(const QString& name) const;
 
     /// LCS line diff of `oldText` → `newText` as [{sign, text}] rows; sign is "+", "-" or " "
-    /// (context).
+    /// (context). Inputs too large to diff give one row {tooLarge: true, text: <message>}.
     Q_INVOKABLE [[nodiscard]] QVariantList lineDiff(const QString& oldText,
                                                     const QString& newText) const;
+
+    /// Indent JSON two spaces per level, keeping number and string tokens exactly as written;
+    /// other text comes back unchanged. `unwrapEncoded` formats a JSON string holding a document.
+    Q_INVOKABLE [[nodiscard]] QString prettyJson(const QString& text,
+                                                 bool unwrapEncoded = false) const;
+
+    /// HTML (or Markdown) for the response preview with every image, background image and other
+    /// loadable reference removed, so showing it fetches nothing.
+    Q_INVOKABLE [[nodiscard]] QString inertPreviewHtml(const QString& source, bool markdown) const;
 
     /// Copy `text` to the clipboard and toast a confirmation (`label` names what was copied).
     Q_INVOKABLE void copyToClipboard(const QString& text, const QString& label);
@@ -757,6 +781,9 @@ public:
     Q_INVOKABLE [[nodiscard]] bool isFormFileValue(const QString& value) const;
     Q_INVOKABLE [[nodiscard]] QString formValueText(const QString& value) const;
     Q_INVOKABLE [[nodiscard]] QString formTextValue(const QString& text) const;
+    /// The open operation's form body as it will be sent: [{key, text, isFile}], where `text` is
+    /// the literal value or, for a file field, its path. Empty when the body is not a form.
+    Q_INVOKABLE [[nodiscard]] QVariantList readBodyFormRows() const;
 
     // ── Explorer selection / activation by fully-qualified id ──────────────
     /// Select an operation row ("<resource>.<op>") and open it (select-to-preview).
@@ -779,9 +806,14 @@ public:
     Q_INVOKABLE bool activateProjectByRoot(const QString& projectRoot);
 
     // ── Create / rename / delete (validated by the engine via ProjectModel; emit `notify`) ──
-    /// Validate a module/endpoint name as ProjectModel does (non-empty, no '.', '/' or backslash),
-    /// so dialogs can gate OK.
+    /// Validate a name as ProjectModel does (the engine's file-stem rule plus no '.'), so dialogs
+    /// can gate OK.
     Q_INVOKABLE [[nodiscard]] bool isValidName(const QString& name) const;
+
+    /// Operations a delete would change, for the confirmation dialog: `kind` "operation" or
+    /// "resource" lists those whose depends_on loses it; "actor" lists those that run as it.
+    Q_INVOKABLE [[nodiscard]] QStringList dependentsOf(const QString& kind,
+                                                       const QString& id) const;
 
     Q_INVOKABLE void createResource(const QString& name, const QString& description);
 
@@ -860,10 +892,20 @@ signals:
     /// Fired after a run, when the cookie jars may have changed.
     void cookiesChanged();
 
+    /// An operation of the active project got a new id (its rename or its module's); emitted
+    /// before the project's `projectChanged`, after its saved examples moved to `newId`.
+    void operationRenamed(QString oldId, QString newId);
+    /// An operation of the active project was deleted (alone or with its module).
+    void operationRemoved(QString operationId);
+
 private:
     void onLoaded();
     void onSaved();
     void onLoadFailed(const QString& code, const QString& detail);
+    void onOperationRenamed(const QString& oldId, const QString& newId);
+    void onOperationRemoved(const QString& operationId);
+    /// Fall back to the project's default environment when the selected one no longer exists.
+    void ensureEnvironmentExists();
     void loadSampleIfPresent();
     /// Best-effort refresh of the project's `reqloom.d.ts` hook typings; failures are swallowed.
     void refreshHookTypings();
@@ -939,9 +981,9 @@ private:
     /// Re-seed the edit-mode depends_on / extract models from the project, so a later endpoint Save
     /// can't clobber a Chain-tab save.
     void seedEditChainFromProject();
-    /// Find the operation producing `token` (a `{{...}}` reference), matching the namespaced
-    /// (`<resource>.<var>`) and bare forms. Returns {operationId, sourcePath}, both empty if none.
-    [[nodiscard]] std::pair<QString, QString> findVariableProducer(const QString& token) const;
+    /// The operation the engine would run to produce `token` ("<resource>.<var>") for the open
+    /// request, unsaved edits included, or why there is none.
+    [[nodiscard]] ProducerLookup findVariableProducer(const QString& token) const;
     /// Best response body to check a step's extraction against without a
     /// re-run: the live body when it's the open op, else its latest example.
     [[nodiscard]] QString responseBodyFor(const QString& operationId) const;
@@ -970,6 +1012,35 @@ private:
     /// Set the Content-Type in editHeaders_ to `desired` only when the current one is empty or a
     /// managed canonical type.
     void setManagedContentType(const QString& desired);
+
+    // ── Run routing (AppControllerRun.cpp): a run's events belong to the tab that started it ──
+    void wireRunEvents();
+    void wireRunLifecycle();
+    void wireRunSteps();
+    void wireRunResponses();
+    void wireRunChecks();
+    /// Store the refresh-candidates producer's 2xx body as its "Latest" example, once per arming.
+    void saveCandidateExample(const QString& op, int status, const QString& body);
+    /// A run was accepted from the shown tab: make it the run's tab and clear its response.
+    void beginRunInActiveTab();
+    /// The worker finished: show an engine refusal, park a hidden tab's timeline, end the run.
+    void finishRun(const RunReport& report);
+    [[nodiscard]] RunTabRouter::TabKey activeTabKey() const;
+    /// Index of the run's tab, or -1 when it is gone or the run started with no tab open.
+    [[nodiscard]] int runTabIndex() const;
+    [[nodiscard]] bool runTabShown() const;
+    /// Timeline for the run's next event, or nullptr when the event belongs nowhere.
+    [[nodiscard]] TimelineModel* runTimeline();
+    void applyTargetResponse(
+        int status, const QString& headers, int bodySize, qint64 elapsedMs, const QString& body);
+    void applyRunOutcome(const QString& outcome);
+    /// Cancel the in-flight run once the tab that started it is no longer open.
+    void cancelRunIfItsTabClosed();
+    /// About to show the run's tab: park what it gathered while hidden in the tab's snapshot.
+    void parkHiddenRunTimeline();
+    /// Open or focus the tab of a replayed run's operation, so a replay never lands in another
+    /// operation's tab; false (after telling the person why) when the replay must not run.
+    [[nodiscard]] bool focusReplayTab(const std::vector<engine::RunEvent>& events);
 
     std::unique_ptr<WorkspaceModel> workspace_;
     std::unique_ptr<Bootstrapper> bootstrapper_;
@@ -1114,10 +1185,26 @@ private:
 
     QStringList environments_;
     QString environment_;
+    /// The new name while the active environment is being renamed, so the selection follows it.
+    QString environmentRenameTarget_;
+    /// The last chain-graph resolution, reused until any of its inputs change.
+    struct ChainPlanCache {
+        std::shared_ptr<const engine::Project> source;
+        QString target;
+        bool creating{false};
+        bool patchedDeps{false};
+        std::vector<std::string> deps;
+        std::shared_ptr<const engine::Project> project;
+        std::expected<engine::ResolvedPlan, engine::ReqloomError> plan{
+            std::unexpected(engine::ReqloomError{})};
+    };
+    mutable std::optional<ChainPlanCache> chainPlanCache_;
+    /// The chain graph's plan for the open operation, resolved at most once per edit state; null
+    /// when there is nothing to resolve.
+    [[nodiscard]] const ChainPlanCache* chainPlan() const;
     bool running_{false};
-    // Live chain-graph run state: index→op (from stepStarted) lets index-only
-    // events (responseReceived) find their node; op→status token feeds colours.
-    QHash<int, QString> runStepOp_;
+    RunTabRouter runRouter_;
+    // Live chain-graph run state: op→status token feeds colours.
     QHash<QString, QString> chainStatus_;
     // Value-picker pins: "<resource>.<var>" → chosen concrete value.
     QHash<QString, QString> variableOverrides_;

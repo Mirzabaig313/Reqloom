@@ -290,7 +290,20 @@ Rectangle {
             Connections {
                 target: tree.model
                 function onModelReset() {
+                    panel.currentOperationId = "";
                     Qt.callLater(panel.restoreExpansion);
+                }
+                function onRowsRemoved() {
+                    Qt.callLater(panel.syncCurrentOperation);
+                }
+                function onLayoutChanged() {
+                    Qt.callLater(panel.syncCurrentOperation);
+                }
+            }
+            Connections {
+                target: tree.selectionModel
+                function onCurrentChanged() {
+                    Qt.callLater(panel.syncCurrentOperation);
                 }
             }
             Component.onCompleted: {
@@ -305,16 +318,8 @@ Rectangle {
 
             // Enter / Return activates (runs) the current operation row in its
             // owning collection.
-            Keys.onReturnPressed: {
-                if (panel.currentOperationId.length > 0) {
-                    AppController.activateOperationInProject(panel.currentProjectRoot, panel.currentOperationId);
-                }
-            }
-            Keys.onEnterPressed: {
-                if (panel.currentOperationId.length > 0) {
-                    AppController.activateOperationInProject(panel.currentProjectRoot, panel.currentOperationId);
-                }
-            }
+            Keys.onReturnPressed: panel.runCurrentOperation()
+            Keys.onEnterPressed: panel.runCurrentOperation()
 
             delegate: TreeViewDelegate {
                 id: del
@@ -540,7 +545,10 @@ Rectangle {
                     if (del.isOperation) {
                         AppController.selectOperationInProject(del.projectRoot, del.operationId);
                     } else if (del.isExample) {
-                        AppController.selectExample(del.operationId, del.exampleName);
+                        // Example ids repeat across projects; look it up in the row's own.
+                        if (AppController.activateProjectByRoot(del.projectRoot)) {
+                            AppController.selectExample(del.operationId, del.exampleName);
+                        }
                     } else if (del.isActor) {
                         AppController.selectActor(del.projectRoot, del.name);
                     } else if (del.isProject) {
@@ -598,6 +606,21 @@ Rectangle {
 
     // Current operation row id (for Enter-to-run), tracked from selection.
     property string currentOperationId: ""
+
+    // Enter must never run an operation the user can no longer see.
+    function syncCurrentOperation() {
+        const idx = tree.selectionModel.currentIndex;
+        if (!idx || !idx.valid || tree.rowAtIndex(idx) < 0) {
+            panel.currentOperationId = "";
+        }
+    }
+
+    function runCurrentOperation() {
+        panel.syncCurrentOperation();
+        if (panel.currentOperationId.length > 0) {
+            AppController.activateOperationInProject(panel.currentProjectRoot, panel.currentOperationId);
+        }
+    }
 
     // ── Add menu (header "+") ────────────────────────────────────────────────
     GlassMenu {
@@ -804,11 +827,22 @@ Rectangle {
 
         property string targetKind: ""
         property string targetId: ""
+        // Endpoints whose depends_on loses the deleted endpoint.
+        property var dependents: []
 
         function openFor(kind, id) {
             targetKind = kind;
             targetId = id;
+            dependents = (kind === "operation" && typeof AppController.dependentsOf === "function") ? AppController.dependentsOf(kind, id) : [];
             open();
+        }
+
+        function endpointText() {
+            const head = qsTr("Delete endpoint “%1”?").arg(targetId);
+            if (!dependents || dependents.length === 0) {
+                return head;
+            }
+            return head + "\n\n" + qsTr("It is also removed from depends_on in:") + "\n• " + dependents.join("\n• ");
         }
 
         background: Rectangle {
@@ -819,7 +853,7 @@ Rectangle {
         }
 
         contentItem: Label {
-            text: deleteDialog.targetKind === "resource" ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId) : (deleteDialog.targetKind === "actor" ? qsTr("Delete actor “%1”? Operations using it will become unauthenticated.").arg(deleteDialog.targetId) : qsTr("Delete endpoint “%1”?").arg(deleteDialog.targetId))
+            text: deleteDialog.targetKind === "resource" ? qsTr("Delete module “%1” and all its endpoints?").arg(deleteDialog.targetId) : (deleteDialog.targetKind === "actor" ? qsTr("Delete actor “%1”? Operations using it will become unauthenticated.").arg(deleteDialog.targetId) : deleteDialog.endpointText())
             color: DesignTokens.textPrimary
             font.pointSize: DesignTokens.fontBodyPointSize
             wrapMode: Text.WordWrap

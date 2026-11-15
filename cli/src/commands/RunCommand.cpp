@@ -3,28 +3,39 @@
 
 #include "RunCommand.h"
 
+#include "ArgParser.h"
 #include "ByteSizeArgument.h"
+#include "ExitCodes.h"
+#include "PathText.h"
+#include "RunInterrupt.h"
 
 #include "../output/JUnitRenderer.h"
 #include "../output/JsonRenderer.h"
+#include "../output/ReportWriter.h"
 #include "../output/TextRenderer.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <exception>
 #include <expected>
 #include <filesystem>
-#include <fstream>
+#include <format>
 #include <iostream>
 #include <map>
-#include <memory>
 #include <optional>
-#include <ostream>
 #include <print>
+#include <ranges>
+#include <sstream>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
+#include <variant>
 
 namespace fs = std::filesystem;
 namespace ce = reqloom::engine;
@@ -34,6 +45,21 @@ namespace reqloom::cli {
 namespace {
 
 enum class Format : std::uint8_t { Text, Json, JUnit };
+
+constexpr std::array<std::string_view, 2> kMachineFormats{"json", "junit"};
+
+constexpr std::array kOptions{
+    OptionSpec{.name = "--project", .takesValue = true},
+    OptionSpec{.name = "--env", .takesValue = true},
+    OptionSpec{.name = "--var", .takesValue = true, .repeatable = true},
+    OptionSpec{.name = "--format", .takesValue = true},
+    OptionSpec{.name = "--output", .takesValue = true},
+    OptionSpec{.name = "--quiet"},
+    OptionSpec{.name = "--failure-body-size", .takesValue = true},
+};
+
+/// Most operation names listed when the target does not exist.
+constexpr std::size_t kListedOperations = 50;
 
 struct RunArgs {
     std::string targetOp;
@@ -46,21 +72,36 @@ struct RunArgs {
     std::optional<std::size_t> failureExcerptBytes;
 };
 
-void printUsage(std::ostream& os) {
-    os << "Usage: reqloom run <resource.operation> [options]\n"
-          "Options:\n"
-          "  --project <path>     Project directory (default: cwd)\n"
-          "  --env <name>         Environment to run against\n"
-          "  --var KEY=VALUE      Override an environment variable (repeatable)\n"
-          "  --format <fmt>       Output format: text (default), json, junit\n"
-          "  --output <file>      Write rendered output to <file> (default: stdout)\n"
-          "  --quiet              Suppress live progress on stdout (failures still go\n"
-          "                       to stderr). Implied by --format json|junit.\n"
-          "  --failure-body-size <size>\n"
-          "                       Most of the response body quoted in a failure message,\n"
-          "                       as bytes or with KiB/MiB (default 4KiB; 0 = none;\n"
-          "                       capped at 1MiB). Secrets are masked at any size.\n"
-          "Exit codes: 0 success, 1 run/schema failure, 2 invalid arguments.\n";
+void printUsage(std::FILE* stream) {
+    std::print(
+        stream,
+        "Usage: reqloom run <resource.operation> [options]\n"
+        "Options may come before or after the operation; --name=value also works, and\n"
+        "-- ends the options.\n"
+        "  --project <path>     Project directory (default: cwd)\n"
+        "  --env <name>         Environment to run against (default: the project's)\n"
+        "  --var KEY=VALUE      Override a variable of that environment (repeatable)\n"
+        "  --format <fmt>       Output format: text (default), json, junit\n"
+        "  --output <file>      Write the report to <file> (default: stdout); replaced only\n"
+        "                       by a complete new report\n"
+        "  --quiet              Suppress live progress on stdout (failures still go\n"
+        "                       to stderr). Implied by --format json|junit.\n"
+        "  --failure-body-size <size>\n"
+        "                       Most of the response body quoted in a failure message,\n"
+        "                       as bytes or with KiB/MiB (default 4KiB; 0 = none;\n"
+        "                       capped at 1MiB). Secrets are masked at any size.\n"
+        "With --format json or junit, stdout (or --output) receives exactly one document\n"
+        "for every outcome, errors before the first step included; diagnostics go to stderr.\n"
+        "Exit codes:\n"
+        "  0    the run succeeded\n"
+        "  1    the run failed (a step or assertion failed), the project does not validate,\n"
+        "       or the engine refused the run\n"
+        "  2    invalid invocation: unknown option, missing or invalid value, no reqloom.yaml\n"
+        "       in the project path, unknown operation or environment\n"
+        "  3    file or system error: the report cannot be written to --output or stdout,\n"
+        "       or an unexpected error\n"
+        "  130  interrupted by SIGINT (Ctrl-C), 143 terminated by SIGTERM: the run is\n"
+        "       cancelled and its report written; a second signal exits at once\n");
 }
 
 [[nodiscard]] std::expected<Format, std::string> parseFormat(const std::string& token) {
@@ -76,177 +117,288 @@ void printUsage(std::ostream& os) {
     return std::unexpected("--format must be one of text, json, junit (got '" + token + "')");
 }
 
-[[nodiscard]] std::expected<RunArgs, int> parseArgs(const QStringList& args) {
-    if (args.isEmpty()) {
-        std::println(stderr, "reqloom run: missing <operation>");
-        printUsage(std::cerr);
-        return std::unexpected(2);
+[[nodiscard]] std::expected<void, std::string> parseVars(const ParsedArguments& parsed,
+                                                         RunArgs& out) {
+    for (const auto& kv : parsed.values("--var")) {
+        const auto eq = kv.find('=');
+        if (eq == std::string::npos || eq == 0) {
+            return std::unexpected(
+                std::format("--var needs KEY=VALUE with a non-empty KEY, got '{}'", kv));
+        }
+        out.overrides[kv.substr(0, eq)] = kv.substr(eq + 1);
     }
-    if (args.first() == QStringLiteral("--help") || args.first() == QStringLiteral("-h")) {
-        printUsage(std::cout);
-        return std::unexpected(0);
-    }
+    return {};
+}
 
+[[nodiscard]] std::expected<RunArgs, std::string> toRunArgs(const ParsedArguments& parsed) {
+    if (parsed.positionals.empty()) {
+        return std::unexpected(std::string{"missing <operation>"});
+    }
+    if (parsed.positionals.size() > 1) {
+        return std::unexpected(std::format("unexpected argument '{}'", parsed.positionals[1]));
+    }
     RunArgs out;
-    out.targetOp = args.first().toStdString();
-
-    for (int i = 1; i < args.size(); ++i) {
-        const auto& flag = args[i];
-        if (flag == QStringLiteral("--project") && i + 1 < args.size()) {
-            out.projectPath = args[++i].toStdString();
-        } else if (flag == QStringLiteral("--env") && i + 1 < args.size()) {
-            out.envName = args[++i].toStdString();
-        } else if (flag == QStringLiteral("--var") && i + 1 < args.size()) {
-            const auto kv = args[++i].toStdString();
-            const auto eq = kv.find('=');
-            if (eq == std::string::npos) {
-                std::println(stderr, "reqloom run: --var requires KEY=VALUE, got '{}'", kv);
-                return std::unexpected(2);
-            }
-            out.overrides[kv.substr(0, eq)] = kv.substr(eq + 1);
-        } else if (flag == QStringLiteral("--format") && i + 1 < args.size()) {
-            auto parsed = parseFormat(args[++i].toStdString());
-            if (!parsed) {
-                std::println(stderr, "reqloom run: {}", parsed.error());
-                return std::unexpected(2);
-            }
-            out.format = *parsed;
-        } else if (flag == QStringLiteral("--output") && i + 1 < args.size()) {
-            out.outputPath = args[++i].toStdString();
-        } else if (flag == QStringLiteral("--failure-body-size") && i + 1 < args.size()) {
-            const auto text = args[++i].toStdString();
-            const auto bytes = parseByteSizeArgument(text);
-            if (!bytes) {
-                std::println(stderr,
-                             "reqloom run: --failure-body-size must be a byte count or a size "
-                             "in KiB or MiB such as 16KiB, got '{}'",
-                             text);
-                return std::unexpected(2);
-            }
-            out.failureExcerptBytes = *bytes;
-        } else if (flag == QStringLiteral("--quiet")) {
-            out.quiet = true;
-        } else if (flag == QStringLiteral("--help") || flag == QStringLiteral("-h")) {
-            printUsage(std::cout);
-            return std::unexpected(0);
-        } else {
-            std::println(stderr, "reqloom run: unknown argument '{}'", flag.toStdString());
-            printUsage(std::cerr);
-            return std::unexpected(2);
+    out.targetOp = parsed.positionals.front();
+    if (const auto project = parsed.value("--project")) {
+        out.projectPath = pathFromUtf8(*project);
+    }
+    out.envName = parsed.value("--env").value_or("");
+    if (auto vars = parseVars(parsed, out); !vars) {
+        return std::unexpected(vars.error());
+    }
+    if (const auto format = parsed.value("--format")) {
+        auto fmt = parseFormat(*format);
+        if (!fmt) {
+            return std::unexpected(fmt.error());
+        }
+        out.format = *fmt;
+    }
+    if (const auto output = parsed.value("--output")) {
+        out.outputPath = pathFromUtf8(*output);
+    }
+    if (const auto size = parsed.value("--failure-body-size")) {
+        out.failureExcerptBytes = parseByteSizeArgument(*size);
+        if (!out.failureExcerptBytes) {
+            return std::unexpected(std::format(
+                "--failure-body-size must be a byte count or a size in KiB or MiB such as "
+                "16KiB, got '{}'",
+                *size));
         }
     }
-
     // Machine-readable formats imply --quiet: stdout carries a single document.
-    if (out.format == Format::Json || out.format == Format::JUnit) {
-        out.quiet = true;
-    }
+    out.quiet = parsed.has("--quiet") || out.format != Format::Text;
     return out;
 }
 
-[[nodiscard]] std::ostream& renderTarget(std::ostream& fallback,
-                                         const fs::path& path,
-                                         std::unique_ptr<std::ofstream>& owned) {
-    if (path.empty()) {
-        return fallback;
+/// Where the report goes, and the error document for a run that ends before its first step.
+struct Report {
+    Format format{Format::Text};
+    fs::path output;
+    std::string target;
+    std::string environment;
+    std::optional<ce::RunId> runId;
+
+    /// Write `document`; `exitCode` on success, kExitSystem if it could not be written.
+    [[nodiscard]] int deliver(const std::string& document, int exitCode) const {
+        const auto written = output.empty() ? writeReportStream(stdout, document)
+                                            : writeReportFile(output, document);
+        if (!written) {
+            std::println(stderr, "reqloom run: cannot write the report: {}", written.error());
+            return kExitSystem;
+        }
+        return exitCode;
     }
-    owned = std::make_unique<std::ofstream>(path);
-    if (!*owned) {
-        std::println(stderr, "reqloom run: cannot open --output file '{}'", path.string());
-        return fallback;  // best-effort fallback; the caller checks owned->good()
+
+    /// Print `message` on stderr and, in a machine format, deliver an error document.
+    [[nodiscard]] int fail(int exitCode,
+                           std::string_view code,
+                           std::string_view detail,
+                           std::string_view message) const {
+        std::println(stderr, "{}", message);
+        if (format == Format::Text) {
+            return exitCode;
+        }
+        std::ostringstream doc;
+        const ce::OperationId op{target};
+        if (format == Format::Json) {
+            JsonRenderer{doc}.renderError(op, environment, runId, code, detail);
+        } else {
+            JUnitRenderer{doc}.renderError(op, environment, runId, code, detail);
+        }
+        return deliver(doc.str(), exitCode);
     }
-    return *owned;
+
+    [[nodiscard]] int failWith(int exitCode, const ce::ReqloomError& error, std::string_view what) {
+        const auto code = ce::toCodeString(error.code);
+        return fail(
+            exitCode, code, error.detail, std::format("{} [{}]: {}", what, code, error.detail));
+    }
+};
+
+[[nodiscard]] int usageError(const QStringList& args, const std::string& message) {
+    Report report;
+    if (const auto format = peekFormat(args, kMachineFormats)) {
+        report.format = *format == "json" ? Format::Json : Format::JUnit;
+    }
+    const int code =
+        report.fail(kExitUsage, kCodeUsage, message, std::format("reqloom run: {}", message));
+    std::println(stderr, "Run 'reqloom run --help' for usage.");
+    return code;
+}
+
+[[nodiscard]] bool operationExists(const ce::Project& project, const std::string& id) {
+    const auto dot = id.find('.');
+    if (dot == std::string::npos) {
+        return false;
+    }
+    const auto resource = project.resources.find(ce::ResourceId{id.substr(0, dot)});
+    return resource != project.resources.end() &&
+           resource->second.operations.contains(id.substr(dot + 1));
+}
+
+[[nodiscard]] std::string operationList(const ce::Project& project) {
+    std::string names;
+    std::size_t count = 0;
+    for (const auto& resource : project.resources | std::views::values) {
+        for (const auto& op : resource.operations | std::views::values) {
+            if (count++ < kListedOperations) {
+                names += (names.empty() ? "" : ", ") + op.id.value;
+            }
+        }
+    }
+    if (count > kListedOperations) {
+        names += std::format(" and {} more", count - kListedOperations);
+    }
+    return names.empty() ? std::string{"none"} : names;
+}
+
+/// The project's environment names; the default is always one, even with no variables.
+[[nodiscard]] std::string environmentList(const ce::Project& project) {
+    std::string names;
+    bool hasDefault = false;
+    for (const auto& name : project.environments | std::views::keys) {
+        names += (names.empty() ? "" : ", ") + name;
+        hasDefault = hasDefault || name == project.defaultEnvironment;
+    }
+    if (!hasDefault) {
+        names += (names.empty() ? "" : ", ") + project.defaultEnvironment;
+    }
+    return names;
+}
+
+[[nodiscard]] std::expected<ce::Project, int> loadProject(const RunArgs& cfg, Report& report) {
+    const auto yamlPath = cfg.projectPath / "reqloom.yaml";
+    std::error_code ec;
+    if (!fs::exists(yamlPath, ec)) {
+        const auto detail = "reqloom.yaml not found in " + pathToUtf8(cfg.projectPath);
+        return std::unexpected(
+            report.fail(kExitUsage, kCodeProjectNotFound, detail, "Error: " + detail));
+    }
+    auto project = ce::parseProject(yamlPath);
+    if (!project) {
+        return std::unexpected(report.failWith(kExitFailed, project.error(), "Schema error"));
+    }
+    return std::move(*project);
+}
+
+/// Exit code of a target or environment that does not exist in `project`, or nullopt.
+[[nodiscard]] std::optional<int> checkNames(const RunArgs& cfg,
+                                            const ce::Project& project,
+                                            const Report& report) {
+    if (!operationExists(project, cfg.targetOp)) {
+        const auto detail = std::format(
+            "unknown operation '{}'; the project has: {}", cfg.targetOp, operationList(project));
+        return report.fail(kExitUsage, kCodeUnknownOperation, detail, "Error: " + detail);
+    }
+    if (!project.environments.contains(report.environment) &&
+        report.environment != project.defaultEnvironment) {
+        const auto detail = std::format("unknown environment '{}'; the project has: {}",
+                                        report.environment,
+                                        environmentList(project));
+        return report.fail(kExitUsage, kCodeUnknownEnvironment, detail, "Error: " + detail);
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] ce::RunOptions runOptions(const RunArgs& cfg) {
+    ce::RunOptions options;
+    options.environment = cfg.envName;
+    if (cfg.failureExcerptBytes) {
+        options.failureExcerptBytes = *cfg.failureExcerptBytes;
+    }
+    return options;
+}
+
+[[nodiscard]] std::string renderRun(const RunArgs& cfg,
+                                    const Report& report,
+                                    TextRenderer& text,
+                                    const std::ostringstream& summary,
+                                    const ce::RunResult& result) {
+    const ce::OperationId target{cfg.targetOp};
+    std::ostringstream doc;
+    switch (cfg.format) {
+        case Format::Text:
+            text.render(target, report.environment, result);
+            return summary.str();
+        case Format::Json:
+            JsonRenderer{doc}.render(target, report.environment, result);
+            break;
+        case Format::JUnit:
+            JUnitRenderer{doc}.render(target, report.environment, result);
+            break;
+    }
+    return doc.str();
+}
+
+[[nodiscard]] int runAndReport(const RunArgs& cfg, const ce::Project& project, Report& report) {
+    std::ostringstream summary;
+    TextRenderer text(summary, std::cout, std::cerr, cfg.quiet);
+    if (cfg.format == Format::Text) {
+        text.printProjectPreamble(project.name, project.actors.size(), project.resources.size());
+    }
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    RunInterrupt interrupt{[&engine](ce::RunId id) {
+        engine.cancel(id);
+    }};
+    engine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* started = std::get_if<ce::RunStarted>(&event)) {
+            report.runId = started->runId;
+            interrupt.runStarted(started->runId);
+        }
+        if (cfg.format == Format::Text) {
+            text.onEvent(event);
+        }
+    });
+
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{cfg.targetOp}, ctx, runOptions(cfg));
+    const int code = result ? report.deliver(renderRun(cfg, report, text, summary, *result),
+                                             result->succeeded() ? kExitSuccess : kExitFailed)
+                            : report.failWith(kExitFailed, result.error(), "Engine error");
+    // A signal's code wins over the run's outcome, but not over a report that was not written.
+    const int signalCode = interrupt.exitCode();
+    return code == kExitSystem || signalCode == 0 ? code : signalCode;
+}
+
+[[nodiscard]] int execute(const RunArgs& cfg, Report& report) {
+    auto project = loadProject(cfg, report);
+    if (!project) {
+        return project.error();
+    }
+    report.environment = cfg.envName.empty() ? project->defaultEnvironment : cfg.envName;
+    if (const auto failed = checkNames(cfg, *project, report)) {
+        return *failed;
+    }
+    auto& envVars = project->environments[report.environment];
+    for (const auto& [key, value] : cfg.overrides) {
+        envVars[key] = value;
+    }
+    return runAndReport(cfg, *project, report);
 }
 
 }  // namespace
 
 int runCommand(const QStringList& args) {
-    auto parsed = parseArgs(args);
-    if (!parsed) {
-        return parsed.error();
+    const auto parsed = parseArguments(args, kOptions);
+    if (parsed && parsed->help) {
+        printUsage(stdout);
+        return kExitSuccess;
     }
-    auto& cfg = *parsed;
-
-    auto yamlPath = cfg.projectPath / "reqloom.yaml";
-    if (!fs::exists(yamlPath)) {
-        std::println(stderr, "Error: reqloom.yaml not found in {}", cfg.projectPath.string());
-        return 1;
+    const auto cfg = parsed ? toRunArgs(*parsed)
+                            : std::expected<RunArgs, std::string>{std::unexpect, parsed.error()};
+    if (!cfg) {
+        return usageError(args, cfg.error());
     }
-
-    auto projectResult = ce::parseProject(yamlPath);
-    if (!projectResult) {
-        std::println(stderr,
-                     "Schema error [{}]: {}",
-                     std::string(ce::toCodeString(projectResult.error().code)),
-                     projectResult.error().detail);
-        return 1;
+    Report report{cfg->format, cfg->outputPath, cfg->targetOp, cfg->envName, std::nullopt};
+    try {
+        return execute(*cfg, report);
+    } catch (const std::exception& ex) {
+        return report.fail(kExitSystem,
+                           kCodeInternal,
+                           ex.what(),
+                           std::format("Error: unexpected failure: {}", ex.what()));
     }
-    auto& project = *projectResult;
-
-    if (!cfg.overrides.empty()) {
-        const auto envKey = cfg.envName.empty() ? project.defaultEnvironment : cfg.envName;
-        auto& envVars = project.environments[envKey];
-        for (auto& [k, v] : cfg.overrides) {
-            envVars[k] = std::move(v);
-        }
-    }
-
-    // `--output` redirects the renderer's sink; live progress still goes to stdout/stderr.
-    std::unique_ptr<std::ofstream> ownedSink;
-    std::ostream& sink = renderTarget(std::cout, cfg.outputPath, ownedSink);
-    if (ownedSink && !ownedSink->good()) {
-        return 1;
-    }
-
-    // The summary goes to `sink`; live progress to stdout/stderr.
-    TextRenderer textRenderer(sink, std::cout, std::cerr, cfg.quiet);
-    if (cfg.format == Format::Text && !cfg.quiet) {
-        textRenderer.printProjectPreamble(
-            project.name, project.actors.size(), project.resources.size());
-    }
-
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
-    ce::RunContext ctx;
-    ce::RunOptions options;
-    if (!cfg.envName.empty()) {
-        options.environment = cfg.envName;
-    }
-    if (cfg.failureExcerptBytes) {
-        options.failureExcerptBytes = *cfg.failureExcerptBytes;
-    }
-
-    if (cfg.format == Format::Text) {
-        engine.subscribe([&textRenderer](const ce::RunEvent& e) { textRenderer.onEvent(e); });
-    }
-
-    const ce::OperationId target{cfg.targetOp};
-    auto resolvedEnv = cfg.envName.empty() ? project.defaultEnvironment : cfg.envName;
-
-    auto result = engine.run(project, target, ctx, options);
-    if (!result) {
-        std::println(stderr,
-                     "Engine error [{}]: {}",
-                     std::string(ce::toCodeString(result.error().code)),
-                     result.error().detail);
-        return 1;
-    }
-
-    switch (cfg.format) {
-        case Format::Text:
-            textRenderer.render(target, resolvedEnv, *result);
-            break;
-        case Format::Json: {
-            JsonRenderer renderer(sink);
-            renderer.render(target, resolvedEnv, *result);
-            break;
-        }
-        case Format::JUnit: {
-            JUnitRenderer renderer(sink);
-            renderer.render(target, resolvedEnv, *result);
-            break;
-        }
-    }
-
-    return result->succeeded() ? 0 : 1;
 }
 
 }  // namespace reqloom::cli

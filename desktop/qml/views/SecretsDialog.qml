@@ -24,9 +24,14 @@ Dialog {
     padding: DesignTokens.spaceLg
     focus: true
     property string focusedSecretName: ""
+    // The row whose Clear failed, so its error shows beside that button.
+    property string clearErrorName: ""
+    property string clearError: ""
 
     function openDialog() {
         focusedSecretName = "";
+        clearErrorName = "";
+        clearError = "";
         SecretsController.refresh();
         open();
     }
@@ -38,6 +43,8 @@ Dialog {
             return false;
         }
         focusedSecretName = name;
+        clearErrorName = "";
+        clearError = "";
         secretList.currentIndex = targetRow;
         open();
         Qt.callLater(function () {
@@ -83,7 +90,7 @@ Dialog {
                 id: bannerLabel
                 anchors.fill: parent
                 anchors.margins: DesignTokens.spaceSm
-                text: qsTr("Keychain backend unavailable — secret writes are not persisted.")
+                text: qsTr("No OS keychain is available, so secrets can't be saved, cleared or read here, and requests that use {{secret.NAME}} will fail. Use a Reqloom build with keychain support, or pass the value through an allowed environment variable ({{$.env.NAME}}) instead.")
                 color: DesignTokens.statusError
                 font.pixelSize: DesignTokens.fontLabel
                 wrapMode: Text.WordWrap
@@ -133,7 +140,14 @@ Dialog {
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
-                    onClicked: SecretsController.confirmMove()
+                    onClicked: {
+                        moveDialog.error = "";
+                        moveDialog.open();
+                    }
+                }
+                FieldError {
+                    Layout.fillWidth: true
+                    text: moveDialog.error
                 }
             }
         }
@@ -161,7 +175,7 @@ Dialog {
                 width: ListView.view.width
                 // Row grows with its tallest child (reference label or the
                 // Set…/Clear actions) at large OS text sizes.
-                height: Math.max(44, rowContent.implicitHeight + DesignTokens.spaceSm * 2)
+                height: rowContent.height + (rowError.visible ? rowError.implicitHeight + DesignTokens.spaceXs : 0)
                 color: sourceFocused ? DesignTokens.accentMuted : "transparent"
 
                 function focusSetAction() {
@@ -170,7 +184,10 @@ Dialog {
 
                 RowLayout {
                     id: rowContent
-                    anchors.fill: parent
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: Math.max(44, implicitHeight + DesignTokens.spaceSm * 2)
                     anchors.leftMargin: DesignTokens.spaceSm
                     anchors.rightMargin: DesignTokens.spaceSm
                     spacing: DesignTokens.spaceMd
@@ -231,8 +248,22 @@ Dialog {
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
-                        onClicked: SecretsController.clear(secretRow.name)
+                        onClicked: {
+                            const ok = SecretsController.clear(secretRow.name);
+                            dialog.clearErrorName = ok ? "" : secretRow.name;
+                            dialog.clearError = ok ? "" : SecretsController.lastError;
+                        }
                     }
+                }
+
+                FieldError {
+                    id: rowError
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: rowContent.bottom
+                    anchors.leftMargin: DesignTokens.spaceSm
+                    anchors.rightMargin: DesignTokens.spaceSm
+                    text: secretRow.name === dialog.clearErrorName ? dialog.clearError : ""
                 }
 
                 Rectangle {
@@ -253,7 +284,7 @@ Dialog {
         onAccepted: dialog.close()
     }
 
-    // Set-value sub-dialog.
+    // Set-value sub-dialog. Closes only when the value was stored.
     Dialog {
         id: setDialog
         modal: true
@@ -265,15 +296,35 @@ Dialog {
         padding: DesignTokens.spaceLg
         focus: true
         property string secretName: ""
+        property string error: ""
+        readonly property bool canSave: valueField.text.length > 0
         header: DialogHeader {
             title: qsTr("Set secret")
         }
 
         function openFor(name) {
             secretName = name;
+            error = "";
             valueField.text = "";
             open();
             valueField.forceActiveFocus();
+        }
+
+        function save() {
+            if (!canSave) {
+                return;
+            }
+            if (SecretsController.store(secretName, valueField.text)) {
+                close();
+            } else {
+                error = SecretsController.lastError;
+            }
+        }
+
+        // The secret must not linger in the field once the dialog is gone.
+        onAboutToHide: {
+            valueField.text = "";
+            revealToggle.checked = false;
         }
 
         background: Rectangle {
@@ -293,16 +344,91 @@ Dialog {
             GlassTextField {
                 id: valueField
                 Layout.fillWidth: true
-                echoMode: TextInput.Password
+                echoMode: revealToggle.checked ? TextInput.Normal : TextInput.Password
                 placeholderText: qsTr("value (not shown)")
-                onAccepted: setDialog.accept()
+                onTextEdited: setDialog.error = ""
+                onAccepted: setDialog.save()
+            }
+            CheckBox {
+                id: revealToggle
+                text: qsTr("Show value")
+                checked: false
+                contentItem: Text {
+                    text: revealToggle.text
+                    color: DesignTokens.textSecondary
+                    font.pointSize: DesignTokens.fontLabelPointSize
+                    leftPadding: revealToggle.indicator.width + DesignTokens.spaceSm
+                    verticalAlignment: Text.AlignVCenter
+                }
+                indicator: Rectangle {
+                    implicitWidth: 16
+                    implicitHeight: 16
+                    radius: 4
+                    y: (revealToggle.height - height) / 2
+                    color: revealToggle.checked ? DesignTokens.accent : DesignTokens.surfaceRaised
+                    border.width: 1
+                    border.color: revealToggle.checked ? DesignTokens.accent : DesignTokens.borderStrong
+                    Text {
+                        anchors.centerIn: parent
+                        visible: revealToggle.checked
+                        text: "✓"
+                        color: DesignTokens.textInverse
+                        font.pointSize: DesignTokens.fontCaptionPointSize
+                        font.weight: DesignTokens.weightBold
+                    }
+                }
+            }
+            FieldError {
+                Layout.fillWidth: true
+                text: setDialog.error
             }
         }
         footer: DialogButtons {
             okText: qsTr("Save")
-            onAccepted: setDialog.accept()
+            okEnabled: setDialog.canSave
+            onAccepted: setDialog.save()
             onRejected: setDialog.reject()
         }
-        onAccepted: SecretsController.store(secretName, valueField.text)
+    }
+
+    // Rebinding the project id moves secret access away from the old folder,
+    // so it needs both folders in front of the user before it happens.
+    Dialog {
+        id: moveDialog
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(460, Overlay.overlay ? Overlay.overlay.width - 64 : 460)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
+        padding: DesignTokens.spaceLg
+        property string error: ""
+        header: DialogHeader {
+            title: qsTr("Use this project's secrets here?")
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            text: qsTr("Secrets for this project id are recorded for:\n%1\n\nThey will be used from this folder instead:\n%2\n\nThe old folder loses access to them. This can't be undone from here.").arg(SecretsController.folderConflict).arg(SecretsController.currentFolder)
+            color: DesignTokens.textPrimary
+            font.pixelSize: DesignTokens.fontLabel
+            wrapMode: Text.WrapAnywhere
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Use secrets here")
+            okDestructive: true
+            onAccepted: {
+                moveDialog.error = SecretsController.confirmMove() ? "" : SecretsController.lastError;
+                moveDialog.close();
+            }
+            onRejected: moveDialog.reject()
+        }
     }
 }

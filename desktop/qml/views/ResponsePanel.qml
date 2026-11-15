@@ -62,8 +62,21 @@ Rectangle {
     property string respFormat: detectedFormat
     // Re-snap to the detected format whenever a new response arrives.
     onDetectedFormatChanged: respFormat = detectedFormat
-    // Preview rendered HTML / Markdown instead of the coloured source.
-    property bool previewMode: false
+    // Preview rendered HTML / Markdown instead of the coloured source. The request only applies
+    // while the current response is HTML or Markdown, and is dropped as soon as it is not.
+    readonly property bool previewable: respFormat === "html" || respFormat === "markdown"
+    property bool previewRequested: false
+    readonly property bool previewMode: previewRequested && previewable
+    onPreviewableChanged: {
+        if (!previewable)
+            previewRequested = false;
+    }
+
+    // The target's response for the current run, as opposed to a run that produced none (dry
+    // run, or the target was blocked or failed before sending).
+    readonly property bool runWithoutResponse: !AppController.hasResponse && !AppController.running && AppController.runOutcome.length > 0
+    // Saving needs a settled response from the target.
+    readonly property bool canSaveFromResponse: AppController.hasResponse && !AppController.running
 
     readonly property real availableContentWidth: Math.max(0, width - DesignTokens.spaceLg * 2)
     readonly property bool topControlsReflow: availableContentWidth < topTabs.implicitWidth + stackBtn.implicitWidth + closeBtn.implicitWidth + DesignTokens.spaceSm * 2
@@ -111,15 +124,21 @@ Rectangle {
     }
 
     // Pretty-print a JSON body for display; returns the raw text unchanged when
-    // it isn't valid JSON. Pure presentation formatting (used by Raw + Diff).
+    // it isn't valid JSON. C++ keeps number tokens exact (used by Raw + Diff).
     function prettyJson(body) {
-        if (body.length === 0)
-            return "";
-        try {
-            return JSON.stringify(JSON.parse(body), null, 2);
-        } catch (e) {
-            return body;
-        }
+        return body.length === 0 ? "" : AppController.prettyJson(body, false);
+    }
+
+    // Status line text: the HTTP status when there is one, plus the run outcome whenever it says
+    // more than "the request succeeded".
+    function statusText() {
+        const outcome = AppController.runOutcome;
+        const status = AppController.respStatus > 0 ? "HTTP " + AppController.respStatus : "";
+        if (status.length === 0)
+            return outcome;
+        if (outcome.length === 0 || outcome === "Succeeded")
+            return status;
+        return status + " \u00b7 " + outcome;
     }
 
     ColumnLayout {
@@ -300,7 +319,7 @@ Rectangle {
                     Rectangle {
                         id: statusSummary
 
-                        readonly property color statusHue: panel.statusColor(AppController.respStatus)
+                        readonly property color statusHue: AppController.runOutcome.length > 0 && AppController.runOutcome !== "Succeeded" ? DesignTokens.statusError : panel.statusColor(AppController.respStatus)
 
                         Layout.row: 0
                         Layout.column: 0
@@ -326,7 +345,7 @@ Rectangle {
                             anchors.leftMargin: DesignTokens.spaceMd
                             spacing: DesignTokens.spaceSm
                             Label {
-                                text: AppController.respStatus > 0 ? ("HTTP " + AppController.respStatus) : AppController.runOutcome
+                                text: panel.statusText()
                                 color: DesignTokens.textPrimary
                                 font.pointSize: DesignTokens.fontLabelPointSize
                                 font.family: DesignTokens.fontMono
@@ -438,6 +457,7 @@ Rectangle {
                             implicitHeight: Math.max(28, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                             leftPadding: DesignTokens.spaceSm
                             rightPadding: DesignTokens.spaceSm
+                            enabled: panel.canSaveFromResponse
                             GlassToolTip {
                                 active: saveExampleBtn.hovered
                                 text: qsTr("Save this response as a named example")
@@ -445,7 +465,7 @@ Rectangle {
                             onClicked: saveExampleDialog.open()
                             contentItem: Text {
                                 text: saveExampleBtn.text
-                                color: DesignTokens.accent
+                                color: saveExampleBtn.enabled ? DesignTokens.accent : DesignTokens.textSecondary
                                 font.pixelSize: DesignTokens.fontLabel
                                 font.weight: DesignTokens.weightSemiBold
                                 horizontalAlignment: Text.AlignHCenter
@@ -598,6 +618,8 @@ Rectangle {
                                 required property bool hasChildren
                                 required property bool collapsed
                                 required property string path
+                                required property bool addressable
+                                required property string pathIssue
                                 width: ListView.view.width
                                 height: 22
                                 radius: DesignTokens.radiusSm
@@ -644,8 +666,15 @@ Rectangle {
                                             id: fieldMouse
                                             anchors.fill: parent
                                             hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: AppController.copyToClipboard(treeRow.path, treeRow.path)
+                                            cursorShape: treeRow.addressable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                            onClicked: {
+                                                if (treeRow.addressable)
+                                                    AppController.copyToClipboard(treeRow.path, treeRow.path);
+                                            }
+                                        }
+                                        GlassToolTip {
+                                            active: fieldMouse.containsMouse && !treeRow.addressable
+                                            text: treeRow.pathIssue
                                         }
                                     }
                                     Text {
@@ -658,7 +687,7 @@ Rectangle {
                                         elide: Text.ElideRight
                                     }
                                     Text {
-                                        visible: fieldMouse.containsMouse
+                                        visible: fieldMouse.containsMouse && treeRow.addressable
                                         text: qsTr("copy path")
                                         color: DesignTokens.accent
                                         font.pixelSize: DesignTokens.fontCaption
@@ -675,9 +704,10 @@ Rectangle {
                                     // array index), so picking is one click.
                                     Text {
                                         id: extractHint
+                                        readonly property bool usable: treeRow.addressable && panel.canSaveFromResponse
                                         visible: extractMouse.containsMouse || (rowMouse.containsMouse && treeRow.isLeaf)
                                         text: qsTr("＋ save as variable")
-                                        color: extractMouse.containsMouse ? DesignTokens.accentHover : DesignTokens.accent
+                                        color: !extractHint.usable ? DesignTokens.textSecondary : (extractMouse.containsMouse ? DesignTokens.accentHover : DesignTokens.accent)
                                         font.pixelSize: DesignTokens.fontCaption
                                         font.weight: DesignTokens.weightSemiBold
                                         MouseArea {
@@ -685,8 +715,15 @@ Rectangle {
                                             anchors.fill: parent
                                             anchors.margins: -4
                                             hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: extractDialog.openFor(treeRow.path, treeRow.field)
+                                            cursorShape: extractHint.usable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                            onClicked: {
+                                                if (extractHint.usable)
+                                                    extractDialog.openFor(treeRow.path, treeRow.field);
+                                            }
+                                        }
+                                        GlassToolTip {
+                                            active: extractMouse.containsMouse && !extractHint.usable
+                                            text: !treeRow.addressable ? treeRow.pathIssue : (AppController.running ? qsTr("Wait for the run to finish.") : qsTr("There is no response from the target to read from."))
                                         }
                                     }
                                 }
@@ -725,7 +762,7 @@ Rectangle {
                             }
                             Button {
                                 id: previewBtn
-                                visible: panel.respFormat === "html" || panel.respFormat === "markdown"
+                                visible: panel.previewable
                                 Layout.row: panel.rawControlsReflow ? 1 : 0
                                 Layout.column: 1
                                 Layout.alignment: Qt.AlignRight
@@ -734,7 +771,7 @@ Rectangle {
                                 rightPadding: DesignTokens.spaceMd
                                 checkable: true
                                 checked: panel.previewMode
-                                onToggled: panel.previewMode = checked
+                                onToggled: panel.previewRequested = checked
                                 background: Rectangle {
                                     radius: DesignTokens.radiusSm
                                     color: previewBtn.checked ? DesignTokens.accentMuted : (previewBtn.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
@@ -791,30 +828,35 @@ Rectangle {
                             placeholder: qsTr("(body not captured — enable “Capture bodies”)")
                         }
 
-                        // Rendered preview (HTML / Markdown).
-                        Rectangle {
+                        // Rendered preview (HTML / Markdown). Built only while it is shown, from HTML
+                        // with every loadable reference removed so a response cannot make the app
+                        // fetch anything.
+                        Loader {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             visible: panel.previewMode
-                            radius: DesignTokens.radiusSm
-                            color: DesignTokens.surfaceSunken
-                            border.width: 1
-                            border.color: DesignTokens.borderSubtle
-                            ScrollView {
-                                anchors.fill: parent
-                                anchors.margins: DesignTokens.spaceSm
-                                clip: true
-                                TextArea {
-                                    readOnly: true
-                                    selectByMouse: true
-                                    wrapMode: TextArea.Wrap
-                                    textFormat: panel.respFormat === "markdown" ? TextEdit.MarkdownText : TextEdit.RichText
-                                    text: AppController.respBody
-                                    color: DesignTokens.textPrimary
-                                    selectionColor: DesignTokens.accent
-                                    selectedTextColor: DesignTokens.textInverse
-                                    font.pixelSize: DesignTokens.fontBody
-                                    background: null
+                            active: panel.previewMode && respTabs.currentIndex === 1 && topTabs.currentIndex === 0 && AppController.hasResponse
+                            sourceComponent: Rectangle {
+                                radius: DesignTokens.radiusSm
+                                color: DesignTokens.surfaceSunken
+                                border.width: 1
+                                border.color: DesignTokens.borderSubtle
+                                ScrollView {
+                                    anchors.fill: parent
+                                    anchors.margins: DesignTokens.spaceSm
+                                    clip: true
+                                    TextArea {
+                                        readOnly: true
+                                        selectByMouse: true
+                                        wrapMode: TextArea.Wrap
+                                        textFormat: TextEdit.RichText
+                                        text: AppController.inertPreviewHtml(AppController.respBody, panel.respFormat === "markdown")
+                                        color: DesignTokens.textPrimary
+                                        selectionColor: DesignTokens.accent
+                                        selectedTextColor: DesignTokens.textInverse
+                                        font.pixelSize: DesignTokens.fontBody
+                                        background: null
+                                    }
                                 }
                             }
                         }
@@ -859,22 +901,45 @@ Rectangle {
                             color: DesignTokens.surfaceSunken
                             border.width: 1
                             border.color: DesignTokens.borderSubtle
-                            ListView {
-                                id: diffView
+                            // Built only while the Diff tab is on screen: the diff is recomputed
+                            // when its inputs change, never for a response nobody is comparing.
+                            Loader {
                                 anchors.fill: parent
                                 anchors.margins: DesignTokens.spaceSm
-                                clip: true
-                                ScrollBar.vertical: ScrollBar {}
-                                model: diffCombo.count > 0 ? AppController.lineDiff(panel.prettyRaw ? panel.prettyJson(AppController.exampleBody(diffCombo.currentText)) : AppController.exampleBody(diffCombo.currentText), panel.prettyRaw ? panel.prettyJson(AppController.respBody) : AppController.respBody) : []
-                                delegate: Text {
-                                    id: diffRow
-                                    required property var modelData
-                                    width: ListView.view.width
-                                    text: diffRow.modelData.sign + " " + diffRow.modelData.text
-                                    color: diffRow.modelData.sign === "+" ? DesignTokens.statusSuccess : (diffRow.modelData.sign === "-" ? DesignTokens.statusError : DesignTokens.textSecondary)
-                                    font.pixelSize: DesignTokens.fontLabel
-                                    font.family: DesignTokens.fontMono
-                                    wrapMode: Text.WrapAnywhere
+                                active: panel.visible && topTabs.currentIndex === 0 && respTabs.currentIndex === 3 && AppController.hasResponse && diffCombo.count > 0
+                                sourceComponent: Item {
+                                    id: diffContent
+                                    readonly property var rows: AppController.lineDiff(panel.prettyRaw ? panel.prettyJson(AppController.exampleBody(diffCombo.currentText)) : AppController.exampleBody(diffCombo.currentText), panel.prettyRaw ? panel.prettyJson(AppController.respBody) : AppController.respBody)
+                                    readonly property bool tooLarge: rows.length === 1 && rows[0].tooLarge === true
+
+                                    Label {
+                                        anchors.fill: parent
+                                        visible: diffContent.tooLarge
+                                        text: diffContent.tooLarge ? diffContent.rows[0].text : ""
+                                        color: DesignTokens.textSecondary
+                                        font.pixelSize: DesignTokens.fontLabel
+                                        wrapMode: Text.WordWrap
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    ListView {
+                                        id: diffView
+                                        anchors.fill: parent
+                                        visible: !diffContent.tooLarge
+                                        clip: true
+                                        ScrollBar.vertical: ScrollBar {}
+                                        model: diffContent.tooLarge ? [] : diffContent.rows
+                                        delegate: Text {
+                                            id: diffRow
+                                            required property var modelData
+                                            width: ListView.view.width
+                                            text: diffRow.modelData.sign + " " + diffRow.modelData.text
+                                            color: diffRow.modelData.sign === "+" ? DesignTokens.statusSuccess : (diffRow.modelData.sign === "-" ? DesignTokens.statusError : DesignTokens.textSecondary)
+                                            font.pixelSize: DesignTokens.fontLabel
+                                            font.family: DesignTokens.fontMono
+                                            wrapMode: Text.WrapAnywhere
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -915,15 +980,27 @@ Rectangle {
 
                     EmptyState {
                         anchors.centerIn: parent
-                        visible: preRun.steps.length === 0
+                        visible: preRun.steps.length === 0 && !panel.runWithoutResponse
                         iconName: "zap"
                         heading: qsTr("No response yet")
                         body: qsTr("Press Send to run this endpoint's chain and the response will appear here.")
                     }
 
+                    // The last run ended without a response from the target: say how it ended
+                    // rather than leaving the pane looking as if nothing ran.
+                    EmptyState {
+                        anchors.centerIn: parent
+                        visible: panel.runWithoutResponse
+                        iconName: "x"
+                        heading: AppController.runOutcome === "Succeeded" ? qsTr("Run finished without a response") : qsTr("Run %1").arg(AppController.runOutcome.toLowerCase())
+                        body: AppController.timeline.rootFailureRow >= 0 ? qsTr("The target was not sent or did not answer. The Timeline shows the step that failed and why.") : qsTr("The target produced no response in this run (for example, a dry run). The Timeline shows each step.")
+                        actionText: qsTr("Show Timeline")
+                        onActionTriggered: panel.showTimeline()
+                    }
+
                     ColumnLayout {
                         anchors.fill: parent
-                        visible: preRun.steps.length > 0
+                        visible: preRun.steps.length > 0 && !panel.runWithoutResponse
                         spacing: DesignTokens.spaceSm
 
                         RowLayout {
@@ -1102,7 +1179,7 @@ Rectangle {
 
         footer: DialogButtons {
             okText: qsTr("Save Response")
-            okEnabled: exampleNameField.text.trim().length > 0
+            okEnabled: exampleNameField.text.trim().length > 0 && panel.canSaveFromResponse
             onAccepted: saveExampleDialog.accept()
             onRejected: saveExampleDialog.reject()
         }
@@ -1173,7 +1250,7 @@ Rectangle {
 
         footer: DialogButtons {
             okText: qsTr("Save variable")
-            okEnabled: extractNameField.text.trim().length > 0
+            okEnabled: extractNameField.text.trim().length > 0 && panel.canSaveFromResponse
             onAccepted: extractDialog.accept()
             onRejected: extractDialog.reject()
         }

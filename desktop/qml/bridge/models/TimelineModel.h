@@ -165,6 +165,9 @@ public slots:
         int index, QString op, QString code, QString detail, QVariantList diagnostics);
     void onStepBlocked(int index, QString op, int blockedByIndex);
     void onRunEnded(QString outcome);
+    /// The engine refused the run as a whole (cycle, unknown target, refused secret): adds a root
+    /// failure row with the engine's code and its already-redacted detail.
+    void onRunError(QString code, QString detail);
 
     /// Clear all rows (a fresh run is starting, or a project loaded).
     void reset();

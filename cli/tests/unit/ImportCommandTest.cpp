@@ -275,10 +275,43 @@ TEST(ImportCommand, unknown_flag_returns_usage_error) {
     EXPECT_EQ(importCommand(toArgs({spec.string(), "--nope"})), 2);
 }
 
-TEST(ImportCommand, missing_spec_file_returns_failure) {
+TEST(ImportCommand, missing_spec_file_is_an_invocation_error) {
     ScratchDir scratch;
     const auto missing = (scratch.path() / "absent.yaml").string();
-    EXPECT_EQ(importCommand(toArgs({missing})), 1);
+    EXPECT_EQ(importCommand(toArgs({missing})), 2);
+}
+
+TEST(ImportCommand, flags_may_come_before_the_spec) {
+    ScratchDir scratch;
+    const auto spec = scratch.write("api.yaml", kMinimalSpec);
+    ScratchDir out;
+
+    EXPECT_EQ(importCommand(toArgs({"--out", out.path().string(), spec.string()})), 0);
+    EXPECT_TRUE(fs::exists(out.path() / "reqloom.yaml"));
+}
+
+TEST(ImportCommand, out_without_value_and_repeated_out_are_invocation_errors) {
+    ScratchDir scratch;
+    const auto spec = scratch.write("api.yaml", kMinimalSpec);
+    ScratchDir out;
+
+    EXPECT_EQ(importCommand(toArgs({spec.string(), "--out"})), 2);
+    EXPECT_EQ(importCommand(toArgs({spec.string(), "--out", "--force"})), 2);
+    EXPECT_EQ(importCommand(toArgs(
+                  {spec.string(), "--out", out.path().string(), "--out", out.path().string()})),
+              2);
+    EXPECT_EQ(importCommand(toArgs({spec.string(), spec.string()})), 2);
+}
+
+TEST(ImportCommand, target_that_cannot_be_written_is_a_system_error) {
+    ScratchDir scratch;
+    const auto spec = scratch.write("api.yaml", kMinimalSpec);
+    const auto blocker = scratch.write("not-a-dir", "file");
+
+    const auto run = runCaptured(
+        toArgs({spec.string(), "--out", (blocker / "project").string()}), nullptr, nullptr);
+    EXPECT_EQ(run.rc, 3) << run.err;
+    EXPECT_EQ(run.err.find("--force"), std::string::npos) << run.err;
 }
 
 TEST(ImportCommand, imports_spec_and_writes_project) {

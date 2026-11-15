@@ -46,6 +46,10 @@ public:
     /// Remove a saved example by name; persists. No-op if it doesn't exist.
     void remove(const QString& operationId, const QString& name);
 
+    /// Move an operation's examples to `newId` after the operation was renamed, appending to any
+    /// already under `newId`; persists. Returns false when `oldId` has none.
+    bool renameOperation(const QString& oldId, const QString& newId);
+
 private:
     [[nodiscard]] QString filePath() const;
     void load();

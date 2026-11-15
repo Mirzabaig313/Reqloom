@@ -380,6 +380,7 @@ void AppController::restoreActiveTab() {
         syncActiveKindFlags();
         return;
     }
+    parkHiddenRunTimeline();
     const TabState tab = tabs_.stateAt(activeTabIndex_);
     // Restore this tab's own run timeline.
     timeline_.restoreSnapshot(tab.timeline);
@@ -635,6 +636,7 @@ void AppController::closeTabImmediately(int index) {
     const bool closingActive = index == activeTabIndex_;
     const bool closingDraft = tabs_.stateAt(index).operationDraft;
     tabs_.removeAt(index);
+    cancelRunIfItsTabClosed();
 
     if (tabs_.count() == 0) {
         activeTabIndex_ = -1;
@@ -701,6 +703,7 @@ void AppController::closeOtherTabsImmediately(int index) {
     TabState keep = tabs_.stateAt(activeTabIndex_);
     tabs_.clearAll();
     activeTabIndex_ = tabs_.append(std::move(keep));
+    cancelRunIfItsTabClosed();
     persistOpenTabs();
     emit activeTabChanged();
 }
@@ -720,6 +723,7 @@ void AppController::confirmDiscardNewOperation() {
     if (action == PendingDraftClose::CloseOtherTabs && keepTab && operationDraftIndex() >= 0) {
         tabs_.clearAll();
         activeTabIndex_ = tabs_.append(std::move(*keepTab));
+        cancelRunIfItsTabClosed();
         restoreActiveTab();
         persistOpenTabs();
         emit activeTabChanged();

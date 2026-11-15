@@ -153,29 +153,41 @@ QVariantList AppController::variableSuggestions(const QString& operationId) cons
     return out;
 }
 
-std::pair<QString, QString> AppController::findVariableProducer(const QString& token) const {
-    if (!activeProject().hasProject() || token.isEmpty()) {
-        return {};
+ProducerLookup AppController::findVariableProducer(const QString& token) const {
+    QString bare = token.trimmed();
+    if (bare.startsWith(QLatin1String("{{")) && bare.endsWith(QLatin1String("}}"))) {
+        bare = bare.mid(2, bare.size() - 4).trimmed();
     }
-    const auto& proj = activeProject().project();
-    for (const auto& [resId, resource] : proj.resources) {
-        const QString resName = QString::fromStdString(resId.value);
-        for (const auto& [opName, op] : resource.operations) {
-            for (const auto& ext : op.extractions) {
-                const QString var = QString::fromStdString(ext.variableName);
-                if (token == (resName + QLatin1Char('.') + var) || token == var) {
-                    return {resName + QLatin1Char('.') + QString::fromStdString(opName),
-                            QString::fromStdString(ext.sourcePath)};
-                }
-            }
-        }
+    const QString targetId = currentOperationId();
+    if (!activeProject().hasProject() || !bootstrapper_ || bare.isEmpty() || targetId.isEmpty()) {
+        return ProducerLookup{{}, {}, tr("Open the request that uses this variable first.")};
     }
-    return {};
+    const engine::OperationId target{targetId.toStdString()};
+    const qsizetype dot = targetId.indexOf(QLatin1Char('.'));
+    const engine::ResourceId resourceId{targetId.left(dot).toStdString()};
+    const std::string opName = targetId.mid(dot + 1).toStdString();
+
+    // The open request with its unsaved edits, so the producer matches what a run would use.
+    engine::Project project = activeProject().project();
+    const auto resource = project.resources.find(resourceId);
+    if (dot <= 0 || resource == project.resources.end()) {
+        return ProducerLookup{{}, {}, tr("Open the request that uses this variable first.")};
+    }
+    if (creatingOperation_ || editing_) {
+        engine::Operation& op = resource->second.operations[opName];
+        applyOverrideToOperation(op, buildOverride());
+        op.id = target;
+        op.resource = resourceId;
+    }
+    return producerFromPlan(
+        bootstrapper_->engine().resolvePlan(project, target), project, target, bare.toStdString());
 }
 
 QStringList AppController::candidateValues(const QString& token) const {
     QStringList out;
-    const auto [producerOpId, sourcePath] = findVariableProducer(token);
+    const ProducerLookup lookup = findVariableProducer(token);
+    const QString producerOpId = QString::fromStdString(lookup.producer);
+    const QString sourcePath = QString::fromStdString(lookup.sourcePath);
     if (producerOpId.isEmpty() || sourcePath.isEmpty()) {
         return out;
     }
@@ -199,7 +211,7 @@ QStringList AppController::candidateValues(const QString& token) const {
 }
 
 QString AppController::producerOpFor(const QString& token) const {
-    return findVariableProducer(token).first;
+    return QString::fromStdString(findVariableProducer(token).producer);
 }
 
 QString AppController::responseBodyFor(const QString& operationId) const {
@@ -268,10 +280,12 @@ void AppController::refreshCandidates(const QString& token) {
     if (!activeProject().hasProject() || runController_ == nullptr || runController_->isRunning()) {
         return;
     }
-    const QString producerOpId = findVariableProducer(token).first;
-    if (producerOpId.isEmpty()) {
+    const ProducerLookup lookup = findVariableProducer(token);
+    if (lookup.producer.empty()) {
+        emit notify(lookup.problem, true);
         return;
     }
+    const QString producerOpId = QString::fromStdString(lookup.producer);
     pendingCandidateOp_ = producerOpId;
     runController_->run(producerOpId, environment_, false, false);
 }
@@ -565,63 +579,85 @@ QVariantList AppController::chainNodes() const {
     return nodes;
 }
 
-QVariantMap AppController::chainGraph() const {
-    // Draw the target's resolved chain. The engine is the single source of truth: resolvePlan()
-    // gives the order and edges; we only lay it out, so the graph always matches what runs.
-    QVariantMap graph;
+const AppController::ChainPlanCache* AppController::chainPlan() const {
     if (!activeProject().hasProject() || (!hasOperation_ && !creatingOperation_) ||
         !bootstrapper_) {
-        return graph;
+        return nullptr;
     }
     const QString targetId = currentOperationId();
     const engine::OperationId targetOpId{targetId.toStdString()};
+    const auto source = activeProject().projectPtr();
+    // Edit mode resolves a copy carrying the unsaved depends_on edits.
+    const bool patchedDeps = !creatingOperation_ && editing_ && chainFieldsLoaded_;
+    std::vector<std::string> deps;
+    if (patchedDeps) {
+        deps = editDependencies_.dependencies();
+    }
+    // A draft's request changes with every keystroke, so it is resolved afresh each time.
+    if (!creatingOperation_ && chainPlanCache_ && !chainPlanCache_->creating &&
+        chainPlanCache_->source == source && chainPlanCache_->target == targetId &&
+        chainPlanCache_->patchedDeps == patchedDeps && chainPlanCache_->deps == deps) {
+        return &*chainPlanCache_;
+    }
 
-    // Creation inserts a synthetic target into a project copy so the resolver can preview the draft
-    // without writing a placeholder to disk.
-    engine::Project patched;
-    const engine::Project* proj = &activeProject().project();
+    const qsizetype dot = targetId.indexOf(QLatin1Char('.'));
+    const engine::ResourceId resourceId{targetId.left(dot).toStdString()};
+    const std::string opName = targetId.mid(dot + 1).toStdString();
+    std::shared_ptr<const engine::Project> project = source;
     if (creatingOperation_) {
-        patched = activeProject().project();
-        const qsizetype dot = targetId.indexOf(QLatin1Char('.'));
-        const engine::ResourceId resourceId{targetId.left(dot).toStdString()};
-        auto resource = patched.resources.find(resourceId);
-        if (dot <= 0 || resource == patched.resources.end()) {
-            return graph;
+        // A synthetic target lets the resolver preview the draft without writing it.
+        auto patched = std::make_shared<engine::Project>(*source);
+        auto resource = patched->resources.find(resourceId);
+        if (dot <= 0 || resource == patched->resources.end()) {
+            return nullptr;
         }
         engine::Operation target;
         applyOverrideToOperation(target, buildOverride());
         target.id = targetOpId;
         target.resource = resourceId;
-        resource->second.operations[targetId.mid(dot + 1).toStdString()] = std::move(target);
-        proj = &patched;
+        resource->second.operations[opName] = std::move(target);
+        project = std::move(patched);
     } else if (activeProject().findOperation(targetOpId) == nullptr) {
-        return graph;
-    }
-
-    // In edit mode, resolve against a patched copy so the preview tracks unsaved depends_on edits.
-    if (!creatingOperation_ && editing_ && chainFieldsLoaded_) {
-        patched = activeProject().project();
-        const qsizetype dot = targetId.indexOf(QLatin1Char('.'));
-        if (dot > 0) {
-            const engine::ResourceId resId{targetId.left(dot).toStdString()};
-            const std::string opName = targetId.mid(dot + 1).toStdString();
-            if (auto resIt = patched.resources.find(resId); resIt != patched.resources.end()) {
-                if (auto opIt = resIt->second.operations.find(opName);
-                    opIt != resIt->second.operations.end()) {
-                    opIt->second.explicitDependencies.clear();
-                    for (const auto& dep : editDependencies_.dependencies()) {
-                        opIt->second.explicitDependencies.push_back(engine::OperationId{dep});
-                    }
-                }
-            }
+        return nullptr;
+    } else if (patchedDeps) {
+        auto patched = std::make_shared<engine::Project>(*source);
+        auto& op = patched->resources.at(resourceId).operations.at(opName);
+        op.explicitDependencies.clear();
+        for (const auto& dep : deps) {
+            op.explicitDependencies.push_back(engine::OperationId{dep});
         }
-        proj = &patched;
+        project = std::move(patched);
     }
 
-    const auto plan = bootstrapper_->engine().resolvePlan(*proj, targetOpId);
-    if (!plan || plan->order.size() <= 1) {
+    chainPlanCache_ = ChainPlanCache{source,
+                                     targetId,
+                                     creatingOperation_,
+                                     patchedDeps,
+                                     std::move(deps),
+                                     project,
+                                     bootstrapper_->engine().resolvePlan(*project, targetOpId)};
+    return &*chainPlanCache_;
+}
+
+QString AppController::chainResolveError() const {
+    const ChainPlanCache* cached = chainPlan();
+    if (cached == nullptr || cached->plan) {
+        return {};
+    }
+    return QString::fromStdString(cached->plan.error().detail);
+}
+
+QVariantMap AppController::chainGraph() const {
+    // Draw the target's resolved chain. The engine is the single source of truth: resolvePlan()
+    // gives the order and edges; we only lay it out, so the graph always matches what runs.
+    QVariantMap graph;
+    const ChainPlanCache* cached = chainPlan();
+    if (cached == nullptr || !cached->plan || cached->plan->order.size() <= 1) {
         return graph;
     }
+    const QString targetId = cached->target;
+    const auto& plan = cached->plan;
+    const engine::Project* proj = cached->project.get();
 
     QHash<QString, int> indexOf;
     QStringList ids;
@@ -1055,26 +1091,8 @@ bool AppController::saveChainEdits() {
             updated.explicitDependencies.push_back(engine::OperationId{dep});
         }
 
-        // Preserve each extraction's source kind by variable name; new rows default to JSONPath.
-        std::map<std::string, engine::Extraction::Source> sourceByVar;
-        for (const auto& ext : op->extractions) {
-            sourceByVar[ext.variableName] = ext.source;
-        }
-        updated.extractions.clear();
-        for (const auto& [variable, sourcePath] : chainEditor_.extractModelAt(i)->pairs()) {
-            const QString var = variable.trimmed();
-            const QString path = sourcePath.trimmed();
-            if (var.isEmpty() && path.isEmpty()) {
-                continue;
-            }
-            engine::Extraction extraction;
-            extraction.variableName = var.toStdString();
-            extraction.sourcePath = path.toStdString();
-            const auto found = sourceByVar.find(extraction.variableName);
-            extraction.source =
-                found != sourceByVar.end() ? found->second : engine::Extraction::Source::JsonPath;
-            updated.extractions.push_back(std::move(extraction));
-        }
+        updated.extractions =
+            mergeExtractions(op->extractions, chainEditor_.extractModelAt(i)->pairs());
 
         const QString overResource = chainEditor_.forEachOverAt(i).trimmed();
         if (overResource.isEmpty()) {

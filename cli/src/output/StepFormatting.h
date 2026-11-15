@@ -38,6 +38,9 @@ namespace reqloom::cli {
     return std::string(engine::toCodeString(*step.error));
 }
 
+/// `outcome` of a machine-readable document for a run that ended before its first step.
+inline constexpr std::string_view kErrorOutcomeName = "ERROR";
+
 [[nodiscard]] constexpr std::string_view runOutcomeName(engine::RunOutcome outcome) noexcept {
     switch (outcome) {
         case engine::RunOutcome::Succeeded:

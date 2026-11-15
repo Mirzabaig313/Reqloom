@@ -309,6 +309,9 @@ Rectangle {
                 // Eight lines preserve timeline scanability; the toggle below
                 // keeps the complete selectable value available on demand.
                 readonly property int payloadPreviewLines: 8
+                // Decided from the text, not a laid-out view: more lines than the preview shows, or
+                // enough characters that wrapping alone will overflow it.
+                readonly property bool valueExceedsPreview: expanded && (value.length > payloadPreviewLines * 100 || value.split("\n", payloadPreviewLines + 1).length > payloadPreviewLines)
                 property bool showFullValue: false
                 onExpandedChanged: {
                     if (!expanded) {
@@ -845,85 +848,89 @@ Rectangle {
 
                     // Expanded detail stays selectable but begins as a bounded
                     // preview so one payload cannot consume the timeline viewport.
-                    Rectangle {
-                        id: payloadWell
-                        visible: row.expanded && row.value.length > 0
+                    // Created only while the row is open, so collapsed rows never lay out a body.
+                    Loader {
+                        active: row.expanded && row.value.length > 0
+                        visible: active
                         Layout.fillWidth: true
                         Layout.bottomMargin: DesignTokens.spaceXs
-                        implicitHeight: payloadContent.implicitHeight + DesignTokens.spaceSm * 2
-                        radius: DesignTokens.radiusSm
-                        color: DesignTokens.surfaceBase
-                        border.width: 1
-                        border.color: payloadText.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
-                        readonly property real previewHeight: payloadFontMetrics.lineSpacing * row.payloadPreviewLines
+                        sourceComponent: Rectangle {
+                            id: payloadWell
+                            implicitHeight: payloadContent.implicitHeight + DesignTokens.spaceSm * 2
+                            radius: DesignTokens.radiusSm
+                            color: DesignTokens.surfaceBase
+                            border.width: 1
+                            border.color: payloadText.activeFocus ? DesignTokens.accent : DesignTokens.borderSubtle
+                            readonly property real previewHeight: payloadFontMetrics.lineSpacing * row.payloadPreviewLines
 
-                        FontMetrics {
-                            id: payloadFontMetrics
-                            font: payloadText.font
-                        }
-
-                        ColumnLayout {
-                            id: payloadContent
-                            anchors.fill: parent
-                            anchors.margins: DesignTokens.spaceSm
-                            spacing: DesignTokens.spaceXs
-
-                            RowLayout {
-                                Layout.fillWidth: true
-
-                                Label {
-                                    text: row.valueLabel
-                                    color: DesignTokens.textSecondary
-                                    font.pixelSize: DesignTokens.fontCaption
-                                    font.weight: DesignTokens.weightSemiBold
-                                    font.letterSpacing: 0.6
-                                }
-
-                                Item {
-                                    Layout.fillWidth: true
-                                }
-
-                                ToolButton {
-                                    id: payloadToggle
-                                    visible: payloadText.contentHeight > payloadWell.previewHeight + 0.5
-                                    text: row.showFullValue ? qsTr("Show less") : qsTr("Show full")
-                                    Accessible.name: text
-                                    onClicked: row.showFullValue = !row.showFullValue
-                                    contentItem: Label {
-                                        text: payloadToggle.text
-                                        color: DesignTokens.accent
-                                        font.pixelSize: DesignTokens.fontCaption
-                                        font.weight: DesignTokens.weightMedium
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                    }
-                                    background: Rectangle {
-                                        radius: DesignTokens.radiusSm
-                                        color: payloadToggle.hovered || payloadToggle.down || payloadToggle.activeFocus ? DesignTokens.accentMuted : "transparent"
-                                        border.width: payloadToggle.activeFocus ? 1 : 0
-                                        border.color: DesignTokens.accent
-                                    }
-                                }
+                            FontMetrics {
+                                id: payloadFontMetrics
+                                font: payloadText.font
                             }
 
-                            TextEdit {
-                                id: payloadText
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: row.showFullValue ? contentHeight : Math.min(contentHeight, payloadWell.previewHeight)
-                                clip: !row.showFullValue
-                                text: row.value
-                                readOnly: true
-                                activeFocusOnTab: true
-                                Accessible.name: row.valueLabel
-                                selectByMouse: true
-                                persistentSelection: true
-                                wrapMode: TextEdit.Wrap
-                                textFormat: TextEdit.PlainText
-                                color: DesignTokens.textPrimary
-                                selectionColor: DesignTokens.accent
-                                selectedTextColor: DesignTokens.textInverse
-                                font.pixelSize: DesignTokens.fontLabel
-                                font.family: DesignTokens.fontMono
+                            ColumnLayout {
+                                id: payloadContent
+                                anchors.fill: parent
+                                anchors.margins: DesignTokens.spaceSm
+                                spacing: DesignTokens.spaceXs
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+
+                                    Label {
+                                        text: row.valueLabel
+                                        color: DesignTokens.textSecondary
+                                        font.pixelSize: DesignTokens.fontCaption
+                                        font.weight: DesignTokens.weightSemiBold
+                                        font.letterSpacing: 0.6
+                                    }
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                    }
+
+                                    ToolButton {
+                                        id: payloadToggle
+                                        visible: row.valueExceedsPreview
+                                        text: row.showFullValue ? qsTr("Show less") : qsTr("Show full")
+                                        Accessible.name: text
+                                        onClicked: row.showFullValue = !row.showFullValue
+                                        contentItem: Label {
+                                            text: payloadToggle.text
+                                            color: DesignTokens.accent
+                                            font.pixelSize: DesignTokens.fontCaption
+                                            font.weight: DesignTokens.weightMedium
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        background: Rectangle {
+                                            radius: DesignTokens.radiusSm
+                                            color: payloadToggle.hovered || payloadToggle.down || payloadToggle.activeFocus ? DesignTokens.accentMuted : "transparent"
+                                            border.width: payloadToggle.activeFocus ? 1 : 0
+                                            border.color: DesignTokens.accent
+                                        }
+                                    }
+                                }
+
+                                TextEdit {
+                                    id: payloadText
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: row.showFullValue ? contentHeight : Math.min(contentHeight, payloadWell.previewHeight)
+                                    clip: !row.showFullValue
+                                    text: row.value
+                                    readOnly: true
+                                    activeFocusOnTab: true
+                                    Accessible.name: row.valueLabel
+                                    selectByMouse: true
+                                    persistentSelection: true
+                                    wrapMode: TextEdit.Wrap
+                                    textFormat: TextEdit.PlainText
+                                    color: DesignTokens.textPrimary
+                                    selectionColor: DesignTokens.accent
+                                    selectedTextColor: DesignTokens.textInverse
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.family: DesignTokens.fontMono
+                                }
                             }
                         }
                     }

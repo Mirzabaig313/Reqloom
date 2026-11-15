@@ -66,11 +66,11 @@ Histogram histogram(std::vector<double> samples) {
     if (n >= 2 && iqr > 0.0) {
         binWidth = 2.0 * iqr * std::pow(static_cast<double>(n), -1.0 / 3.0);
     }
-    int binCount = 0;
-    if (binWidth > 0.0) {
-        binCount = std::max(1, static_cast<int>(std::ceil(range / binWidth)));
-    } else {
-        binCount = std::max(1, static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n)))));
+    const double wanted =
+        binWidth > 0.0 ? std::ceil(range / binWidth) : std::ceil(std::sqrt(static_cast<double>(n)));
+    const int binCount =
+        static_cast<int>(std::clamp(wanted, 1.0, static_cast<double>(kMaxHistogramBins)));
+    if (binWidth <= 0.0 || static_cast<double>(binCount) < wanted) {
         binWidth = range / static_cast<double>(binCount);
     }
 

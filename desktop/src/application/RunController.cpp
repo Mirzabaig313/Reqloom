@@ -42,11 +42,17 @@ RunController::RunController(ce::ExecutionEngine& engine,
     : QObject(parent), engine_(engine), project_(&project) {
     qRegisterMetaType<RunReport>("RunReport");
 
-    // The engine retains this callback with no unsubscribe and outlives this controller. Capture a
-    // copy of the `alive` flag, not a bare `this`, so an event after destruction can't touch a
-    // freed `this`.
-    engine_.subscribe([this, alive = alive_](const ce::RunEvent& event) {
-        if (alive->load(std::memory_order_acquire)) {
+    // The engine retains this callback with no unsubscribe and outlives this controller, so it
+    // touches `this` only while the gate says the controller is alive. A held cancel is applied
+    // here, before the engine does any further work, even during teardown.
+    engine_.subscribe([this, gate = gate_, &engine = engine_](const ce::RunEvent& event) {
+        if (const auto* started = std::get_if<ce::RunStarted>(&event); started != nullptr) {
+            gate->runId.store(started->runId.value);
+            if (gate->cancelPending.exchange(false)) {
+                engine.cancel(started->runId);
+            }
+        }
+        if (gate->alive.load(std::memory_order_acquire)) {
             publishEvent(event);
         }
     });
@@ -60,9 +66,9 @@ RunController::RunController(ce::ExecutionEngine& engine,
 }
 
 RunController::~RunController() {
-    // Block further callback work, then drain the worker so an in-flight run() can't race teardown.
-    alive_->store(false, std::memory_order_release);
+    gate_->alive.store(false, std::memory_order_release);
     if (watcher_.isRunning()) {
+        requestCancel();
         watcher_.waitForFinished();
     }
 }
@@ -102,7 +108,7 @@ void RunController::setEnvironment(const QString& environment) {
 
 void RunController::forgetProject(const QString& rootPath) {
     const std::string root = rootPath.toStdString();
-    if (running_ && root == runningRoot_) {
+    if (running_ && root == runningKey_.first) {
         return;
     }
     std::erase_if(contexts_, [&root](const auto& entry) { return entry.first.first == root; });
@@ -147,7 +153,36 @@ void RunController::clearExtractionCache() {
     }
 }
 
+const RunController::ActorView* RunController::runSnapshotFor(const ce::ActorId& actor) const {
+    static const ActorView kUnknown{};
+    if (!running_ || activeKey() != runningKey_) {
+        return nullptr;
+    }
+    const auto it = runSnapshot_.find(actor.value);
+    return it == runSnapshot_.end() ? &kUnknown : &it->second;
+}
+
+void RunController::snapshotForRun(const ce::RunContext& ctx) {
+    runSnapshot_.clear();
+    if (!project_->hasProject()) {
+        return;
+    }
+    for (const auto& [id, unusedActor] : project_->project().actors) {
+        ActorView view;
+        if (const ce::ActorSession* session = ctx.session(id); session != nullptr) {
+            view.state = session->state;
+            view.expiresAt = session->expiresAt;
+        }
+        view.cookies = ctx.cookies(id);
+        view.jar = ctx.jarCookies(id);
+        runSnapshot_.emplace(id.value, std::move(view));
+    }
+}
+
 std::map<std::string, std::string> RunController::cookies(const ce::ActorId& actor) const {
+    if (const ActorView* view = runSnapshotFor(actor); view != nullptr) {
+        return view->cookies;
+    }
     const auto* ctx = findActiveContext();
     if (ctx == nullptr) {
         return {};
@@ -156,6 +191,9 @@ std::map<std::string, std::string> RunController::cookies(const ce::ActorId& act
 }
 
 std::vector<ce::JarCookie> RunController::jarCookies(const ce::ActorId& actor) const {
+    if (const ActorView* view = runSnapshotFor(actor); view != nullptr) {
+        return view->jar;
+    }
     const auto* ctx = findActiveContext();
     if (ctx == nullptr) {
         return {};
@@ -163,7 +201,23 @@ std::vector<ce::JarCookie> RunController::jarCookies(const ce::ActorId& actor) c
     return ctx->jarCookies(actor);
 }
 
+RunController::ActorSessionInfo RunController::sessionInfoOf(
+    ce::ActorSession::State state, std::chrono::steady_clock::time_point expiresAt) {
+    ActorSessionInfo info;
+    info.state = state;
+    if (info.state == ce::ActorSession::State::Live) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+            expiresAt - std::chrono::steady_clock::now());
+        info.secondsRemaining =
+            static_cast<int>(std::max<std::chrono::seconds::rep>(0, remaining.count()));
+    }
+    return info;
+}
+
 RunController::ActorSessionInfo RunController::sessionInfo(const ce::ActorId& actor) const {
+    if (const ActorView* view = runSnapshotFor(actor); view != nullptr) {
+        return sessionInfoOf(view->state, view->expiresAt);
+    }
     const auto* ctx = findActiveContext();
     if (ctx == nullptr) {
         return {};
@@ -172,16 +226,7 @@ RunController::ActorSessionInfo RunController::sessionInfo(const ce::ActorId& ac
     if (session == nullptr) {
         return {};
     }
-
-    ActorSessionInfo info;
-    info.state = session->state;
-    if (info.state == ce::ActorSession::State::Live) {
-        const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
-            session->expiresAt - std::chrono::steady_clock::now());
-        info.secondsRemaining =
-            static_cast<int>(std::max<std::chrono::seconds::rep>(0, remaining.count()));
-    }
-    return info;
+    return sessionInfoOf(session->state, session->expiresAt);
 }
 
 namespace {
@@ -329,7 +374,8 @@ void RunController::runWithOverride(const QString& target,
                                : project_->projectPtr();
     setEnvironment(environment);
     ce::RunContext& ctx = contextForActive();
-    runningRoot_ = project_->rootPath().toStdString();
+    runningKey_ = activeKey();
+    snapshotForRun(ctx);
 
     // Value-picker pins seed each chosen value as the resource's most-recent instance, so the
     // producing op is skipped and the pinned value used. A clean run resets extractions in the
@@ -344,11 +390,11 @@ void RunController::runWithOverride(const QString& target,
         ctx.appendInstance(ce::ResourceId{token.substr(0, dot)}, std::move(instance));
     }
 
+    // Cleared before the worker exists, so a cancel can neither hit a stale id nor carry over.
+    gate_->runId.store(0);
+    gate_->cancelPending.store(false);
     running_ = true;
     emit runningChanged(true);
-
-    // Clear the prior run id so a cancelRun() racing worker startup can't cancel by a stale id.
-    currentRunId_.store(0, std::memory_order_release);
 
     // engine_.run blocks, so run it on a worker. Captured state outlives the run: the engine lives
     // for the app, `project` is owned by the lambda, and ctx is a member whose destructor drains
@@ -373,10 +419,14 @@ void RunController::cancelRun() {
     if (!running_) {
         return;
     }
-    // RunStarted may not have arrived yet (id 0); cancelling by a zero id is a no-op, so forward
-    // only a real id.
-    const auto runId = currentRunId_.load(std::memory_order_acquire);
-    if (runId != 0) {
+    requestCancel();
+}
+
+void RunController::requestCancel() {
+    // Sequentially consistent: either this sees the id the callback stored, or the callback sees
+    // the pending flag set here, so the cancel cannot fall between the two.
+    gate_->cancelPending.store(true);
+    if (const auto runId = gate_->runId.load(); runId != 0) {
         engine_.cancel(engine::RunId{runId});
     }
 }
@@ -386,7 +436,6 @@ void RunController::publishEvent(const ce::RunEvent& event) {
         [this](const auto& e) {
             using T = std::decay_t<decltype(e)>;
             if constexpr (std::is_same_v<T, ce::RunStarted>) {
-                currentRunId_.store(e.runId.value, std::memory_order_release);
                 emit runStarted(QString::fromStdString(e.target.value),
                                 static_cast<int>(e.chainSize),
                                 QString::fromStdString(e.envName));

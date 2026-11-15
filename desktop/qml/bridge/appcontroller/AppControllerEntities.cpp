@@ -113,22 +113,6 @@ namespace {
     return engine::HttpMethod::Post;
 }
 
-[[nodiscard]] std::vector<engine::Extraction> extractionsFromPairs(
-    const std::vector<std::pair<QString, QString>>& pairs) {
-    std::vector<engine::Extraction> out;
-    for (const auto& [key, value] : pairs) {
-        if (key.isEmpty()) {
-            continue;
-        }
-        engine::Extraction ext;
-        ext.variableName = key.toStdString();
-        ext.sourcePath = value.toStdString();
-        ext.source = engine::Extraction::Source::JsonPath;
-        out.push_back(std::move(ext));
-    }
-    return out;
-}
-
 }  // namespace
 
 QStringList AppController::actorStrategies() const {
@@ -341,27 +325,28 @@ bool AppController::saveActorInline(const QString& originalId,
     const bool stepBased =
         (strategy == engine::AuthStrategy::Simple || strategy == engine::AuthStrategy::Chain);
     if (stepBased) {
-        actor.authSteps.clear();
+        std::vector<AuthStepEdit> edits;
         for (int i = 0; i < actorAuthSteps_.count(); ++i) {
-            engine::AuthStep step;
-            step.id = actorAuthSteps_.idAt(i).trimmed().toStdString();
-            if (step.id.empty()) {
-                step.id = (i == 0) ? std::string{"login"} : "step" + std::to_string(i + 1);
+            AuthStepEdit edit;
+            edit.id = actorAuthSteps_.idAt(i).trimmed().toStdString();
+            if (edit.id.empty()) {
+                edit.id = (i == 0) ? std::string{"login"} : "step" + std::to_string(i + 1);
             }
-            step.method = httpMethodFromLabel(actorAuthSteps_.methodAt(i));
-            step.pathTemplate = actorAuthSteps_.pathAt(i).trimmed().toStdString();
+            edit.method = httpMethodFromLabel(actorAuthSteps_.methodAt(i));
+            edit.pathTemplate = actorAuthSteps_.pathAt(i).trimmed().toStdString();
             const QString body = actorAuthSteps_.bodyAt(i).trimmed();
-            step.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
+            edit.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
                                                : std::optional<std::string>{body.toStdString()};
             bool okExpect = false;
             const int expect = actorAuthSteps_.expectAt(i).trimmed().toInt(&okExpect);
-            step.expectStatus = okExpect ? std::optional<int>{expect} : std::optional<int>{};
-            const auto* extractModel = actorAuthSteps_.extractModelAt(i);
-            if (extractModel != nullptr) {
-                step.extractions = extractionsFromPairs(extractModel->pairs());
+            edit.expectStatus = okExpect ? std::optional<int>{expect} : std::optional<int>{};
+            if (const auto* extractModel = actorAuthSteps_.extractModelAt(i);
+                extractModel != nullptr) {
+                edit.extractions = extractModel->pairs();
             }
-            actor.authSteps.push_back(std::move(step));
+            edits.push_back(std::move(edit));
         }
+        actor.authSteps = mergeAuthSteps(actor.authSteps, edits);
     } else {
         actor.authSteps.clear();
     }
@@ -376,7 +361,7 @@ bool AppController::saveActorInline(const QString& originalId,
         const QString body = refreshBody.trimmed();
         refresh.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
                                               : std::optional<std::string>{body.toStdString()};
-        refresh.extractions = extractionsFromPairs(actorRefreshExtract_.pairs());
+        refresh.extractions = mergeExtractions(refresh.extractions, actorRefreshExtract_.pairs());
         actor.refresh = std::move(refresh);
     } else {
         actor.refresh.reset();
@@ -465,9 +450,14 @@ bool AppController::saveEnvironmentEdits(const QString& originalName, const QStr
     if (!baseUrl.isEmpty()) {
         variables.insert_or_assign(std::string{"baseUrl"}, baseUrl.toStdString());
     }
+    // Saving never switches environments; onSaved follows a rename of the active one.
+    if (!originalName.trimmed().isEmpty() && originalName.trimmed() == environment_) {
+        environmentRenameTarget_ = name.trimmed();
+    }
     QString error;
-    if (activeProject().saveEnvironment(originalName, name, variables, error)) {
-        setEnvironment(name.trimmed());
+    const bool ok = activeProject().saveEnvironment(originalName, name, variables, error);
+    environmentRenameTarget_.clear();
+    if (ok) {
         emit notify(QStringLiteral("Saved environment “%1”").arg(name.trimmed()), false);
         return true;
     }
@@ -476,9 +466,13 @@ bool AppController::saveEnvironmentEdits(const QString& originalName, const QStr
 }
 
 void AppController::deleteEnvironment(const QString& name) {
+    const bool wasActive = name.trimmed() == environment_;
     QString error;
     if (activeProject().deleteEnvironment(name, error)) {
-        emit notify(QStringLiteral("Deleted environment “%1”").arg(name), false);
+        emit notify(wasActive ? QStringLiteral("Deleted environment “%1”; now using “%2”")
+                                    .arg(name.trimmed(), environment_)
+                              : QStringLiteral("Deleted environment “%1”").arg(name.trimmed()),
+                    false);
     } else {
         emit notify(error, true);
     }
@@ -526,6 +520,10 @@ void AppController::clearHistory() {
     if (!bootstrapper_) {
         return;
     }
+    if (runController_->isRunning()) {
+        emit notify(tr("Run history can't be cleared while a run is in progress."), true);
+        return;
+    }
     auto cleared = bootstrapper_->engine().clearHistory();
     if (!cleared) {
         emit notify(QString::fromStdString(cleared.error().detail), true);
@@ -542,6 +540,9 @@ void AppController::replayRun(qulonglong runId) {
     auto events = bootstrapper_->engine().historyEvents(engine::RunId{runId});
     if (!events) {
         emit notify(QString::fromStdString(events.error().detail), true);
+        return;
+    }
+    if (!focusReplayTab(*events)) {
         return;
     }
 
@@ -633,6 +634,37 @@ void AppController::replayRun(qulonglong runId) {
     emit runReplayed();
 }
 
+bool AppController::focusReplayTab(const std::vector<engine::RunEvent>& events) {
+    QString target;
+    for (const auto& event : events) {
+        if (const auto* started = std::get_if<engine::RunStarted>(&event); started != nullptr) {
+            target = QString::fromStdString(started->target.value);
+            break;
+        }
+    }
+    if (target.isEmpty()) {
+        emit notify(tr("This run recorded no steps to replay."), true);
+        return false;
+    }
+    const qsizetype dot = target.indexOf(QLatin1Char('.'));
+    if (dot <= 0 || !activeProject().hasProject() ||
+        activeProject().findOperation(engine::OperationId{target.toStdString()}) == nullptr) {
+        emit notify(
+            tr("“%1” is no longer in this project, so its run can't be replayed.").arg(target),
+            true);
+        return false;
+    }
+    const RunTabRouter::TabKey key{static_cast<int>(TabState::Kind::Operation), target};
+    if (runRouter_.originIs(key)) {
+        emit notify(tr("“%1” has a run in progress. Replay after it finishes.").arg(target), true);
+        return false;
+    }
+    if (activeTabKey() != key) {
+        openOperationTab(activeProject().rootPath(), target.left(dot), target.mid(dot + 1));
+    }
+    return activeTabKey() == key;
+}
+
 QStringList AppController::operationIds() const {
     QStringList ids;
     if (activeProject().hasProject()) {
@@ -676,8 +708,11 @@ void AppController::activateOperationById(const QString& operationId) {
 }
 
 bool AppController::isValidName(const QString& name) const {
-    const QString trimmed = name.trimmed();
-    return !trimmed.isEmpty() && !hasIdBreakingChars(trimmed);
+    return isValidEntityName(name.trimmed().toStdString());
+}
+
+QStringList AppController::dependentsOf(const QString& kind, const QString& id) const {
+    return activeProject().dependentsOf(kind, id);
 }
 
 void AppController::createResource(const QString& name, const QString& description) {
@@ -877,8 +912,14 @@ void AppController::renameOperation(const QString& operationId, const QString& n
 
 void AppController::deleteOperation(const QString& operationId) {
     QString error;
-    if (activeProject().deleteOperation(engine::OperationId{operationId.toStdString()}, error)) {
-        emit notify(QStringLiteral("Deleted endpoint"), false);
+    QStringList dropped;
+    if (activeProject().deleteOperation(
+            engine::OperationId{operationId.toStdString()}, error, &dropped)) {
+        emit notify(dropped.isEmpty()
+                        ? QStringLiteral("Deleted endpoint")
+                        : QStringLiteral("Deleted endpoint; removed it from depends_on in %1")
+                              .arg(dropped.join(QStringLiteral(", "))),
+                    false);
     } else {
         emit notify(error, true);
     }
@@ -896,11 +937,45 @@ void AppController::renameResource(const QString& resourceId, const QString& new
 
 void AppController::deleteResource(const QString& resourceId) {
     QString error;
-    if (activeProject().deleteResource(engine::ResourceId{resourceId.toStdString()}, error)) {
-        emit notify(QStringLiteral("Deleted module"), false);
+    QStringList dropped;
+    if (activeProject().deleteResource(
+            engine::ResourceId{resourceId.toStdString()}, error, &dropped)) {
+        emit notify(
+            dropped.isEmpty()
+                ? QStringLiteral("Deleted module")
+                : QStringLiteral("Deleted module; removed its endpoints from depends_on in %1")
+                      .arg(dropped.join(QStringLiteral(", "))),
+            false);
     } else {
         emit notify(error, true);
     }
+}
+
+void AppController::onOperationRenamed(const QString& oldId, const QString& newId) {
+    exampleStore_.renameOperation(oldId, newId);
+    emit operationRenamed(oldId, newId);
+}
+
+void AppController::onOperationRemoved(const QString& operationId) {
+    emit operationRemoved(operationId);
+}
+
+void AppController::ensureEnvironmentExists() {
+    if (environments_.contains(environment_)) {
+        return;
+    }
+    setEnvironment(chooseEnvironment(
+        environments_, environmentRenameTarget_, activeProject().defaultEnvironment()));
+}
+
+QStringList AppController::loadWarnings() const {
+    QStringList out;
+    if (activeProject().hasProject()) {
+        for (const auto& warning : activeProject().project().loadWarnings) {
+            out << QString::fromStdString(warning);
+        }
+    }
+    return out;
 }
 
 void AppController::selectExample(const QString& operationId, const QString& exampleName) {

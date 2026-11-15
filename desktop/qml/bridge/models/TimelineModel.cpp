@@ -8,6 +8,8 @@
 #include <QtCore/QTime>
 #include <QtCore/QUrl>
 
+#include <utility>
+
 namespace reqloom::desktop::qml {
 
 namespace {
@@ -610,6 +612,30 @@ void TimelineModel::onRunEnded(QString outcome) {
     row.title = summary;
     row.statusToken = token;
     appendRow(std::move(row));
+}
+
+void TimelineModel::onRunError(QString code, QString detail) {
+    if (runStartRow_ >= 0 && runStartRow_ < static_cast<int>(rows_.size()) &&
+        rows_[static_cast<std::size_t>(runStartRow_)].statusToken == QLatin1String("running")) {
+        onRunEnded(QStringLiteral("Failed"));
+    }
+    Row row;
+    row.kind = Kind::Fail;
+    row.title = humanizeError(code);
+    row.detail = detail;
+    row.statusToken = QStringLiteral("error");
+    row.statusLabel = QStringLiteral("failed");
+    row.value = detail.isEmpty() ? QStringLiteral("Error code: %1").arg(code)
+                                 : QStringLiteral("%1\n\nError code: %2").arg(detail, code);
+    const bool firstFailure = rootFailureRow_ < 0;
+    if (firstFailure) {
+        row.rootFailure = true;
+        rootFailureRow_ = static_cast<int>(rows_.size());
+    }
+    appendRow(std::move(row));
+    if (firstFailure) {
+        emit rootFailureChanged();
+    }
 }
 
 }  // namespace reqloom::desktop::qml
