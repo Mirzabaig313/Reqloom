@@ -5,8 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -147,4 +149,69 @@ TEST(ImportFromInsomnia, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// D-20: a non-boolean `disabled` (null, "true", 1) used to throw
+// nlohmann::json::type_error out of the importer. It must import cleanly,
+// treating the non-boolean value as the default (not disabled).
+TEST(ImportFromInsomnia, non_boolean_disabled_does_not_throw) {
+    for (const std::string disabled : {"null", "\"true\"", "1"}) {
+        ScratchDir scratch;
+        const std::string body =
+            R"({"_type":"export","__export_format":4,"resources":[
+{"_id":"wrk_1","_type":"workspace","name":"D"},
+{"_id":"req_1","_type":"request","parentId":"wrk_1","name":"Ping","method":"POST",
+"url":"https://api.example.com/ping",
+"headers":[{"name":"X-H","value":"v","disabled":)" +
+            disabled + R"(}],
+"parameters":[{"name":"q","value":"1","disabled":)" +
+            disabled + R"(}],
+"body":{"mimeType":"application/x-www-form-urlencoded","params":[{"name":"f","value":"x","disabled":)" +
+            disabled + R"(}]}}]})";
+        const auto file = scratch.write("d.insomnia.json", body);
+        std::expected<ce::OpenApiImportOutcome, ce::ReqloomError> outcome =
+            std::unexpected(ce::ReqloomError{});
+        ASSERT_NO_THROW(outcome = ce::importFromInsomnia(file, scratch.path())) << disabled;
+        ASSERT_TRUE(outcome.has_value()) << disabled << ": " << outcome.error().detail;
+        ASSERT_EQ(outcome->project.resources.size(), 1u);
+        const auto& ops = outcome->project.resources.begin()->second.operations;
+        ASSERT_EQ(ops.size(), 1u);
+        const auto& op = ops.begin()->second;
+        EXPECT_TRUE(op.headers.contains("X-H")) << disabled;
+        EXPECT_TRUE(op.queryParams.contains("q")) << disabled;
+    }
+}
+
+// File fields carrying paths from the exporting machine keep only their base
+// name (with a warning); a text field starting with `@` is flagged too.
+TEST(ImportFromInsomnia, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    const auto file = scratch.write("uploads.json", R"JSON(
+{
+  "_type": "export", "__export_format": 4,
+  "resources": [
+    { "_id": "wrk_1", "_type": "workspace", "name": "Uploads API" },
+    { "_id": "fld_1", "_type": "request_group", "parentId": "wrk_1", "name": "Uploads" },
+    {
+      "_id": "req_1", "_type": "request", "parentId": "fld_1", "name": "Upload",
+      "method": "POST", "url": "https://api.example.com/up",
+      "body": { "mimeType": "multipart/form-data", "params": [
+        { "name": "unix", "type": "file", "fileName": "/Users/x/.ssh/id_rsa" },
+        { "name": "win", "type": "file", "fileName": "C:\\Users\\x\\a.png" },
+        { "name": "rel", "type": "file", "fileName": "../../secret.txt" },
+        { "name": "bare", "type": "file", "fileName": "photo.png" },
+        { "name": "sneaky", "value": "@/etc/passwd" }
+      ] }
+    }
+  ]
+}
+)JSON");
+
+    auto outcome = ce::importFromInsomnia(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    reqloom::tests::expectImportedFileRefsSanitised(
+        *op->bodyForm, outcome->warnings, "uploads.upload");
 }

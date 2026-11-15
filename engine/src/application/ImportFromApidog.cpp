@@ -5,6 +5,8 @@
 // a header. Upgrade path: extract a shared ImportSupport.h once worth it.
 
 #include "ImportFromApidog.h"
+#include "ImportFromFileRefs.h"
+#include "ImportFromJsonHelpers.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -280,7 +282,7 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
                 const auto it = params.find(key);
                 if (it != params.end() && it->is_array()) {
                     for (const auto& p : *it) {
-                        if (!p.is_object() || !p.value("enable", true)) {
+                        if (!p.is_object() || !import_json::boolOr(p, "enable", true)) {
                             continue;
                         }
                         const auto name = jsonStr(p, "name");
@@ -307,7 +309,7 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
                 body["parameters"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["parameters"]) {
-                    if (!f.is_object() || !f.value("enable", true)) {
+                    if (!f.is_object() || !import_json::boolOr(f, "enable", true)) {
                         continue;
                     }
                     const auto name = jsonStr(f, "name");
@@ -317,7 +319,8 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
                     if (jsonStr(f, "type") == "file") {
                         form[name] = "@";
                     } else {
-                        form[name] = rewrite(jsonStr(f, "example"));
+                        form[name] = import_files::textFieldValue(
+                            jsonStr(f, "example"), op.id.value, name, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {

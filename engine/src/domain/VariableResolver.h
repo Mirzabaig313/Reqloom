@@ -5,6 +5,8 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,12 +17,20 @@ namespace reqloom::engine {
 struct ResolveContext {
     std::map<std::string, std::string> envVars;
     std::map<std::string, std::string> secrets;
+    /// Process environment variable names `{{$.env.NAME}}` may read
+    /// (Project::allowedEnv). Any other name is left unresolved.
+    std::set<std::string> allowedEnv;
     /// Per-environment transport overrides. The executor stamps this
     /// onto every outbound HttpRequest before send so authenticators,
     /// poll loops, and the main step builder all see the same TLS /
     /// proxy / connect-timeout settings.
     TransportConfig transport;
 };
+
+/// Why a `$.env.NAME` builtin token did not resolve, as user-facing text,
+/// or nullopt when `token` is not a `$.env.` builtin.
+[[nodiscard]] std::optional<std::string> envBuiltinFailureReason(std::string_view token,
+                                                                 const ResolveContext& rctx);
 
 class VariableResolver {
 public:

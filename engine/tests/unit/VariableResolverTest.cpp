@@ -9,6 +9,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <iomanip>
 #include <regex>
 #include <sstream>
@@ -488,4 +489,44 @@ TEST(VariableResolver, preserves_duplicate_unresolved_occurrences) {
     EXPECT_EQ(result.unresolvedOccurrences[0].component, ce::VariableResolver::Component::UrlPath);
     EXPECT_EQ(result.unresolvedOccurrences[1].token, "missing.id");
     EXPECT_EQ(result.unresolvedOccurrences[1].component, ce::VariableResolver::Component::UrlPath);
+}
+
+namespace {
+
+void setProcessEnv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+}  // namespace
+
+TEST(VariableResolver, env_builtin_resolves_only_names_listed_in_allowed_env) {
+    setProcessEnv("REQLOOM_TEST_ALLOWED_ENV", "allowed-value");
+    setProcessEnv("REQLOOM_TEST_DENIED_ENV", "denied-value");
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    auto rctx = makeResolveCtx();
+    rctx.allowedEnv = {"REQLOOM_TEST_ALLOWED_ENV"};
+
+    EXPECT_EQ(resolver.resolve("{{$.env.REQLOOM_TEST_ALLOWED_ENV}}", ctx, rctx).output,
+              "allowed-value");
+
+    const auto denied = resolver.resolve("{{$.env.REQLOOM_TEST_DENIED_ENV}}", ctx, rctx);
+    EXPECT_EQ(denied.output, "{{$.env.REQLOOM_TEST_DENIED_ENV}}");
+    ASSERT_EQ(denied.unresolvedOccurrences.size(), 1u);
+    EXPECT_EQ(denied.unresolvedOccurrences[0].token, "$.env.REQLOOM_TEST_DENIED_ENV");
+}
+
+TEST(VariableResolver, env_builtin_is_unresolved_when_allowed_env_is_empty) {
+    setProcessEnv("REQLOOM_TEST_DENIED_ENV", "denied-value");
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const auto result = resolver.resolve("{{$.env.REQLOOM_TEST_DENIED_ENV}}", ctx, rctx);
+    EXPECT_EQ(result.output.find("denied-value"), std::string::npos);
+    EXPECT_EQ(result.unresolvedOccurrences.size(), 1u);
 }

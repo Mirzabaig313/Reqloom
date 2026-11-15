@@ -2,6 +2,8 @@
 // Engine importer, sibling of ImportFromOpenApi.
 
 #include "ImportFromPostman.h"
+#include "ImportFromFileRefs.h"
+#include "ImportFromJsonHelpers.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -418,7 +420,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
         // Query params: prefer the url object's structured array.
         if (urlNode != nullptr && urlNode->contains("query") && (*urlNode)["query"].is_array()) {
             for (const auto& q : (*urlNode)["query"]) {
-                if (!q.is_object() || q.value("disabled", false)) {
+                if (!q.is_object() || import_json::boolOr(q, "disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(q, "key");
@@ -431,7 +433,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
         // Headers.
         if (request.is_object() && request.contains("header") && request["header"].is_array()) {
             for (const auto& h : request["header"]) {
-                if (!h.is_object() || h.value("disabled", false)) {
+                if (!h.is_object() || import_json::boolOr(h, "disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(h, "key");
@@ -451,12 +453,13 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                        body["urlencoded"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["urlencoded"]) {
-                    if (!f.is_object() || f.value("disabled", false)) {
+                    if (!f.is_object() || import_json::boolOr(f, "disabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(f, "key");
                     if (!key.empty()) {
-                        form[key] = rewrite(jsonStr(f, "value"));
+                        form[key] = import_files::textFieldValue(
+                            jsonStr(f, "value"), op.id.value, key, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {
@@ -466,7 +469,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                        body["formdata"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["formdata"]) {
-                    if (!f.is_object() || f.value("disabled", false)) {
+                    if (!f.is_object() || import_json::boolOr(f, "disabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(f, "key");
@@ -484,7 +487,8 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                         if (srcs.empty()) {
                             form[key] = "@";
                         } else {
-                            form[key] = "@" + rewrite(srcs.front());
+                            form[key] = import_files::fileFieldValue(
+                                srcs.front(), op.id.value, key, warnings, rewrite);
                             if (srcs.size() > 1) {
                                 warnings.push_back(std::format(
                                     "operation {}: file field `{}` had {} files; only the first "
@@ -495,7 +499,8 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                             }
                         }
                     } else {
-                        form[key] = rewrite(jsonStr(f, "value"));
+                        form[key] = import_files::textFieldValue(
+                            jsonStr(f, "value"), op.id.value, key, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {

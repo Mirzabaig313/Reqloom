@@ -331,6 +331,15 @@ std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
                              "extract path '" + ext.sourcePath +
                                  "' not found in response (variable: " + ext.variableName + ")"});
         }
+        // JSON null is a missing value, not the string "null" (which would
+        // otherwise be sent on as e.g. `Authorization: Bearer null`).
+        if (current->is_null()) {
+            return std::unexpected(
+                ReqloomError{ErrorCode::ExtractionFailed,
+                             ErrorClass::Extraction,
+                             "extract path '" + ext.sourcePath +
+                                 "' is null in response (variable: " + ext.variableName + ")"});
+        }
 
         std::string value = current->is_string() ? current->get<std::string>() : current->dump();
         values[ext.variableName] = std::move(value);

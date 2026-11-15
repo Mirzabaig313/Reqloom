@@ -389,3 +389,25 @@ TEST(JsonExtractionFilter, filter_value_containing_at_sign_is_intact) {
     ASSERT_TRUE(result.has_value()) << result.error().detail;
     EXPECT_EQ(result->traces[0].value, "u2");
 }
+
+// D-05: extractFromJson (auth login / refresh) must treat JSON null as a
+// missing value, never as the literal string "null".
+TEST(JsonExtractionStrict, null_value_is_an_extraction_failure_not_the_string_null) {
+    auto result =
+        ce::extractFromJson(R"({"access_token": null})", {jsonpath("token", "$.access_token")});
+    ASSERT_FALSE(result.has_value()) << "got value: " << result->at("token");
+    EXPECT_EQ(result.error().code, ce::ErrorCode::ExtractionFailed);
+    EXPECT_NE(result.error().detail.find("null"), std::string::npos) << result.error().detail;
+    EXPECT_NE(result.error().detail.find("token"), std::string::npos) << result.error().detail;
+}
+
+TEST(JsonExtractionStrict, non_string_scalars_and_containers_are_unchanged) {
+    auto result = ce::extractFromJson(
+        R"({"n": 42, "b": false, "o": {"k": "v"}, "a": [1, 2]})",
+        {jsonpath("n", "$.n"), jsonpath("b", "$.b"), jsonpath("o", "$.o"), jsonpath("a", "$.a")});
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(result->at("n"), "42");
+    EXPECT_EQ(result->at("b"), "false");
+    EXPECT_EQ(result->at("o"), R"({"k":"v"})");
+    EXPECT_EQ(result->at("a"), "[1,2]");
+}

@@ -32,6 +32,9 @@
 //     longer than that fail with `E_HOOK_TIMEOUT`.
 //   - 8 MiB stack cap to avoid runaway recursion bringing the process
 //     down via stack overflow.
+//   - 64 MiB heap cap; exceeding it fails the hook ("out of memory").
+//   - Async hooks: pending promise jobs are drained within the same budget
+//     and a returned promise must settle (rejection fails the hook).
 //
 // The runner accepts BOTH module-style (`export default function (ctx){…}`)
 // and script-style (`(ctx) => {…}`, or a plain top-level body that mutates
@@ -77,11 +80,18 @@ using namespace codecs;
 
 struct InterruptState {
     std::chrono::steady_clock::time_point deadline;
+    /// Set when the budget ran out and execution was interrupted. The
+    /// timeout verdict comes from this flag, never from exception text.
+    bool fired{false};
 };
 
 int interruptCallback(JSRuntime* /*rt*/, void* opaque) {
     auto* state = static_cast<InterruptState*>(opaque);
-    return std::chrono::steady_clock::now() >= state->deadline ? 1 : 0;
+    if (std::chrono::steady_clock::now() >= state->deadline) {
+        state->fired = true;
+        return 1;
+    }
+    return 0;
 }
 
 // ─── Tiny RAII wrappers around JS lifetime ───────────────────────────────────
@@ -513,9 +523,7 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
 
 // ─── Error formatting ────────────────────────────────────────────────────────
 
-[[nodiscard]] std::string formatJsException(JSContext* ctx) {
-    JSValue const ex = JS_GetException(ctx);
-    JsValueGuard const guard{ctx, ex};
+[[nodiscard]] std::string formatJsValue(JSContext* ctx, JSValueConst ex) {
     if (JS_IsNull(ex) || JS_IsUndefined(ex)) {
         return "<unknown>";
     }
@@ -530,6 +538,12 @@ void readMutatedResponse(JSContext* ctx, JSValueConst root, HookResponseView& ou
         }
     }
     return base;
+}
+
+[[nodiscard]] std::string formatJsException(JSContext* ctx) {
+    JSValue const ex = JS_GetException(ctx);
+    JsValueGuard const guard{ctx, ex};
+    return formatJsValue(ctx, ex);
 }
 
 // ─── Script shape detection ──────────────────────────────────────────────────
@@ -565,7 +579,68 @@ QuickJsHookRunner::~QuickJsHookRunner() = default;
 namespace {
 
 constexpr auto kHookTimeout = std::chrono::seconds(1);
-constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
+constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;     // 8 MiB
+constexpr std::size_t kMemoryLimit = std::size_t{64} * 1024 * 1024;  // 64 MiB
+
+using HookResult = std::expected<void, ReqloomError>;
+
+[[nodiscard]] std::unexpected<ReqloomError> hookError(ErrorCode code, std::string detail) {
+    return std::unexpected(ReqloomError{code, ErrorClass::Hook, std::move(detail)});
+}
+
+// Turn the pending exception into a hook error. Timeout iff the interrupt
+// handler fired; an out-of-memory surfaces as QuickJS's "out of memory".
+[[nodiscard]] std::unexpected<ReqloomError> exceptionError(JSContext* c,
+                                                           const InterruptState& ist,
+                                                           std::string_view prefix) {
+    const auto err = formatJsException(c);
+    if (ist.fired) {
+        return hookError(ErrorCode::HookTimeout, "hook exceeded 1s budget");
+    }
+    return hookError(ErrorCode::HookFailure, std::string{prefix} + err);
+}
+
+// Run queued promise jobs to completion under the same deadline and memory
+// limit, then judge `value`: a non-promise or fulfilled promise is success,
+// a rejected one fails with its reason. The sandbox has no timers or I/O,
+// so a promise still pending once the job queue is empty can never settle.
+[[nodiscard]] HookResult settle(JSContext* c,
+                                const InterruptState& ist,
+                                JSValueConst value,
+                                std::string_view what) {
+    JSRuntime* rt = JS_GetRuntime(c);
+    for (;;) {
+        JSContext* jobCtx = nullptr;
+        const int r = JS_ExecutePendingJob(rt, &jobCtx);
+        if (r == 0) {
+            break;
+        }
+        if (r < 0) {
+            return exceptionError(jobCtx != nullptr ? jobCtx : c, ist, std::string{what} + ": ");
+        }
+    }
+    if (!JS_IsPromise(value)) {
+        return {};
+    }
+    switch (JS_PromiseState(c, value)) {
+        case JS_PROMISE_REJECTED: {
+            JSValue const reason = JS_PromiseResult(c, value);
+            JsValueGuard const reasonGuard{c, reason};
+            return hookError(ErrorCode::HookFailure,
+                             std::string{what} + " rejected: " + formatJsValue(c, reason));
+        }
+        case JS_PROMISE_PENDING:
+            if (ist.fired) {
+                return hookError(ErrorCode::HookTimeout, "hook exceeded 1s budget");
+            }
+            return hookError(ErrorCode::HookFailure,
+                             std::string{what} +
+                                 " returned a promise that never settled (no timers or I/O "
+                                 "exist in the hook sandbox)");
+        default:
+            return {};
+    }
+}
 
 [[nodiscard]] std::expected<HookOutcome, ReqloomError> runScript(const std::string& script,
                                                                  HookContext context,
@@ -576,6 +651,7 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
             ReqloomError{ErrorCode::HookFailure, ErrorClass::Hook, "JS_NewRuntime returned null"});
     }
     JS_SetMaxStackSize(rt.get(), kStackSize);
+    JS_SetMemoryLimit(rt.get(), kMemoryLimit);
 
     InterruptState ist{std::chrono::steady_clock::now() + kHookTimeout};
     JS_SetInterruptHandler(rt.get(), interruptCallback, &ist);
@@ -614,15 +690,14 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
             return fail(ErrorCode::HookFailure, "hook compile failed: " + formatJsException(c));
         }
         JSValue const evalOk = JS_EvalFunction(c, compiled);
+        JsValueGuard const evalOkGuard{c, evalOk};
         if (JS_IsException(evalOk)) {
-            JS_FreeValue(c, evalOk);
-            const auto err = formatJsException(c);
-            if (err.find("interrupted") != std::string::npos) {
-                return fail(ErrorCode::HookTimeout, "hook exceeded 1s budget");
-            }
-            return fail(ErrorCode::HookFailure, "hook failed: " + err);
+            return exceptionError(c, ist, "hook failed: ");
         }
-        JS_FreeValue(c, evalOk);
+        // Module evaluation yields a promise; a top-level throw rejects it.
+        if (auto settled = settle(c, ist, evalOk, "hook module evaluation"); !settled) {
+            return std::unexpected(std::move(settled.error()));
+        }
 
         // QuickJS are cached by name.
         const std::string driver =
@@ -630,12 +705,13 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
             "globalThis.__reqloom_invoke = () => fn(globalThis.__reqloom_ctx);\n";
         JSValue const driverEval =
             JS_Eval(c, driver.data(), driver.size(), "<driver>", JS_EVAL_TYPE_MODULE);
+        JsValueGuard const driverGuard{c, driverEval};
         if (JS_IsException(driverEval)) {
-            JS_FreeValue(c, driverEval);
-            const auto err = formatJsException(c);
-            return fail(ErrorCode::HookFailure, "hook driver eval failed: " + err);
+            return exceptionError(c, ist, "hook driver eval failed: ");
         }
-        JS_FreeValue(c, driverEval);
+        if (auto settled = settle(c, ist, driverEval, "hook driver"); !settled) {
+            return std::unexpected(std::move(settled.error()));
+        }
 
         JSValue const invoke = JS_GetPropertyStr(c, global, "__reqloom_invoke");
         JsValueGuard const invokeGuard{c, invoke};
@@ -645,11 +721,10 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
         JSValue const result = JS_Call(c, invoke, JS_UNDEFINED, 0, nullptr);
         JsValueGuard const resultGuard{c, result};
         if (JS_IsException(result)) {
-            const auto err = formatJsException(c);
-            if (err.find("interrupted") != std::string::npos) {
-                return fail(ErrorCode::HookTimeout, "hook exceeded 1s budget");
-            }
-            return fail(ErrorCode::HookFailure, "hook threw: " + err);
+            return exceptionError(c, ist, "hook threw: ");
+        }
+        if (auto settled = settle(c, ist, result, "hook"); !settled) {
+            return std::unexpected(std::move(settled.error()));
         }
     } else {
         // Inline body. Wrap in `(function(ctx){ <body> })(__reqloom_ctx)`.
@@ -662,11 +737,12 @@ constexpr std::size_t kStackSize = std::size_t{8} * 1024 * 1024;  // 8 MiB
             JS_Eval(c, wrapped.data(), wrapped.size(), "hook.js", JS_EVAL_TYPE_GLOBAL);
         JsValueGuard const evalGuard{c, evalRes};
         if (JS_IsException(evalRes)) {
-            const auto err = formatJsException(c);
-            if (err.find("interrupted") != std::string::npos) {
-                return fail(ErrorCode::HookTimeout, "hook exceeded 1s budget");
-            }
-            return fail(ErrorCode::HookFailure, "hook threw: " + err);
+            return exceptionError(c, ist, "hook threw: ");
+        }
+        // The eval's completion value is whatever the body returned; an
+        // inline hook may return a promise.
+        if (auto settled = settle(c, ist, evalRes, "hook"); !settled) {
+            return std::unexpected(std::move(settled.error()));
         }
     }
 

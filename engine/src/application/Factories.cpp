@@ -8,6 +8,7 @@
 #include "ImportFromHttpFile.h"
 #include "ImportFromHttpie.h"
 #include "ImportFromInsomnia.h"
+#include "ImportFromJsonHelpers.h"
 #include "ImportFromOpenApi.h"
 #include "ImportFromPostman.h"
 #include "ImportFromThunderClient.h"
@@ -136,9 +137,12 @@ std::vector<std::string> collectSecretReferences(const Project& project) {
 }
 
 std::expected<std::filesystem::path, ReqloomError> writeProject(
-    const std::filesystem::path& targetDir, const Project& project, bool overwrite) {
+    const std::filesystem::path& targetDir,
+    const Project& project,
+    bool overwrite,
+    bool pruneStale) {
     YamlSchemaWriter writer;
-    return writer.write(targetDir, project, overwrite);
+    return writer.write(targetDir, project, overwrite, pruneStale);
 }
 
 std::expected<std::filesystem::path, ReqloomError> emitHookTypings(
@@ -147,94 +151,73 @@ std::expected<std::filesystem::path, ReqloomError> emitHookTypings(
     return emitter.emit(targetDir, project, overwrite);
 }
 
+namespace {
+
+/// Run one importer and adapt its outcome. Import input is untrusted JSON, so
+/// any nlohmann exception an importer lets escape becomes a ReqloomError
+/// rather than crashing the CLI or the desktop import.
+template <typename Importer>
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> runImporter(
+    const std::filesystem::path& input, const std::filesystem::path& projectRoot) {
+    try {
+        Importer const importer;
+        auto inner = importer.run(input, projectRoot);
+        if (!inner) {
+            return std::unexpected(inner.error());
+        }
+        return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    } catch (const nlohmann::json::exception& e) {
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            std::string{"import: malformed input: "} + e.what()});
+    }
+}
+
+}  // namespace
+
 std::expected<OpenApiImportOutcome, ReqloomError> importFromOpenApi(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
-    ImportFromOpenApi const importer;
-    auto inner = importer.run(spec, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromOpenApi>(spec, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromPostman(
     const std::filesystem::path& collection, const std::filesystem::path& projectRoot) {
-    ImportFromPostman const importer;
-    auto inner = importer.run(collection, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromPostman>(collection, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromInsomnia(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromInsomnia const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromInsomnia>(exportFile, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromThunderClient(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromThunderClient const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromThunderClient>(exportFile, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromHoppscotch(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromHoppscotch const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromHoppscotch>(exportFile, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpFile(
     const std::filesystem::path& file, const std::filesystem::path& projectRoot) {
-    ImportFromHttpFile const importer;
-    auto inner = importer.run(file, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromHttpFile>(file, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromBruno(
     const std::filesystem::path& input, const std::filesystem::path& projectRoot) {
-    ImportFromBruno const importer;
-    auto inner = importer.run(input, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromBruno>(input, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpie(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromHttpie const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromHttpie>(exportFile, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromApidog(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromApidog const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromApidog>(exportFile, projectRoot);
 }
 
 namespace {
@@ -336,7 +319,7 @@ using ImportFn = std::expected<OpenApiImportOutcome, ReqloomError> (*)(
 [[nodiscard]] ImportFn detectJsonImporter(const nlohmann::json& d) {
     const bool obj = d.is_object();
     if (obj && d.contains("meta") && d["meta"].is_object() &&
-        d["meta"].value("format", std::string{}) == "httpie") {
+        import_json::stringOr(d["meta"], "format", std::string{}) == "httpie") {
         return &importFromHttpie;
     }
     if (obj && d.contains("apidogProject")) {

@@ -517,3 +517,267 @@ TEST(DependencyResolver, collect_secret_references_empty_when_no_secrets) {
     const auto names = ce::DependencyResolver::collectSecretReferences(project);
     EXPECT_TRUE(names.empty());
 }
+
+// ─── D-07: several operations extract the same variable ──────────────────────
+
+namespace {
+
+/// An op on `order` whose path consumes {{order.id}} and which also
+/// extracts `id` (e.g. GET/PUT /orders/{id} in an imported spec).
+ce::Operation consumingExtractor(const std::string& opName) {
+    auto op = makeOp("order", opName, {jsonExt("id", "$.id")});
+    op.pathTemplate = "/api/v1/orders/{{order.id}}";
+    return op;
+}
+
+}  // namespace
+
+TEST(DependencyResolver, extractor_that_consumes_the_variable_is_not_its_producer) {
+    // update and patch both consume {{order.id}} and re-extract id; only
+    // create produces it from scratch. Previously update ↔ patch formed a
+    // false cycle.
+    auto project = makeProject({
+        {"order",
+         {
+             {"create", makeOp("order", "create", {jsonExt("id", "$.id")})},
+             {"update", consumingExtractor("update")},
+             {"patch", consumingExtractor("patch")},
+         }},
+    });
+
+    ce::DependencyResolver resolver;
+    auto valid = resolver.validate(project);
+    ASSERT_TRUE(valid.has_value()) << valid.error().detail;
+
+    auto chain = resolver.resolve(project, ce::OperationId{"order.update"});
+    ASSERT_TRUE(chain.has_value()) << chain.error().detail;
+    ASSERT_EQ(chain->size(), 2u);
+    EXPECT_EQ((*chain)[0].value, "order.create");
+    EXPECT_EQ((*chain)[1].value, "order.update");
+}
+
+TEST(DependencyResolver, explicit_depends_on_disambiguates_between_producers) {
+    auto get = makeOp("order", "get", {}, {ce::OperationId{"order.import"}});
+    get.pathTemplate = "/api/v1/orders/{{order.id}}";
+    auto project = makeProject({
+        {"order",
+         {
+             {"create", makeOp("order", "create", {jsonExt("id", "$.id")})},
+             {"import", makeOp("order", "import", {jsonExt("id", "$.id")})},
+             {"get", std::move(get)},
+         }},
+    });
+
+    ce::DependencyResolver resolver;
+    auto valid = resolver.validate(project);
+    ASSERT_TRUE(valid.has_value()) << valid.error().detail;
+
+    auto chain = resolver.resolve(project, ce::OperationId{"order.get"});
+    ASSERT_TRUE(chain.has_value()) << chain.error().detail;
+    ASSERT_EQ(chain->size(), 2u);
+    EXPECT_EQ((*chain)[0].value, "order.import");
+    EXPECT_EQ((*chain)[1].value, "order.get");
+}
+
+TEST(DependencyResolver, ambiguous_producer_is_reported_not_a_cycle) {
+    auto get = makeOp("order", "get");
+    get.pathTemplate = "/api/v1/orders/{{order.id}}";
+    auto project = makeProject({
+        {"order",
+         {
+             {"create", makeOp("order", "create", {jsonExt("id", "$.id")})},
+             {"import", makeOp("order", "import", {jsonExt("id", "$.id")})},
+             {"get", std::move(get)},
+         }},
+    });
+
+    ce::DependencyResolver resolver;
+    auto valid = resolver.validate(project);
+    ASSERT_FALSE(valid.has_value());
+    EXPECT_EQ(valid.error().code, ce::ErrorCode::RefUndefined);
+    const auto& detail = valid.error().detail;
+    EXPECT_NE(detail.find("ambiguous producer for {{order.id}}"), std::string::npos) << detail;
+    EXPECT_NE(detail.find("order.create"), std::string::npos) << detail;
+    EXPECT_NE(detail.find("order.import"), std::string::npos) << detail;
+    EXPECT_NE(detail.find("depends_on"), std::string::npos) << detail;
+
+    auto chain = resolver.resolve(project, ce::OperationId{"order.get"});
+    ASSERT_FALSE(chain.has_value());
+    EXPECT_NE(chain.error().detail.find("ambiguous producer"), std::string::npos)
+        << chain.error().detail;
+}
+
+TEST(DependencyResolver, no_producer_when_every_extractor_also_consumes) {
+    auto project = makeProject({
+        {"order",
+         {
+             {"update", consumingExtractor("update")},
+             {"patch", consumingExtractor("patch")},
+         }},
+    });
+
+    ce::DependencyResolver resolver;
+    auto valid = resolver.validate(project);
+    ASSERT_FALSE(valid.has_value());
+    EXPECT_NE(valid.error().code, ce::ErrorCode::Cycle) << valid.error().detail;
+    EXPECT_NE(valid.error().detail.find("no producer"), std::string::npos) << valid.error().detail;
+    EXPECT_NE(valid.error().detail.find("{{order.id}}"), std::string::npos) << valid.error().detail;
+}
+
+TEST(DependencyResolver, sole_extractor_consuming_its_own_variable_is_unchanged) {
+    // Only the op itself extracts the variable it consumes: no edge, no
+    // error (as before — an op never depends on itself).
+    auto project = makeProject({{"order", {{"get", consumingExtractor("get")}}}});
+
+    ce::DependencyResolver resolver;
+    auto valid = resolver.validate(project);
+    ASSERT_TRUE(valid.has_value()) << valid.error().detail;
+    auto chain = resolver.resolve(project, ce::OperationId{"order.get"});
+    ASSERT_TRUE(chain.has_value()) << chain.error().detail;
+    EXPECT_EQ(chain->size(), 1u);
+}
+
+// ─── D-08: builtin call arguments, inline / default auth, poll_until ─────────
+
+TEST(DependencyResolver, collect_secret_references_scans_builtin_call_arguments) {
+    auto op = makeOp("product", "get");
+    op.headers["Authorization"] = "Basic {{$.base64.encode(secret.API_KEY)}}";
+    op.headers["X-Literal"] = "{{$.base64.encode('secret.NOT_A_REF')}}";
+
+    auto project = makeProject({{"product", {{"get", std::move(op)}}}});
+
+    const auto names = ce::DependencyResolver::collectSecretReferences(project);
+    ASSERT_EQ(names.size(), 1u);
+    EXPECT_EQ(names[0], "API_KEY");
+}
+
+TEST(DependencyResolver, builtin_call_argument_creates_dependency_edge) {
+    auto pay = makeOp("payment", "create");
+    pay.headers["X-Sig"] = "{{ $.hex.encode(order.token) }}";
+    auto project = makeProject({
+        {"order", {{"create", makeOp("order", "create", {jsonExt("token", "$.token")})}}},
+        {"payment", {{"create", std::move(pay)}}},
+    });
+
+    ce::DependencyResolver resolver;
+    auto chain = resolver.resolve(project, ce::OperationId{"payment.create"});
+    ASSERT_TRUE(chain.has_value()) << chain.error().detail;
+    ASSERT_EQ(chain->size(), 2u);
+    EXPECT_EQ((*chain)[0].value, "order.create");
+}
+
+TEST(DependencyResolver, validate_rejects_unknown_scope_inside_builtin_argument) {
+    auto op = makeOp("product", "get");
+    op.headers["X"] = "{{$.url.encode(nope.value)}}";
+    auto project = makeProject({{"product", {{"get", std::move(op)}}}});
+
+    ce::DependencyResolver resolver;
+    auto valid = resolver.validate(project);
+    ASSERT_FALSE(valid.has_value());
+    EXPECT_EQ(valid.error().code, ce::ErrorCode::RefUndefined);
+}
+
+TEST(DependencyResolver, validate_rejects_env_builtin_not_listed_in_allowed_env) {
+    auto op = makeOp("product", "get");
+    op.headers["X"] = "{{$.env.AWS_SECRET_ACCESS_KEY}}";
+    auto project = makeProject({{"product", {{"get", std::move(op)}}}});
+    project.allowedEnv = {"CI_TOKEN"};
+
+    ce::DependencyResolver resolver;
+    auto valid = resolver.validate(project);
+    ASSERT_FALSE(valid.has_value());
+    EXPECT_EQ(valid.error().code, ce::ErrorCode::RefUndefined);
+    EXPECT_NE(
+        valid.error().detail.find(
+            "environment variable AWS_SECRET_ACCESS_KEY is not in allowed_env in reqloom.yaml"),
+        std::string::npos)
+        << valid.error().detail;
+}
+
+TEST(DependencyResolver, validate_accepts_env_builtin_listed_in_allowed_env) {
+    auto op = makeOp("product", "get");
+    op.headers["X"] = "{{ $.env.CI_TOKEN }}";
+    auto project = makeProject({{"product", {{"get", std::move(op)}}}});
+    project.allowedEnv = {"CI_TOKEN"};
+
+    ce::DependencyResolver resolver;
+    auto valid = resolver.validate(project);
+    EXPECT_TRUE(valid.has_value()) << valid.error().detail;
+}
+
+TEST(DependencyResolver, collect_secret_references_scans_inline_and_default_auth) {
+    auto op = makeOp("product", "get");
+    ce::InlineAuth inlineAuth;
+    inlineAuth.type = ce::InlineAuthType::Bearer;
+    inlineAuth.token = "{{secret.INLINE_TOKEN}}";
+    op.inlineAuth = inlineAuth;
+
+    auto project = makeProject({{"product", {{"get", std::move(op)}}}});
+    ce::InlineAuth def;
+    def.type = ce::InlineAuthType::Basic;
+    def.username = "svc";
+    def.password = "{{secret.DEFAULT_PASSWORD}}";
+    project.defaultAuth = def;
+
+    const auto names = ce::DependencyResolver::collectSecretReferences(project);
+    ASSERT_EQ(names.size(), 2u);
+    EXPECT_EQ(names[0], "DEFAULT_PASSWORD");
+    EXPECT_EQ(names[1], "INLINE_TOKEN");
+}
+
+TEST(DependencyResolver, inline_auth_reference_creates_dependency_edge) {
+    auto get = makeOp("product", "get");
+    ce::InlineAuth inlineAuth;
+    inlineAuth.type = ce::InlineAuthType::Bearer;
+    inlineAuth.token = "{{session.token}}";
+    get.inlineAuth = inlineAuth;
+    auto project = makeProject({
+        {"session", {{"open", makeOp("session", "open", {jsonExt("token", "$.t")})}}},
+        {"product", {{"get", std::move(get)}}},
+    });
+
+    ce::DependencyResolver resolver;
+    auto chain = resolver.resolve(project, ce::OperationId{"product.get"});
+    ASSERT_TRUE(chain.has_value()) << chain.error().detail;
+    ASSERT_EQ(chain->size(), 2u);
+    EXPECT_EQ((*chain)[0].value, "session.open");
+}
+
+TEST(DependencyResolver, inherited_default_auth_reference_creates_dependency_edge) {
+    auto get = makeOp("product", "get");
+    ce::InlineAuth inherit;
+    inherit.type = ce::InlineAuthType::Inherit;
+    get.inlineAuth = inherit;
+    auto project = makeProject({
+        {"session", {{"open", makeOp("session", "open", {jsonExt("token", "$.t")})}}},
+        {"product", {{"get", std::move(get)}}},
+    });
+    ce::InlineAuth def;
+    def.type = ce::InlineAuthType::Bearer;
+    def.token = "{{session.token}}";
+    project.defaultAuth = def;
+
+    ce::DependencyResolver resolver;
+    auto chain = resolver.resolve(project, ce::OperationId{"product.get"});
+    ASSERT_TRUE(chain.has_value()) << chain.error().detail;
+    ASSERT_EQ(chain->size(), 2u);
+    EXPECT_EQ((*chain)[0].value, "session.open");
+}
+
+TEST(DependencyResolver, poll_until_path_reference_creates_dependency_edge) {
+    auto wait = makeOp("report", "wait");
+    ce::PollUntil poll;
+    poll.pathTemplate = "/api/v1/jobs/{{job.job_id}}";
+    poll.successWhen = "$.status == 'done'";
+    wait.pollUntil = std::move(poll);
+    auto project = makeProject({
+        {"job", {{"create", makeOp("job", "create", {jsonExt("job_id", "$.id")})}}},
+        {"report", {{"wait", std::move(wait)}}},
+    });
+
+    ce::DependencyResolver resolver;
+    auto chain = resolver.resolve(project, ce::OperationId{"report.wait"});
+    ASSERT_TRUE(chain.has_value()) << chain.error().detail;
+    ASSERT_EQ(chain->size(), 2u);
+    EXPECT_EQ((*chain)[0].value, "job.create");
+}

@@ -104,24 +104,79 @@ resources:
 
 /// Write kProjectYaml into a temp dir and load it through ProjectModel.
 /// The QTemporaryDir is returned so it outlives the loaded project.
-void writeProject(const QTemporaryDir& dir) {
+void writeProject(const QTemporaryDir& dir, const char* extraRootKeys = "") {
     const QString path = QDir(dir.path()).filePath(QStringLiteral("reqloom.yaml"));
     std::ofstream out(path.toStdString());
-    out << kProjectYaml;
+    out << extraRootKeys << kProjectYaml;
 }
 
 }  // namespace
 
 TEST(SecretManager, store_then_clear_round_trips_through_backend) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    writeProject(dir, "id: proj-a\n");
+    ProjectModel project;
+    project.loadFromDirectory(dir.path());
+    ASSERT_TRUE(project.hasProject());
+
     auto [fake, manager] = makeManager();
 
     QString error;
-    ASSERT_TRUE(manager->store(QStringLiteral("API_KEY"), QStringLiteral("s3cr3t"), error))
+    ASSERT_TRUE(manager->store(project, QStringLiteral("API_KEY"), QStringLiteral("s3cr3t"), error))
         << error.toStdString();
-    EXPECT_TRUE(fake->has("API_KEY"));
-
-    ASSERT_TRUE(manager->clear(QStringLiteral("API_KEY"), error)) << error.toStdString();
+    EXPECT_TRUE(fake->has("proj-a/API_KEY"));
     EXPECT_FALSE(fake->has("API_KEY"));
+
+    ASSERT_TRUE(manager->clear(project, QStringLiteral("API_KEY"), error)) << error.toStdString();
+    EXPECT_FALSE(fake->has("proj-a/API_KEY"));
+}
+
+TEST(SecretManager, projects_with_different_ids_see_only_their_own_secrets) {
+    QTemporaryDir dirA;
+    QTemporaryDir dirB;
+    ASSERT_TRUE(dirA.isValid());
+    ASSERT_TRUE(dirB.isValid());
+    writeProject(dirA, "id: proj-a\n");
+    writeProject(dirB, "id: proj-b\n");
+    ProjectModel projectA;
+    ProjectModel projectB;
+    projectA.loadFromDirectory(dirA.path());
+    projectB.loadFromDirectory(dirB.path());
+    ASSERT_TRUE(projectA.hasProject());
+    ASSERT_TRUE(projectB.hasProject());
+
+    auto [fake, manager] = makeManager();
+    QString error;
+    ASSERT_TRUE(manager->store(projectA, QStringLiteral("API_KEY"), QStringLiteral("a"), error))
+        << error.toStdString();
+
+    const auto seenByA = manager->referencedSecrets(projectA);
+    const auto seenByB = manager->referencedSecrets(projectB);
+    ASSERT_EQ(seenByA.size(), 2);
+    ASSERT_EQ(seenByB.size(), 2);
+    EXPECT_EQ(seenByA[0].state, SecretState::Set);
+    EXPECT_EQ(seenByB[0].state, SecretState::NotSet);
+
+    ASSERT_TRUE(manager->clear(projectB, QStringLiteral("API_KEY"), error)) << error.toStdString();
+    EXPECT_TRUE(fake->has("proj-a/API_KEY"));
+}
+
+TEST(SecretManager, opening_a_project_without_id_assigns_and_persists_one) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    writeProject(dir);
+
+    ProjectModel project;
+    project.loadFromDirectory(dir.path());
+    ASSERT_TRUE(project.hasProject());
+    const auto assigned = project.project().id;
+    EXPECT_FALSE(assigned.empty());
+
+    ProjectModel reopened;
+    reopened.loadFromDirectory(dir.path());
+    ASSERT_TRUE(reopened.hasProject());
+    EXPECT_EQ(reopened.project().id, assigned);
 }
 
 TEST(SecretManager, referenced_secrets_reports_set_and_unset_against_project) {
@@ -145,7 +200,7 @@ TEST(SecretManager, referenced_secrets_reports_set_and_unset_against_project) {
 
     // Set one; it flips to Set, the other stays NotSet.
     QString error;
-    ASSERT_TRUE(manager->store(QStringLiteral("API_KEY"), QStringLiteral("v"), error))
+    ASSERT_TRUE(manager->store(project, QStringLiteral("API_KEY"), QStringLiteral("v"), error))
         << error.toStdString();
 
     auto after = manager->referencedSecrets(project);

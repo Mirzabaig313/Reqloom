@@ -1,15 +1,20 @@
 // Direct (non-LLM) Postman Collection v2.1 importer tests. Each fails on the
 // parent commit (importFromPostman did not exist).
 
+#include "application/ImportFromFileRefs.h"
+
 #include <reqloom/engine/Factories.h>
 
 #include <gtest/gtest.h>
 
 #include <support/TempPath.h>
 
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -200,15 +205,121 @@ TEST(ImportFromPostman, formdata_file_fields_become_at_path_references) {
     // Text field kept verbatim; file field mapped to the `@path` convention so
     // the engine sends multipart/form-data with the file attached.
     EXPECT_EQ(form.at("caption"), "hi");
-    EXPECT_EQ(form.at("avatar"), "@/tmp/pic.png");
+    // Only the base name of the exporting machine's path is kept.
+    EXPECT_EQ(form.at("avatar"), "@pic.png");
     // A file field with no source path is preserved as an `@` placeholder to be
     // filled before running — not silently dropped.
     EXPECT_EQ(form.at("empty"), "@");
 
     // An empty file field is the normal Postman case (exports carry no path),
     // so it produces no warning — the editor shows it as a "Choose a file…"
-    // slot. The only thing worth flagging would be genuinely lossy cases.
-    EXPECT_TRUE(outcome->warnings.empty()) << outcome->warnings;
+    // slot. The dropped directory of `avatar` is the only warning.
+    EXPECT_NE(outcome->warnings.find("`avatar`"), std::string::npos) << outcome->warnings;
+    EXPECT_EQ(outcome->warnings.find("`empty`"), std::string::npos) << outcome->warnings;
+}
+
+// File fields carrying paths from the exporting machine (Unix absolute,
+// Windows absolute, relative `../`) keep only their base name, each with a
+// warning; a bare name is untouched and silent. A text field whose value
+// starts with `@` would be sent as an upload, so it is warned about and
+// reduced the same way.
+constexpr const char* kFilePathsCollection = R"JSON(
+{
+  "info": { "name": "Uploads", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  "item": [
+    {
+      "name": "Upload",
+      "request": {
+        "method": "POST",
+        "url": { "raw": "https://api.example.com/up", "path": ["up"] },
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "unix", "type": "file", "src": "/Users/x/.ssh/id_rsa" },
+            { "key": "win", "type": "file", "src": "C:\\Users\\x\\a.png" },
+            { "key": "rel", "type": "file", "src": "../../secret.txt" },
+            { "key": "bare", "type": "file", "src": "photo.png" },
+            { "key": "multi", "type": "file", "src": ["/a/one.png", "/b/two.png"] },
+            { "key": "dironly", "type": "file", "src": "/Users/x/" },
+            { "key": "sneaky", "type": "text", "value": "@/etc/passwd" }
+          ]
+        }
+      }
+    }
+  ]
+}
+)JSON";
+
+TEST(ImportFromPostman, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    const auto file = scratch.write("paths.json", kFilePathsCollection);
+
+    auto outcome = ce::importFromPostman(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    const auto& form = *op->bodyForm;
+    EXPECT_EQ(form.at("unix"), "@id_rsa");
+    EXPECT_EQ(form.at("win"), "@a.png");
+    EXPECT_EQ(form.at("rel"), "@secret.txt");
+    EXPECT_EQ(form.at("bare"), "@photo.png");
+    EXPECT_EQ(form.at("multi"), "@one.png");
+    EXPECT_EQ(form.at("dironly"), "@");
+    EXPECT_EQ(form.at("sneaky"), "@passwd");
+
+    const auto& w = outcome->warnings;
+    for (const char* field : {"`unix`", "`win`", "`rel`", "`dironly`", "`sneaky`"}) {
+        EXPECT_NE(w.find(field), std::string::npos) << field << '\n' << w;
+    }
+    EXPECT_EQ(w.find("`bare`"), std::string::npos) << w;
+    EXPECT_NE(w.find("operation uploads.upload"), std::string::npos) << w;
+    EXPECT_NE(w.find("current working directory"), std::string::npos) << w;
+}
+
+TEST(ImportFileRefs, base_name_handles_separators_drives_and_edge_cases) {
+    using ce::import_files::fileBaseName;
+    struct Case {
+        const char* in;
+        const char* name;
+        bool hadDirectory;
+    };
+    const Case cases[] = {
+        {"photo.png", "photo.png", false},
+        {"", "", false},
+        {"/Users/x/docs/photo.png", "photo.png", true},
+        {"C:\\Users\\x\\a.png", "a.png", true},
+        {"C:/Users/x/a.png", "a.png", true},
+        {"C:a.png", "a.png", true},
+        {"\\\\server\\share\\a.png", "a.png", true},
+        {"../../secret.txt", "secret.txt", true},
+        {"./a.png", "a.png", true},
+        {"/Users/x/", "", true},
+        {"C:\\", "", true},
+        {"..", "", true},
+        {".", "", true},
+        {"a/..", "", true},
+        {"dir\\mixed/b.png", "b.png", true},
+    };
+    for (const auto& c : cases) {
+        const auto got = fileBaseName(c.in);
+        EXPECT_EQ(got.name, c.name) << c.in;
+        EXPECT_EQ(got.hadDirectory, c.hadDirectory) << c.in;
+    }
+
+    std::vector<std::string> warnings;
+    const auto identity = [](std::string_view s) {
+        return std::string{s};
+    };
+    EXPECT_EQ(ce::import_files::fileFieldValue("x.png", "r.op", "f", warnings, identity), "@x.png");
+    EXPECT_EQ(ce::import_files::fileFieldValue("", "r.op", "f", warnings, identity), "@");
+    EXPECT_EQ(ce::import_files::textFieldValue("plain", "r.op", "t", warnings, identity), "plain");
+    EXPECT_TRUE(warnings.empty());
+    EXPECT_EQ(ce::import_files::fileFieldValue("/a/x.png", "r.op", "f", warnings, identity),
+              "@x.png");
+    EXPECT_EQ(ce::import_files::textFieldValue("@handle", "r.op", "t", warnings, identity),
+              "@handle");
+    EXPECT_EQ(warnings.size(), 2U);
 }
 
 TEST(ImportFromPostman, importAny_detects_collection_when_marker_past_head_window) {
@@ -232,4 +343,48 @@ TEST(ImportFromPostman, importAny_detects_collection_when_marker_past_head_windo
     // Routed to the Postman importer (not the OpenAPI default) despite the
     // marker being past the head-sniff window.
     ASSERT_FALSE(outcome->project.resources.empty());
+}
+
+// D-20: a non-boolean `disabled` (null, "true", 1) used to throw
+// nlohmann::json::type_error out of the importer. It must import cleanly,
+// treating the non-boolean value as the default (not disabled).
+TEST(ImportFromPostman, non_boolean_disabled_does_not_throw) {
+    for (const std::string disabled : {"null", "\"true\"", "1"}) {
+        ScratchDir scratch;
+        const std::string body =
+            R"({"info":{"name":"D","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+"item":[{"name":"Ping","request":{"method":"POST",
+"header":[{"key":"X-H","value":"v","disabled":)" +
+            disabled + R"(}],
+"url":{"raw":"https://api.example.com/ping?q=1","path":["ping"],
+"query":[{"key":"q","value":"1","disabled":)" +
+            disabled + R"(}]},
+"body":{"mode":"urlencoded","urlencoded":[{"key":"f","value":"x","disabled":)" +
+            disabled + R"(}]}}}]})";
+        const auto file = scratch.write("d.json", body);
+        std::expected<ce::OpenApiImportOutcome, ce::ReqloomError> outcome =
+            std::unexpected(ce::ReqloomError{});
+        ASSERT_NO_THROW(outcome = ce::importFromPostman(file, scratch.path())) << disabled;
+        ASSERT_TRUE(outcome.has_value()) << disabled << ": " << outcome.error().detail;
+        ASSERT_EQ(outcome->project.resources.size(), 1u);
+        const auto& ops = outcome->project.resources.begin()->second.operations;
+        ASSERT_EQ(ops.size(), 1u);
+        const auto& op = ops.begin()->second;
+        EXPECT_TRUE(op.headers.contains("X-H")) << disabled;
+        EXPECT_TRUE(op.queryParams.contains("q")) << disabled;
+    }
+}
+
+// D-20: the import sniffer's typed `meta.format` lookup threw on a non-string
+// value; importAny must still route the document (here to Postman).
+TEST(ImportFromPostman, importAny_tolerates_non_string_meta_format) {
+    ScratchDir scratch;
+    const auto file = scratch.write("m.json",
+                                    R"({"meta":{"format":1},"info":{"name":"Meta"},
+"item":[{"name":"Ping","request":{"method":"GET","url":"https://api.example.com/ping"}}]})");
+    std::expected<ce::OpenApiImportOutcome, ce::ReqloomError> outcome =
+        std::unexpected(ce::ReqloomError{});
+    ASSERT_NO_THROW(outcome = ce::importAny(file, scratch.path()));
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    EXPECT_EQ(outcome->project.name, "Meta");
 }

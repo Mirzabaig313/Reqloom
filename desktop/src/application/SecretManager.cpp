@@ -4,7 +4,10 @@
 #include "ProjectModel.h"
 
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/ProjectIdentity.h>
 
+#include <optional>
+#include <string>
 #include <utility>
 
 namespace reqloom::desktop {
@@ -35,7 +38,14 @@ QList<SecretEntry> SecretManager::referencedSecrets(const ProjectModel& project)
         SecretEntry entry;
         entry.name = QString::fromStdString(name);
 
-        auto result = store_->read(name);
+        const auto key = engine::projectSecretKey(project.project(), name);
+        if (!key) {
+            entry.state = SecretState::ReadError;
+            entry.detail = QString::fromStdString(key.error().detail);
+            entries.append(std::move(entry));
+            continue;
+        }
+        auto result = store_->read(*key);
         if (!result) {
             entry.state = SecretState::ReadError;
             entry.detail = QString::fromStdString(result.error().detail);
@@ -49,8 +59,36 @@ QList<SecretEntry> SecretManager::referencedSecrets(const ProjectModel& project)
     return entries;
 }
 
-bool SecretManager::store(const QString& name, const QString& value, QString& error) {
-    auto result = store_->write(name.toStdString(), value.toStdString());
+namespace {
+
+/// The namespaced store key for `name` in the open project, or nullopt with
+/// `error` set when there is no project or it has no id.
+std::optional<std::string> keyFor(const ProjectModel& project,
+                                  const QString& name,
+                                  QString& error) {
+    if (!project.hasProject()) {
+        error = QStringLiteral("No project loaded.");
+        return std::nullopt;
+    }
+    auto key = engine::projectSecretKey(project.project(), name.toStdString());
+    if (!key) {
+        error = QString::fromStdString(key.error().detail);
+        return std::nullopt;
+    }
+    return std::move(*key);
+}
+
+}  // namespace
+
+bool SecretManager::store(const ProjectModel& project,
+                          const QString& name,
+                          const QString& value,
+                          QString& error) {
+    const auto key = keyFor(project, name, error);
+    if (!key) {
+        return false;
+    }
+    auto result = store_->write(*key, value.toStdString());
     if (!result) {
         error = QString::fromStdString(result.error().detail);
         return false;
@@ -58,8 +96,12 @@ bool SecretManager::store(const QString& name, const QString& value, QString& er
     return true;
 }
 
-bool SecretManager::clear(const QString& name, QString& error) {
-    auto result = store_->remove(name.toStdString());
+bool SecretManager::clear(const ProjectModel& project, const QString& name, QString& error) {
+    const auto key = keyFor(project, name, error);
+    if (!key) {
+        return false;
+    }
+    auto result = store_->remove(*key);
     if (!result) {
         error = QString::fromStdString(result.error().detail);
         return false;

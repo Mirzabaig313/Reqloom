@@ -64,9 +64,22 @@ class LlmClient;
 /// `parseProject` modulo YAML map ordering. Refuses to overwrite an
 /// existing `reqloom.yaml` unless `overwrite` is true.
 ///
+/// With `overwrite` and `pruneStale` both true (the default for an in-place
+/// project save), stale `*.yaml` files in actors/, resources/ and
+/// environments/ that no longer match an entity are deleted. Pass
+/// `pruneStale = false` to replace only the files being written and leave
+/// every other file in the directory untouched (e.g. `reqloom import --force`).
+///
+/// Actor ids, resource ids and environment names must be safe file stems
+/// (non-empty, no leading dot, no `/`, `\`, `:` or NUL); otherwise an error
+/// naming the id is returned and nothing is written.
+///
 /// Returns the path to the written `reqloom.yaml` on success.
 [[nodiscard]] std::expected<std::filesystem::path, ReqloomError> writeProject(
-    const std::filesystem::path& targetDir, const Project& project, bool overwrite = false);
+    const std::filesystem::path& targetDir,
+    const Project& project,
+    bool overwrite = false,
+    bool pruneStale = true);
 
 /// Write `<targetDir>/reqloom.d.ts` describing the hook sandbox `ctx`
 /// surface. Hook authors place this file alongside their `.js` scripts

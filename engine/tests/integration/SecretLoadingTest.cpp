@@ -19,6 +19,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <map>
 #include <optional>
 #include <string>
@@ -89,6 +90,7 @@ private:
 ce::Project makeProjectWithSecretHeader() {
     ce::Project project;
     project.name = "SecretLoadingTest";
+    project.id = "proj-test";
     project.defaultEnvironment = "local";
     project.environments["local"] = {{"baseUrl", "http://unused.test"}};
 
@@ -129,7 +131,7 @@ ce::ExecutionEngine makeEngine(Fakes& out) {
 TEST(SecretLoading, referenced_secret_resolves_into_request_header) {
     Fakes fakes;
     auto engine = makeEngine(fakes);
-    fakes.secrets->put("API_KEY", "sk_live_zzz");
+    fakes.secrets->put("proj-test/API_KEY", "sk_live_zzz");
 
     auto project = makeProjectWithSecretHeader();
     ce::RunContext ctx;
@@ -147,7 +149,7 @@ TEST(SecretLoading, referenced_secret_resolves_into_request_header) {
 TEST(SecretLoading, backend_failure_aborts_run_with_secret_access_failed) {
     Fakes fakes;
     auto engine = makeEngine(fakes);
-    fakes.secrets->failOn("API_KEY");
+    fakes.secrets->failOn("proj-test/API_KEY");
 
     auto project = makeProjectWithSecretHeader();
     ce::RunContext ctx;
@@ -179,7 +181,7 @@ TEST(SecretLoading, dry_run_does_not_touch_the_secret_store) {
     // prompt). Even a backend that would fail on read must not be consulted.
     Fakes fakes;
     auto engine = makeEngine(fakes);
-    fakes.secrets->failOn("API_KEY");
+    fakes.secrets->failOn("proj-test/API_KEY");
 
     auto project = makeProjectWithSecretHeader();
     ce::RunContext ctx;
@@ -195,7 +197,7 @@ TEST(SecretLoading, dry_run_does_not_touch_the_secret_store) {
 TEST(SecretLoading, raw_query_templates_are_safe_and_structured_query_precedes_fragment) {
     Fakes fakes;
     auto engine = makeEngine(fakes);
-    fakes.secrets->put("API_KEY", "ok&admin=true#");
+    fakes.secrets->put("proj-test/API_KEY", "ok&admin=true#");
 
     auto project = makeProjectWithSecretHeader();
     auto& operation = project.resources.at(ce::ResourceId{"item"}).operations.at("get");
@@ -214,7 +216,7 @@ TEST(SecretLoading, raw_query_templates_are_safe_and_structured_query_precedes_f
 TEST(SecretLoading, whole_path_reference_cannot_change_request_authority) {
     Fakes fakes;
     auto engine = makeEngine(fakes);
-    fakes.secrets->put("API_KEY", "sk_live_zzz");
+    fakes.secrets->put("proj-test/API_KEY", "sk_live_zzz");
 
     auto project = makeProjectWithSecretHeader();
     project.environments["local"]["path"] = "@evil.test/collect";
@@ -237,7 +239,7 @@ TEST(SecretLoading, whole_path_reference_cannot_change_request_authority) {
 TEST(SecretLoading, missing_query_parameter_reference_fails_before_request) {
     Fakes fakes;
     auto engine = makeEngine(fakes);
-    fakes.secrets->put("API_KEY", "sk_live_zzz");
+    fakes.secrets->put("proj-test/API_KEY", "sk_live_zzz");
 
     auto project = makeProjectWithSecretHeader();
     auto& operation = project.resources.at(ce::ResourceId{"item"}).operations.at("get");
@@ -253,4 +255,105 @@ TEST(SecretLoading, missing_query_parameter_reference_fails_before_request) {
     EXPECT_EQ(result->steps.front().error.value_or(ce::ErrorCode::Internal),
               ce::ErrorCode::VarUnresolved);
     EXPECT_TRUE(fakes.http->requests().empty());
+}
+
+TEST(SecretLoading, projects_with_different_ids_read_their_own_secret_values) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("proj-a/API_KEY", "value-a");
+    fakes.secrets->put("proj-b/API_KEY", "value-b");
+
+    auto projectA = makeProjectWithSecretHeader();
+    projectA.id = "proj-a";
+    auto projectB = makeProjectWithSecretHeader();
+    projectB.id = "proj-b";
+
+    ce::RunContext ctxA;
+    ASSERT_TRUE(engine.run(projectA, ce::OperationId{"item.get"}, ctxA).has_value());
+    ce::RunContext ctxB;
+    ASSERT_TRUE(engine.run(projectB, ce::OperationId{"item.get"}, ctxB).has_value());
+
+    ASSERT_EQ(fakes.http->requests().size(), 2u);
+    EXPECT_EQ(fakes.http->requests()[0].headers.at("X-Api-Key"), "value-a");
+    EXPECT_EQ(fakes.http->requests()[1].headers.at("X-Api-Key"), "value-b");
+}
+
+TEST(SecretLoading, project_cannot_read_another_projects_secret_or_a_bare_key) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("proj-a/API_KEY", "value-a");
+    fakes.secrets->put("API_KEY", "bare-value");
+
+    auto projectB = makeProjectWithSecretHeader();
+    projectB.id = "proj-b";
+    ce::RunContext ctx;
+    const auto result = engine.run(projectB, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->succeeded());
+    ASSERT_EQ(result->steps.size(), 1u);
+    EXPECT_EQ(result->steps.front().error.value_or(ce::ErrorCode::Internal),
+              ce::ErrorCode::VarUnresolved);
+    EXPECT_TRUE(fakes.http->requests().empty());
+}
+
+TEST(SecretLoading, project_without_id_that_uses_secrets_fails_before_any_request) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("API_KEY", "bare-value");
+
+    auto project = makeProjectWithSecretHeader();
+    project.id.clear();
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid);
+    EXPECT_NE(result.error().detail.find("id: "), std::string::npos) << result.error().detail;
+    EXPECT_NE(result.error().detail.find("reqloom.yaml"), std::string::npos)
+        << result.error().detail;
+    EXPECT_TRUE(fakes.http->requests().empty());
+}
+
+TEST(SecretLoading, env_builtin_not_in_allowed_env_fails_with_actionable_detail) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("proj-test/API_KEY", "sk_live_zzz");
+
+    auto project = makeProjectWithSecretHeader();
+    auto& operation = project.resources.at(ce::ResourceId{"item"}).operations.at("get");
+    operation.headers["X-Build"] = "{{$.env.PATH}}";
+
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_EQ(result->steps.size(), 1u);
+    EXPECT_EQ(result->steps.front().error.value_or(ce::ErrorCode::Internal),
+              ce::ErrorCode::VarUnresolved);
+    EXPECT_NE(result->steps.front().detail.find(
+                  "environment variable PATH is not in allowed_env in reqloom.yaml"),
+              std::string::npos)
+        << result->steps.front().detail;
+    EXPECT_TRUE(fakes.http->requests().empty());
+}
+
+TEST(SecretLoading, env_builtin_listed_in_allowed_env_resolves_into_request) {
+    Fakes fakes;
+    auto engine = makeEngine(fakes);
+    fakes.secrets->put("proj-test/API_KEY", "sk_live_zzz");
+    const char* path = std::getenv("PATH");
+    ASSERT_NE(path, nullptr);
+
+    auto project = makeProjectWithSecretHeader();
+    project.allowedEnv = {"PATH"};
+    auto& operation = project.resources.at(ce::ResourceId{"item"}).operations.at("get");
+    operation.headers["X-Build"] = "{{$.env.PATH}}";
+
+    ce::RunContext ctx;
+    const auto result = engine.run(project, ce::OperationId{"item.get"}, ctx);
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_EQ(fakes.http->requests().size(), 1u);
+    EXPECT_EQ(fakes.http->requests().front().headers.at("X-Build"), std::string{path});
 }

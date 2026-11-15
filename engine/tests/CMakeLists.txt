@@ -45,6 +45,7 @@ add_executable(reqloom-engine-unit-tests
     unit/SchemaValidationTest.cpp
     unit/SecretEnvTagTest.cpp
     unit/ValidateProjectTest.cpp
+    unit/JsonBodyTemplateTest.cpp
 )
 target_include_directories(reqloom-engine-unit-tests
     PRIVATE
@@ -88,6 +89,7 @@ add_executable(reqloom-engine-integration-tests
     integration/CookieJarTest.cpp
     integration/TransportConfigTest.cpp
     integration/SecretLoadingTest.cpp
+    integration/JsonBodyEscapingTest.cpp
 )
 target_link_libraries(reqloom-engine-integration-tests
     PRIVATE

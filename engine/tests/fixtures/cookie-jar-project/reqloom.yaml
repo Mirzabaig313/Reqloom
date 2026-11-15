@@ -1,5 +1,6 @@
 version: 1
 name: Cookie Jar Smoke
+id: b5d0a6de-3d4c-4268-99d1-ef086f884f85
 default_environment: local
 
 environments:

@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
 #include <filesystem>
@@ -138,4 +139,42 @@ TEST(ImportFromThunderClient, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// File fields carrying paths from the exporting machine keep only their base
+// name (with a warning); a text field starting with `@` is flagged too.
+TEST(ImportFromThunderClient, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    const auto file = scratch.write("uploads.json", R"JSON(
+[
+  {
+    "_id": "col_1", "colName": "Uploads API",
+    "folders": [ { "_id": "fld_1", "name": "Uploads", "containerId": "" } ],
+    "requests": [
+      {
+        "_id": "req_1", "colId": "col_1", "containerId": "fld_1", "name": "Upload",
+        "method": "POST", "url": "https://api.example.com/up",
+        "body": {
+          "type": "form",
+          "form": [ { "name": "sneaky", "value": "@/etc/passwd" } ],
+          "files": [
+            { "name": "unix", "value": "/Users/x/.ssh/id_rsa" },
+            { "name": "win", "value": "C:\\Users\\x\\a.png" },
+            { "name": "rel", "value": "../../secret.txt" },
+            { "name": "bare", "value": "photo.png" }
+          ]
+        }
+      }
+    ]
+  }
+]
+)JSON");
+
+    auto outcome = ce::importFromThunderClient(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    reqloom::tests::expectImportedFileRefsSanitised(
+        *op->bodyForm, outcome->warnings, "uploads.upload");
 }

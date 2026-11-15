@@ -11,7 +11,8 @@
 //      to set the Content-Type header by hand.
 //
 // File path resolution is conservative: paths must exist, be regular
-// files, and fit under a 50 MiB cap. We do NOT enforce project-root
+// files, and fit under a 50 MiB per-part cap; the file parts of one request
+// together must fit under a 256 MiB total cap (see `UploadLimits`). We do NOT enforce project-root
 // containment — the user's own YAML legitimately references files in
 // `~/Documents`, `/tmp`, etc. The threat model for `body_form` is "the
 // person editing the YAML is the operator", same as for shell scripts.
@@ -32,6 +33,7 @@
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -44,7 +46,47 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr std::uintmax_t kMaxUploadBytes = 50ULL * 1024 * 1024;  // 50 MiB
+constexpr std::uintmax_t kMiB = 1024ULL * 1024;
+
+/// "50 MiB" for whole mebibytes, "N bytes" otherwise.
+[[nodiscard]] std::string formatLimit(std::uintmax_t bytes) {
+    if (bytes != 0 && bytes % kMiB == 0) {
+        return std::format("{} MiB", bytes / kMiB);
+    }
+    return std::format("{} bytes", bytes);
+}
+
+/// Per-part and request-total size gates, applied to a file's measured
+/// size before its bytes are read. `filesSoFar` is the sum of the file
+/// parts already accepted in this request.
+[[nodiscard]] std::optional<ReqloomError> checkUploadSize(const std::string& field,
+                                                          const std::string& rawPath,
+                                                          std::uintmax_t size,
+                                                          std::uintmax_t filesSoFar,
+                                                          const UploadLimits& limits) {
+    if (size > limits.perPartBytes) {
+        return ReqloomError{ErrorCode::UploadFileUnreadable,
+                            ErrorClass::Resolution,
+                            std::format("body_form field '{}': file exceeds {} upload cap "
+                                        "({} bytes): {}",
+                                        field,
+                                        formatLimit(limits.perPartBytes),
+                                        size,
+                                        rawPath)};
+    }
+    if (size > limits.totalBytes - std::min(filesSoFar, limits.totalBytes)) {
+        return ReqloomError{
+            ErrorCode::UploadFileUnreadable,
+            ErrorClass::Resolution,
+            std::format("body_form field '{}': total size of file uploads in this request "
+                        "would be {} bytes, over the {} request cap: {}",
+                        field,
+                        filesSoFar + size,
+                        formatLimit(limits.totalBytes),
+                        rawPath)};
+    }
+    return std::nullopt;
+}
 
 [[nodiscard]] std::string toLower(std::string_view s) {
     std::string out;
@@ -75,7 +117,9 @@ bool wantsMultipart(const std::map<std::string, std::string>& headers,
 }
 
 std::expected<FormBody, ReqloomError> buildFormBody(
-    const std::map<std::string, std::string>& resolvedFormFields, bool routeMultipart) {
+    const std::map<std::string, std::string>& resolvedFormFields,
+    bool routeMultipart,
+    const UploadLimits& limits) {
     if (!routeMultipart) {
         std::string urlEncoded;
         for (const auto& [k, v] : resolvedFormFields) {
@@ -89,6 +133,7 @@ std::expected<FormBody, ReqloomError> buildFormBody(
 
     MultipartBody mb;
     mb.parts.reserve(resolvedFormFields.size());
+    std::uintmax_t fileBytes{0};  // sum of accepted file parts, for the total cap
 
     for (const auto& [k, v] : resolvedFormFields) {
         MultipartPart part;
@@ -137,7 +182,7 @@ std::expected<FormBody, ReqloomError> buildFormBody(
         // point on the path is irrelevant — even if an attacker swaps
         // the path to a symlink targeting /etc/shadow or a 5 GiB file,
         // tellg() / read() operate on the inode we already have. The
-        // 50 MiB cap below bounds per-request RSS.
+        // per-part and total caps below bound per-request RSS.
         std::ifstream in(effective, std::ios::binary);
         if (!in) {
             return std::unexpected(
@@ -155,16 +200,10 @@ std::expected<FormBody, ReqloomError> buildFormBody(
                 std::format("body_form field '{}': could not measure size: {}", k, rawPath)});
         }
         const auto size = static_cast<std::uintmax_t>(endPos);
-        if (size > kMaxUploadBytes) {
-            return std::unexpected(
-                ReqloomError{ErrorCode::UploadFileUnreadable,
-                             ErrorClass::Resolution,
-                             std::format("body_form field '{}': file exceeds 50 MiB upload cap "
-                                         "({} bytes): {}",
-                                         k,
-                                         size,
-                                         rawPath)});
+        if (auto sizeErr = checkUploadSize(k, rawPath, size, fileBytes, limits)) {
+            return std::unexpected(std::move(*sizeErr));
         }
+        fileBytes += size;
         in.seekg(0, std::ios::beg);
 
         // Slurp through the open fd. The streambuf-iterator pattern

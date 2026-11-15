@@ -19,6 +19,8 @@ add_library(reqloom-engine-domain OBJECT
     src/domain/RunContext.cpp
     src/domain/ErrorCodes.cpp
     src/domain/Codecs.cpp
+    src/domain/ProjectIdentity.cpp
+    src/domain/JsonBodyTemplate.cpp
 )
 target_include_directories(reqloom-engine-domain
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

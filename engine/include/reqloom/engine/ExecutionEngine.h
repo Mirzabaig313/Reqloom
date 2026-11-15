@@ -49,6 +49,17 @@ struct Project {
     std::string name;
     std::string defaultEnvironment;
 
+    /// Stable project identifier (`id:` in reqloom.yaml). Namespaces the
+    /// project's keychain secrets as `<id>/<name>`, so one project cannot
+    /// read another's. Empty means unset; a run that needs secrets then
+    /// fails before any request. The schema writer generates one on save.
+    std::string id;
+
+    /// Process environment variables `{{$.env.NAME}}` may read
+    /// (`allowed_env:` in reqloom.yaml). Any other name stays unresolved,
+    /// so a project file cannot exfiltrate arbitrary environment values.
+    std::vector<std::string> allowedEnv;
+
     /// Project-wide default auth. Operations whose inline auth is
     /// `InlineAuthType::Inherit` resolve to this (the "inherit from parent"
     /// behavior). Empty means those operations run with no auth.

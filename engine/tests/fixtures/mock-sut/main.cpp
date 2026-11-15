@@ -240,6 +240,12 @@ void registerRoute(httplib::Server& server, const Route& route, CaptureStore& ca
         server.Patch(route.path, handler);
     else if (route.method == "DELETE")
         server.Delete(route.path, handler);
+    else if (route.method == "HEAD")
+        // httplib answers HEAD from the GET handler table: headers (incl.
+        // Content-Length) are sent, the body is suppressed.
+        server.Get(route.path, handler);
+    else if (route.method == "OPTIONS")
+        server.Options(route.path, handler);
     else
         server.Get(route.path, handler);
 }

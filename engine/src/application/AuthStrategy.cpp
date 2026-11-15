@@ -5,6 +5,7 @@
 #include "JsonExtraction.h"
 
 #include "../domain/Codecs.h"
+#include "../domain/JsonBodyTemplate.h"
 #include "../domain/VariableResolver.h"
 #include "../infrastructure/http/HttpClient.h"
 #include "../infrastructure/util/Crypto.h"
@@ -112,7 +113,8 @@ public:
             }
 
             if (step.bodyTemplate) {
-                auto resolved = deps_.varResolver->resolve(*step.bodyTemplate, ctx, rctx);
+                auto resolved = resolveRequestBody(
+                    *deps_.varResolver, *step.bodyTemplate, req.headers, ctx, rctx);
                 req.body = resolved.output;
                 if (!req.headers.contains("Content-Type")) {
                     req.headers["Content-Type"] = "application/json";
@@ -1025,7 +1027,8 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
         req.headers[k] = resolved.output;
     }
     if (refresh.bodyTemplate) {
-        auto resolved = deps.varResolver->resolve(*refresh.bodyTemplate, ctx, rctx);
+        auto resolved =
+            resolveRequestBody(*deps.varResolver, *refresh.bodyTemplate, req.headers, ctx, rctx);
         req.body = resolved.output;
         if (!req.headers.contains("Content-Type")) {
             req.headers["Content-Type"] = "application/json";

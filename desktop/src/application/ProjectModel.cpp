@@ -3,6 +3,7 @@
 #include "ProjectModel.h"
 
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/ProjectIdentity.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -113,6 +114,17 @@ void ProjectModel::loadFromDirectory(const QString& directory) {
         emit loadFailed(QString::fromUtf8(codeStr.data(), static_cast<qsizetype>(codeStr.size())),
                         QString::fromStdString(err.detail));
         return;
+    }
+
+    // Secrets are keyed by the project id, so a project without one gets an
+    // id persisted now, before any secret can be stored under it. If the
+    // save fails the id is dropped again: an id that never reached disk
+    // would orphan every secret stored under it on the next open.
+    if (parsed->id.empty()) {
+        parsed->id = engine::generateProjectId();
+        if (!engine::writeProject(dir, *parsed, /*overwrite=*/true, /*pruneStale=*/false)) {
+            parsed->id.clear();
+        }
     }
 
     project_ = std::make_shared<const engine::Project>(std::move(*parsed));

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -78,17 +79,39 @@ void RunController::setProject(const ProjectModel& project) noexcept {
     project_ = &project;
 }
 
+RunController::ContextKey RunController::activeKey() const {
+    // Same rule the engine applies to RunOptions::environment: empty means the
+    // project's default, so both spellings share one context.
+    std::string env = environment_;
+    if (env.empty() && project_->hasProject()) {
+        env = project_->project().defaultEnvironment;
+    }
+    return {project_->rootPath().toStdString(), std::move(env)};
+}
+
 engine::RunContext* RunController::findActiveContext() const {
-    const auto it = contexts_.find(project_->rootPath().toStdString());
+    const auto it = contexts_.find(activeKey());
     return it == contexts_.end() ? nullptr : it->second.get();
 }
 
 engine::RunContext& RunController::contextForActive() {
-    auto& slot = contexts_[project_->rootPath().toStdString()];
+    auto& slot = contexts_[activeKey()];
     if (!slot) {
         slot = std::make_unique<engine::RunContext>();
     }
     return *slot;
+}
+
+void RunController::setEnvironment(const QString& environment) {
+    environment_ = environment.toStdString();
+}
+
+void RunController::forgetProject(const QString& rootPath) {
+    const std::string root = rootPath.toStdString();
+    if (running_ && root == runningRoot_) {
+        return;
+    }
+    std::erase_if(contexts_, [&root](const auto& entry) { return entry.first.first == root; });
 }
 
 void RunController::resetCaches() {
@@ -97,11 +120,7 @@ void RunController::resetCaches() {
     }
     if (auto* ctx = findActiveContext(); ctx != nullptr) {
         ctx->clearExtractions();
-        if (project_->hasProject()) {
-            for (const auto& [actorId, _] : project_->project().actors) {
-                ctx->invalidateSession(actorId);
-            }
-        }
+        ctx->clearSessions();
     }
 }
 
@@ -316,7 +335,11 @@ void RunController::runWithOverride(const QString& target,
     const std::shared_ptr<const ce::Project> project =
         requestOverride.active ? patchedProject(project_->project(), targetId, requestOverride)
                                : project_->projectPtr();
+    // The run's environment keys its context, so a token or cached id from
+    // another environment can never reach this run.
+    setEnvironment(environment);
     ce::RunContext& ctx = contextForActive();
+    runningRoot_ = project_->rootPath().toStdString();
 
     // Value-picker pins (Option A): seed each chosen value as the resource's
     // most-recent instance so the producing op is extraction-cache-skipped and

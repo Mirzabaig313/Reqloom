@@ -54,12 +54,18 @@ public:
     /// annotated with whether the keychain currently holds a value. Sorted.
     [[nodiscard]] QList<SecretEntry> referencedSecrets(const ProjectModel& project) const;
 
-    /// Store (create or overwrite) a secret. Returns true on success; on
-    /// failure `error` carries a human-readable backend message.
-    [[nodiscard]] bool store(const QString& name, const QString& value, QString& error);
+    /// Store (create or overwrite) one of `project`'s secrets. Keys are
+    /// namespaced by the project id, so only that project can read it.
+    /// Returns true on success; on failure `error` carries a
+    /// human-readable message (backend error, or no project / no id).
+    [[nodiscard]] bool store(const ProjectModel& project,
+                             const QString& name,
+                             const QString& value,
+                             QString& error);
 
-    /// Remove a secret. No-op if already absent. Returns true on success.
-    [[nodiscard]] bool clear(const QString& name, QString& error);
+    /// Remove one of `project`'s secrets. No-op if already absent.
+    /// Returns true on success.
+    [[nodiscard]] bool clear(const ProjectModel& project, const QString& name, QString& error);
 
     /// Whether a real keychain backend is available. False when the engine
     /// was built without QtKeychain (the no-op store) — the UI warns rather

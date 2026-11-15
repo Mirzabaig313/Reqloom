@@ -1,5 +1,6 @@
 version: 1
 name: Extraction Sources Smoke
+id: 3f24dbb6-1aff-4986-beef-434383e83974
 default_environment: local
 
 environments:

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -51,6 +52,12 @@ struct TransportConfig {
     /// "P12", `clientCertPath` points at the .p12/.pfx and `clientKeyPath`
     /// is unused (the key lives inside the bundle).
     std::optional<std::string> clientCertType;
+
+    /// Upper bound on the response body, counted after transparent
+    /// decompression. A larger body fails the request with
+    /// `E_NETWORK_POLICY` instead of growing memory without limit.
+    /// Default 64 MiB. Not yet settable from YAML.
+    std::size_t maxResponseBytes{std::size_t{64} * 1024 * 1024};
 };
 
 }  // namespace reqloom::engine

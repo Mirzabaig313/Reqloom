@@ -4,7 +4,9 @@
 
 #include "Codecs.h"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -441,6 +443,11 @@ ResolvedRef resolveBuiltin(std::string_view ref,
             return std::nullopt;
         }
         const std::string envName{ref.substr(6)};
+        // Only names the project lists in `allowed_env` are readable, so a
+        // project file cannot send an arbitrary process variable to the API.
+        if (!rctx.allowedEnv.contains(envName)) {
+            return std::nullopt;
+        }
         if (auto* val = std::getenv(envName.c_str())) {
             return std::string{val};
         }
@@ -659,6 +666,28 @@ std::string substituteRefs(
 }
 
 }  // namespace
+
+std::optional<std::string> envBuiltinFailureReason(const std::string_view token,
+                                                   const ResolveContext& rctx) {
+    constexpr std::string_view kPrefix{"$.env."};
+    if (!token.starts_with(kPrefix)) {
+        return std::nullopt;
+    }
+    const std::string envName{trim(token.substr(kPrefix.size()))};
+    // Only a plain variable name is echoed back into diagnostics.
+    const auto isNameChar = [](const char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+    };
+    if (envName.empty() || envName.size() > 128 || !std::ranges::all_of(envName, isNameChar)) {
+        return std::nullopt;
+    }
+    if (!rctx.allowedEnv.contains(envName)) {
+        return "environment variable " + envName +
+               " is not in allowed_env in reqloom.yaml; add it to the allowed_env list there "
+               "to let the project read it.";
+    }
+    return "environment variable " + envName + " is not set in the process environment.";
+}
 
 VariableResolver::VariableResolver() = default;
 

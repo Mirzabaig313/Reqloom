@@ -4,6 +4,7 @@
 
 #include "../domain/Codecs.h"
 #include "../domain/DependencyResolver.h"
+#include "../domain/JsonBodyTemplate.h"
 #include "../domain/VariableResolver.h"
 #include "../infrastructure/hooks/HookRunner.h"
 #include "../infrastructure/http/HttpClient.h"
@@ -17,6 +18,7 @@
 #include "JsonExtraction.h"
 
 #include <reqloom/engine/JsonValues.h>
+#include <reqloom/engine/ProjectIdentity.h>
 #include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
 #include "RequestSigners.h"
@@ -590,6 +592,52 @@ void setQueryParameter(std::string& url, const std::string_view key, const std::
     return sanitized;
 }
 
+/// Does the operation accept this status? With no expectation, any status
+/// does. `expectStatusList` takes precedence over the legacy single value.
+[[nodiscard]] bool expectsStatus(const Operation& op, const int status) {
+    if (!op.expectStatusList.empty()) {
+        return std::ranges::find(op.expectStatusList, status) != op.expectStatusList.end();
+    }
+    if (op.expectStatus) {
+        return status == *op.expectStatus;
+    }
+    return true;
+}
+
+/// Methods that may be re-sent after the server might have processed them.
+[[nodiscard]] bool isIdempotentMethod(const HttpMethod method) noexcept {
+    switch (method) {
+        case HttpMethod::Get:
+        case HttpMethod::Head:
+        case HttpMethod::Options:
+        case HttpMethod::Put:
+        case HttpMethod::Delete:
+            return true;
+        case HttpMethod::Post:
+        case HttpMethod::Patch:
+            return false;
+    }
+    return false;
+}
+
+/// Login-like steps carry credentials in their response, so their body is
+/// never quoted in a failure detail even when body capture is on: the op
+/// extracts a secret-looking variable or its path names auth / login.
+[[nodiscard]] bool isCredentialStep(const Operation& op) {
+    if (std::ranges::any_of(op.extractions, [](const Extraction& ext) {
+            return isSensitiveName(ext.variableName);
+        })) {
+        return true;
+    }
+    std::string path{};
+    path.reserve(op.pathTemplate.size());
+    for (const char c : op.pathTemplate) {
+        path.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    return path.find("auth") != std::string::npos || path.find("login") != std::string::npos ||
+           path.find("token") != std::string::npos;
+}
+
 }  // namespace
 
 struct ExecutionEngine::Impl {
@@ -608,6 +656,24 @@ struct ExecutionEngine::Impl {
     bool captureResponseBodies{false};
 
     explicit Impl(Dependencies d) : deps(std::move(d)) {}
+
+    /// Run ids come from the open history store, which keeps them unique
+    /// across processes and restarts for its database. Without a store (or
+    /// before openHistory()), nothing is persisted and a process-local
+    /// counter is enough; the store refuses a RunStarted whose id already
+    /// belongs to a stored run, so a fallback id can never merge two runs.
+    [[nodiscard]] RunId allocateRunId() {
+        if (deps.history) {
+            try {
+                if (auto allocated = deps.history->allocateRunId(); allocated) {
+                    return *allocated;
+                }
+                // NOLINTNEXTLINE(bugprone-empty-catch)
+            } catch (...) {
+            }
+        }
+        return RunId{nextRunId.fetch_add(1)};
+    }
 
     [[nodiscard]] bool isCancelled(RunId runId) const noexcept {
         const auto cancelled = cancelledRunId.load(std::memory_order_acquire);
@@ -688,6 +754,46 @@ struct ExecutionEngine::Impl {
         }
     }
 
+    /// After a refresh, rebuild the credential the authenticator pre-resolved
+    /// into the session's inject maps at login. Those values are not
+    /// re-resolved per request and override the actor's own inject, so
+    /// leaving them alone would keep sending the pre-refresh credential.
+    /// Keys mirror the variable names each authenticator stores
+    /// (AuthStrategy.cpp): oauth2 → access_token, bearer → token,
+    /// api_key → key. A refresh that doesn't extract that name leaves the
+    /// credential as it was.
+    static void refreshInjectedCredentials(const Actor& actor,
+                                           const std::map<std::string, std::string>& refreshed,
+                                           ActorSession& session) {
+        const auto valueOf = [&](const std::string& key) -> const std::string* {
+            const auto it = refreshed.find(key);
+            return it == refreshed.end() ? nullptr : &it->second;
+        };
+        const bool isOAuth2 = actor.strategy == AuthStrategy::OAuth2ClientCredentials ||
+                              actor.strategy == AuthStrategy::OAuth2Password;
+        if (isOAuth2 || actor.strategy == AuthStrategy::Bearer) {
+            if (const auto* token = valueOf(isOAuth2 ? "access_token" : "token")) {
+                eraseHeaderCaseInsensitive(session.injectHeaders, "Authorization");
+                session.injectHeaders["Authorization"] = "Bearer " + *token;
+            }
+            return;
+        }
+        if (actor.strategy == AuthStrategy::ApiKey) {
+            const auto* key = valueOf("key");
+            const auto locIt = actor.authConfig.find("location");
+            const auto nameIt = actor.authConfig.find("name");
+            if (key == nullptr || locIt == actor.authConfig.end() ||
+                nameIt == actor.authConfig.end()) {
+                return;
+            }
+            if (locIt->second == "header") {
+                session.injectHeaders[nameIt->second] = *key;
+            } else if (locIt->second == "query") {
+                session.injectQueryParams[nameIt->second] = *key;
+            }
+        }
+    }
+
     // Authenticate an actor if session is not live. Returns true on success.
 
     bool ensureSession(const Actor& actor,
@@ -714,6 +820,7 @@ struct ExecutionEngine::Impl {
                 auto refreshed = runRefresh(actor, ctx, rctx, refreshDeps);
                 if (refreshed) {
                     ActorSession updated = *existing;
+                    refreshInjectedCredentials(actor, *refreshed, updated);
                     for (auto& [k, v] : *refreshed) {
                         updated.variables[k] = std::move(v);
                     }
@@ -787,16 +894,17 @@ struct ExecutionEngine::Impl {
         const std::string baseUrl = baseUrlIt != rctx.envVars.end() ? baseUrlIt->second : "";
 
         const Actor* pollActor = nullptr;
-        if (poll.actor) {
-            auto it = project.actors.find(*poll.actor);
-            if (it != project.actors.end()) {
-                pollActor = &it->second;
+        const auto& pollActorId = poll.actor ? *poll.actor : op.actor;
+        if (!pollActorId.value.empty()) {
+            auto it = project.actors.find(pollActorId);
+            if (it == project.actors.end()) {
+                // Never poll unauthenticated when an actor was asked for.
+                return std::unexpected(
+                    ReqloomError{ErrorCode::RefUndefined,
+                                 ErrorClass::Schema,
+                                 "poll_until: actor '" + pollActorId.value + "' is not defined"});
             }
-        } else if (!op.actor.value.empty()) {
-            auto it = project.actors.find(op.actor);
-            if (it != project.actors.end()) {
-                pollActor = &it->second;
-            }
+            pollActor = &it->second;
         }
 
         if ((pollActor != nullptr) && !ensureSession(*pollActor, ctx, rctx, runId, stepIndex)) {
@@ -1351,12 +1459,14 @@ struct ExecutionEngine::Impl {
         bool ignoreCurrentActorUnresolved{};
         std::optional<std::pair<std::string, std::string>> firstUnresolved{};
 
-        const auto unresolvedVariableDetail = [](const std::string_view safeVariable,
-                                                 const std::string_view location) {
+        const auto unresolvedVariableDetail = [&rctx](const std::string_view safeVariable,
+                                                      const std::string_view location) {
+            const auto envReason = envBuiltinFailureReason(safeVariable, rctx);
             return std::string{"Variable: {{"} + std::string{safeVariable} +
-                   "}}\nLocation: " + std::string{location} +
-                   "\nCause: No usable value was available in the current run when this request "
-                   "was prepared.";
+                   "}}\nLocation: " + std::string{location} + "\nCause: " +
+                   envReason.value_or(
+                       "No usable value was available in the current run when "
+                       "this request was prepared.");
         };
         const auto addDiagnostic = [&](const VariableResolver::UnresolvedOccurrence& occurrence,
                                        const std::string_view resolvedOutput,
@@ -1372,8 +1482,12 @@ struct ExecutionEngine::Impl {
             foundUnresolved = true;
             const bool exposeToken = canExposeDiagnosticToken(resolvedOutput, occurrence.token);
             if (!firstUnresolved) {
+                // A `$.env.NAME` token names a variable, never a value, so it
+                // is shown with its cause (envBuiltinFailureReason vets NAME).
+                const bool showToken =
+                    exposeToken || envBuiltinFailureReason(occurrence.token, rctx).has_value();
                 firstUnresolved = std::pair{
-                    exposeToken ? safeDiagnosticText(occurrence.token) : std::string{"<redacted>"},
+                    showToken ? safeDiagnosticText(occurrence.token) : std::string{"<redacted>"},
                     std::string{location}};
             }
             // ponytail: Bound untrusted template amplification. If richer bulk
@@ -1540,7 +1654,8 @@ struct ExecutionEngine::Impl {
 
             std::map<std::string, std::string> resolvedFormFields{};
             if (op.bodyTemplate) {
-                auto resolved = varResolver.resolve(*op.bodyTemplate, ctx, rctx);
+                auto resolved =
+                    resolveRequestBody(varResolver, *op.bodyTemplate, req.headers, ctx, rctx);
                 addValueDiagnostics(resolved, VariableUseKind::Body, {}, "Request body");
                 req.body = resolved.output;
             } else if (op.bodyForm) {
@@ -1632,8 +1747,15 @@ struct ExecutionEngine::Impl {
 
         if (!op.actor.value.empty()) {
             const auto actorIt = project.actors.find(op.actor);
-            if (actorIt != project.actors.end() &&
-                !ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
+            if (actorIt == project.actors.end()) {
+                // Never fall through and send the request without the
+                // credentials the operation asked for.
+                failPreparation(ErrorCode::RefUndefined,
+                                "Operation '" + op.id.value + "' names actor '" + op.actor.value +
+                                    "', which is not defined");
+                return result;
+            }
+            if (!ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
                 result.status = StepResult::Status::Failed;
                 result.error = ErrorCode::SessionRefreshFailed;
                 return result;
@@ -1644,12 +1766,23 @@ struct ExecutionEngine::Impl {
             return result;
         }
 
-        const int maxAttempts = op.retry.maxAttempts;
+        // `retry.maxAttempts` is the total number of sends (at least one).
+        const int maxAttempts = std::max(op.retry.maxAttempts, 1);
         std::optional<HttpResponse> httpResp;
         ReqloomError lastError{};
         int attemptCount = 0;
+        const auto backoff = [&](const int attempt) {
+            // Exponential backoff. Cap the shift at 20 to avoid signed-overflow
+            // UB on large maxAttempts values.
+            const auto shift = std::min(attempt, 20);
+            auto delay = op.retry.baseBackoff * (std::uint32_t{1} << shift);
+            if (delay > op.retry.maxBackoff) {
+                delay = op.retry.maxBackoff;
+            }
+            std::this_thread::sleep_for(delay);
+        };
 
-        for (int attempt = 0; attempt <= maxAttempts; ++attempt) {
+        for (int attempt = 0; attempt < maxAttempts; ++attempt) {
             ++attemptCount;
             if (isCancelled(runId)) {
                 result.status = StepResult::Status::Cancelled;
@@ -1726,23 +1859,32 @@ struct ExecutionEngine::Impl {
                 if (!op.actor.value.empty()) {
                     absorbResponseCookies(httpResp->headers, op.actor, ctx);
                 }
-                break;
+                // An unexpected 5xx reached the server, so only methods that
+                // are safe to repeat are re-sent; the final 5xx falls through
+                // to the status check below.
+                const bool retry5xx = httpResp->status >= 500 &&
+                                      !expectsStatus(op, httpResp->status) &&
+                                      isIdempotentMethod(op.method) && attempt + 1 < maxAttempts;
+                if (!retry5xx) {
+                    break;
+                }
+                backoff(attempt);
+                continue;
             }
             lastError = resp.error();
-            if (!isRetryable(lastError.code) || attempt >= maxAttempts) {
+            // Non-idempotent methods (POST, PATCH) are re-sent only when the
+            // error proves the request never reached the server. Of the
+            // transport's codes only NetworkDns proves that: connection
+            // refused and timeouts share NetworkTimeout.
+            const bool safeToResend =
+                isIdempotentMethod(op.method) || lastError.code == ErrorCode::NetworkDns;
+            if (!isRetryable(lastError.code) || !safeToResend || attempt + 1 >= maxAttempts) {
                 result.status = StepResult::Status::Failed;
                 result.error = lastError.code;
                 result.attempts = attemptCount;
                 return result;
             }
-            // Exponential backoff. Cap the shift at 20 to avoid signed-overflow
-            // UB on large maxAttempts values.
-            const auto shift = std::min(attempt, 20);
-            auto delay = op.retry.baseBackoff * (std::uint32_t{1} << shift);
-            if (delay > op.retry.maxBackoff) {
-                delay = op.retry.maxBackoff;
-            }
-            std::this_thread::sleep_for(delay);
+            backoff(attempt);
         }
 
         result.attempts = attemptCount;
@@ -1845,29 +1987,30 @@ struct ExecutionEngine::Impl {
         // When expectStatusList is non-empty it takes precedence over the
         // singular expectStatus field; the latter is the legacy single-value
         // form consulted only when the list is empty.
-        const auto statusMatches = [&]() -> bool {
-            if (!httpResp) {
-                return true;
-            }
-            if (!op.expectStatusList.empty()) {
-                return std::find(op.expectStatusList.begin(),
-                                 op.expectStatusList.end(),
-                                 httpResp->status) != op.expectStatusList.end();
-            }
-            if (op.expectStatus) {
-                return httpResp->status == *op.expectStatus;
-            }
-            return true;
-        }();
+        const bool statusMatches = !httpResp || expectsStatus(op, httpResp->status);
 
         if (!statusMatches) {
             result.status = StepResult::Status::Failed;
             result.error = (httpResp->status >= 500) ? ErrorCode::Http5xx : ErrorCode::Http4xx;
-            constexpr std::size_t kBodyExcerpt = 200;
-            std::string const bodyExcerpt = httpResp->body.size() > kBodyExcerpt
-                                                ? httpResp->body.substr(0, kBodyExcerpt) + "..."
-                                                : httpResp->body;
-            result.detail = "HTTP " + std::to_string(httpResp->status) + " — " + bodyExcerpt;
+            std::string expected{};
+            if (!op.expectStatusList.empty()) {
+                for (const int status : op.expectStatusList) {
+                    expected += (expected.empty() ? "" : ", ") + std::to_string(status);
+                }
+            } else if (op.expectStatus) {
+                expected = std::to_string(*op.expectStatus);
+            }
+            // Detail reaches StepFailed, history, UI and CLI. The body may
+            // carry secrets, so quote it only when the run opted into body
+            // capture, and never for a login-like step.
+            result.detail =
+                "HTTP " + std::to_string(httpResp->status) + " (expected " + expected + ")";
+            if (captureResponseBodies && !isCredentialStep(op)) {
+                constexpr std::size_t kBodyExcerpt = 200;
+                result.detail += " — " + (httpResp->body.size() > kBodyExcerpt
+                                              ? httpResp->body.substr(0, kBodyExcerpt) + "..."
+                                              : httpResp->body);
+            }
             auto elapsed = std::chrono::steady_clock::now() - startTime;
             result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
             return result;
@@ -2152,9 +2295,9 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     }
     const std::size_t extractionTraceStart{ctx.extractionTrace().size()};
     if (options.resetSessions) {
-        for (const auto& [actorId, _] : project.actors) {
-            ctx.invalidateSession(actorId);
-        }
+        // All sessions, not only declared actors': cached inline-OAuth2 tokens
+        // live under synthetic `__inline_oauth2:` ids and must not survive.
+        ctx.clearSessions();
     }
 
     auto chainResult = impl_->resolver.resolve(project, target);
@@ -2163,7 +2306,6 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     }
 
     const auto& chain = *chainResult;
-    auto runId = RunId{impl_->nextRunId.fetch_add(1)};
 
     ResolveContext rctx;
     auto envName = options.environment.empty() ? project.defaultEnvironment : options.environment;
@@ -2176,6 +2318,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     if (auto it = project.transport.find(envName); it != project.transport.end()) {
         rctx.transport = it->second;
     }
+    rctx.allowedEnv.insert(project.allowedEnv.begin(), project.allowedEnv.end());
 
     // Pre-load referenced secrets from the OS keychain into the resolve
     // context. We read only the names the project actually references —
@@ -2189,7 +2332,13 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     // `{{secret.X}}` markers in the previewed chain are expected.
     if (impl_->deps.secrets && !options.dryRun) {
         for (const auto& name : DependencyResolver::collectSecretReferences(project)) {
-            auto value = impl_->deps.secrets->read(name);
+            // Keys are namespaced `<project id>/<name>` so a project can only
+            // read its own secrets; a project without an id fails here.
+            auto key = projectSecretKey(project, name);
+            if (!key) {
+                return std::unexpected(key.error());
+            }
+            auto value = impl_->deps.secrets->read(*key);
             if (!value) {
                 return std::unexpected(ReqloomError{
                     ErrorCode::SecretAccessFailed,
@@ -2202,6 +2351,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
         }
     }
 
+    const auto runId = impl_->allocateRunId();
     impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});
 
     RunResult result;

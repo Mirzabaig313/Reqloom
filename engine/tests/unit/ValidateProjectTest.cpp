@@ -124,3 +124,67 @@ TEST(ValidateProject, undefined_reference_is_rejected) {
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::RefUndefined);
 }
+
+// ─── D-04: unknown actor / poll actor / for_each resource ───────────────────
+
+TEST(ValidateProject, unknown_operation_actor_is_rejected) {
+    auto op = makeOp("order", "create");
+    op.actor = ce::ActorId{"ghost"};
+    auto project = makeProject({{"order", {{"create", std::move(op)}}}});
+
+    auto result = ce::validateProject(project);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::RefUndefined);
+    EXPECT_NE(result.error().detail.find("order.create"), std::string::npos)
+        << result.error().detail;
+    EXPECT_NE(result.error().detail.find("ghost"), std::string::npos) << result.error().detail;
+}
+
+TEST(ValidateProject, operation_without_actor_is_still_valid) {
+    auto op = makeOp("order", "create");
+    op.actor = ce::ActorId{};
+    auto project = makeProject({{"order", {{"create", std::move(op)}}}});
+
+    EXPECT_TRUE(ce::validateProject(project).has_value());
+}
+
+TEST(ValidateProject, unknown_poll_until_actor_is_rejected) {
+    auto op = makeOp("job", "start");
+    ce::PollUntil poll;
+    poll.pathTemplate = "/api/v1/jobs/1";
+    poll.successWhen = "$.status == 'done'";
+    poll.actor = ce::ActorId{"phantom"};
+    op.pollUntil = std::move(poll);
+    auto project = makeProject({{"job", {{"start", std::move(op)}}}});
+
+    auto result = ce::validateProject(project);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::RefUndefined);
+    EXPECT_NE(result.error().detail.find("job.start"), std::string::npos) << result.error().detail;
+    EXPECT_NE(result.error().detail.find("phantom"), std::string::npos) << result.error().detail;
+}
+
+TEST(ValidateProject, poll_until_with_known_actor_and_response_ref_is_valid) {
+    auto op = makeOp("job", "start");
+    ce::PollUntil poll;
+    poll.pathTemplate = "{{response.headers.Location}}";
+    poll.successWhen = "$.status == 'done'";
+    poll.actor = ce::ActorId{"user"};
+    op.pollUntil = std::move(poll);
+    auto project = makeProject({{"job", {{"start", std::move(op)}}}});
+
+    auto result = ce::validateProject(project);
+    EXPECT_TRUE(result.has_value()) << result.error().detail;
+}
+
+TEST(ValidateProject, unknown_for_each_resource_is_rejected) {
+    auto op = makeOp("item", "check");
+    op.forEach = ce::ForEach{ce::ResourceId{"nowhere"}, false};
+    auto project = makeProject({{"item", {{"check", std::move(op)}}}});
+
+    auto result = ce::validateProject(project);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ce::ErrorCode::RefUndefined);
+    EXPECT_NE(result.error().detail.find("item.check"), std::string::npos) << result.error().detail;
+    EXPECT_NE(result.error().detail.find("nowhere"), std::string::npos) << result.error().detail;
+}

@@ -7,6 +7,8 @@
 // header. Upgrade path: extract a shared ImportSupport.h once worth it.
 
 #include "ImportFromHttpie.h"
+#include "ImportFromFileRefs.h"
+#include "ImportFromJsonHelpers.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -347,7 +349,7 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
             const auto it = req.find(key);
             if (it != req.end() && it->is_array()) {
                 for (const auto& item : *it) {
-                    if (!item.is_object() || !item.value("enabled", true)) {
+                    if (!item.is_object() || !import_json::boolOr(item, "enabled", true)) {
                         continue;
                     }
                     const auto name = jsonStr(item, "name");
@@ -379,7 +381,7 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
                        body["form"].contains("fields") && body["form"]["fields"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["form"]["fields"]) {
-                    if (!f.is_object() || !f.value("enabled", true)) {
+                    if (!f.is_object() || !import_json::boolOr(f, "enabled", true)) {
                         continue;
                     }
                     const auto name = jsonStr(f, "name");
@@ -390,9 +392,11 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
                     if (fieldType == "file" || fieldType == "filetext") {
                         const auto fileName =
                             f.contains("file") ? jsonStr(f["file"], "name") : std::string{};
-                        form[name] = fileName.empty() ? "@" : "@" + rewrite(fileName);
+                        form[name] = import_files::fileFieldValue(
+                            fileName, op.id.value, name, warnings, rewrite);
                     } else {
-                        form[name] = rewrite(jsonStr(f, "value"));
+                        form[name] = import_files::textFieldValue(
+                            jsonStr(f, "value"), op.id.value, name, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {
@@ -445,12 +449,12 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         if (entry.contains("environments") && entry["environments"].is_array()) {
             // Default environment first so its keys win; then the rest fill gaps.
             for (const auto& e : entry["environments"]) {
-                if (e.is_object() && e.value("isDefault", false)) {
+                if (e.is_object() && import_json::boolOr(e, "isDefault", false)) {
                     absorbEnvironment(e);
                 }
             }
             for (const auto& e : entry["environments"]) {
-                if (e.is_object() && !e.value("isDefault", false)) {
+                if (e.is_object() && !import_json::boolOr(e, "isDefault", false)) {
                     absorbEnvironment(e);
                 }
             }

@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
 #include <filesystem>
@@ -204,4 +205,44 @@ TEST(ImportFromHttpie, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// File fields carrying paths from the exporting machine keep only their base
+// name (with a warning); a text field starting with `@` is flagged too.
+TEST(ImportFromHttpie, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    const auto file = scratch.write("uploads.json", R"JSON(
+{
+  "meta": { "format": "httpie", "version": "2024.1.0", "contentType": "workspace" },
+  "entry": {
+    "name": "Uploads API",
+    "collections": [
+      {
+        "name": "Uploads",
+        "requests": [
+          {
+            "name": "Upload", "method": "POST", "url": "https://api.example.com/up",
+            "body": { "type": "form", "form": { "isMultipart": true, "fields": [
+              { "name": "unix", "type": "file", "file": { "name": "/Users/x/.ssh/id_rsa" } },
+              { "name": "win", "type": "file", "file": { "name": "C:\\Users\\x\\a.png" } },
+              { "name": "rel", "type": "file", "file": { "name": "../../secret.txt" } },
+              { "name": "bare", "type": "file", "file": { "name": "photo.png" } },
+              { "name": "sneaky", "type": "text", "value": "@/etc/passwd" }
+            ] } }
+          }
+        ]
+      }
+    ],
+    "environments": []
+  }
+}
+)JSON");
+
+    auto outcome = ce::importFromHttpie(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    reqloom::tests::expectImportedFileRefsSanitised(
+        *op->bodyForm, outcome->warnings, "uploads.upload");
 }

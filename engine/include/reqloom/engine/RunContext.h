@@ -131,6 +131,9 @@ public:
     [[nodiscard]] const ActorSession* session(const ActorId& actor) const noexcept;
     void putSession(const ActorId& actor, ActorSession session);
     void invalidateSession(const ActorId& actor);
+    /// Drop every session and cookie jar, including entries not keyed by a
+    /// declared actor (inline-OAuth2 token caches). Used by a clean run/reset.
+    void clearSessions();
 
     /// Snapshot of the actor's current cookies. Empty when no jar.
     [[nodiscard]] std::map<std::string, std::string> cookies(const ActorId& actor) const;

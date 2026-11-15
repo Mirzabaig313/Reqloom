@@ -1,5 +1,6 @@
 version: 1
 name: Hooks Smoke Project
+id: da4ad1b3-32d6-47b5-88e7-862e7466e13b
 default_environment: local
 
 environments:

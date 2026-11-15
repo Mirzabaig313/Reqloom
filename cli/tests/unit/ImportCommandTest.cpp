@@ -134,6 +134,31 @@ TEST(ImportCommand, overwrites_with_force) {
     EXPECT_EQ(importCommand(toArgs({spec.string(), "--out", out.path().string(), "--force"})), 0);
 }
 
+// D-19: --force overwrites the files the import writes; it must never delete
+// unrelated hand-written actors/resources/environments already in <dir>.
+TEST(ImportCommand, force_keeps_unrelated_files_in_out_dir) {
+    ScratchDir scratch;
+    const auto spec = scratch.write("api.yaml", kMinimalSpec);
+    ScratchDir out;
+    ASSERT_EQ(importCommand(toArgs({spec.string(), "--out", out.path().string()})), 0);
+
+    fs::create_directories(out.path() / "resources");
+    fs::create_directories(out.path() / "actors");
+    const auto keepRes = out.path() / "resources" / "keep.yaml";
+    const auto keepActor = out.path() / "actors" / "admin.yaml";
+    {
+        std::ofstream res{keepRes};
+        res << "resource: keep\n";
+        std::ofstream actor{keepActor};
+        actor << "actor: admin\n";
+    }
+
+    EXPECT_EQ(importCommand(toArgs({spec.string(), "--out", out.path().string(), "--force"})), 0);
+    EXPECT_TRUE(fs::exists(keepRes));
+    EXPECT_TRUE(fs::exists(keepActor));
+    EXPECT_TRUE(fs::exists(out.path() / "reqloom.yaml"));
+}
+
 TEST(ImportCommand, rejects_spec_outside_project_root) {
     ScratchDir scratch;
     const auto spec = scratch.write("api.yaml", kMinimalSpec);

@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -1337,4 +1338,162 @@ TEST(SchemaWriter, mtls_p12_actor_round_trips) {
     EXPECT_EQ(reload.authConfig.at("cert_path"), "/certs/client.p12");
     EXPECT_EQ(reload.authConfig.at("key_password"), "{{secret.P12_PASS}}");
     EXPECT_FALSE(reload.authConfig.contains("key_path"));
+}
+
+// D-18: IDs become file names, so an unsafe actor id, resource id or
+// environment name must be rejected before anything is written — otherwise
+// `../x` or an absolute id writes outside the project directory.
+namespace {
+
+std::vector<std::string> unsafeIds(const fs::path& outside) {
+    return {"",
+            ".",
+            "..",
+            "../../x",
+            (outside / "abs").string(),
+            "a/b",
+            "a\\b",
+            std::string{"a\0b", 3},
+            "C:x",
+            ".hidden"};
+}
+
+void expectRejectedAndNothingWritten(const ScratchDir& scratch,
+                                     const ce::Project& project,
+                                     const fs::path& outside,
+                                     const std::string& id) {
+    const auto target = scratch.path() / "proj";
+    auto written = ce::writeProject(target, project, /*overwrite=*/true);
+    EXPECT_FALSE(written.has_value()) << "id accepted: '" << id << "'";
+    EXPECT_FALSE(fs::exists(target / "reqloom.yaml")) << id;
+    EXPECT_FALSE(fs::exists(target / "actors" / "user.yaml")) << id;
+    EXPECT_FALSE(fs::exists(outside / "abs.yaml")) << id;
+    EXPECT_FALSE(fs::exists(scratch.path() / "x.yaml")) << id;
+    std::error_code ec;
+    fs::remove_all(target, ec);
+}
+
+}  // namespace
+
+TEST(SchemaWriter, rejects_unsafe_resource_ids_and_writes_nothing) {
+    ScratchDir scratch;
+    const auto outside = scratch.path() / "outside";
+    for (const auto& id : unsafeIds(outside)) {
+        auto project = makeRoundTripProject();
+        auto res = project.resources.at(ce::ResourceId{"payment"});
+        res.id = ce::ResourceId{id};
+        project.resources[ce::ResourceId{id}] = res;
+        expectRejectedAndNothingWritten(scratch, project, outside, id);
+    }
+}
+
+TEST(SchemaWriter, rejects_unsafe_actor_ids_and_writes_nothing) {
+    ScratchDir scratch;
+    const auto outside = scratch.path() / "outside";
+    for (const auto& id : unsafeIds(outside)) {
+        auto project = makeRoundTripProject();
+        auto actor = project.actors.at(ce::ActorId{"user"});
+        actor.id = ce::ActorId{id};
+        project.actors[ce::ActorId{id}] = actor;
+        expectRejectedAndNothingWritten(scratch, project, outside, id);
+    }
+}
+
+TEST(SchemaWriter, rejects_unsafe_environment_names_and_writes_nothing) {
+    ScratchDir scratch;
+    const auto outside = scratch.path() / "outside";
+    for (const auto& id : unsafeIds(outside)) {
+        auto project = makeRoundTripProject();
+        project.environments[id] = {{"baseUrl", "http://localhost:0"}};
+        expectRejectedAndNothingWritten(scratch, project, outside, id);
+    }
+}
+
+TEST(SchemaWriter, unsafe_id_error_names_the_offending_id) {
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    project.environments["../evil"] = {};
+    auto written = ce::writeProject(scratch.path() / "proj", project);
+    ASSERT_FALSE(written.has_value());
+    EXPECT_NE(written.error().detail.find("../evil"), std::string::npos) << written.error().detail;
+}
+
+// D-19: overwrite without pruning (the `reqloom import --force` mode) replaces
+// the files it writes but leaves unrelated hand-written files alone.
+TEST(SchemaWriter, overwrite_without_prune_keeps_unrelated_files) {
+    ScratchDir scratch;
+    auto project = makeRoundTripProject();
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true).has_value());
+    const auto keep = scratch.path() / "resources" / "keep.yaml";
+    {
+        std::ofstream out{keep};
+        out << "resource: keep\n";
+    }
+    ASSERT_TRUE(ce::writeProject(scratch.path(), project, /*overwrite=*/true, /*pruneStale=*/false)
+                    .has_value());
+    EXPECT_TRUE(fs::exists(keep));
+    EXPECT_TRUE(fs::exists(scratch.path() / "resources" / "payment.yaml"));
+}
+
+// D-18 guard: the containment check must accept a target dir given with a
+// trailing separator (e.g. `--out myproj/`).
+TEST(SchemaWriter, accepts_target_dir_with_trailing_separator) {
+    ScratchDir scratch;
+    const auto target = fs::path{(scratch.path() / "proj").string() + "/"};
+    auto written = ce::writeProject(target, makeRoundTripProject());
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    EXPECT_TRUE(fs::exists(scratch.path() / "proj" / "resources" / "payment.yaml"));
+}
+
+TEST(SchemaWriter, project_id_and_allowed_env_round_trip) {
+    ScratchDir scratch;
+    auto original = makeRoundTripProject();
+    original.id = "proj-0001";
+    original.allowedEnv = {"CI_TOKEN", "BUILD_ID"};
+
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    EXPECT_EQ(reloaded->id, "proj-0001");
+    EXPECT_EQ(reloaded->allowedEnv, original.allowedEnv);
+}
+
+TEST(SchemaWriter, writer_generates_project_id_when_missing) {
+    ScratchDir first;
+    ScratchDir second;
+    const auto original = makeRoundTripProject();
+    ASSERT_TRUE(original.id.empty());
+
+    auto writtenA = ce::writeProject(first.path(), original);
+    auto writtenB = ce::writeProject(second.path(), original);
+    ASSERT_TRUE(writtenA.has_value()) << writtenA.error().detail;
+    ASSERT_TRUE(writtenB.has_value()) << writtenB.error().detail;
+
+    auto a = ce::parseProject(*writtenA);
+    auto b = ce::parseProject(*writtenB);
+    ASSERT_TRUE(a.has_value()) << a.error().detail;
+    ASSERT_TRUE(b.has_value()) << b.error().detail;
+    EXPECT_GE(a->id.size(), 32u);
+    EXPECT_NE(a->id, b->id);
+}
+
+TEST(SchemaWriter, writer_keeps_on_disk_project_id_when_rewriting_without_one) {
+    ScratchDir scratch;
+    const auto original = makeRoundTripProject();
+    auto first = ce::writeProject(scratch.path(), original, /*overwrite=*/true);
+    ASSERT_TRUE(first.has_value()) << first.error().detail;
+    const auto firstId = ce::parseProject(*first)->id;
+    ASSERT_FALSE(firstId.empty());
+
+    auto second = ce::writeProject(scratch.path(), original, /*overwrite=*/true);
+    ASSERT_TRUE(second.has_value()) << second.error().detail;
+    EXPECT_EQ(ce::parseProject(*second)->id, firstId);
+
+    auto explicitId = original;
+    explicitId.id = "kept-id";
+    auto third = ce::writeProject(scratch.path(), explicitId, /*overwrite=*/true);
+    ASSERT_TRUE(third.has_value()) << third.error().detail;
+    EXPECT_EQ(ce::parseProject(*third)->id, "kept-id");
 }

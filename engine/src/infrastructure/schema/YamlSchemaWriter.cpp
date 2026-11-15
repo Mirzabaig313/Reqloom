@@ -3,13 +3,17 @@
 
 #include "../../domain/Codecs.h"
 
+#include <reqloom/engine/ProjectIdentity.h>
+
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <ranges>
 #include <set>
 #include <string>
 #include <string_view>
@@ -149,6 +153,41 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
     return temp;
 }
 
+// ─── Path safety ─────────────────────────────────────────────────────────────
+
+// IDs become file stems. Reject anything that could name a different
+// directory: empty, leading dot (covers `.`, `..`, hidden files), path
+// separators, NUL, or a colon (Windows drive-letter / stream forms).
+[[nodiscard]] bool isSafeFileStem(std::string_view stem) {
+    return !stem.empty() && stem.front() != '.' &&
+           stem.find_first_of(std::string_view{"/\\:\0", 4}) == std::string_view::npos;
+}
+
+// True when `path`, once normalised, lies strictly under `root`.
+[[nodiscard]] bool isUnder(const fs::path& root, const fs::path& path) {
+    std::error_code baseEc;
+    std::error_code fullEc;
+    const auto base = fs::absolute(root, baseEc).lexically_normal();
+    const auto full = fs::absolute(path, fullEc).lexically_normal();
+    if (baseEc || fullEc) {
+        return false;
+    }
+    const auto rel = full.lexically_relative(base);
+    return !rel.empty() && rel.is_relative() && *rel.begin() != ".." && *rel.begin() != ".";
+}
+
+[[nodiscard]] std::expected<void, ReqloomError> checkStem(std::string_view kind,
+                                                          const std::string& stem) {
+    if (isSafeFileStem(stem)) {
+        return {};
+    }
+    return std::unexpected(ReqloomError{
+        ErrorCode::SchemaInvalid,
+        ErrorClass::Schema,
+        "writer: unsafe " + std::string{kind} + " '" + stem +
+            "' (must be non-empty, not start with '.', and contain no '/', '\\', ':' or NUL)"});
+}
+
 // ─── Emitter helpers ─────────────────────────────────────────────────────────
 
 // Remove stale `*.yaml` files in a managed sub-directory (actors/, resources/,
@@ -156,9 +195,11 @@ constexpr std::string_view verifiedAgainstToString(Provenance::VerifiedAgainst v
 // rename or delete leaves the old file on disk and it reloads as a ghost
 // entity on the next parse. Only `.yaml` files are touched; unrelated files
 // are left alone.
-void pruneStaleFiles(const fs::path& dir, const std::set<std::string>& keepStems) {
+void pruneStaleFiles(const fs::path& root,
+                     const fs::path& dir,
+                     const std::set<std::string>& keepStems) {
     std::error_code ec;
-    if (!fs::is_directory(dir, ec)) {
+    if (!isUnder(root, dir) || !fs::is_directory(dir, ec)) {
         return;
     }
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
@@ -166,7 +207,7 @@ void pruneStaleFiles(const fs::path& dir, const std::set<std::string>& keepStems
             break;
         }
         const auto& path = entry.path();
-        if (!entry.is_regular_file() || path.extension() != ".yaml") {
+        if (!entry.is_regular_file() || path.extension() != ".yaml" || !isUnder(dir, path)) {
             continue;
         }
         if (!keepStems.contains(path.stem().string())) {
@@ -704,11 +745,41 @@ std::string emitEnvironment(const std::string& name,
     return e.c_str();
 }
 
-std::string emitRoot(const Project& project) {
+/// The id to write: the project's own, else the one already in `rootYaml`
+/// (so a save never re-keys the project's secrets), else a fresh random one.
+std::string effectiveProjectId(const Project& project, const fs::path& rootYaml) {
+    if (!project.id.empty()) {
+        return project.id;
+    }
+    std::error_code ec;
+    if (fs::is_regular_file(rootYaml, ec)) {
+        try {
+            const auto existing = YAML::LoadFile(rootYaml.string())["id"];
+            if (existing && existing.IsScalar()) {
+                auto id = existing.as<std::string>();
+                if (validateProjectId(id)) {
+                    return id;
+                }
+            }
+        } catch (const YAML::Exception&) {
+            // An unreadable existing root just means there is no id to keep.
+        }
+    }
+    return generateProjectId();
+}
+
+std::string emitRoot(const Project& project, const std::string& projectId) {
     YAML::Emitter e;
     e << YAML::BeginMap << YAML::Key << "version" << YAML::Value << 1 << YAML::Key << "name"
-      << YAML::Value << project.name << YAML::Key << "default_environment" << YAML::Value
-      << project.defaultEnvironment;
+      << YAML::Value << project.name << YAML::Key << "id" << YAML::Value << projectId << YAML::Key
+      << "default_environment" << YAML::Value << project.defaultEnvironment;
+    if (!project.allowedEnv.empty()) {
+        e << YAML::Key << "allowed_env" << YAML::Value << YAML::BeginSeq;
+        for (const auto& name : project.allowedEnv) {
+            e << name;
+        }
+        e << YAML::EndSeq;
+    }
     if (project.latencySloP95Ms > 0) {
         e << YAML::Key << "latency_slo" << YAML::Value << YAML::BeginMap << YAML::Key << "p95_ms"
           << YAML::Value << project.latencySloP95Ms << YAML::EndMap;
@@ -730,7 +801,31 @@ YamlSchemaWriter::~YamlSchemaWriter() = default;
 
 SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
                                           const Project& project,
-                                          bool overwrite) {
+                                          bool overwrite,
+                                          bool pruneStale) {
+    // Validate every id-derived file stem before touching the filesystem, so
+    // a bad id can't write (or prune) outside targetDir and nothing is written.
+    if (!project.id.empty()) {
+        if (auto ok = validateProjectId(project.id); !ok) {
+            return std::unexpected(ok.error());
+        }
+    }
+    for (const auto& id : project.actors | std::views::keys) {
+        if (auto ok = checkStem("actor id", id.value); !ok) {
+            return std::unexpected(ok.error());
+        }
+    }
+    for (const auto& id : project.resources | std::views::keys) {
+        if (auto ok = checkStem("resource id", id.value); !ok) {
+            return std::unexpected(ok.error());
+        }
+    }
+    for (const auto& name : project.environments | std::views::keys) {
+        if (auto ok = checkStem("environment name", name); !ok) {
+            return std::unexpected(ok.error());
+        }
+    }
+
     std::error_code ec;
     if (fs::exists(targetDir) && !overwrite) {
         // Only fail if reqloom.yaml is already there — the directory
@@ -755,7 +850,8 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
     // two phases so a multi-file save is near-atomic: if any file fails to
     // stage, nothing is committed and no target file is touched.
     std::vector<std::pair<fs::path, std::string>> plan;
-    plan.emplace_back(targetDir / "reqloom.yaml", emitRoot(project));
+    plan.emplace_back(targetDir / "reqloom.yaml",
+                      emitRoot(project, effectiveProjectId(project, targetDir / "reqloom.yaml")));
     for (const auto& [id, actor] : project.actors) {
         plan.emplace_back(targetDir / "actors" / (id.value + ".yaml"), emitActor(actor));
     }
@@ -769,6 +865,15 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
         }
         plan.emplace_back(targetDir / "environments" / (name + ".yaml"),
                           emitEnvironment(name, vars, transport));
+    }
+    for (const auto& entry : plan) {
+        if (!isUnder(targetDir, entry.first)) {
+            return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                                ErrorClass::Schema,
+                                                "writer: refusing to write " +
+                                                    entry.first.string() + " outside " +
+                                                    targetDir.string()});
+        }
     }
 
     // Phase 1 — stage: write a .tmp for each changed file. Skip unchanged
@@ -812,25 +917,26 @@ SchemaWriteResult YamlSchemaWriter::write(const fs::path& targetDir,
     // stale actor/resource/environment .yaml doesn't reload as a ghost. Gated
     // on overwrite — the in-place "save the project" path — so the slot-into-
     // an-existing-directory case (overwrite=false) never deletes pre-existing
-    // files the writer didn't create this run.
-    if (overwrite) {
+    // files the writer didn't create this run. `pruneStale=false` (the
+    // `reqloom import --force` path) overwrites but never deletes.
+    if (overwrite && pruneStale) {
         std::set<std::string> actorStems;
         for (const auto& [id, _] : project.actors) {
             actorStems.insert(id.value);
         }
-        pruneStaleFiles(targetDir / "actors", actorStems);
+        pruneStaleFiles(targetDir, targetDir / "actors", actorStems);
 
         std::set<std::string> resourceStems;
         for (const auto& [id, _] : project.resources) {
             resourceStems.insert(id.value);
         }
-        pruneStaleFiles(targetDir / "resources", resourceStems);
+        pruneStaleFiles(targetDir, targetDir / "resources", resourceStems);
 
         std::set<std::string> environmentStems;
         for (const auto& [name, _] : project.environments) {
             environmentStems.insert(name);
         }
-        pruneStaleFiles(targetDir / "environments", environmentStems);
+        pruneStaleFiles(targetDir, targetDir / "environments", environmentStems);
     }
 
     return targetDir / "reqloom.yaml";

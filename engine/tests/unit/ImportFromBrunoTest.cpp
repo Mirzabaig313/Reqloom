@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
 #include <filesystem>
@@ -156,4 +157,37 @@ TEST(ImportFromBruno, accepts_bruno_json_path_and_derives_root) {
     auto outcome = ce::importFromBruno(scratch.path() / "bruno.json", scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     EXPECT_TRUE(outcome->project.resources.contains(ce::ResourceId{"orders"}));
+}
+
+// Bruno writes multipart file fields as `@file(<path>)`. Paths from the
+// exporting machine keep only their base name (with a warning); a text field
+// starting with `@` is flagged too.
+TEST(ImportFromBruno, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    scratch.write("bruno.json", R"({"version":"1","name":"Uploads API","type":"collection"})");
+    scratch.write("Uploads/Upload.bru",
+                  "meta {\n"
+                  "  name: Upload\n"
+                  "}\n"
+                  "\n"
+                  "post {\n"
+                  "  url: https://api.example.com/up\n"
+                  "  body: multipartForm\n"
+                  "}\n"
+                  "\n"
+                  "body:multipart-form {\n"
+                  "  unix: @file(/Users/x/.ssh/id_rsa)\n"
+                  "  win: @file(C:\\Users\\x\\a.png)\n"
+                  "  rel: @file(../../secret.txt)\n"
+                  "  bare: @file(photo.png)\n"
+                  "  sneaky: @/etc/passwd\n"
+                  "}\n");
+
+    auto outcome = ce::importFromBruno(scratch.path(), scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    reqloom::tests::expectImportedFileRefsSanitised(
+        *op->bodyForm, outcome->warnings, "uploads.upload");
 }

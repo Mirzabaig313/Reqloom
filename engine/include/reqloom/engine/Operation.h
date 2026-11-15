@@ -44,6 +44,12 @@ struct Extraction {
 };
 
 /// Per-operation retry policy.
+///
+/// `maxAttempts` is the total number of sends (values below 1 count as 1).
+/// Retryable transport errors and unexpected 5xx responses are retried
+/// within that budget for GET, HEAD, OPTIONS, PUT and DELETE. POST and
+/// PATCH are re-sent only when the error proves the request never reached
+/// the server (NetworkDns); a 5xx or an ambiguous transport error is final.
 struct RetryPolicy {
     int maxAttempts{3};
     std::chrono::milliseconds baseBackoff{500};

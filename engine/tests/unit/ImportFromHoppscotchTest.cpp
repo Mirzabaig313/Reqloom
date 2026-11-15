@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
 #include <filesystem>
@@ -147,4 +148,42 @@ TEST(ImportFromHoppscotch, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// File fields carrying paths from the exporting machine keep only their base
+// name (with a warning); a text field starting with `@` is flagged too.
+TEST(ImportFromHoppscotch, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    const auto file = scratch.write("uploads.json", R"JSON(
+{
+  "v": 1, "name": "Uploads API",
+  "folders": [
+    {
+      "v": 1, "name": "Uploads", "folders": [],
+      "requests": [
+        {
+          "v": "1", "name": "Upload", "method": "POST",
+          "endpoint": "https://api.example.com/up", "headers": [], "params": [],
+          "body": { "contentType": "multipart/form-data", "body": [
+            { "key": "unix", "value": "/Users/x/.ssh/id_rsa", "active": true, "isFile": true },
+            { "key": "win", "value": "C:\\Users\\x\\a.png", "active": true, "isFile": true },
+            { "key": "rel", "value": "../../secret.txt", "active": true, "isFile": true },
+            { "key": "bare", "value": "photo.png", "active": true, "isFile": true },
+            { "key": "sneaky", "value": "@/etc/passwd", "active": true, "isFile": false }
+          ] }
+        }
+      ]
+    }
+  ],
+  "requests": []
+}
+)JSON");
+
+    auto outcome = ce::importFromHoppscotch(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    reqloom::tests::expectImportedFileRefsSanitised(
+        *op->bodyForm, outcome->warnings, "uploads.upload");
 }

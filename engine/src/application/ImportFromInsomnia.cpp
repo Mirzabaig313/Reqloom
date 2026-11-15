@@ -9,6 +9,8 @@
 // needs the identical helpers.
 
 #include "ImportFromInsomnia.h"
+#include "ImportFromFileRefs.h"
+#include "ImportFromJsonHelpers.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -436,7 +438,7 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
         // Query params.
         if (item.contains("parameters") && item["parameters"].is_array()) {
             for (const auto& q : item["parameters"]) {
-                if (!q.is_object() || q.value("disabled", false)) {
+                if (!q.is_object() || import_json::boolOr(q, "disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(q, "name");
@@ -449,7 +451,7 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
         // Headers.
         if (item.contains("headers") && item["headers"].is_array()) {
             for (const auto& h : item["headers"]) {
-                if (!h.is_object() || h.value("disabled", false)) {
+                if (!h.is_object() || import_json::boolOr(h, "disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(h, "name");
@@ -471,7 +473,7 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
                        body.contains("params") && body["params"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["params"]) {
-                    if (!f.is_object() || f.value("disabled", false)) {
+                    if (!f.is_object() || import_json::boolOr(f, "disabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(f, "name");
@@ -483,9 +485,11 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
                         // to reqloom's `@path` multipart convention (empty → a
                         // `@` placeholder the editor shows as "Choose a file…").
                         const auto fileName = jsonStr(f, "fileName");
-                        form[key] = fileName.empty() ? "@" : "@" + rewrite(fileName);
+                        form[key] = import_files::fileFieldValue(
+                            fileName, op.id.value, key, warnings, rewrite);
                     } else {
-                        form[key] = rewrite(jsonStr(f, "value"));
+                        form[key] = import_files::textFieldValue(
+                            jsonStr(f, "value"), op.id.value, key, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {

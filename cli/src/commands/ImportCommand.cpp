@@ -41,7 +41,11 @@ void printUsage(std::FILE* stream) {
                  "  --out <dir>           Directory to write the project into (default: cwd)\n"
                  "  --project-root <dir>  Containment root the spec must resolve under\n"
                  "                        (default: the spec's parent directory)\n"
-                 "  --force               Overwrite an existing reqloom.yaml in <dir>\n"
+                 "  --force               Allow writing into a <dir> that already has a\n"
+                 "                        reqloom.yaml: replaces reqloom.yaml and any\n"
+                 "                        actors/, resources/, environments/ file with the\n"
+                 "                        same name as an imported one. Never deletes\n"
+                 "                        other files.\n"
                  "Exit codes: 0 success, 1 import/write failure, 2 invalid arguments.");
 }
 
@@ -119,7 +123,9 @@ int importCommand(const QStringList& args) {
         return 1;
     }
 
-    auto written = ce::writeProject(cfg.outDir, imported->project, cfg.force);
+    // --force overwrites the files this import writes but never prunes other
+    // actors/resources/environments already in <dir> (hand-written files).
+    auto written = ce::writeProject(cfg.outDir, imported->project, cfg.force, /*pruneStale=*/false);
     if (!written) {
         std::println(stderr,
                      "Write error [{}]: {}",

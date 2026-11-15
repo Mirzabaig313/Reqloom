@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
 #include <filesystem>
@@ -197,4 +198,51 @@ TEST(ImportFromApidog, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// Apidog file parameters carry no path (always a bare `@` slot), but a text
+// parameter whose example starts with `@` would be sent as a file upload: it
+// is warned about and reduced to a base name.
+TEST(ImportFromApidog, text_field_starting_with_at_is_reduced_and_warned) {
+    ScratchDir scratch;
+    const auto file = scratch.write("uploads.apidog.json", R"JSON(
+{
+  "apidogProject": "1.0.0",
+  "info": { "name": "Uploads API" },
+  "apiCollection": [
+    {
+      "name": "Root", "id": 1, "parentId": 0,
+      "items": [
+        {
+          "name": "Uploads", "id": 2, "parentId": 0,
+          "items": [
+            {
+              "name": "Upload",
+              "api": {
+                "id": "10", "method": "post", "path": "/up",
+                "requestBody": { "type": "multipart/form-data", "parameters": [
+                  { "name": "avatar", "type": "file", "enable": true },
+                  { "name": "sneaky", "type": "string", "example": "@/etc/passwd", "enable": true },
+                  { "name": "plain", "type": "string", "example": "hello", "enable": true }
+                ] }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+)JSON");
+
+    auto outcome = ce::importFromApidog(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    EXPECT_EQ(op->bodyForm->at("avatar"), "@");
+    EXPECT_EQ(op->bodyForm->at("sneaky"), "@passwd");
+    EXPECT_EQ(op->bodyForm->at("plain"), "hello");
+    EXPECT_NE(outcome->warnings.find("`sneaky`"), std::string::npos) << outcome->warnings;
+    EXPECT_EQ(outcome->warnings.find("`plain`"), std::string::npos) << outcome->warnings;
 }

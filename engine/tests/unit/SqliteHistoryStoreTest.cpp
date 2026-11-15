@@ -17,7 +17,9 @@
 
 #include <support/TempPath.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -712,4 +714,105 @@ TEST(SqliteHistoryStore, clear_deletes_all_runs_and_events) {
     auto events = store.eventsFor(ce::RunId{1});
     ASSERT_TRUE(events.has_value());
     EXPECT_TRUE(events->empty());
+}
+
+// ─── Run id allocation (D-01) ───────────────────────────────────────────────
+
+TEST(SqliteHistoryStore, allocate_run_id_is_unique_across_connections_and_reopens) {
+    // Two processes (here: two connections) on one database, plus a reopen,
+    // must never hand out the same run id.
+    TempDb tmp;
+    ce::SqliteHistoryStore a;
+    ce::SqliteHistoryStore b;
+    ASSERT_TRUE(a.open(tmp.path()).has_value());
+    ASSERT_TRUE(b.open(tmp.path()).has_value());
+
+    std::vector<std::uint64_t> ids;
+    for (int i = 0; i < 3; ++i) {
+        auto fromA = a.allocateRunId();
+        ASSERT_TRUE(fromA.has_value()) << fromA.error().detail;
+        ids.push_back(fromA->value);
+        auto fromB = b.allocateRunId();
+        ASSERT_TRUE(fromB.has_value()) << fromB.error().detail;
+        ids.push_back(fromB->value);
+    }
+    a.close();
+    ASSERT_TRUE(a.open(tmp.path()).has_value());
+    auto afterReopen = a.allocateRunId();
+    ASSERT_TRUE(afterReopen.has_value());
+    ids.push_back(afterReopen->value);
+
+    std::vector<std::uint64_t> sorted = ids;
+    std::ranges::sort(sorted);
+    EXPECT_EQ(std::ranges::adjacent_find(sorted), sorted.end()) << "duplicate run id allocated";
+    for (const auto id : ids) {
+        EXPECT_NE(id, 0u);
+    }
+}
+
+TEST(SqliteHistoryStore, allocate_run_id_skips_ids_already_in_the_database) {
+    // A database written by an older build (process-local counters) already
+    // holds runs; allocation must start above them.
+    TempDb tmp;
+    ce::SqliteHistoryStore store;
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+    ce::RunStarted rs;
+    rs.runId = ce::RunId{7};
+    rs.target = ce::OperationId{"old.run"};
+    rs.at = someTimePoint();
+    ASSERT_TRUE(store.append(rs).has_value());
+
+    auto id = store.allocateRunId();
+    ASSERT_TRUE(id.has_value()) << id.error().detail;
+    EXPECT_GT(id->value, 7u);
+}
+
+TEST(SqliteHistoryStore, run_started_for_existing_run_never_overwrites_it) {
+    TempDb tmp;
+    ce::SqliteHistoryStore store;
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+
+    ce::RunStarted original;
+    original.runId = ce::RunId{1};
+    original.target = ce::OperationId{"first.op"};
+    original.envName = "local";
+    original.chainSize = 2;
+    original.at = someTimePoint();
+    ASSERT_TRUE(store.append(original).has_value());
+    ce::RunEnded originalEnd;
+    originalEnd.runId = ce::RunId{1};
+    originalEnd.outcome = ce::RunOutcome::Succeeded;
+    originalEnd.at = someTimePoint() + std::chrono::seconds{1};
+    ASSERT_TRUE(store.append(originalEnd).has_value());
+
+    // A second run that (wrongly) reuses id 1: its RunStarted and every
+    // later event must be rejected rather than merged into run 1.
+    ce::RunStarted clash;
+    clash.runId = ce::RunId{1};
+    clash.target = ce::OperationId{"second.op"};
+    clash.envName = "prod";
+    clash.chainSize = 5;
+    clash.at = someTimePoint() + std::chrono::seconds{60};
+    EXPECT_FALSE(store.append(clash).has_value());
+    ce::StepStarted clashStep;
+    clashStep.runId = ce::RunId{1};
+    clashStep.op = ce::OperationId{"second.op"};
+    clashStep.at = someTimePoint() + std::chrono::seconds{61};
+    EXPECT_FALSE(store.append(clashStep).has_value());
+    ce::RunEnded clashEnd;
+    clashEnd.runId = ce::RunId{1};
+    clashEnd.outcome = ce::RunOutcome::Failed;
+    clashEnd.at = someTimePoint() + std::chrono::seconds{62};
+    EXPECT_FALSE(store.append(clashEnd).has_value());
+
+    auto rows = store.listRuns(10);
+    ASSERT_TRUE(rows.has_value());
+    ASSERT_EQ(rows->size(), 1u);
+    EXPECT_EQ((*rows)[0].targetOp.value, "first.op");
+    EXPECT_EQ((*rows)[0].envName, "local");
+    EXPECT_EQ((*rows)[0].outcome, "Succeeded");
+
+    auto events = store.eventsFor(ce::RunId{1});
+    ASSERT_TRUE(events.has_value());
+    EXPECT_EQ(events->size(), 2u) << "events of the clashing run were merged into run 1";
 }

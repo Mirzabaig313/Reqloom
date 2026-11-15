@@ -24,6 +24,11 @@ enum class ErrorCode : std::uint8_t {
     NetworkTimeout,
     NetworkDns,
     NetworkTls,
+    /// The transfer was refused by a transport safety rule rather than by
+    /// the network: a URL scheme other than http/https, a response body
+    /// over `TransportConfig::maxResponseBytes`, or too many redirects.
+    /// `detail` says which. Not retryable.
+    NetworkPolicy,
     /// Local file referenced by an `@/path` value in `body_form` could
     /// not be read (missing, not a regular file, or exceeded the size
     /// cap). Surfaced from the executor before any HTTP call is made.

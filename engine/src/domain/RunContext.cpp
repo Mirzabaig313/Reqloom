@@ -41,6 +41,11 @@ void RunContext::invalidateSession(const ActorId& actor) {
     impl_->cookieJars.erase(actor);
 }
 
+void RunContext::clearSessions() {
+    impl_->sessions.clear();
+    impl_->cookieJars.clear();
+}
+
 std::map<std::string, std::string> RunContext::cookies(const ActorId& actor) const {
     const auto it = impl_->cookieJars.find(actor);
     if (it == impl_->cookieJars.end()) {

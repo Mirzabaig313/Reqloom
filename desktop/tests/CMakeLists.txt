@@ -94,6 +94,9 @@ add_executable(reqloom-desktop-secret-tests
     unit/AuthStepListModelTest.cpp
     unit/TimelineModelTest.cpp
     unit/ExecutionPreviewTest.cpp
+    unit/RunControllerContextTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/RunController.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/RunController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ExecutionPreview.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ExecutionPreview.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/Formatting.cpp
@@ -135,6 +138,8 @@ target_link_libraries(reqloom-desktop-secret-tests
         reqloom::engine
         Qt6::Core
         Qt6::Qml
+        # RunController runs the engine on a QtConcurrent worker.
+        Qt6::Concurrent
         GTest::gtest
 )
 set_target_properties(reqloom-desktop-secret-tests PROPERTIES

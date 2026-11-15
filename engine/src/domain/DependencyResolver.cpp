@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <array>
 #include <format>
+#include <iterator>
 #include <map>
+#include <optional>
 #include <queue>
 #include <regex>
 #include <set>
@@ -26,11 +28,11 @@ struct ParsedRef {
     std::string field;
 };
 
-/// Collect the templated strings on an operation (path, body, headers,
-/// query params, form fields) into one list for reference scanning.
-/// Returns views into `op`; the caller must keep `op` alive while the
-/// returned list is in use (always synchronous here).
-std::vector<std::string_view> operationTemplates(const Operation& op) {
+/// Collect the templated strings on an operation's request (path, body,
+/// headers, query params, form fields) into one list for reference
+/// scanning. Returns views into `op`; the caller must keep `op` alive
+/// while the returned list is in use (always synchronous here).
+std::vector<std::string_view> requestTemplates(const Operation& op) {
     std::vector<std::string_view> templates;
     templates.reserve(1 + (op.bodyTemplate ? 1U : 0U) + op.headers.size() + op.queryParams.size() +
                       (op.bodyForm ? op.bodyForm->size() : 0U));
@@ -52,6 +54,63 @@ std::vector<std::string_view> operationTemplates(const Operation& op) {
     return templates;
 }
 
+/// Every value field of an inline auth block (all may hold `{{...}}`).
+void appendInlineAuthTemplates(const InlineAuth& a, std::vector<std::string_view>& out) {
+    for (const std::string* field :
+         {&a.token,           &a.username,           &a.password,
+          &a.apiKeyName,      &a.apiKeyValue,        &a.awsAccessKey,
+          &a.awsSecretKey,    &a.awsRegion,          &a.awsService,
+          &a.awsSessionToken, &a.oauthConsumerKey,   &a.oauthConsumerSecret,
+          &a.oauthToken,      &a.oauthTokenSecret,   &a.oauth2TokenUrl,
+          &a.oauth2ClientId,  &a.oauth2ClientSecret, &a.oauth2Scope,
+          &a.oauth2AuthUrl,   &a.oauth2CallbackUrl,  &a.oauth2AccessToken,
+          &a.jwtSecret,       &a.jwtPayload,         &a.mtlsCertPath,
+          &a.mtlsKeyPath,     &a.mtlsKeyPassword,    &a.mtlsCaCertPath}) {
+        if (!field->empty()) {
+            out.emplace_back(*field);
+        }
+    }
+}
+
+/// The operation's effective inline auth templates: its own block, or the
+/// project default when the block is `Inherit` (mirrors ExecutionEngine).
+std::vector<std::string_view> authTemplates(const Operation& op, const Project& project) {
+    std::vector<std::string_view> templates;
+    if (!op.inlineAuth) {
+        return templates;
+    }
+    if (op.inlineAuth->type == InlineAuthType::Inherit) {
+        if (project.defaultAuth && project.defaultAuth->type != InlineAuthType::Inherit) {
+            appendInlineAuthTemplates(*project.defaultAuth, templates);
+        }
+        return templates;
+    }
+    appendInlineAuthTemplates(*op.inlineAuth, templates);
+    return templates;
+}
+
+/// `poll_until` templates: the poll path and its predicates.
+std::vector<std::string_view> pollTemplates(const Operation& op) {
+    std::vector<std::string_view> templates;
+    if (op.pollUntil) {
+        templates.emplace_back(op.pollUntil->pathTemplate);
+        templates.emplace_back(op.pollUntil->successWhen);
+        if (op.pollUntil->failWhen) {
+            templates.emplace_back(*op.pollUntil->failWhen);
+        }
+    }
+    return templates;
+}
+
+/// Every templated string an operation resolves when it runs: request,
+/// effective inline auth, and `poll_until`.
+std::vector<std::string_view> operationTemplates(const Operation& op, const Project& project) {
+    auto templates = requestTemplates(op);
+    std::ranges::copy(authTemplates(op, project), std::back_inserter(templates));
+    std::ranges::copy(pollTemplates(op), std::back_inserter(templates));
+    return templates;
+}
+
 /// Trim ASCII spaces/tabs — matches VariableResolver's trim of each
 /// `{{...}}` capture.
 [[nodiscard]] std::string_view trimWs(std::string_view s) {
@@ -63,6 +122,39 @@ std::vector<std::string_view> operationTemplates(const Operation& op) {
     return s.substr(begin, end - begin + 1);
 }
 
+/// Split one dotted reference (`scope.field`, `scope[N].field`) into a
+/// ParsedRef. No dot → nullopt (unresolved at send time, not a load error).
+std::optional<ParsedRef> parseDotted(std::string_view inner) {
+    const auto dot = inner.find('.');
+    if (dot == std::string_view::npos) {
+        return std::nullopt;
+    }
+    auto scope = std::string{inner.substr(0, dot)};
+    auto field = std::string{inner.substr(dot + 1)};
+
+    // Strip a trailing `[N]` index, matching resolveDotted's
+    // indexed-resource handling (`order[2]`).
+    if (const auto br = scope.find('['); br != std::string::npos) {
+        scope = scope.substr(0, br);
+    }
+    return ParsedRef{std::move(scope), std::move(field)};
+}
+
+/// The bare-reference argument of a builtin call `$.ns.name(arg)`, if any.
+/// Mirrors VariableResolver::resolveCallArg: a quoted argument is a literal,
+/// anything else is a dotted reference resolved like a top-level one.
+std::optional<std::string_view> builtinCallArgument(std::string_view inner) {
+    const auto open = inner.find('(');
+    if (open == std::string_view::npos || inner.back() != ')') {
+        return std::nullopt;
+    }
+    const auto arg = trimWs(inner.substr(open + 1, inner.size() - open - 2));
+    if (arg.empty() || arg.front() == '"' || arg.front() == '\'') {
+        return std::nullopt;
+    }
+    return arg;
+}
+
 /// Find every `{{...}}` reference and split it into (scope, field).
 ///
 /// Must mirror VariableResolver exactly — it matches `{{[^}]+}}`, trims,
@@ -70,10 +162,9 @@ std::vector<std::string_view> operationTemplates(const Operation& op) {
 /// `{{ order.id }}` (spaces), dropping a real dependency edge and
 /// letting a whitespaced cyclic reference evade detection.
 ///
-/// `$` builtins are recorded with scope "$": the resolver handles them,
-/// and anything nested in their call args resolves (or fails) at send
-/// time, never at load — so "$" satisfies the scope check without
-/// inventing a load error.
+/// `$` builtins are recorded with scope "$". A builtin call's bare
+/// reference argument (`{{$.base64.encode(secret.KEY)}}`) is recorded as
+/// well, so it is checked, creates edges and has its secret pre-loaded.
 std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templates) {
     static const std::regex refPattern(R"(\{\{([^}]+)\}\})");
     std::vector<ParsedRef> refs;
@@ -87,92 +178,182 @@ std::vector<ParsedRef> scanReferences(const std::vector<std::string_view>& templ
             }
 
             if (inner.front() == '$') {
-                refs.push_back(ParsedRef{"$", {}});
+                // The builtin's tail (`env.NAME`, `uuid`, ...) is kept so
+                // validate() can check `$.env` names against allowed_env.
+                refs.push_back(
+                    ParsedRef{"$", inner.starts_with("$.") ? inner.substr(2) : std::string{}});
+                if (const auto arg = builtinCallArgument(inner)) {
+                    if (auto ref = parseDotted(*arg)) {
+                        refs.push_back(std::move(*ref));
+                    }
+                }
                 continue;
             }
 
-            const auto dot = inner.find('.');
-            if (dot == std::string::npos) {
-                // No dot → unresolved at send time, not a load error. Skip.
-                continue;
+            if (auto ref = parseDotted(inner)) {
+                refs.push_back(std::move(*ref));
             }
-
-            auto scope = inner.substr(0, dot);
-            auto field = inner.substr(dot + 1);
-
-            // Strip a trailing `[N]` index, matching resolveDotted's
-            // indexed-resource handling (`order[2]`).
-            if (const auto br = scope.find('['); br != std::string::npos) {
-                scope = scope.substr(0, br);
-            }
-            refs.push_back(ParsedRef{std::move(scope), std::move(field)});
         }
     }
     return refs;
 }
 
-/// Like `inferImplicitDeps` but keeps the flowing variable per producer
-/// (as "resource.var"), so callers building a graph can label edges. A
-/// producer that satisfies several referenced variables yields one entry
-/// per distinct (producer, variable) pair.
-std::vector<std::pair<OperationId, std::string>> inferImplicitDepsDetailed(const Operation& op,
-                                                                           const Project& project) {
-    std::vector<std::pair<OperationId, std::string>> deps;
-    std::set<std::pair<std::string, std::string>> seen;
+/// Reject a `$.env.NAME` builtin whose NAME is not in the project's
+/// `allowed_env` list: it can never resolve, and the message says how to fix it.
+std::expected<void, ReqloomError> checkEnvBuiltinAllowed(const OperationId& opId,
+                                                         const ParsedRef& ref,
+                                                         const Project& project) {
+    constexpr std::string_view kEnvPrefix{"env."};
+    if (ref.scope != "$" || !ref.field.starts_with(kEnvPrefix)) {
+        return {};
+    }
+    auto name = std::string_view{ref.field}.substr(kEnvPrefix.size());
+    name = name.substr(0, name.find_first_of(" \t"));
+    if (std::ranges::find(project.allowedEnv, name) != project.allowedEnv.end()) {
+        return {};
+    }
+    return std::unexpected(ReqloomError{
+        ErrorCode::RefUndefined,
+        ErrorClass::Schema,
+        std::format("Operation '{}' reads $.env.{}, but environment variable {} is not in "
+                    "allowed_env in reqloom.yaml; add it to the allowed_env list there",
+                    opId.value,
+                    name,
+                    name)});
+}
 
-    for (const auto& ref : scanReferences(operationTemplates(op))) {
-        const auto& refResource = ref.scope;
-        const auto& refVar = ref.field;
+using ImplicitDeps = std::vector<std::pair<OperationId, std::string>>;
 
-        if (refResource == "$" || refResource == "env" || refResource == "secret") {
+/// Whether `op`'s own templates consume `{{resource.var}}`.
+[[nodiscard]] bool consumesVariable(const Operation& op,
+                                    const Project& project,
+                                    const std::string& resource,
+                                    const std::string& var) {
+    return std::ranges::any_of(
+        scanReferences(operationTemplates(op, project)),
+        [&](const ParsedRef& r) { return r.scope == resource && r.field == var; });
+}
+
+[[nodiscard]] std::string joinIds(const std::vector<OperationId>& ids) {
+    std::string out;
+    for (const auto& id : ids) {
+        out += (out.empty() ? "" : ", ") + id.value;
+    }
+    return out;
+}
+
+/// Pick the producer(s) of `{{resource.var}}` for the operation `self`.
+/// Extractors other than `self` are the raw candidates; one that itself
+/// consumes the variable is dropped (it re-extracts, it does not produce).
+/// One left → it. Several → those named in `self`'s depends_on, else an
+/// ambiguity error. None left (every extractor consumes) → "no producer".
+/// No extractor at all → no edge (a runtime concern, as before).
+std::expected<std::vector<OperationId>, ReqloomError> selectProducers(const Operation& op,
+                                                                      const OperationId& self,
+                                                                      const Project& project,
+                                                                      const Resource& resource,
+                                                                      const std::string& refRes,
+                                                                      const std::string& refVar) {
+    std::vector<OperationId> extractors;
+    std::vector<OperationId> candidates;
+    for (const auto& [opName, resOp] : resource.operations) {
+        auto id = OperationId{std::format("{}.{}", refRes, opName)};
+        const bool extracts = std::ranges::any_of(
+            resOp.extractions, [&](const Extraction& e) { return e.variableName == refVar; });
+        if (id == self || !extracts) {
             continue;
         }
-
-        bool isActor = false;
-        for (const auto& [actorId, _] : project.actors) {
-            if (actorId.value == refResource) {
-                isActor = true;
-                break;
-            }
+        extractors.push_back(id);
+        if (!consumesVariable(resOp, project, refRes, refVar)) {
+            candidates.push_back(std::move(id));
         }
-        if (isActor) {
+    }
+    if (extractors.empty() || candidates.size() == 1) {
+        return candidates;
+    }
+    if (candidates.empty()) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::RefUndefined,
+            ErrorClass::Schema,
+            std::format("Operation '{}': no producer for {{{{{}.{}}}}}: every operation that "
+                        "extracts it ({}) also consumes it",
+                        self.value,
+                        refRes,
+                        refVar,
+                        joinIds(extractors))});
+    }
+    std::vector<OperationId> named;
+    std::ranges::copy_if(candidates, std::back_inserter(named), [&](const OperationId& c) {
+        return std::ranges::find(op.explicitDependencies, c) != op.explicitDependencies.end();
+    });
+    if (!named.empty()) {
+        return named;
+    }
+    return std::unexpected(ReqloomError{
+        ErrorCode::RefUndefined,
+        ErrorClass::Schema,
+        std::format("Operation '{}': ambiguous producer for {{{{{}.{}}}}}: candidates {} — "
+                    "add depends_on",
+                    self.value,
+                    refRes,
+                    refVar,
+                    joinIds(candidates))});
+}
+
+/// Implicit dependencies of `op` (identified as `self`), keeping the
+/// flowing variable per producer (as "resource.var") so callers building
+/// a graph can label edges. One entry per distinct (producer, variable).
+std::expected<ImplicitDeps, ReqloomError> inferImplicitDepsDetailed(const Operation& op,
+                                                                    const OperationId& self,
+                                                                    const Project& project) {
+    ImplicitDeps deps;
+    std::set<std::string> seenVariables;
+
+    for (const auto& ref : scanReferences(operationTemplates(op, project))) {
+        if (ref.scope == "$" || ref.scope == "env" || ref.scope == "secret" ||
+            project.actors.contains(ActorId{ref.scope})) {
             continue;
         }
-
-        auto resIt = project.resources.find(ResourceId{refResource});
-        if (resIt == project.resources.end()) {
+        auto resIt = project.resources.find(ResourceId{ref.scope});
+        const auto variable = std::format("{}.{}", ref.scope, ref.field);
+        if (resIt == project.resources.end() || !seenVariables.insert(variable).second) {
             continue;
         }
-
-        for (const auto& [opName, resOp] : resIt->second.operations) {
-            for (const auto& ext : resOp.extractions) {
-                if (ext.variableName == refVar) {
-                    auto depId = OperationId{std::format("{}.{}", refResource, opName)};
-                    if (depId.value != op.id.value) {
-                        const auto variable = std::format("{}.{}", refResource, refVar);
-                        if (seen.insert({depId.value, variable}).second) {
-                            deps.emplace_back(std::move(depId), variable);
-                        }
-                    }
-                    break;
-                }
-            }
+        auto producers = selectProducers(op, self, project, resIt->second, ref.scope, ref.field);
+        if (!producers) {
+            return std::unexpected(std::move(producers.error()));
+        }
+        for (auto& producer : *producers) {
+            deps.emplace_back(std::move(producer), variable);
         }
     }
 
     return deps;
 }
 
-/// Extract all implicit dependencies from an operation's templates.
-/// A reference like `{{product.product_id}}` implies a dependency on
-/// the resource "product" — specifically on whatever operation produces
-/// that variable (i.e. has it in `extract:`).
-std::vector<OperationId> inferImplicitDeps(const Operation& op, const Project& project) {
-    std::set<OperationId> deps;
-    for (auto& [producer, _] : inferImplicitDepsDetailed(op, project)) {
-        deps.insert(producer);
+/// D-04: an operation's `actor`, `poll_until.actor` and `for_each.over`
+/// must name things that exist. An empty actor means "no actor".
+std::expected<void, ReqloomError> validateOperationTargets(const OperationId& opId,
+                                                           const Operation& op,
+                                                           const Project& project) {
+    const auto missing = [&](std::string_view what, const std::string& id) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::RefUndefined,
+            ErrorClass::Schema,
+            std::format(
+                "Operation '{}' names {} '{}', which is not defined", opId.value, what, id)});
+    };
+    if (!op.actor.value.empty() && !project.actors.contains(op.actor)) {
+        return missing("actor", op.actor.value);
     }
-    return {deps.begin(), deps.end()};
+    if (op.pollUntil && op.pollUntil->actor && !op.pollUntil->actor->value.empty() &&
+        !project.actors.contains(*op.pollUntil->actor)) {
+        return missing("poll_until actor", op.pollUntil->actor->value);
+    }
+    if (op.forEach && !project.resources.contains(op.forEach->over)) {
+        return missing("for_each resource", op.forEach->over.value);
+    }
+    return {};
 }
 
 }  // namespace
@@ -244,7 +425,11 @@ std::expected<ResolvedPlan, ReqloomError> DependencyResolver::resolvePlan(
         for (const auto& dep : explicitProducers) {
             edges.push_back(DependencyEdge{current, dep, false, {}});
         }
-        for (auto& [producer, variable] : inferImplicitDepsDetailed(op, project)) {
+        auto implicit = inferImplicitDepsDetailed(op, current, project);
+        if (!implicit) {
+            return std::unexpected(std::move(implicit.error()));
+        }
+        for (auto& [producer, variable] : *implicit) {
             allDeps.insert(producer);
             if (!explicitProducers.contains(producer)) {
                 edges.push_back(DependencyEdge{current, producer, true, std::move(variable)});
@@ -361,7 +546,17 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
 
             // AC-3.1.6: a reference whose scope isn't a known root can
             // never resolve — reject at load.
-            for (const auto& ref : scanReferences(operationTemplates(op))) {
+            // `poll_until` templates may also use `{{response.X}}` (the
+            // initial response); everything else must be a known root.
+            auto strictTemplates = requestTemplates(op);
+            std::ranges::copy(authTemplates(op, project), std::back_inserter(strictTemplates));
+            auto refs = scanReferences(strictTemplates);
+            for (auto& ref : scanReferences(pollTemplates(op))) {
+                if (ref.scope != "response") {
+                    refs.push_back(std::move(ref));
+                }
+            }
+            for (const auto& ref : refs) {
                 if (!isKnownScope(ref.scope)) {
                     return std::unexpected(ReqloomError{
                         ErrorCode::RefUndefined,
@@ -372,6 +567,9 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
                                     ref.scope,
                                     ref.field,
                                     ref.scope)});
+                }
+                if (auto denied = checkEnvBuiltinAllowed(opId, ref, project); !denied) {
+                    return denied;
                 }
             }
 
@@ -400,8 +598,16 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
                 allDeps.insert(dep);
             }
 
-            const auto implicit = inferImplicitDeps(op, project);
-            allDeps.insert(implicit.begin(), implicit.end());
+            if (auto targets = validateOperationTargets(opId, op, project); !targets) {
+                return targets;
+            }
+            const auto implicit = inferImplicitDepsDetailed(op, opId, project);
+            if (!implicit) {
+                return std::unexpected(implicit.error());
+            }
+            for (const auto& [producer, _] : *implicit) {
+                allDeps.insert(producer);
+            }
             graph[opId] = {allDeps.begin(), allDeps.end()};
         }
     }
@@ -471,16 +677,15 @@ std::vector<std::string> DependencyResolver::collectSecretReferences(const Proje
 
     for (const auto& [_, resource] : project.resources) {
         for (const auto& [__, op] : resource.operations) {
-            scan(operationTemplates(op));
-            if (op.pollUntil) {
-                std::vector<std::string_view> pollTemplates{op.pollUntil->pathTemplate,
-                                                            op.pollUntil->successWhen};
-                if (op.pollUntil->failWhen) {
-                    pollTemplates.emplace_back(*op.pollUntil->failWhen);
-                }
-                scan(pollTemplates);
-            }
+            scan(operationTemplates(op, project));
         }
+    }
+
+    // The project default auth (applied to `Inherit` operations).
+    if (project.defaultAuth) {
+        std::vector<std::string_view> defaultAuthTemplates;
+        appendInlineAuthTemplates(*project.defaultAuth, defaultAuthTemplates);
+        scan(defaultAuthTemplates);
     }
 
     // Environment values can themselves be secret references — a

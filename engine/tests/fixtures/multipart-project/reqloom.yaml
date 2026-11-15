@@ -1,5 +1,6 @@
 version: 1
 name: Multipart Smoke Project
+id: dc4c3871-a934-45c0-9a99-bb3e11d71b6c
 default_environment: local
 
 environments:

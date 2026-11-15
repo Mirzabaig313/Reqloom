@@ -244,3 +244,114 @@ TEST(QuickJsHookRunner, hooks_are_isolated_between_invocations) {
     // set in the second runtime.
     EXPECT_EQ(secondRun->mutatedRequest.headers.at("X-Leak"), "undefined");
 }
+
+// ─── Timeout detection (D-12) ────────────────────────────────────────────────
+// The timeout verdict must come from the interrupt handler actually firing,
+// not from the text of whatever the hook threw.
+
+TEST(QuickJsHookRunner, error_whose_message_says_interrupted_is_not_a_timeout) {
+    ce::QuickJsHookRunner runner;
+    auto inlineOutcome = runner.runPreRequest("throw new Error('interrupted');", baseContext());
+    ASSERT_FALSE(inlineOutcome.has_value());
+    EXPECT_EQ(inlineOutcome.error().code, ce::ErrorCode::HookFailure);
+    EXPECT_NE(inlineOutcome.error().detail.find("interrupted"), std::string::npos);
+
+    auto moduleOutcome = runner.runPreRequest(
+        "export default function (ctx) { throw new Error('interrupted'); }", baseContext());
+    ASSERT_FALSE(moduleOutcome.has_value());
+    EXPECT_EQ(moduleOutcome.error().code, ce::ErrorCode::HookFailure);
+}
+
+TEST(QuickJsHookRunner, module_infinite_loop_is_reported_as_timeout) {
+    ce::QuickJsHookRunner runner;
+    auto outcome =
+        runner.runPreRequest("export default function (ctx) { for (;;) {} }", baseContext());
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error().code, ce::ErrorCode::HookTimeout);
+}
+
+// ─── Memory limit (D-17) ─────────────────────────────────────────────────────
+
+TEST(QuickJsHookRunner, runaway_allocation_fails_as_hook_error) {
+    ce::QuickJsHookRunner runner;
+    // ~512 MiB if unbounded; the runtime memory limit must stop it early.
+    const std::string script = R"(
+        const keep = [];
+        for (let i = 0; i < 32; i++) { keep.push(new Array(1 << 20).fill(i)); }
+        ctx.request.headers['X-Done'] = String(keep.length);
+    )";
+    auto outcome = runner.runPreRequest(script, baseContext());
+    ASSERT_FALSE(outcome.has_value()) << "allocation loop was not stopped by a memory limit";
+    EXPECT_EQ(outcome.error().code, ce::ErrorCode::HookFailure);
+    EXPECT_NE(outcome.error().detail.find("out of memory"), std::string::npos)
+        << outcome.error().detail;
+
+    // The runner stays usable afterwards.
+    auto next = runner.runPreRequest("ctx.request.headers['X-Ok'] = '1';", baseContext());
+    ASSERT_TRUE(next.has_value()) << next.error().detail;
+}
+
+// ─── Async hooks (D-11) ──────────────────────────────────────────────────────
+
+TEST(QuickJsHookRunner, async_module_hook_mutation_after_await_is_applied) {
+    ce::QuickJsHookRunner runner;
+    const std::string script =
+        "export default async function (ctx) { await 0; ctx.request.headers.sig = 'x'; }";
+    auto outcome = runner.runPreRequest(script, baseContext());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    ASSERT_TRUE(outcome->mutatedRequest.headers.contains("sig"));
+    EXPECT_EQ(outcome->mutatedRequest.headers.at("sig"), "x");
+}
+
+TEST(QuickJsHookRunner, inline_hook_returning_a_promise_is_awaited) {
+    ce::QuickJsHookRunner runner;
+    const std::string script =
+        "return (async () => { await 0; ctx.request.headers.sig = 'y'; })();";
+    auto outcome = runner.runPreRequest(script, baseContext());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    ASSERT_TRUE(outcome->mutatedRequest.headers.contains("sig"));
+    EXPECT_EQ(outcome->mutatedRequest.headers.at("sig"), "y");
+}
+
+TEST(QuickJsHookRunner, async_module_hook_rejection_fails_the_hook) {
+    ce::QuickJsHookRunner runner;
+    const std::string script =
+        "export default async function (ctx) { await 0; throw new Error('async-boom'); }";
+    auto outcome = runner.runPreRequest(script, baseContext());
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error().code, ce::ErrorCode::HookFailure);
+    EXPECT_NE(outcome.error().detail.find("async-boom"), std::string::npos)
+        << outcome.error().detail;
+}
+
+TEST(QuickJsHookRunner, async_hook_that_never_settles_fails_clearly) {
+    ce::QuickJsHookRunner runner;
+    const std::string script =
+        "export default async function (ctx) { await new Promise(() => {}); }";
+    auto outcome = runner.runPreRequest(script, baseContext());
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error().code, ce::ErrorCode::HookFailure);
+    EXPECT_NE(outcome.error().detail.find("never settled"), std::string::npos)
+        << outcome.error().detail;
+}
+
+TEST(QuickJsHookRunner, async_hook_looping_after_await_times_out) {
+    ce::QuickJsHookRunner runner;
+    const std::string script = "export default async function (ctx) { await 0; for (;;) {} }";
+    auto outcome = runner.runPreRequest(script, baseContext());
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error().code, ce::ErrorCode::HookTimeout);
+}
+
+TEST(QuickJsHookRunner, module_top_level_throw_reports_the_real_error) {
+    ce::QuickJsHookRunner runner;
+    const std::string script =
+        "export const x = 1;\n"
+        "throw new Error('top-level-boom');\n"
+        "export default function (ctx) {}";
+    auto outcome = runner.runPreRequest(script, baseContext());
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error().code, ce::ErrorCode::HookFailure);
+    EXPECT_NE(outcome.error().detail.find("top-level-boom"), std::string::npos)
+        << outcome.error().detail;
+}

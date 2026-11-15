@@ -101,11 +101,24 @@ void ensureCurlGlobalInit() {
 // unwinding through them is undefined behaviour. Both are noexcept and
 // signal failure to libcurl by returning a short count, which surfaces as
 // CURLE_WRITE_ERROR on curl_easy_perform.
+// Response body accumulator with a hard cap on the decompressed size, so a
+// hostile or broken server cannot grow memory without bound.
+struct BodySink {
+    std::string body;
+    std::size_t limit{0};
+    bool limitExceeded{false};
+};
+
 std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) noexcept {
     const std::size_t total = size * nmemb;
-    auto* body = static_cast<std::string*>(userdata);
+    auto* sink = static_cast<BodySink*>(userdata);
+    // body.size() never exceeds limit, so the subtraction cannot wrap.
+    if (total > sink->limit - sink->body.size()) {
+        sink->limitExceeded = true;
+        return 0;
+    }
     try {
-        body->append(ptr, total);
+        sink->body.append(ptr, total);
     } catch (...) {
         return 0;
     }
@@ -120,6 +133,12 @@ std::size_t headerCallback(char* ptr,
     auto* headers = static_cast<std::vector<std::pair<std::string, std::string>>*>(userdata);
     try {
         std::string const line(ptr, total);
+        // A status line starts each response (redirect hops, 100 Continue,
+        // proxy CONNECT). Keep only the final response's headers.
+        if (line.starts_with("HTTP/")) {
+            headers->clear();
+            return total;
+        }
         auto colonPos = line.find(':');
         if (colonPos == std::string::npos) {
             return total;
@@ -176,6 +195,36 @@ std::size_t headerCallback(char* ptr,
     }
 }
 
+constexpr long kMaxRedirects = 10;
+
+// Map a failed transfer to a ReqloomError. Transport-policy refusals get
+// their own code (not retryable) instead of the NetworkTimeout catch-all.
+[[nodiscard]] ReqloomError describeCurlFailure(CURLcode res, const BodySink& sink) {
+    const std::string curlText = curl_easy_strerror(res);
+    if (res == CURLE_WRITE_ERROR && sink.limitExceeded) {
+        return ReqloomError{ErrorCode::NetworkPolicy,
+                            ErrorClass::Network,
+                            std::format("response body exceeded the limit of {} bytes "
+                                        "(transport.maxResponseBytes); transfer aborted",
+                                        sink.limit)};
+    }
+    if (res == CURLE_UNSUPPORTED_PROTOCOL) {
+        return ReqloomError{
+            ErrorCode::NetworkPolicy,
+            ErrorClass::Network,
+            "URL scheme not allowed: only http:// and https:// are supported (curl: " + curlText +
+                ")"};
+    }
+    if (res == CURLE_TOO_MANY_REDIRECTS) {
+        return ReqloomError{
+            ErrorCode::NetworkPolicy,
+            ErrorClass::Network,
+            std::format(
+                "too many redirects: stopped after {} (curl: {})", kMaxRedirects, curlText)};
+    }
+    return ReqloomError{classifyCurlError(res), ErrorClass::Network, "curl error: " + curlText};
+}
+
 }  // namespace
 
 // ─── Public ──────────────────────────────────────────────────────────────────
@@ -194,16 +243,28 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     }
 
     HttpResponse response;
-    std::string responseBody;
+    BodySink responseBody;
+    responseBody.limit = request.transport.maxResponseBytes;
     std::vector<std::pair<std::string, std::string>> responseHeaders;
 
     curl_easy_setopt(curl.get(), CURLOPT_URL, request.url.c_str());
-    curl_easy_setopt(curl.get(), CURLOPT_CUSTOMREQUEST, methodString(request.method));
+    // HEAD must go through CURLOPT_NOBODY: as a custom request libcurl
+    // still waits for the Content-Length body that never arrives.
+    if (request.method == HttpMethod::Head) {
+        curl_easy_setopt(curl.get(), CURLOPT_NOBODY, 1L);
+    } else {
+        curl_easy_setopt(curl.get(), CURLOPT_CUSTOMREQUEST, methodString(request.method));
+    }
+    // Only http(s), for the request and for every redirect hop: no file://,
+    // dict://, gopher:// etc. from a project URL or a Location header.
+    curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &responseBody);
     curl_easy_setopt(curl.get(), CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.get(), CURLOPT_HEADERDATA, &responseHeaders);
     curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, kMaxRedirects);
     curl_easy_setopt(curl.get(),
                      CURLOPT_TIMEOUT_MS,
                      toCurlLongClamped(static_cast<std::int64_t>(request.timeout.count())));
@@ -368,16 +429,14 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     auto elapsed = std::chrono::steady_clock::now() - startTime;
 
     if (res != CURLE_OK) {
-        return std::unexpected(ReqloomError{classifyCurlError(res),
-                                            ErrorClass::Network,
-                                            std::string("curl error: ") + curl_easy_strerror(res)});
+        return std::unexpected(describeCurlFailure(res, responseBody));
     }
 
     long httpStatus = 0;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &httpStatus);
 
     response.status = static_cast<int>(httpStatus);
-    response.body = std::move(responseBody);
+    response.body = std::move(responseBody.body);
     response.headers = std::move(responseHeaders);
     response.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
     return response;

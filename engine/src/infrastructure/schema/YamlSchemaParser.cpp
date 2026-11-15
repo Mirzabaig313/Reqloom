@@ -3,6 +3,8 @@
 
 #include "../../domain/DependencyResolver.h"
 
+#include <reqloom/engine/ProjectIdentity.h>
+
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
 
@@ -372,6 +374,11 @@ std::chrono::seconds parseDuration(const std::string& s) {
     if (s.empty()) {
         return kDefault;
     }
+    // All digits, no unit → whole seconds ("3600" is an hour, not 360s).
+    if (std::ranges::all_of(s, [](const char c) { return c >= '0' && c <= '9'; })) {
+        const auto whole = parseNonNegativeLong(s);
+        return whole ? std::chrono::seconds{*whole} : kDefault;
+    }
 
     const auto digits = std::string_view{s}.substr(0, s.size() - 1);
     const auto value = parseNonNegativeLong(digits);
@@ -411,8 +418,11 @@ std::chrono::seconds parseDuration(const std::string& s) {
         }
         return fallback;
     }
-    // Fall through to second-grained parser. Empty unit (just digits)
-    // is treated as seconds by parseDuration.
+    // Fall through to second-grained parser. A bare number (no unit) is
+    // whole seconds, matching parseDuration.
+    if (parseNonNegativeLong(literal)) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(parseDuration(literal));
+    }
     if (literal.size() < 2) {
         return fallback;
     }
@@ -1116,6 +1126,26 @@ SchemaParseResult YamlSchemaParser::parse(const fs::path& rootYaml) {
         Project project;
         project.name = root["name"].as<std::string>("Unnamed Project");
         project.defaultEnvironment = root["default_environment"].as<std::string>("local");
+
+        // Optional stable id (namespaces keychain secrets) and the
+        // process environment variables `{{$.env.NAME}}` may read.
+        if (root["id"]) {
+            project.id = root["id"].as<std::string>();
+            if (auto ok = validateProjectId(project.id); !ok) {
+                return std::unexpected(ok.error());
+            }
+        }
+        if (const auto allowedEnv = root["allowed_env"]; allowedEnv) {
+            if (!allowedEnv.IsSequence()) {
+                return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                                    ErrorClass::Schema,
+                                                    "allowed_env must be a list of environment "
+                                                    "variable names"});
+            }
+            for (const auto& item : allowedEnv) {
+                project.allowedEnv.push_back(item.as<std::string>());
+            }
+        }
 
         // Project-wide default auth (the "inherit from parent" target). An
         // operation whose auth type is `inherit` resolves to this.

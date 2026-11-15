@@ -177,6 +177,14 @@ AppController::AppController(QObject* parent)
     sessionTicker_.setInterval(kSessionTickMs);
     connect(&sessionTicker_, &QTimer::timeout, this, &AppController::refreshActorSessions);
 
+    // Run state is per environment: point the controller at the newly selected
+    // environment's context and redraw what shows that context's state.
+    connect(this, &AppController::environmentChanged, this, [this]() {
+        runController_->setEnvironment(environment_);
+        refreshActorSessions();
+        emit cookiesChanged();
+    });
+
     // Bridge ALL streamed RunController signals into the timeline model so the
     // panel mirrors the old Widgets TimelinePanel (steps, requests, responses,
     // extractions, skips, failures). Receiver-bound, function-pointer form.
@@ -512,6 +520,10 @@ void AppController::closeProject(int index) {
     }
     if (wasActive && !canLeaveActiveProject()) {
         return;
+    }
+    // Closing drops the project's sessions + caches in every environment.
+    if (const ProjectModel* closing = workspace_->at(index); closing != nullptr) {
+        runController_->forgetProject(closing->rootPath());
     }
     workspace_->removeProject(index);
     persistOpenProjects();
@@ -948,7 +960,10 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
         std::error_code mkEc;
         std::filesystem::create_directories(projectDir, mkEc);
 
-        auto written = engine::writeProject(projectDir, imported->project, overwrite);
+        // An import replaces the files it writes but must never delete the
+        // user's other actors/resources/environments (same rule as the CLI).
+        auto written =
+            engine::writeProject(projectDir, imported->project, overwrite, /*pruneStale=*/false);
         if (!written) {
             out.status = ImportOutcome::Status::WriteFailed;
             out.errorDetail = QString::fromStdString(written.error().detail);

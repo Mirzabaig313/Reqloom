@@ -28,6 +28,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_NETWORK_DNS";
         case ErrorCode::NetworkTls:
             return "E_NETWORK_TLS";
+        case ErrorCode::NetworkPolicy:
+            return "E_NETWORK_POLICY";
         case ErrorCode::UploadFileUnreadable:
             return "E_UPLOAD_FILE_UNREADABLE";
         case ErrorCode::Http5xx:
@@ -90,6 +92,8 @@ std::string_view humanize(ErrorCode code) noexcept {
             return "Could not resolve host";
         case ErrorCode::NetworkTls:
             return "TLS handshake failed";
+        case ErrorCode::NetworkPolicy:
+            return "Blocked by transport limits";
         case ErrorCode::UploadFileUnreadable:
             return "Upload file unreadable";
         case ErrorCode::Http5xx:
@@ -134,7 +138,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
     // Reverse of toCodeString, matched against the full enumerator list.
     // The drift guard below fails the build if a code is added without
     // growing this array.
-    constexpr std::array<ErrorCode, 28> kAll = {
+    constexpr std::array<ErrorCode, 29> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,
         ErrorCode::Cycle,
@@ -145,6 +149,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::NetworkTimeout,
         ErrorCode::NetworkDns,
         ErrorCode::NetworkTls,
+        ErrorCode::NetworkPolicy,
         ErrorCode::UploadFileUnreadable,
         ErrorCode::Http5xx,
         ErrorCode::Http4xx,
@@ -203,6 +208,7 @@ ErrorClass classify(ErrorCode code) noexcept {
         case ErrorCode::NetworkTimeout:
         case ErrorCode::NetworkDns:
         case ErrorCode::NetworkTls:
+        case ErrorCode::NetworkPolicy:
             return ErrorClass::Network;
 
         case ErrorCode::UploadFileUnreadable:

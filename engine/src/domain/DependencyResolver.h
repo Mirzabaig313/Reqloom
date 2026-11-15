@@ -37,6 +37,11 @@ public:
     ///     (field existence stays a runtime concern);
     ///   - every `depends_on:` target names a real operation → else
     ///     RefUndefined;
+    ///   - a non-empty `actor`, `poll_until.actor`, and `for_each.over`
+    ///     name a defined actor / resource → else RefUndefined;
+    ///   - each `{{res.var}}` has one clear producer: extractors that also
+    ///     consume the variable are skipped, `depends_on` disambiguates →
+    ///     else RefUndefined ("ambiguous producer" / "no producer");
     ///   - the full dependency graph is acyclic, self-loops included →
     ///     else Cycle, listing the operations involved.
     [[nodiscard]] std::expected<void, ReqloomError> validate(const Project& project) const;

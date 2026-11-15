@@ -7,23 +7,27 @@
 // scanner. In practice Bruno bodies are balanced JSON, so this holds.
 
 #include "ImportFromBruno.h"
+#include "ImportFromFileRefs.h"
 
 #include "../domain/DependencyResolver.h"
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace reqloom::engine {
@@ -327,6 +331,46 @@ std::vector<std::pair<std::string, std::string>> parseDict(std::string_view inne
     return out;
 }
 
+/// Bruno writes a multipart file field as `@file(<path>)`, several paths
+/// joined by `|`. Returns the text between the parentheses, if `v` is one.
+std::optional<std::string_view> brunoFileRefInner(std::string_view v) {
+    constexpr std::string_view kOpen{"@file("};
+    if (!v.starts_with(kOpen) || !v.ends_with(')')) {
+        return std::nullopt;
+    }
+    v.remove_prefix(kOpen.size());
+    v.remove_suffix(1);
+    return v;
+}
+
+/// `body_form` map from a Bruno form block. File fields keep only the base
+/// name of their (first) path and text fields starting with `@` are flagged,
+/// via the shared import_files helpers.
+template <typename Rewrite>
+std::map<std::string, std::string> brunoForm(
+    const std::vector<std::pair<std::string, std::string>>& pairs,
+    const std::string& opId,
+    std::vector<std::string>& warnings,
+    Rewrite& rewrite) {
+    std::map<std::string, std::string> form;
+    for (const auto& [k, v] : pairs) {
+        const auto inner = brunoFileRefInner(v);
+        if (!inner) {
+            form[k] = import_files::textFieldValue(v, opId, k, warnings, rewrite);
+            continue;
+        }
+        const auto bar = inner->find('|');
+        if (bar != std::string_view::npos) {
+            warnings.push_back(std::format(
+                "operation {}: file field `{}` had several files; only the first was imported",
+                opId,
+                k));
+        }
+        form[k] = import_files::fileFieldValue(inner->substr(0, bar), opId, k, warnings, rewrite);
+    }
+    return form;
+}
+
 std::string jsonStr(const json& node, std::string_view key) {
     if (node.is_object()) {
         if (const auto it = node.find(key); it != node.end() && it->is_string()) {
@@ -479,7 +523,7 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
         std::string bodyType;
         std::map<std::string, std::string> headers;
         std::map<std::string, std::string> query;
-        std::map<std::string, std::string> form;
+        std::vector<std::pair<std::string, std::string>> formPairs;
         std::optional<std::string> rawBody;
         for (const auto& b : blocks) {
             if (const auto m = methodFromBlockName(b.name)) {
@@ -505,9 +549,7 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
                     sub == "graphql" || sub.empty()) {
                     rawBody = rewrite(trim(b.inner));
                 } else if (sub.find("form") != std::string::npos) {
-                    for (const auto& [k, v] : parseDict(b.inner)) {
-                        form[k] = rewrite(v);
-                    }
+                    std::ranges::move(parseDict(b.inner), std::back_inserter(formPairs));
                 }
             }
         }
@@ -564,6 +606,7 @@ std::expected<ImportFromBruno::Outcome, ReqloomError> ImportFromBruno::run(
         op.pathTemplate = rewrite(split.path);
         op.headers = std::move(headers);
         op.queryParams = std::move(query);
+        auto form = brunoForm(formPairs, op.id.value, warnings, rewrite);
         if (!form.empty()) {
             op.bodyForm = std::move(form);
         } else if (rawBody && !rawBody->empty()) {

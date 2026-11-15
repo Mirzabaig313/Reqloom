@@ -476,3 +476,65 @@ resources:
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::YamlParse);
 }
+
+// ───— project id and allowed_env ────────────────────────────────────────
+
+namespace {
+
+constexpr const char* kMinimalBody = R"YAML(
+default_environment: local
+environment:
+  baseUrl: http://localhost:0
+resources:
+  item:
+    operations:
+      get:
+        method: GET
+        path: /items
+        expect_status: 200
+)YAML";
+
+}  // namespace
+
+TEST(SchemaValidation, project_id_and_allowed_env_are_parsed) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml",
+                                    std::string{"version: 1\nname: P\nid: proj-1234\n"
+                                                "allowed_env:\n  - CI_TOKEN\n  - BUILD_ID\n"} +
+                                        kMinimalBody);
+    auto project = ce::parseProject(yaml);
+    ASSERT_TRUE(project.has_value()) << project.error().detail;
+    EXPECT_EQ(project->id, "proj-1234");
+    ASSERT_EQ(project->allowedEnv.size(), 2u);
+    EXPECT_EQ(project->allowedEnv[0], "CI_TOKEN");
+    EXPECT_EQ(project->allowedEnv[1], "BUILD_ID");
+}
+
+TEST(SchemaValidation, project_id_with_slash_is_rejected) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write(
+        "reqloom.yaml", std::string{"version: 1\nname: P\nid: other/project\n"} + kMinimalBody);
+    auto project = ce::parseProject(yaml);
+    ASSERT_FALSE(project.has_value());
+    EXPECT_EQ(project.error().code, ce::ErrorCode::SchemaInvalid);
+    EXPECT_NE(project.error().detail.find("id"), std::string::npos) << project.error().detail;
+}
+
+TEST(SchemaValidation, project_id_with_control_character_is_rejected) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write(
+        "reqloom.yaml", std::string{"version: 1\nname: P\nid: \"abc\\tdef\"\n"} + kMinimalBody);
+    auto project = ce::parseProject(yaml);
+    ASSERT_FALSE(project.has_value());
+    EXPECT_EQ(project.error().code, ce::ErrorCode::SchemaInvalid);
+}
+
+TEST(SchemaValidation, overlong_project_id_is_rejected) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write(
+        "reqloom.yaml",
+        std::string{"version: 1\nname: P\nid: "} + std::string(200, 'a') + "\n" + kMinimalBody);
+    auto project = ce::parseProject(yaml);
+    ASSERT_FALSE(project.has_value());
+    EXPECT_EQ(project.error().code, ce::ErrorCode::SchemaInvalid);
+}

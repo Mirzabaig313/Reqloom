@@ -82,7 +82,11 @@ void SecretsController::refresh() {
 
 bool SecretsController::store(const QString& name, const QString& value) {
     QString error;
-    if (manager_.store(name, value, error)) {
+    if (project_ == nullptr) {
+        emit notify(QStringLiteral("Failed to set secret: no project loaded."), true);
+        return false;
+    }
+    if (manager_.store(*project_, name, value, error)) {
         if (project_ != nullptr) {
             list_.reload(manager_.referencedSecrets(*project_));
         }
@@ -95,7 +99,11 @@ bool SecretsController::store(const QString& name, const QString& value) {
 
 bool SecretsController::clear(const QString& name) {
     QString error;
-    if (manager_.clear(name, error)) {
+    if (project_ == nullptr) {
+        emit notify(QStringLiteral("Failed to clear secret: no project loaded."), true);
+        return false;
+    }
+    if (manager_.clear(*project_, name, error)) {
         if (project_ != nullptr) {
             list_.reload(manager_.referencedSecrets(*project_));
         }

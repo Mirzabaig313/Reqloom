@@ -17,7 +17,8 @@ public:
 
     SchemaWriteResult write(const std::filesystem::path& targetDir,
                             const Project& project,
-                            bool overwrite = false) override;
+                            bool overwrite = false,
+                            bool pruneStale = true) override;
 };
 
 }  // namespace reqloom::engine

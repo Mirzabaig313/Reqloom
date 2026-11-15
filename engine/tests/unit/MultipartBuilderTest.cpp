@@ -178,6 +178,53 @@ TEST(MultipartBuilder, file_part_carries_preloaded_bytes) {
         << "file bytes must be pre-loaded into MultipartPart::value at build time";
 }
 
+TEST(MultipartBuilder, default_upload_limits_are_50_mib_per_part_and_256_mib_total) {
+    constexpr ce::UploadLimits limits{};
+    EXPECT_EQ(limits.perPartBytes, 50ULL * 1024 * 1024);
+    EXPECT_EQ(limits.totalBytes, 256ULL * 1024 * 1024);
+}
+
+TEST(MultipartBuilder, fails_when_total_file_bytes_exceed_request_cap) {
+    // Each part is under the per-part cap, but together they exceed the
+    // total cap: the request must fail instead of holding every file in
+    // memory. Limits are lowered so the test only writes a few bytes.
+    TempFile a{std::string(6, 'a')};
+    TempFile b{std::string(6, 'b')};
+    std::map<std::string, std::string> fields{{"a", "@" + a.path().string()},
+                                              {"b", "@" + b.path().string()}};
+
+    auto body = ce::buildFormBody(
+        fields, /*routeMultipart=*/true, ce::UploadLimits{.perPartBytes = 8, .totalBytes = 10});
+    ASSERT_FALSE(body.has_value());
+    EXPECT_EQ(body.error().code, ce::ErrorCode::UploadFileUnreadable);
+    EXPECT_NE(body.error().detail.find("total"), std::string::npos) << body.error().detail;
+    EXPECT_NE(body.error().detail.find("12 bytes"), std::string::npos) << body.error().detail;
+    EXPECT_NE(body.error().detail.find("10 bytes"), std::string::npos) << body.error().detail;
+}
+
+TEST(MultipartBuilder, accepts_files_whose_total_is_exactly_the_request_cap) {
+    TempFile a{std::string(5, 'a')};
+    TempFile b{std::string(5, 'b')};
+    std::map<std::string, std::string> fields{{"a", "@" + a.path().string()},
+                                              {"b", "@" + b.path().string()},
+                                              {"note", "text parts do not count"}};
+
+    auto body = ce::buildFormBody(
+        fields, /*routeMultipart=*/true, ce::UploadLimits{.perPartBytes = 8, .totalBytes = 10});
+    ASSERT_TRUE(body.has_value()) << body.error().detail;
+}
+
+TEST(MultipartBuilder, per_part_cap_still_applies_under_custom_limits) {
+    TempFile a{std::string(9, 'a')};
+    std::map<std::string, std::string> fields{{"a", "@" + a.path().string()}};
+
+    auto body = ce::buildFormBody(
+        fields, /*routeMultipart=*/true, ce::UploadLimits{.perPartBytes = 8, .totalBytes = 100});
+    ASSERT_FALSE(body.has_value());
+    EXPECT_EQ(body.error().code, ce::ErrorCode::UploadFileUnreadable);
+    EXPECT_NE(body.error().detail.find("upload cap"), std::string::npos) << body.error().detail;
+}
+
 TEST(MultipartBuilder, error_code_string_is_stable) {
     EXPECT_EQ(ce::toCodeString(ce::ErrorCode::UploadFileUnreadable), "E_UPLOAD_FILE_UNREADABLE");
 }

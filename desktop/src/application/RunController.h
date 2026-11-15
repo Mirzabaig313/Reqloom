@@ -162,14 +162,15 @@ public:
     [[nodiscard]] bool isRunning() const noexcept;
 
     /// Point the controller at a different project (workspace switch). Each
-    /// project keeps its own RunContext (sessions + extraction cache), keyed by
-    /// project root, so switching collections preserves each one's logins.
+    /// project + environment keeps its own RunContext (sessions + extraction
+    /// cache), so switching collections preserves each one's logins.
     /// Must not be called while a run is in flight (the caller blocks switches
     /// during a run).
     void setProject(const ProjectModel& project) noexcept;
 
-    /// Resets the run context's session + extraction caches. Refused while
-    /// a run is in flight.
+    /// Resets the active environment's run context: every session (inline
+    /// OAuth2 token caches included), cookie jar and extraction. Other
+    /// environments are untouched. Refused while a run is in flight.
     void resetCaches();
 
     /// Opt into capturing full response bodies for the next run. Off by
@@ -210,6 +211,25 @@ public:
     /// (state `None`) means no run has authenticated this actor yet, the
     /// context was reset, or the project has no context at all.
     [[nodiscard]] ActorSessionInfo sessionInfo(const engine::ActorId& actor) const;
+
+    /// Select the environment whose run context the read and reset paths
+    /// (sessionInfo, cookies, resetCaches, clearExtractionCache) use. Each
+    /// (project root, environment name) pair has its own context, so nothing
+    /// obtained in one environment is used in another. An empty name means the
+    /// project's default environment, as it does for a run. A run also selects
+    /// the environment it runs against.
+    void setEnvironment(const QString& environment);
+
+    /// Drop every run context (all environments) of the project at `rootPath`.
+    /// Called when the project is closed. Refused for the project of an
+    /// in-flight run.
+    void forgetProject(const QString& rootPath);
+
+    /// The active project + environment's RunContext, or nullptr when none has
+    /// been created yet (no run in this environment since the project opened).
+    [[nodiscard]] engine::RunContext* findActiveContext() const;
+    /// The active project + environment's RunContext, creating it on first use.
+    engine::RunContext& contextForActive();
 
 public slots:
     /// Kick off a run ending at `target` against `environment` (empty → project
@@ -258,23 +278,24 @@ signals:
 private:
     void publishEvent(const engine::RunEvent& event);
 
-    /// The active project's RunContext, or nullptr when none has been created
-    /// yet (no run since this project became active). Read paths use this.
-    [[nodiscard]] engine::RunContext* findActiveContext() const;
-    /// The active project's RunContext, creating it on first use. Run paths
-    /// use this.
-    engine::RunContext& contextForActive();
-
     engine::ExecutionEngine& engine_;
     const ProjectModel* project_;
 
-    // Per-project run contexts keyed by project root, so switching collections
-    // preserves each project's sessions + extraction cache. Node references are
-    // stable (no eviction), so a worker capturing `&ctx` stays valid across a
-    // switch (switches are blocked during a run anyway).
-    // contexts are never evicted — session-lifetime memory. If a
-    // workspace churns through many projects, evict on close instead.
-    std::map<std::string, std::unique_ptr<engine::RunContext>> contexts_;
+    // (project root, environment name) — the key of one run context.
+    using ContextKey = std::pair<std::string, std::string>;
+    [[nodiscard]] ContextKey activeKey() const;
+
+    // Per-(project, environment) run contexts, so switching collections or
+    // environments preserves each one's sessions + extraction cache while
+    // never sending one environment's tokens, cookies or cached ids to
+    // another. Node references are stable, so a worker capturing `&ctx` stays
+    // valid across a switch. Evicted only by forgetProject (project close);
+    // memory grows with the environments visited while a project is open.
+    std::map<ContextKey, std::unique_ptr<engine::RunContext>> contexts_;
+    // Active environment name as selected by the UI (empty → project default).
+    std::string environment_;
+    // Root of the project an in-flight run belongs to; forgetProject refuses it.
+    std::string runningRoot_;
     QFutureWatcher<RunReport> watcher_;
     bool running_{false};
     bool captureResponseBodies_{false};
