@@ -162,6 +162,52 @@ TEST(SecretManager, store_then_clear_round_trips_through_backend) {
     EXPECT_FALSE(fake->has("proj-a/API_KEY"));
 }
 
+TEST(SecretManager, store_refuses_an_empty_value_and_writes_nothing) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    writeProject(dir, "id: proj-a\n");
+    ProjectModel project;
+    project.loadFromDirectory(dir.path());
+    ASSERT_TRUE(project.hasProject());
+    auto [fake, manager] = makeManager();
+
+    QString error;
+    const bool stored = manager->store(project, QStringLiteral("API_KEY"), QString{}, error);
+
+    EXPECT_FALSE(stored);
+    EXPECT_FALSE(error.isEmpty());
+    EXPECT_FALSE(fake->has("proj-a/API_KEY"));
+}
+
+TEST(SecretManager, confirm_move_refuses_when_the_recorded_folder_is_not_the_one_shown) {
+    QTemporaryDir original;
+    QTemporaryDir moved;
+    ASSERT_TRUE(original.isValid());
+    ASSERT_TRUE(moved.isValid());
+    writeProject(original, "id: shared\n");
+    writeProject(moved, "id: shared\n");
+    ProjectModel atOriginal;
+    ProjectModel atMoved;
+    atOriginal.loadFromDirectory(original.path());
+    atMoved.loadFromDirectory(moved.path());
+    ASSERT_TRUE(atOriginal.hasProject());
+    ASSERT_TRUE(atMoved.hasProject());
+    auto [fake, manager] = makeManager();
+    ASSERT_EQ(manager->referencedSecrets(atOriginal).front().state, SecretState::NotSet);
+    const QString recorded = manager->folderConflict(atMoved);
+    ASSERT_FALSE(recorded.isEmpty());
+
+    QString error;
+    const bool movedToStale =
+        manager->confirmMove(atMoved, QDir(moved.path()).filePath(QStringLiteral("x")), error);
+
+    EXPECT_FALSE(movedToStale);
+    EXPECT_FALSE(error.isEmpty());
+    EXPECT_EQ(manager->folderConflict(atMoved), recorded);
+    ASSERT_TRUE(manager->confirmMove(atMoved, recorded, error)) << error.toStdString();
+    EXPECT_TRUE(manager->folderConflict(atMoved).isEmpty());
+}
+
 TEST(SecretManager, projects_with_different_ids_see_only_their_own_secrets) {
     QTemporaryDir dirA;
     QTemporaryDir dirB;

@@ -107,6 +107,60 @@ TEST(TabEdits, new_chain_candidates_and_an_acquired_oauth2_token_are_not_edits) 
     EXPECT_FALSE(qml::hasUnsavedEdits(tab));
 }
 
+TEST(TabEdits, graphql_variables_typed_but_not_yet_valid_make_the_tab_dirty) {
+    TabState tab = editingTab(QStringLiteral("users.list"));
+    tab.editBodyType = QStringLiteral("graphql");
+    tab.editGraphqlQuery = QStringLiteral("{ me { id } }");
+    tab.editBody = qml::composeGraphqlBody({tab.editGraphqlQuery, QString{}});
+    tab.editBaseline = std::make_shared<const TabState>(tab);
+    ASSERT_FALSE(qml::hasUnsavedEdits(tab));
+
+    tab.editGraphqlVariables = QStringLiteral("{\"id\": ");
+    EXPECT_TRUE(qml::hasUnsavedEdits(tab));
+}
+
+TEST(TabEdits, graphql_text_left_over_from_another_body_type_is_not_an_edit) {
+    TabState tab = editingTab(QStringLiteral("users.list"));
+    tab.editBodyType = QStringLiteral("json");
+    tab.editBaseline = std::make_shared<const TabState>(tab);
+    tab.editGraphqlQuery = QStringLiteral("{ me { id } }");
+    EXPECT_FALSE(qml::hasUnsavedEdits(tab));
+}
+
+TEST(TabEdits, graphql_body_splits_into_query_and_variables) {
+    const auto text = qml::splitGraphqlBody(QStringLiteral(
+        R"({"query":"query($id: ID!) { user(id: $id) { name } }","variables":{"id":7}})"));
+    EXPECT_EQ(text.query, QStringLiteral("query($id: ID!) { user(id: $id) { name } }"));
+    EXPECT_EQ(text.variables, QStringLiteral("{\n    \"id\": 7\n}"));
+}
+
+TEST(TabEdits, graphql_body_without_variables_or_json_keeps_what_it_has) {
+    EXPECT_EQ(qml::splitGraphqlBody(QStringLiteral(R"({"query":"{ me }"})")).variables, QString{});
+    EXPECT_EQ(
+        qml::splitGraphqlBody(QStringLiteral(R"({"query":"{ me }","variables":{}})")).variables,
+        QStringLiteral("{}"));
+    const auto plain = qml::splitGraphqlBody(QStringLiteral("{ me { id } }"));
+    EXPECT_EQ(plain.query, QStringLiteral("{ me { id } }"));
+    EXPECT_EQ(plain.variables, QString{});
+    EXPECT_EQ(qml::splitGraphqlBody(QString{}).query, QString{});
+}
+
+TEST(TabEdits, graphql_body_keeps_variables_as_typed_and_sends_blank_as_an_empty_object) {
+    EXPECT_EQ(
+        qml::composeGraphqlBody(
+            {QStringLiteral("q \"x\"\n"), QStringLiteral(" {\"n\": 12345678901234567890123} ")}),
+        QStringLiteral(R"({"query":"q \"x\"\n","variables":{"n": 12345678901234567890123}})"));
+    EXPECT_EQ(qml::composeGraphqlBody({QStringLiteral("{ me }"), QStringLiteral("  ")}),
+              QStringLiteral(R"({"query":"{ me }","variables":{}})"));
+}
+
+TEST(TabEdits, graphql_variables_must_be_blank_or_valid_json) {
+    EXPECT_TRUE(qml::graphqlVariablesError(QString{}).isEmpty());
+    EXPECT_TRUE(qml::graphqlVariablesError(QStringLiteral(" \n ")).isEmpty());
+    EXPECT_TRUE(qml::graphqlVariablesError(QStringLiteral(R"({"id": 1})")).isEmpty());
+    EXPECT_FALSE(qml::graphqlVariablesError(QStringLiteral(R"({"id": )")).isEmpty());
+}
+
 TEST(TabEdits, a_tab_out_of_edit_mode_is_not_dirty) {
     TabState tab = editingTab(QStringLiteral("users.list"));
     tab.editPath = QStringLiteral("/changed");

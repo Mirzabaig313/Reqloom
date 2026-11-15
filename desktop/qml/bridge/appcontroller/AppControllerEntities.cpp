@@ -454,6 +454,9 @@ bool AppController::saveEnvironmentEdits(const QString& originalName, const QStr
     const bool ok = activeProject().saveEnvironment(originalName, name, variables, error);
     environmentRenameTarget_.clear();
     if (ok) {
+        if (!originalName.trimmed().isEmpty() && originalName.trimmed() != name.trimmed()) {
+            runController_->forgetEnvironment(activeProject().rootPath(), originalName.trimmed());
+        }
         envBaseline_ = {name.trimmed(), editEnvBaseUrl_, envVars_.pairs()};
         emit notify(QStringLiteral("Saved environment “%1”").arg(name.trimmed()), false);
         return true;
@@ -466,6 +469,7 @@ void AppController::deleteEnvironment(const QString& name) {
     const bool wasActive = name.trimmed() == environment_;
     QString error;
     if (activeProject().deleteEnvironment(name, error)) {
+        runController_->forgetEnvironment(activeProject().rootPath(), name.trimmed());
         emit notify(wasActive ? QStringLiteral("Deleted environment “%1”; now using “%2”")
                                     .arg(name.trimmed(), environment_)
                               : QStringLiteral("Deleted environment “%1”").arg(name.trimmed()),

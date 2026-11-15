@@ -65,6 +65,9 @@ RunController::RunController(ce::ExecutionEngine& engine,
     connect(&watcher_, &QFutureWatcher<RunReport>::finished, this, [this]() {
         const RunReport report = watcher_.result();
         running_ = false;
+        if (std::exchange(dropRunningContext_, false)) {
+            contexts_.erase(runningKey_);
+        }
         emit runningChanged(false);
         emit runFinished(report);
     });
@@ -117,6 +120,15 @@ void RunController::forgetProject(const QString& rootPath) {
         return;
     }
     std::erase_if(contexts_, [&root](const auto& entry) { return entry.first.first == root; });
+}
+
+void RunController::forgetEnvironment(const QString& rootPath, const QString& environment) {
+    const ContextKey key{rootPath.toStdString(), environment.toStdString()};
+    if (running_ && key == runningKey_) {
+        dropRunningContext_ = true;
+        return;
+    }
+    contexts_.erase(key);
 }
 
 void RunController::resetCaches() {
@@ -361,6 +373,14 @@ void RunController::runWithOverride(const QString& target,
                                     bool dryRun,
                                     const RequestOverride& requestOverride) {
     if (running_ || !project_->hasProject()) {
+        return;
+    }
+    // The engine runs an unknown environment with no variables; the desktop refuses instead.
+    if (!environment.isEmpty() &&
+        !project_->project().environments.contains(environment.toStdString())) {
+        emit runRefused(tr("Environment “%1” no longer exists. Choose another environment and "
+                           "run again.")
+                            .arg(environment));
         return;
     }
 

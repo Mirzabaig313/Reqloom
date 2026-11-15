@@ -1,6 +1,6 @@
 // TabEdits — pure rules for a tab's unsaved edits: when a tab is dirty, how a renamed or deleted
-// operation reaches the open tabs, which saved tabs can reopen, and what the unsaved-changes prompt
-// says.
+// operation reaches the open tabs, which saved tabs can reopen, what the unsaved-changes prompt
+// says, and how the GraphQL editor's text maps to the request body.
 #pragma once
 
 #include "TabModel.h"
@@ -42,6 +42,23 @@ bool forgetOperationInTab(TabState& tab, const QString& operationId);
 /// Turn the tab of a deleted operation into a never-saved endpoint draft identified by `draftId`,
 /// keeping its edits and name so the person can save it again or discard it.
 void detachDeletedOperation(TabState& tab, const QString& draftId);
+
+/// The GraphQL editor's two texts.
+struct GraphqlText {
+    QString query;
+    QString variables;
+};
+
+/// Split a `{"query": ..., "variables": ...}` body into the editor's texts. A body that is not a
+/// JSON object is taken as the query.
+[[nodiscard]] GraphqlText splitGraphqlBody(const QString& body);
+
+/// Why `variables` cannot be sent, or an empty string when it is blank or valid JSON.
+[[nodiscard]] QString graphqlVariablesError(const QString& variables);
+
+/// The request body for `text`, whose variables must be blank (sent as `{}`) or valid JSON. The
+/// variables are copied as typed so their numbers keep every digit.
+[[nodiscard]] QString composeGraphqlBody(const GraphqlText& text);
 
 /// A saved tab descriptor as persisted per project.
 struct SavedTab {

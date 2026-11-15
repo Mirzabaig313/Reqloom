@@ -181,6 +181,12 @@ class AppController : public QObject {
     Q_PROPERTY(QString editBody READ editBody WRITE setEditBody NOTIFY editChanged)
     Q_PROPERTY(bool editBodyIsForm READ editBodyIsForm WRITE setEditBodyIsForm NOTIFY editChanged)
     Q_PROPERTY(QString editBodyType READ editBodyType WRITE setEditBodyType NOTIFY editChanged)
+    // The GraphQL editor's texts; each change rebuilds editBody while the variables are valid.
+    Q_PROPERTY(
+        QString editGraphqlQuery READ editGraphqlQuery WRITE setEditGraphqlQuery NOTIFY editChanged)
+    Q_PROPERTY(QString editGraphqlVariables READ editGraphqlVariables WRITE setEditGraphqlVariables
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editGraphqlError READ editGraphqlError NOTIFY editChanged)
     // Inline (actor-less) auth. editAuthType is none/bearer/basic/apikey; the rest carry that
     // type's credential.
     Q_PROPERTY(QString editAuthType READ editAuthType WRITE setEditAuthType NOTIFY editChanged)
@@ -514,6 +520,9 @@ public:
     [[nodiscard]] QString editBody() const { return editBody_; }
     [[nodiscard]] bool editBodyIsForm() const { return editBodyIsForm_; }
     [[nodiscard]] QString editBodyType() const { return editBodyType_; }
+    [[nodiscard]] QString editGraphqlQuery() const { return editGraphqlQuery_; }
+    [[nodiscard]] QString editGraphqlVariables() const { return editGraphqlVariables_; }
+    [[nodiscard]] QString editGraphqlError() const;
     [[nodiscard]] QString editAuthType() const { return editAuthType_; }
     [[nodiscard]] QString editAuthToken() const { return editAuthToken_; }
     [[nodiscard]] QString editAuthUsername() const { return editAuthUsername_; }
@@ -563,7 +572,10 @@ public:
     void setEditBodyIsForm(bool isForm);
     /// Body kind: none, form-data, x-www-form-urlencoded, json, xml, text or graphql. Keeps
     /// editBodyIsForm in sync and sets the canonical Content-Type unless the user set a custom one.
+    /// Switching to graphql splits the current body into the GraphQL editor's texts.
     void setEditBodyType(const QString& type);
+    void setEditGraphqlQuery(const QString& query);
+    void setEditGraphqlVariables(const QString& variables);
     void setEditAuthType(const QString& type);
     void setEditAuthToken(const QString& token);
     void setEditAuthUsername(const QString& username);
@@ -1016,6 +1028,8 @@ private:
     void restoreOperationEditFrom(const TabState& tab);
     /// Restore the live actor edit models + scalars from `tab`.
     void restoreActorFrom(const TabState& tab);
+    /// Rebuild editBody from the GraphQL editor's texts and emit the edit signals.
+    void syncGraphqlBody();
     /// Open (or focus) an operation tab, snapshotting the outgoing tab first.
     void openOperationTab(const QString& projectRoot,
                           const QString& moduleName,
@@ -1242,6 +1256,8 @@ private:
     QString editBody_;
     bool editBodyIsForm_{false};
     QString editBodyType_{QStringLiteral("none")};
+    QString editGraphqlQuery_;
+    QString editGraphqlVariables_;
     QString editAuthType_{QStringLiteral("none")};
     QString editAuthToken_;
     QString editAuthUsername_;

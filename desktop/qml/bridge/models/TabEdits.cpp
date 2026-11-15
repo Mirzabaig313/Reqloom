@@ -1,13 +1,21 @@
 // TabEdits — see header.
 #include "TabEdits.h"
 
+#include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtCore/QJsonParseError>
+#include <QtCore/QJsonValue>
 #include <QtCore/QLatin1Char>
+#include <QtCore/QLatin1String>
 
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <tuple>
+#include <utility>
 
 namespace reqloom::desktop::qml {
 
@@ -32,6 +40,14 @@ namespace {
                     t.editExtractions,
                     t.editAssertions,
                     t.editDependencies);
+}
+
+// The GraphQL texts are stale once the body type changes, so they count only for a GraphQL body.
+[[nodiscard]] std::pair<QString, QString> graphqlFields(const TabState& t) {
+    if (t.editBodyType != QLatin1String("graphql")) {
+        return {};
+    }
+    return {t.editGraphqlQuery, t.editGraphqlVariables};
 }
 
 [[nodiscard]] auto authFields(const TabState& t) {
@@ -160,6 +176,10 @@ bool editLiveAndBaseline(TabState& tab, Edit edit) {
     return changed;
 }
 
+[[nodiscard]] QString indentedJson(const QJsonDocument& document) {
+    return QString::fromUtf8(document.toJson(QJsonDocument::Indented)).trimmed();
+}
+
 [[nodiscard]] QString moduleOf(const QString& operationId) {
     return operationId.section(QLatin1Char('.'), 0, 0);
 }
@@ -168,7 +188,7 @@ bool editLiveAndBaseline(TabState& tab, Edit edit) {
 
 bool sameOperationEdits(const TabState& a, const TabState& b) {
     return requestFields(a) == requestFields(b) && authFields(a) == authFields(b) &&
-           sameChain(a, b);
+           graphqlFields(a) == graphqlFields(b) && sameChain(a, b);
 }
 
 bool sameActorEdits(const TabState& a, const TabState& b) {
@@ -247,6 +267,50 @@ void detachDeletedOperation(TabState& tab, const QString& draftId) {
     // Compared against a blank draft, so the kept edits stay dirty even once the name is cleared.
     tab.editBaseline = std::make_shared<const TabState>();
     tab.dirty = true;
+}
+
+GraphqlText splitGraphqlBody(const QString& body) {
+    QJsonParseError error{};
+    const QJsonDocument document = QJsonDocument::fromJson(body.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) {
+        return {body, QString{}};
+    }
+    const QJsonObject object = document.object();
+    GraphqlText text{object.value(QLatin1String("query")).toString(), QString{}};
+    const QJsonValue variables = object.value(QLatin1String("variables"));
+    if (variables.isObject()) {
+        text.variables = variables.toObject().isEmpty()
+                             ? QStringLiteral("{}")
+                             : indentedJson(QJsonDocument{variables.toObject()});
+    } else if (variables.isArray()) {
+        text.variables = indentedJson(QJsonDocument{variables.toArray()});
+    }
+    return text;
+}
+
+QString graphqlVariablesError(const QString& variables) {
+    const QString trimmed = variables.trimmed();
+    if (trimmed.isEmpty()) {
+        return {};
+    }
+    QJsonParseError error{};
+    std::ignore = QJsonDocument::fromJson(trimmed.toUtf8(), &error);
+    if (error.error == QJsonParseError::NoError) {
+        return {};
+    }
+    return tr("Variables are not valid JSON (%1). Send and Save use the last valid body until this "
+              "is fixed.")
+        .arg(error.errorString());
+}
+
+QString composeGraphqlBody(const GraphqlText& text) {
+    const QString variables = text.variables.trimmed();
+    // Encoded as a one-element array, then unwrapped, to get a JSON string literal.
+    const QByteArray query =
+        QJsonDocument{QJsonArray{text.query}}.toJson(QJsonDocument::Compact).chopped(1).sliced(1);
+    return QStringLiteral("{\"query\":") + QString::fromUtf8(query) +
+           QStringLiteral(",\"variables\":") +
+           (variables.isEmpty() ? QStringLiteral("{}") : variables) + QLatin1Char('}');
 }
 
 TabRestorePlan planTabRestore(const std::vector<SavedTab>& saved,

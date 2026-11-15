@@ -9,11 +9,15 @@
 
 #include <gtest/gtest.h>
 
+#include <QtCore/QCoreApplication>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QThreadPool>
 
+#include <array>
 #include <chrono>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -81,6 +85,10 @@ const QString kProduction{QStringLiteral("production")};
 class RunControllerContextFixture : public ::testing::Test {
 protected:
     void SetUp() override {
+        // runFinished arrives through the event loop, which needs an application object.
+        if (QCoreApplication::instance() == nullptr) {
+            app_ = std::make_unique<QCoreApplication>(argc_, argv_.data());
+        }
         ASSERT_TRUE(dir_.isValid());
         const fs::path root{dir_.path().toStdString()};
         ASSERT_TRUE(ce::writeProject(root, buildProject(), /*overwrite=*/true).has_value());
@@ -108,6 +116,10 @@ protected:
         return ctx == nullptr ? 0U : ctx->instances(kPayment).size();
     }
 
+    int argc_{1};
+    std::string argv0_{"context-test"};
+    std::array<char*, 2> argv_{argv0_.data(), nullptr};
+    std::unique_ptr<QCoreApplication> app_;
     QTemporaryDir dir_;
     ProjectModel project_;
     ce::ExecutionEngine engine_{ce::makeDefaultDependencies()};
@@ -201,6 +213,57 @@ TEST_F(RunControllerContextFixture, forgetting_the_project_drops_every_environme
 
     EXPECT_EQ(controller_->findActiveContext(), nullptr);
     controller_->setEnvironment(kStaging);
+    EXPECT_EQ(controller_->findActiveContext(), nullptr);
+}
+
+TEST_F(RunControllerContextFixture, forgetting_an_environment_drops_only_its_context) {
+    controller_->setEnvironment(kStaging);
+    seedActiveContext("stg-1");
+    controller_->setEnvironment(kProduction);
+    seedActiveContext("prd-1");
+
+    controller_->forgetEnvironment(project_.rootPath(), kStaging);
+
+    EXPECT_EQ(activeInstanceCount(), 1U);
+    controller_->setEnvironment(kStaging);
+    EXPECT_EQ(controller_->findActiveContext(), nullptr);
+}
+
+TEST_F(RunControllerContextFixture, forgetting_the_running_environment_drops_it_after_the_run) {
+    controller_->setEnvironment(kStaging);
+    seedActiveContext("stg-1");
+    bool finished = false;
+    QObject::connect(controller_.get(),
+                     &RunController::runFinished,
+                     controller_.get(),
+                     [&finished](const RunReport&) { finished = true; });
+
+    controller_->run(QStringLiteral("payment.pay"), kStaging, /*clean=*/false, /*dryRun=*/true);
+    controller_->forgetEnvironment(project_.rootPath(), kStaging);
+    QElapsedTimer timer;
+    timer.start();
+    while (!finished && timer.elapsed() < 30'000) {
+        QThreadPool::globalInstance()->waitForDone(50);
+        QCoreApplication::processEvents();
+    }
+
+    ASSERT_TRUE(finished);
+    EXPECT_EQ(controller_->findActiveContext(), nullptr);
+}
+
+TEST_F(RunControllerContextFixture, run_against_an_unknown_environment_is_refused) {
+    QString refusal;
+    QObject::connect(controller_.get(),
+                     &RunController::runRefused,
+                     controller_.get(),
+                     [&refusal](const QString& message) { refusal = message; });
+
+    controller_->run(
+        QStringLiteral("payment.pay"), QStringLiteral("gone"), /*clean=*/false, /*dryRun=*/true);
+
+    EXPECT_FALSE(controller_->isRunning());
+    EXPECT_FALSE(refusal.isEmpty());
+    controller_->setEnvironment(QStringLiteral("gone"));
     EXPECT_EQ(controller_->findActiveContext(), nullptr);
 }
 

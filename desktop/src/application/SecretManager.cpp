@@ -106,6 +106,10 @@ bool SecretManager::store(const ProjectModel& project,
                           const QString& name,
                           const QString& value,
                           QString& error) {
+    if (value.isEmpty()) {
+        error = QStringLiteral("Enter a value. To remove the secret, use Clear instead.");
+        return false;
+    }
     const auto key = keyFor(trust_.get(), project, name, error);
     if (!key) {
         return false;
@@ -126,13 +130,23 @@ QString SecretManager::folderConflict(const ProjectModel& project) const {
     return other ? QString::fromStdString(other->string()) : QString{};
 }
 
-bool SecretManager::confirmMove(const ProjectModel& project, QString& error) {
+bool SecretManager::confirmMove(const ProjectModel& project,
+                                const QString& shownOwner,
+                                QString& error) {
     if (!project.hasProject()) {
         error = QStringLiteral("No project loaded.");
         return false;
     }
     if (!trust_) {
         error = QStringLiteral("No project trust store is available.");
+        return false;
+    }
+    // The person approved handing over one specific folder's secrets; a changed record needs a
+    // fresh look.
+    if (const QString owner = folderConflict(project); owner.isEmpty() || owner != shownOwner) {
+        error = QStringLiteral(
+            "The folder recorded for this project changed since it was shown. "
+            "Review the folders again before moving.");
         return false;
     }
     if (auto bound = engine::rebindProjectFolder(*trust_, project.project()); !bound) {

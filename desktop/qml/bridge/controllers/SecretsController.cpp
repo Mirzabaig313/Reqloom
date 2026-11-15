@@ -99,11 +99,12 @@ void SecretsController::setLastError(const QString& error) {
     emit lastErrorChanged();
 }
 
-bool SecretsController::confirmMove() {
+bool SecretsController::confirmMove(const QString& shownOwner) {
     QString error;
-    if (project_ == nullptr || !manager_.confirmMove(*project_, error)) {
+    if (project_ == nullptr || !manager_.confirmMove(*project_, shownOwner, error)) {
         setLastError(QStringLiteral("Couldn't use the secrets here: %1")
                          .arg(project_ == nullptr ? QStringLiteral("no project loaded.") : error));
+        reloadList();
         return false;
     }
     setLastError({});

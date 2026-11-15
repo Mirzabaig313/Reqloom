@@ -125,6 +125,35 @@ bool AppController::loadOperationReadState(const QString& moduleName, const QStr
     return true;
 }
 
+QString AppController::editGraphqlError() const {
+    return graphqlVariablesError(editGraphqlVariables_);
+}
+
+void AppController::setEditGraphqlQuery(const QString& query) {
+    if (query == editGraphqlQuery_) {
+        return;
+    }
+    editGraphqlQuery_ = query;
+    syncGraphqlBody();
+}
+
+void AppController::setEditGraphqlVariables(const QString& variables) {
+    if (variables == editGraphqlVariables_) {
+        return;
+    }
+    editGraphqlVariables_ = variables;
+    syncGraphqlBody();
+}
+
+void AppController::syncGraphqlBody() {
+    // Invalid variables keep the last valid body, so Send and Save never drop them to `{}`.
+    if (editGraphqlError().isEmpty()) {
+        editBody_ = composeGraphqlBody({editGraphqlQuery_, editGraphqlVariables_});
+        emit chainChanged();
+    }
+    emit editChanged();
+}
+
 void AppController::captureOperationInto(TabState& tab) const {
     tab.editing = editing_;
     tab.editMethod = editMethod_;
@@ -136,6 +165,8 @@ void AppController::captureOperationInto(TabState& tab) const {
     tab.editBody = editBody_;
     tab.editBodyIsForm = editBodyIsForm_;
     tab.editBodyType = editBodyType_;
+    tab.editGraphqlQuery = editGraphqlQuery_;
+    tab.editGraphqlVariables = editGraphqlVariables_;
     tab.chainFieldsLoaded = chainFieldsLoaded_;
 
     tab.editAuthType = editAuthType_;
@@ -201,6 +232,8 @@ void AppController::restoreOperationEditFrom(const TabState& tab) {
     editBody_ = tab.editBody;
     editBodyIsForm_ = tab.editBodyIsForm;
     editBodyType_ = tab.editBodyType;
+    editGraphqlQuery_ = tab.editGraphqlQuery;
+    editGraphqlVariables_ = tab.editGraphqlVariables;
     chainFieldsLoaded_ = tab.chainFieldsLoaded;
 
     editAuthType_ = tab.editAuthType;

@@ -70,8 +70,11 @@ public:
     [[nodiscard]] QString folderConflict(const ProjectModel& project) const;
 
     /// Bind the project's id to its current folder after the user confirms it was moved.
-    /// `error` carries the reason on failure.
-    [[nodiscard]] bool confirmMove(const ProjectModel& project, QString& error);
+    /// `shownOwner` is the recorded folder the user was shown; the move is refused when the record
+    /// no longer names it. `error` carries the reason on failure.
+    [[nodiscard]] bool confirmMove(const ProjectModel& project,
+                                   const QString& shownOwner,
+                                   QString& error);
 
     /// Whether a real keychain backend is available; false when built without QtKeychain, so the UI
     /// warns instead of silently dropping writes.

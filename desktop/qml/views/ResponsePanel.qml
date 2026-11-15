@@ -60,8 +60,20 @@ Rectangle {
     readonly property var formatValues: ["json", "xml", "html", "yaml", "javascript", "markdown", "text"]
     readonly property string detectedFormat: detectFormat(AppController.respHeaders)
     property string respFormat: detectedFormat
-    // Re-snap to the detected format whenever a new response arrives.
+    // A format picked by hand applies to the response it was picked for: a new or cleared
+    // response, an example, or another tab's response re-snaps to the detected format, even when
+    // the detected format is the same.
+    readonly property bool responseShown: AppController.hasResponse
+    readonly property string exampleShown: AppController.shownExample
     onDetectedFormatChanged: respFormat = detectedFormat
+    onResponseShownChanged: respFormat = detectedFormat
+    onExampleShownChanged: respFormat = detectedFormat
+    Connections {
+        target: AppController
+        function onActiveTabChanged() {
+            panel.respFormat = panel.detectedFormat;
+        }
+    }
     // Preview rendered HTML / Markdown instead of the coloured source. The request only applies
     // while the current response is HTML or Markdown, and is dropped as soon as it is not.
     readonly property bool previewable: respFormat === "html" || respFormat === "markdown"

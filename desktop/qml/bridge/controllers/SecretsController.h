@@ -87,9 +87,10 @@ public:
     /// Clear a secret. Emits notify on success; a failure sets lastError.
     Q_INVOKABLE bool clear(const QString& name);
     /// The user confirms the open project was moved here: bind its id to
-    /// this folder so its secrets work here. Emits notify on success; a failure
-    /// sets lastError.
-    Q_INVOKABLE bool confirmMove();
+    /// this folder so its secrets work here. `shownOwner` is the recorded folder
+    /// the user was shown; the move is refused if the record changed. Emits
+    /// notify on success; a failure sets lastError and refreshes folderConflict.
+    Q_INVOKABLE bool confirmMove(const QString& shownOwner);
 
 signals:
     void notify(QString message, bool isError);

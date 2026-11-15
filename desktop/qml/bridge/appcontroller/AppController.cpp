@@ -128,6 +128,9 @@ AppController::AppController(QObject* parent)
         refreshActorSessions();
         emit cookiesChanged();
     });
+    connect(runController_.get(), &RunController::runRefused, this, [this](const QString& message) {
+        emit notify(message, true);
+    });
 
     treeFilter_.setSourceModel(&tree_);
 
@@ -1046,7 +1049,8 @@ void AppController::closeOperation() {
 }
 
 void AppController::setEnvironment(const QString& env) {
-    if (env == environment_) {
+    // A picker still showing a deleted or renamed environment must not select it.
+    if (env == environment_ || (!env.isEmpty() && !environments_.contains(env))) {
         return;
     }
     environment_ = env;
@@ -1180,6 +1184,11 @@ void AppController::setEditBodyType(const QString& type) {
     editBodyType_ = type;
     editBodyIsForm_ =
         (type == QStringLiteral("form-data") || type == QStringLiteral("x-www-form-urlencoded"));
+    if (type == QStringLiteral("graphql")) {
+        auto [query, variables] = splitGraphqlBody(editBody_);
+        editGraphqlQuery_ = std::move(query);
+        editGraphqlVariables_ = std::move(variables);
+    }
 
     QString desired;
     if (type == QStringLiteral("json") || type == QStringLiteral("graphql")) {

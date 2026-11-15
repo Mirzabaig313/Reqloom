@@ -204,6 +204,11 @@ public:
     /// Drop every run context of the project at `rootPath`. Refused for an in-flight run's project.
     void forgetProject(const QString& rootPath);
 
+    /// Drop the run context of `environment` in the project at `rootPath` (deleted or renamed), so
+    /// a later environment of the same name starts clean. An in-flight run's context goes when
+    /// the run ends.
+    void forgetEnvironment(const QString& rootPath, const QString& environment);
+
     /// The active run context, or nullptr when none exists yet. Not for the GUI thread while a run
     /// uses that context.
     [[nodiscard]] engine::RunContext* findActiveContext() const;
@@ -260,6 +265,9 @@ signals:
     void stepBlocked(int index, QString op, int blockedByIndex);
     void runEnded(QString outcome);
 
+    /// A run was not started; `message` says why (for example, its environment no longer exists).
+    void runRefused(QString message);
+
     /// Emitted on the GUI thread once the worker finishes, carrying the chain summary.
     void runFinished(RunReport report);
 
@@ -298,12 +306,15 @@ private:
     [[nodiscard]] ContextKey activeKey() const;
 
     // One run context per (project, environment). Node references are stable, so a worker
-    // holding `&ctx` stays valid across a switch. Evicted only by forgetProject.
+    // holding `&ctx` stays valid across a switch. Evicted only by forgetProject and
+    // forgetEnvironment.
     std::map<ContextKey, std::unique_ptr<engine::RunContext>> contexts_;
     std::string environment_;
     // Context of the in-flight run: forgetProject refuses its project, reads of it use
     // runSnapshot_.
     ContextKey runningKey_;
+    // Set when the in-flight run's environment was deleted or renamed; its context goes at run end.
+    bool dropRunningContext_{false};
     std::map<std::string, ActorView> runSnapshot_;
     QFutureWatcher<RunReport> watcher_;
     bool running_{false};

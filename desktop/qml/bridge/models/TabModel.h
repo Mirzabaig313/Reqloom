@@ -57,6 +57,10 @@ struct TabState {
     QString editBody;
     bool editBodyIsForm{false};
     QString editBodyType{QStringLiteral("none")};
+    /// The GraphQL editor's text while editBodyType is "graphql". The variables may be invalid
+    /// JSON for a while, during which editBody keeps the last valid body.
+    QString editGraphqlQuery;
+    QString editGraphqlVariables;
     bool chainFieldsLoaded{false};
 
     QString editAuthType{QStringLiteral("none")};

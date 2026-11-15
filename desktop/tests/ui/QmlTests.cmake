@@ -5,11 +5,13 @@ find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Test)
 add_executable(reqloom-desktop-qml-tests
     ${CMAKE_CURRENT_LIST_DIR}/../TestMain.cpp
     ${CMAKE_CURRENT_LIST_DIR}/QmlWidgetsTest.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/SecretsDialogTest.cpp
 )
 target_compile_definitions(reqloom-desktop-qml-tests
     PRIVATE
         REQLOOM_QML_TEST_STUBS_DIR="${CMAKE_CURRENT_LIST_DIR}/qml"
         REQLOOM_QML_WIDGETS_DIR="${CMAKE_CURRENT_LIST_DIR}/../../qml/widgets"
+        REQLOOM_QML_VIEWS_DIR="${CMAKE_CURRENT_LIST_DIR}/../../qml/views"
 )
 target_link_libraries(reqloom-desktop-qml-tests
     PRIVATE

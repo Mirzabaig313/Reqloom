@@ -1209,37 +1209,38 @@ ColumnLayout {
                 id: bodyBox
                 spacing: DesignTokens.spaceSm
 
-                // GraphQL is stored as a JSON body {query, variables}; these
-                // hold the split halves while the GraphQL editor is shown.
-                property string gqlQuery: ""
-                property string gqlVars: ""
-                // Set while the variables are not valid JSON; the body then keeps its last
-                // valid value instead of sending `{}`.
-                property string gqlVarsError: ""
-
                 // The editor's per-tab state was replaced (tab, operation or edit session), so
-                // nothing derived from the previous state may stay on screen.
-                function reloadFromEditState() {
-                    bodyBox.gqlVarsError = "";
-                    if (AppController.editBodyType === "graphql")
-                        bodyBox.loadGraphql();
-                    uploadSummary.clear();
-                }
-
+                // an upload check of the previous state may not stay on screen.
                 Connections {
                     target: AppController
                     function onActiveTabChanged() {
-                        bodyBox.reloadFromEditState();
+                        uploadSummary.clear();
                     }
                     function onOperationChanged() {
-                        bodyBox.reloadFromEditState();
+                        uploadSummary.clear();
                     }
                     function onEditingChanged() {
-                        bodyBox.reloadFromEditState();
+                        uploadSummary.clear();
                     }
                 }
                 Connections {
                     target: AppController.editForm
+                    function onDataChanged() {
+                        uploadSummary.clear();
+                    }
+                    function onRowsInserted() {
+                        uploadSummary.clear();
+                    }
+                    function onRowsRemoved() {
+                        uploadSummary.clear();
+                    }
+                    function onModelReset() {
+                        uploadSummary.clear();
+                    }
+                }
+                // A Content-Type header can turn the form into multipart, so the check covers it too.
+                Connections {
+                    target: AppController.editHeaders
                     function onDataChanged() {
                         uploadSummary.clear();
                     }
@@ -1273,31 +1274,6 @@ ColumnLayout {
                 // Keep edit-mode behavior aligned with the read-only preview.
                 function beautify() {
                     AppController.editBody = editor.beautifiedJson(AppController.editBody);
-                }
-                function loadGraphql() {
-                    bodyBox.gqlVarsError = "";
-                    try {
-                        const o = JSON.parse(AppController.editBody);
-                        bodyBox.gqlQuery = o.query || "";
-                        bodyBox.gqlVars = o.variables ? JSON.stringify(o.variables, null, 2) : "";
-                    } catch (e) {
-                        bodyBox.gqlQuery = AppController.editBody;
-                        bodyBox.gqlVars = "";
-                    }
-                }
-                function syncGraphql() {
-                    const varsText = bodyBox.gqlVars.trim();
-                    try {
-                        if (varsText.length > 0)
-                            JSON.parse(varsText);
-                    } catch (e) {
-                        bodyBox.gqlVarsError = qsTr("Variables are not valid JSON (%1). Send and Save use the last valid body until this is fixed.").arg(e.message);
-                        return;
-                    }
-                    bodyBox.gqlVarsError = "";
-                    // The variables text is spliced in as typed so its number tokens are not
-                    // rounded through a JS number.
-                    AppController.editBody = "{\"query\":" + JSON.stringify(bodyBox.gqlQuery) + ",\"variables\":" + (varsText.length > 0 ? varsText : "{}") + "}";
                 }
 
                 // Body-type pills.
@@ -1347,9 +1323,6 @@ ColumnLayout {
                             onClicked: {
                                 AppController.editBodyType = bodyPill.modelData.id;
                                 uploadSummary.clear();
-                                if (bodyPill.modelData.id === "graphql") {
-                                    bodyBox.loadGraphql();
-                                }
                             }
                             background: Rectangle {
                                 radius: DesignTokens.radiusPill
@@ -1570,7 +1543,6 @@ ColumnLayout {
                     // 3 — GraphQL (query + variables → JSON body)
                     ColumnLayout {
                         spacing: DesignTokens.spaceXs
-                        Component.onCompleted: bodyBox.loadGraphql()
                         FieldLabel {
                             text: qsTr("Query")
                         }
@@ -1586,16 +1558,15 @@ ColumnLayout {
                                 anchors.margins: DesignTokens.spaceXs
                                 clip: true
                                 TextArea {
-                                    text: bodyBox.gqlQuery
+                                    text: AppController.editGraphqlQuery
                                     placeholderText: qsTr("query { … }")
                                     color: DesignTokens.textPrimary
                                     placeholderTextColor: DesignTokens.textSecondary
                                     font.pixelSize: DesignTokens.fontLabel
                                     font.family: DesignTokens.fontMono
                                     wrapMode: TextEdit.WrapAnywhere
-                                    onTextChanged: if (text !== bodyBox.gqlQuery) {
-                                        bodyBox.gqlQuery = text;
-                                        bodyBox.syncGraphql();
+                                    onTextChanged: if (text !== AppController.editGraphqlQuery) {
+                                        AppController.editGraphqlQuery = text;
                                     }
                                     background: null
                                 }
@@ -1616,16 +1587,15 @@ ColumnLayout {
                                 anchors.margins: DesignTokens.spaceXs
                                 clip: true
                                 TextArea {
-                                    text: bodyBox.gqlVars
+                                    text: AppController.editGraphqlVariables
                                     placeholderText: "{ }"
                                     color: DesignTokens.textPrimary
                                     placeholderTextColor: DesignTokens.textSecondary
                                     font.pixelSize: DesignTokens.fontLabel
                                     font.family: DesignTokens.fontMono
                                     wrapMode: TextEdit.WrapAnywhere
-                                    onTextChanged: if (text !== bodyBox.gqlVars) {
-                                        bodyBox.gqlVars = text;
-                                        bodyBox.syncGraphql();
+                                    onTextChanged: if (text !== AppController.editGraphqlVariables) {
+                                        AppController.editGraphqlVariables = text;
                                     }
                                     background: null
                                 }
@@ -1633,8 +1603,8 @@ ColumnLayout {
                         }
                         Label {
                             Layout.fillWidth: true
-                            visible: bodyBox.gqlVarsError.length > 0
-                            text: bodyBox.gqlVarsError
+                            visible: AppController.editGraphqlError.length > 0
+                            text: AppController.editGraphqlError
                             color: DesignTokens.statusError
                             font.pixelSize: DesignTokens.fontCaption
                             wrapMode: Text.WordWrap
