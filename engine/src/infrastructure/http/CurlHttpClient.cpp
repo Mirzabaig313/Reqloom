@@ -194,7 +194,7 @@ constexpr long kMaxRedirects = 10;
         return ReqloomError{ErrorCode::NetworkPolicy,
                             ErrorClass::Network,
                             std::format("response body exceeded the limit of {} bytes "
-                                        "(transport.maxResponseBytes); transfer aborted",
+                                        "(transport.max_response_size); transfer aborted",
                                         sink.limit)};
     }
     if (res == CURLE_UNSUPPORTED_PROTOCOL) {
