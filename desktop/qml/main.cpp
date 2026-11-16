@@ -52,7 +52,7 @@ void loadBundledFonts() {
 int main(int argc, char** argv) {
     const QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Reqloom"));
-    QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    QApplication::setApplicationVersion(QStringLiteral(REQLOOM_VERSION));
     QApplication::setOrganizationName(QStringLiteral("Reqloom"));
 
     // Window / taskbar / dock icon, bundled via the Reqloom QML module

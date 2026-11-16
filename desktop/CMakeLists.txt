@@ -236,6 +236,10 @@ target_include_directories(reqloom-desktop
 set_target_properties(reqloom-desktop PROPERTIES
     OUTPUT_NAME "Reqloom"
     MACOSX_BUNDLE ON
+    # Permanent: macOS keys settings, keychain access and "Open with" on it.
+    MACOSX_BUNDLE_GUI_IDENTIFIER "tech.reqloom.Reqloom"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     # Build as a GUI-subsystem app on Windows so launching it does not also
     # open a console window (the GUI app has no use for an attached console).
     WIN32_EXECUTABLE ON
