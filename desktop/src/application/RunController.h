@@ -204,10 +204,15 @@ public:
     /// Drop every run context of the project at `rootPath`. Refused for an in-flight run's project.
     void forgetProject(const QString& rootPath);
 
-    /// Drop the run context of `environment` in the project at `rootPath` (deleted or renamed), so
-    /// a later environment of the same name starts clean. An in-flight run's context goes when
-    /// the run ends.
+    /// Drop the run context of a deleted `environment` in the project at `rootPath`, so a later
+    /// environment of the same name starts clean. An in-flight run's context goes when the run
+    /// ends.
     void forgetEnvironment(const QString& rootPath, const QString& environment);
+
+    /// Keep a renamed environment's run context (sessions, cookies, extracted values) under its
+    /// new name, replacing anything kept under that name. An in-flight run's context moves when
+    /// the run ends.
+    void renameEnvironment(const QString& rootPath, const QString& from, const QString& to);
 
     /// The active run context, or nullptr when none exists yet. Not for the GUI thread while a run
     /// uses that context.
@@ -306,15 +311,21 @@ private:
     [[nodiscard]] ContextKey activeKey() const;
 
     // One run context per (project, environment). Node references are stable, so a worker
-    // holding `&ctx` stays valid across a switch. Evicted only by forgetProject and
+    // holding `&ctx` stays valid across a switch and a rename. Evicted only by forgetProject and
     // forgetEnvironment.
     std::map<ContextKey, std::unique_ptr<engine::RunContext>> contexts_;
     std::string environment_;
     // Context of the in-flight run: forgetProject refuses its project, reads of it use
     // runSnapshot_.
     ContextKey runningKey_;
-    // Set when the in-flight run's environment was deleted or renamed; its context goes at run end.
+    // Set when the in-flight run's environment was deleted; its context goes at run end.
     bool dropRunningContext_{false};
+    // Set when the in-flight run's environment was renamed; its context moves at run end.
+    std::optional<std::string> renameRunningTo_;
+    void moveContext(const ContextKey& from, const ContextKey& to);
+    // Where the in-flight run's context will live once the run ends: its key, or the name it was
+    // renamed to during the run.
+    [[nodiscard]] ContextKey pendingRunningKey() const;
     std::map<std::string, ActorView> runSnapshot_;
     QFutureWatcher<RunReport> watcher_;
     bool running_{false};

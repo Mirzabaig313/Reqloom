@@ -455,7 +455,8 @@ bool AppController::saveEnvironmentEdits(const QString& originalName, const QStr
     environmentRenameTarget_.clear();
     if (ok) {
         if (!originalName.trimmed().isEmpty() && originalName.trimmed() != name.trimmed()) {
-            runController_->forgetEnvironment(activeProject().rootPath(), originalName.trimmed());
+            runController_->renameEnvironment(
+                activeProject().rootPath(), originalName.trimmed(), name.trimmed());
         }
         envBaseline_ = {name.trimmed(), editEnvBaseUrl_, envVars_.pairs()};
         emit notify(QStringLiteral("Saved environment “%1”").arg(name.trimmed()), false);

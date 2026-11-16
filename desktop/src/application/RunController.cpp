@@ -65,8 +65,11 @@ RunController::RunController(ce::ExecutionEngine& engine,
     connect(&watcher_, &QFutureWatcher<RunReport>::finished, this, [this]() {
         const RunReport report = watcher_.result();
         running_ = false;
+        const auto renamedTo = std::exchange(renameRunningTo_, std::nullopt);
         if (std::exchange(dropRunningContext_, false)) {
             contexts_.erase(runningKey_);
+        } else if (renamedTo) {
+            moveContext(runningKey_, {runningKey_.first, *renamedTo});
         }
         emit runningChanged(false);
         emit runFinished(report);
@@ -124,11 +127,52 @@ void RunController::forgetProject(const QString& rootPath) {
 
 void RunController::forgetEnvironment(const QString& rootPath, const QString& environment) {
     const ContextKey key{rootPath.toStdString(), environment.toStdString()};
-    if (running_ && key == runningKey_) {
+    if (running_ && key == pendingRunningKey()) {
         dropRunningContext_ = true;
+        renameRunningTo_.reset();
+        return;
+    }
+    if (running_ && key == runningKey_) {
+        // Renamed away during the run: the slot holds that run's context, which moves at run end.
         return;
     }
     contexts_.erase(key);
+}
+
+void RunController::renameEnvironment(const QString& rootPath,
+                                      const QString& from,
+                                      const QString& to) {
+    const ContextKey source{rootPath.toStdString(), from.toStdString()};
+    const ContextKey target{rootPath.toStdString(), to.toStdString()};
+    if (source == target) {
+        return;
+    }
+    if (running_ && source == pendingRunningKey()) {
+        renameRunningTo_ = target.second;
+        return;
+    }
+    if (running_ && target == runningKey_) {
+        // The in-flight run's context still holds this name until it ends, so the renamed
+        // environment starts without a session.
+        contexts_.erase(source);
+        return;
+    }
+    moveContext(source, target);
+}
+
+RunController::ContextKey RunController::pendingRunningKey() const {
+    return renameRunningTo_ ? ContextKey{runningKey_.first, *renameRunningTo_} : runningKey_;
+}
+
+void RunController::moveContext(const ContextKey& from, const ContextKey& to) {
+    if (from == to) {
+        return;
+    }
+    contexts_.erase(to);
+    if (auto node = contexts_.extract(from); !node.empty()) {
+        node.key() = to;
+        contexts_.insert(std::move(node));
+    }
 }
 
 void RunController::resetCaches() {

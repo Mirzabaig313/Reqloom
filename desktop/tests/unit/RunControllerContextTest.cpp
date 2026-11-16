@@ -111,6 +111,35 @@ protected:
         ctx.appendInstance(kPayment, instanceWithId(id));
     }
 
+    /// Start a dry run of `environment`, apply `renames` (then forget `forgetAfter`) while it is in
+    /// flight, and wait for it to finish. The run cannot finish before the renames: runFinished
+    /// is delivered through the event loop, which is not processed until the wait.
+    void runAndRenameDuringIt(const QString& environment,
+                              const std::vector<std::pair<QString, QString>>& renames,
+                              const QString& forgetAfter = {}) {
+        bool finished = false;
+        QObject::connect(controller_.get(),
+                         &RunController::runFinished,
+                         controller_.get(),
+                         [&finished](const RunReport&) { finished = true; });
+        controller_->run(
+            QStringLiteral("payment.pay"), environment, /*clean=*/false, /*dryRun=*/true);
+        ASSERT_TRUE(controller_->isRunning());
+        for (const auto& [from, to] : renames) {
+            controller_->renameEnvironment(project_.rootPath(), from, to);
+        }
+        if (!forgetAfter.isEmpty()) {
+            controller_->forgetEnvironment(project_.rootPath(), forgetAfter);
+        }
+        QElapsedTimer timer;
+        timer.start();
+        while (!finished && timer.elapsed() < 30'000) {
+            QThreadPool::globalInstance()->waitForDone(50);
+            QCoreApplication::processEvents();
+        }
+        ASSERT_TRUE(finished);
+    }
+
     [[nodiscard]] std::size_t activeInstanceCount() const {
         const ce::RunContext* ctx = controller_->findActiveContext();
         return ctx == nullptr ? 0U : ctx->instances(kPayment).size();
@@ -227,6 +256,116 @@ TEST_F(RunControllerContextFixture, forgetting_an_environment_drops_only_its_con
     EXPECT_EQ(activeInstanceCount(), 1U);
     controller_->setEnvironment(kStaging);
     EXPECT_EQ(controller_->findActiveContext(), nullptr);
+}
+
+TEST_F(RunControllerContextFixture, renaming_an_environment_keeps_its_context_under_the_new_name) {
+    controller_->setEnvironment(kStaging);
+    seedActiveContext("stg-1");
+    const engine::RunContext* before = controller_->findActiveContext();
+    const QString renamed = QStringLiteral("preprod");
+
+    controller_->renameEnvironment(project_.rootPath(), kStaging, renamed);
+
+    controller_->setEnvironment(renamed);
+    EXPECT_EQ(controller_->findActiveContext(), before);
+    EXPECT_EQ(activeInstanceCount(), 1U);
+    controller_->setEnvironment(kStaging);
+    EXPECT_EQ(controller_->findActiveContext(), nullptr);
+}
+
+TEST_F(RunControllerContextFixture, renaming_onto_a_stale_name_replaces_what_was_kept_there) {
+    controller_->setEnvironment(kProduction);
+    seedActiveContext("prd-1");
+    controller_->setEnvironment(kStaging);
+    seedActiveContext("stg-1");
+    const engine::RunContext* staging = controller_->findActiveContext();
+
+    controller_->renameEnvironment(project_.rootPath(), kStaging, kProduction);
+
+    controller_->setEnvironment(kProduction);
+    EXPECT_EQ(controller_->findActiveContext(), staging);
+}
+
+TEST_F(RunControllerContextFixture, renaming_the_running_environment_moves_it_after_the_run) {
+    controller_->setEnvironment(kStaging);
+    seedActiveContext("stg-1");
+    const engine::RunContext* before = controller_->findActiveContext();
+    const QString renamed = QStringLiteral("preprod");
+    bool finished = false;
+    QObject::connect(controller_.get(),
+                     &RunController::runFinished,
+                     controller_.get(),
+                     [&finished](const RunReport&) { finished = true; });
+
+    controller_->run(QStringLiteral("payment.pay"), kStaging, /*clean=*/false, /*dryRun=*/true);
+    controller_->renameEnvironment(project_.rootPath(), kStaging, renamed);
+    QElapsedTimer timer;
+    timer.start();
+    while (!finished && timer.elapsed() < 30'000) {
+        QThreadPool::globalInstance()->waitForDone(50);
+        QCoreApplication::processEvents();
+    }
+
+    ASSERT_TRUE(finished);
+    controller_->setEnvironment(renamed);
+    EXPECT_EQ(controller_->findActiveContext(), before);
+    controller_->setEnvironment(kStaging);
+    EXPECT_EQ(controller_->findActiveContext(), nullptr);
+}
+
+TEST_F(RunControllerContextFixture, renaming_the_running_environment_twice_lands_on_the_last_name) {
+    controller_->setEnvironment(kStaging);
+    seedActiveContext("stg-1");
+    const engine::RunContext* before = controller_->findActiveContext();
+    const QString middle = QStringLiteral("preprod");
+    const QString last = QStringLiteral("uat");
+
+    runAndRenameDuringIt(kStaging, {{kStaging, middle}, {middle, last}});
+
+    controller_->setEnvironment(last);
+    EXPECT_EQ(controller_->findActiveContext(), before);
+    EXPECT_EQ(activeInstanceCount(), 1U);
+    controller_->setEnvironment(middle);
+    EXPECT_EQ(controller_->findActiveContext(), nullptr);
+}
+
+TEST_F(RunControllerContextFixture, renaming_the_running_environment_back_keeps_it) {
+    controller_->setEnvironment(kStaging);
+    seedActiveContext("stg-1");
+    const engine::RunContext* before = controller_->findActiveContext();
+    const QString middle = QStringLiteral("preprod");
+
+    runAndRenameDuringIt(kStaging, {{kStaging, middle}, {middle, kStaging}});
+
+    controller_->setEnvironment(kStaging);
+    EXPECT_EQ(controller_->findActiveContext(), before);
+}
+
+TEST_F(RunControllerContextFixture, renaming_then_deleting_the_running_environment_drops_it) {
+    controller_->setEnvironment(kStaging);
+    seedActiveContext("stg-1");
+    const QString middle = QStringLiteral("preprod");
+
+    runAndRenameDuringIt(kStaging, {{kStaging, middle}}, /*forgetAfter=*/middle);
+
+    controller_->setEnvironment(middle);
+    EXPECT_EQ(controller_->findActiveContext(), nullptr);
+    controller_->setEnvironment(kStaging);
+    EXPECT_EQ(controller_->findActiveContext(), nullptr);
+}
+
+TEST_F(RunControllerContextFixture,
+       forgetting_a_new_environment_with_the_running_old_name_keeps_the_run) {
+    controller_->setEnvironment(kStaging);
+    seedActiveContext("stg-1");
+    const engine::RunContext* before = controller_->findActiveContext();
+    const QString middle = QStringLiteral("preprod");
+
+    runAndRenameDuringIt(kStaging, {{kStaging, middle}}, /*forgetAfter=*/kStaging);
+
+    controller_->setEnvironment(middle);
+    EXPECT_EQ(controller_->findActiveContext(), before);
+    EXPECT_EQ(activeInstanceCount(), 1U);
 }
 
 TEST_F(RunControllerContextFixture, forgetting_the_running_environment_drops_it_after_the_run) {
