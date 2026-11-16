@@ -24,9 +24,11 @@
 
 #include <support/TempPath.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -486,6 +488,72 @@ resources:
     // Default values from RetryPolicy struct.
     EXPECT_EQ(get.retry.maxAttempts, 3);
     EXPECT_EQ(get.retry.baseBackoff, std::chrono::milliseconds{500});
+}
+
+namespace {
+
+// A one-operation project whose retry block is `retryBlock` (YAML lines
+// indented for the operation level).
+[[nodiscard]] std::string retryProjectYaml(const std::string& retryBlock) {
+    return R"YAML(
+version: 1
+name: RetryNonIdempotent
+default_environment: local
+
+environment:
+  baseUrl: http://localhost:0
+
+resources:
+  payment:
+    operations:
+      charge:
+        method: POST
+        path: /api/v1/charge
+        expect_status: 200
+)YAML" + retryBlock;
+}
+
+}  // namespace
+
+TEST(SchemaParserOperationFields, retry_non_idempotent_true_is_parsed) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml",
+                                    retryProjectYaml("        retry:\n"
+                                                     "          max: 4\n"
+                                                     "          non_idempotent: true\n"));
+    auto result = ce::parseProject(yaml);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& charge = result->resources.at(ce::ResourceId{"payment"}).operations.at("charge");
+    EXPECT_TRUE(charge.retry.nonIdempotent);
+    EXPECT_EQ(charge.retry.maxAttempts, 4);
+}
+
+TEST(SchemaParserOperationFields, retry_non_idempotent_defaults_to_false) {
+    ScratchDir scratch;
+    const auto withBlock = scratch.write("reqloom.yaml",
+                                         retryProjectYaml("        retry:\n"
+                                                          "          max: 4\n"));
+    auto result = ce::parseProject(withBlock);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_FALSE(result->resources.at(ce::ResourceId{"payment"})
+                     .operations.at("charge")
+                     .retry.nonIdempotent);
+    EXPECT_FALSE(ce::RetryPolicy{}.nonIdempotent);
+}
+
+TEST(SchemaParserOperationFields, retry_non_idempotent_rejects_non_boolean_values) {
+    for (const std::string value : {"maybe", "1", "[true]", "{ on: true }", "\"\""}) {
+        ScratchDir scratch;
+        const auto yaml = scratch.write("reqloom.yaml",
+                                        retryProjectYaml("        retry:\n"
+                                                         "          non_idempotent: " +
+                                                         value + "\n"));
+        auto result = ce::parseProject(yaml);
+        ASSERT_FALSE(result.has_value()) << "non_idempotent: " << value << " was accepted";
+        EXPECT_EQ(result.error().code, ce::ErrorCode::SchemaInvalid) << value;
+        EXPECT_NE(result.error().detail.find("non_idempotent"), std::string::npos)
+            << result.error().detail;
+    }
 }
 
 // ─── timeout: field ──────────────────────────────────────────────────────────
@@ -1268,6 +1336,81 @@ actors:
     ASSERT_TRUE(result.has_value()) << result.error().detail;
     ASSERT_TRUE(result->transport.contains("local"));
     EXPECT_EQ(result->transport.at("local").connectTimeout, std::chrono::milliseconds{750});
+}
+
+// ─── D-02: duration literals, with and without a unit ───────────────────────
+
+namespace {
+
+/// Parse a minimal project with `session.ttl: <ttl>` and
+/// `transport.connect_timeout: <timeout>` and return (ttl, timeout).
+std::pair<std::chrono::seconds, std::chrono::milliseconds> parseDurations(
+    const std::string& ttl, const std::string& timeout) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: Durations
+default_environment: local
+environment: { baseUrl: http://localhost:0 }
+
+transport:
+  connect_timeout: ")YAML" + timeout + R"YAML("
+
+actors:
+  user:
+    auth: { method: POST, path: /login, body: {}, extract: { token: $.t } }
+    session:
+      ttl: ")YAML" + ttl + R"YAML("
+)YAML");
+    auto result = ce::parseProject(yaml);
+    EXPECT_TRUE(result.has_value()) << result.error().detail;
+    if (!result) {
+        return {};
+    }
+    return {result->actors.at(ce::ActorId{"user"}).sessionTtl,
+            result->transport.at("local").connectTimeout};
+}
+
+}  // namespace
+
+TEST(SchemaParserDurations, bare_digits_are_whole_seconds) {
+    const auto [ttl, timeout] = parseDurations("3600", "3600");
+    EXPECT_EQ(ttl, std::chrono::seconds{3600});
+    EXPECT_EQ(timeout, std::chrono::milliseconds{3'600'000});
+
+    const auto [ttl30, timeout30] = parseDurations("30", "30");
+    EXPECT_EQ(ttl30, std::chrono::seconds{30});
+    EXPECT_EQ(timeout30, std::chrono::milliseconds{30'000});
+
+    const auto [ttl5, timeout5] = parseDurations("5", "5");
+    EXPECT_EQ(ttl5, std::chrono::seconds{5});
+    EXPECT_EQ(timeout5, std::chrono::milliseconds{5'000});
+}
+
+TEST(SchemaParserDurations, unit_suffixes_still_parse) {
+    const auto [ttl, timeout] = parseDurations("15m", "500ms");
+    EXPECT_EQ(ttl, std::chrono::seconds{900});
+    EXPECT_EQ(timeout, std::chrono::milliseconds{500});
+
+    const auto [ttl2h, timeout2h] = parseDurations("2h", "2h");
+    EXPECT_EQ(ttl2h, std::chrono::seconds{7200});
+    EXPECT_EQ(timeout2h, std::chrono::milliseconds{7'200'000});
+}
+
+TEST(SchemaParserDurations, empty_literal_is_an_error) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write("reqloom.yaml", R"YAML(
+version: 1
+name: Durations
+actors:
+  user:
+    auth: { method: POST, path: /login }
+    session:
+      ttl: ""
+)YAML");
+    auto result = ce::parseProject(yaml);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().detail.find("'ttl'"), std::string::npos) << result.error().detail;
 }
 
 TEST(SchemaParserTransport, environment_file_transport_block_is_picked_up) {

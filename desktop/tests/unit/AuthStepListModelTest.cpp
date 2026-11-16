@@ -52,10 +52,59 @@ TEST(EditableKeyValueModel, clearing_non_trailing_row_removes_it_and_keeps_ghost
 
     model.setKey(0, QString{});
     model.setValue(0, QString{});
+    model.pruneBlankRows();
 
     EXPECT_TRUE(model.pairs().empty());
     ASSERT_EQ(model.rowCount(), 1);
     EXPECT_TRUE(model.data(model.index(0), EditableKeyValueModel::IsGhostRole).toBool());
+}
+
+TEST(EditableKeyValueModel, row_cleared_while_typing_stays_until_pruned) {
+    EditableKeyValueModel model;
+    model.setKey(0, QStringLiteral("x"));
+    ASSERT_EQ(model.rowCount(), 2);
+
+    model.setKey(0, QString{});
+
+    ASSERT_EQ(model.rowCount(), 2);
+    EXPECT_FALSE(model.data(model.index(0), EditableKeyValueModel::IsGhostRole).toBool());
+    EXPECT_TRUE(model.data(model.index(1), EditableKeyValueModel::IsGhostRole).toBool());
+    EXPECT_TRUE(model.pairs().empty());
+}
+
+TEST(EditableKeyValueModel, prune_drops_every_blank_row_and_keeps_one_ghost) {
+    EditableKeyValueModel model;
+    model.setPairs({{QStringLiteral("a"), QStringLiteral("1")},
+                    {QStringLiteral("b"), QStringLiteral("2")},
+                    {QStringLiteral("c"), QStringLiteral("3")}});
+    model.setKey(0, QString{});
+    model.setValue(0, QString{});
+    model.setKey(2, QString{});
+    model.setValue(2, QString{});
+    ASSERT_EQ(model.rowCount(), 4);
+
+    model.pruneBlankRows();
+
+    ASSERT_EQ(model.rowCount(), 2);
+    EXPECT_EQ(model.data(model.index(0), EditableKeyValueModel::KeyRole).toString(),
+              QStringLiteral("b"));
+    EXPECT_TRUE(model.data(model.index(1), EditableKeyValueModel::IsGhostRole).toBool());
+}
+
+TEST(EditableKeyValueModel, prune_keeps_the_row_that_still_has_focus) {
+    EditableKeyValueModel model;
+    model.setPairs(
+        {{QStringLiteral("a"), QStringLiteral("1")}, {QStringLiteral("b"), QStringLiteral("2")}});
+    model.setKey(0, QString{});
+    model.setValue(0, QString{});
+    model.setKey(1, QString{});
+    model.setValue(1, QString{});
+
+    model.pruneBlankRows(1);
+
+    ASSERT_EQ(model.rowCount(), 2);
+    EXPECT_FALSE(model.data(model.index(0), EditableKeyValueModel::IsGhostRole).toBool());
+    EXPECT_TRUE(model.data(model.index(1), EditableKeyValueModel::IsGhostRole).toBool());
 }
 
 TEST(AuthStepListModel, setters_update_fields_via_data_roles) {
@@ -112,6 +161,34 @@ TEST(AuthStepListModel, move_step_swaps_adjacent_rows) {
     model.moveStep(1, 1);
     EXPECT_EQ(model.idAt(0), QStringLiteral("b"));
     EXPECT_EQ(model.idAt(1), QStringLiteral("a"));
+}
+
+TEST(AuthStepListModel, every_edit_including_a_step_extraction_reports_steps_edited) {
+    AuthStepListModel model;
+    model.rebuild({makeSeed("a", "POST", "/a"), makeSeed("b", "GET", "/b")});
+    int edits = 0;
+    QObject::connect(&model, &AuthStepListModel::stepsEdited, &model, [&edits]() { ++edits; });
+    const auto reports = [&edits](auto action) {
+        const int before = edits;
+        action();
+        return edits > before;
+    };
+
+    EXPECT_TRUE(reports([&model]() { model.setPath(0, QStringLiteral("/a2")); }));
+    EXPECT_TRUE(reports([&model]() { model.setMethod(0, QStringLiteral("PUT")); }));
+    EXPECT_TRUE(reports([&model]() { model.setBody(0, QStringLiteral("{}")); }));
+    EXPECT_TRUE(reports([&model]() { model.setExpect(0, QStringLiteral("201")); }));
+    EXPECT_TRUE(reports([&model]() { model.moveStep(0, 1); }));
+    EXPECT_TRUE(reports([&model]() { model.extractModelAt(0)->setKey(0, QStringLiteral("id")); }));
+    int added = -1;
+    EXPECT_TRUE(reports([&model, &added]() { added = model.addStep(); }));
+    EXPECT_TRUE(reports(
+        [&model, added]() { model.extractModelAt(added)->setValue(0, QStringLiteral("x")); }));
+    EXPECT_TRUE(reports([&model, added]() { model.removeStep(added); }));
+
+    EXPECT_FALSE(reports([&model]() { model.setPath(0, model.pathAt(0)); }));
+    EXPECT_FALSE(reports([&model]() { model.rebuild({makeSeed("c", "POST", "/c")}); }));
+    EXPECT_TRUE(reports([&model]() { model.extractModelAt(0)->setKey(0, QStringLiteral("id")); }));
 }
 
 }  // namespace

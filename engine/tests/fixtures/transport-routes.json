@@ -1,0 +1,229 @@
+{
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/slow",
+      "status": 200,
+      "delayMs": 5000,
+      "body": { "ok": true }
+    },
+    {
+      "method": "HEAD",
+      "path": "/resource",
+      "status": 200,
+      "body": {
+        "payload": "a body that HEAD must not wait for"
+      }
+    },
+    {
+      "method": "OPTIONS",
+      "path": "/resource",
+      "status": 204,
+      "headers": {
+        "Allow": "GET, HEAD, OPTIONS"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/hop1",
+      "status": 302,
+      "headers": {
+        "Location": "/final",
+        "X-Hop-Only": "first"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/final",
+      "status": 200,
+      "headers": {
+        "X-Final": "yes"
+      },
+      "body": {
+        "final": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/loop",
+      "status": 302,
+      "headers": {
+        "Location": "/loop"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/see-other-closed-port",
+      "status": 303,
+      "headers": {
+        "Location": "http://127.0.0.1:1/after-post"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/see-other-unresolvable",
+      "status": 303,
+      "headers": {
+        "Location": "http://reqloom-redirect-target.invalid/after-post"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/big",
+      "status": 200,
+      "body": "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+    },
+    {
+      "method": "GET",
+      "path": "/ten",
+      "status": 200,
+      "sequence": [
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/ten"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "arrived": true
+          }
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/eleven",
+      "status": 200,
+      "sequence": [
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/eleven"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "arrived": true
+          }
+        }
+      ]
+    }
+  ]
+}

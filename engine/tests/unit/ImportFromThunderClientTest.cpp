@@ -5,11 +5,13 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -101,6 +103,8 @@ TEST(ImportFromThunderClient, folder_becomes_resource_and_requests_become_operat
 
     const auto* create = findOp(project, "orders.create_order");
     ASSERT_NE(create, nullptr);
+    ASSERT_TRUE(create->provenance.has_value());
+    EXPECT_EQ(create->provenance->source, ce::Provenance::Source::ThunderClientImport);
     EXPECT_EQ(create->method, ce::HttpMethod::Post);
     EXPECT_EQ(create->pathTemplate, "/api/v1/orders");
     ASSERT_TRUE(create->bodyTemplate.has_value());
@@ -138,4 +142,118 @@ TEST(ImportFromThunderClient, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// File fields carrying paths from the exporting machine keep only their base
+// name (with a warning); a text field starting with `@` is escaped as `@@`.
+TEST(ImportFromThunderClient, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    const auto file = scratch.write("uploads.json", R"JSON(
+[
+  {
+    "_id": "col_1", "colName": "Uploads API",
+    "folders": [ { "_id": "fld_1", "name": "Uploads", "containerId": "" } ],
+    "requests": [
+      {
+        "_id": "req_1", "colId": "col_1", "containerId": "fld_1", "name": "Upload",
+        "method": "POST", "url": "https://api.example.com/up",
+        "body": {
+          "type": "form",
+          "form": [ { "name": "sneaky", "value": "@/etc/passwd" } ],
+          "files": [
+            { "name": "unix", "value": "/Users/x/.ssh/id_rsa" },
+            { "name": "win", "value": "C:\\Users\\x\\a.png" },
+            { "name": "rel", "value": "../../secret.txt" },
+            { "name": "bare", "value": "photo.png" }
+          ]
+        }
+      }
+    ]
+  }
+]
+)JSON");
+
+    auto outcome = ce::importFromThunderClient(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    reqloom::tests::expectImportedFileRefsSanitised(
+        *op->bodyForm, outcome->warnings, "uploads.upload");
+}
+
+namespace {
+
+std::size_t countOf(const std::string& haystack, std::string_view needle) {
+    std::size_t n = 0;
+    for (auto pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+// A Thunder Client `{id}` path parameter (value in an `isPath` param)
+// becomes the shared `{{resource.id}}` reference; request auth warns once,
+// `inherit` and `none` do not, and collection `settings.auth` warns once.
+TEST(ImportFromThunderClient, path_parameter_and_auth_are_handled_like_other_importers) {
+    ScratchDir scratch;
+    const auto file = scratch.write("tc_auth.json", R"JSON(
+[ { "_id": "c1", "colName": "Users API", "settings": { "auth": { "type": "bearer" } },
+    "folders": [ { "_id": "f1", "name": "Users", "containerId": "" } ],
+    "requests": [
+      { "_id": "r1", "containerId": "f1", "name": "Get User", "method": "GET",
+        "url": "https://api.example.com/users/{id}",
+        "params": [ { "name": "id", "value": "7", "isPath": true } ],
+        "auth": { "type": "inherit" } },
+      { "_id": "r2", "containerId": "f1", "name": "Own Auth", "method": "GET",
+        "url": "https://api.example.com/me", "auth": { "type": "basic" } },
+      { "_id": "r3", "containerId": "f1", "name": "No Auth", "method": "GET",
+        "url": "https://api.example.com/open", "auth": { "type": "none" } }
+    ] } ]
+)JSON");
+    auto outcome = ce::importFromThunderClient(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* get = findOp(outcome->project, "users.get_user");
+    ASSERT_NE(get, nullptr);
+    EXPECT_EQ(get->pathTemplate, "/users/{{users.id}}");
+    EXPECT_FALSE(get->queryParams.contains("id"));
+    const auto& w = outcome->warnings;
+    EXPECT_NE(w.find("`7`"), std::string::npos) << w;
+    EXPECT_EQ(countOf(w, "auth was not imported"), 2u) << w;
+    EXPECT_EQ(countOf(w, "collection `Users API`: `bearer` auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "operation users.own_auth: `basic` auth was not imported"), 1u) << w;
+}
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart. Thunder
+// Client names a multipart body `formdata` and an urlencoded one `formencoded`.
+TEST(ImportFromThunderClient, text_only_formdata_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+[
+  {
+    "_id": "col_1", "colName": "Forms",
+    "folders": [ { "_id": "fld_1", "name": "Forms", "containerId": "" } ],
+    "requests": [
+      { "_id": "req_1", "colId": "col_1", "containerId": "fld_1", "name": "Multi",
+        "method": "POST", "url": "https://api.example.com/m",
+        "body": { "type": "formdata", "form": [ { "name": "a", "value": "1" } ] } },
+      { "_id": "req_2", "colId": "col_1", "containerId": "fld_1", "name": "Encoded",
+        "method": "POST", "url": "https://api.example.com/e",
+        "body": { "type": "formencoded", "form": [ { "name": "a", "value": "1" } ] } }
+    ]
+  }
+]
+)JSON");
+    auto outcome = ce::importFromThunderClient(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    ASSERT_TRUE(multi->bodyForm.has_value());
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
 }

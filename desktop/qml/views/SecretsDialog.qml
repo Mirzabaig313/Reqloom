@@ -1,6 +1,6 @@
-// SecretsDialog — keychain secrets management (mirrors the old Widgets
-// SecretsDialog). Lists every {{secret.NAME}} the project references with
-// its keychain state, and lets the user set or clear each one.
+// SecretsDialog — keychain secrets management. Lists every {{secret.NAME}}
+// the project references with its keychain state, and lets the user set or
+// clear each one. Failures stay in the dialog until the next action.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -24,11 +24,27 @@ Dialog {
     padding: DesignTokens.spaceLg
     focus: true
     property string focusedSecretName: ""
+    // The row whose Clear failed, so its error shows beside that button.
+    property string clearErrorName: ""
+    property string clearError: ""
+    property string moveError: ""
+
+    function clearMessages() {
+        clearErrorName = "";
+        clearError = "";
+        moveError = "";
+    }
 
     function openDialog() {
         focusedSecretName = "";
+        clearMessages();
         SecretsController.refresh();
         open();
+    }
+
+    onAboutToHide: {
+        setDialog.close();
+        moveDialog.close();
     }
 
     function openSource(name) {
@@ -38,6 +54,7 @@ Dialog {
             return false;
         }
         focusedSecretName = name;
+        clearMessages();
         secretList.currentIndex = targetRow;
         open();
         Qt.callLater(function () {
@@ -83,12 +100,71 @@ Dialog {
                 id: bannerLabel
                 anchors.fill: parent
                 anchors.margins: DesignTokens.spaceSm
-                text: qsTr("Keychain backend unavailable — secret writes are not persisted.")
+                text: qsTr("No OS keychain is available, so secrets can't be saved, cleared or read here, and requests that use {{secret.NAME}} will fail. Use a Reqloom build with keychain support, or pass the value through an allowed environment variable ({{$.env.NAME}}) instead.")
                 color: DesignTokens.statusError
                 font.pixelSize: DesignTokens.fontLabel
                 wrapMode: Text.WordWrap
                 verticalAlignment: Text.AlignVCenter
             }
+        }
+
+        // Folder-conflict banner: this project's id belongs to another folder
+        // on this machine (the project was moved or copied). Secrets stay
+        // blocked until the user confirms the move.
+        Rectangle {
+            Layout.fillWidth: true
+            visible: SecretsController.folderConflict !== ""
+            radius: DesignTokens.radiusSm
+            color: Qt.rgba(DesignTokens.statusError.r, DesignTokens.statusError.g, DesignTokens.statusError.b, 0.12)
+            border.width: 1
+            border.color: DesignTokens.statusError
+            implicitHeight: conflictColumn.implicitHeight + DesignTokens.spaceSm * 2
+            ColumnLayout {
+                id: conflictColumn
+                anchors.fill: parent
+                anchors.margins: DesignTokens.spaceSm
+                spacing: DesignTokens.spaceXs
+                Label {
+                    objectName: "conflictText"
+                    Layout.fillWidth: true
+                    text: qsTr("This project's id belongs to another folder on this machine:\n%1\n\nThis folder:\n%2\n\nIf you moved the project here, use its secrets in this folder (the old folder loses access). If this is a copy, give it a new id in reqloom.yaml instead.").arg(SecretsController.folderConflict).arg(SecretsController.currentFolder)
+                    color: DesignTokens.statusError
+                    font.pixelSize: DesignTokens.fontLabel
+                    wrapMode: Text.Wrap
+                }
+                Button {
+                    id: confirmMoveBtn
+                    objectName: "confirmMoveButton"
+                    text: qsTr("I moved this project — use its secrets here")
+                    implicitHeight: Math.max(28, implicitContentHeight + DesignTokens.spaceXs * 2)
+                    leftPadding: DesignTokens.spaceSm
+                    rightPadding: DesignTokens.spaceSm
+                    background: Rectangle {
+                        radius: DesignTokens.radiusSm
+                        color: confirmMoveBtn.down ? DesignTokens.accentMuted : "transparent"
+                        border.width: 1
+                        border.color: DesignTokens.borderStrong
+                    }
+                    contentItem: Text {
+                        text: confirmMoveBtn.text
+                        color: DesignTokens.textPrimary
+                        font.pixelSize: DesignTokens.fontLabel
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        dialog.clearMessages();
+                        moveDialog.openFor(SecretsController.folderConflict, SecretsController.currentFolder);
+                    }
+                }
+            }
+        }
+
+        // Outside the conflict banner: a refused move can be the reason the banner is gone.
+        FieldError {
+            objectName: "moveError"
+            Layout.fillWidth: true
+            text: dialog.moveError
         }
 
         // Secrets table.
@@ -110,11 +186,12 @@ Dialog {
                 required property int index
                 required property string name
                 required property string status
+                required property string detail
                 readonly property bool sourceFocused: name === dialog.focusedSecretName
                 width: ListView.view.width
                 // Row grows with its tallest child (reference label or the
                 // Set…/Clear actions) at large OS text sizes.
-                height: Math.max(44, rowContent.implicitHeight + DesignTokens.spaceSm * 2)
+                height: rowContent.height + (rowError.visible ? rowError.implicitHeight + DesignTokens.spaceXs : 0)
                 color: sourceFocused ? DesignTokens.accentMuted : "transparent"
 
                 function focusSetAction() {
@@ -123,7 +200,10 @@ Dialog {
 
                 RowLayout {
                     id: rowContent
-                    anchors.fill: parent
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: Math.max(44, implicitHeight + DesignTokens.spaceSm * 2)
                     anchors.leftMargin: DesignTokens.spaceSm
                     anchors.rightMargin: DesignTokens.spaceSm
                     spacing: DesignTokens.spaceMd
@@ -145,6 +225,7 @@ Dialog {
 
                     Button {
                         id: setSecretBtn
+                        objectName: "setSecretButton"
                         text: qsTr("Set…")
                         implicitHeight: Math.max(28, implicitContentHeight + DesignTokens.spaceXs * 2)
                         leftPadding: DesignTokens.spaceSm
@@ -162,7 +243,10 @@ Dialog {
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
-                        onClicked: setDialog.openFor(secretRow.name)
+                        onClicked: {
+                            dialog.clearMessages();
+                            setDialog.openFor(secretRow.name);
+                        }
                     }
                     Button {
                         id: clearSecretBtn
@@ -184,8 +268,24 @@ Dialog {
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
-                        onClicked: SecretsController.clear(secretRow.name)
+                        onClicked: {
+                            dialog.clearMessages();
+                            const ok = SecretsController.clear(secretRow.name);
+                            dialog.clearErrorName = ok ? "" : secretRow.name;
+                            dialog.clearError = ok ? "" : SecretsController.lastError;
+                        }
                     }
+                }
+
+                FieldError {
+                    id: rowError
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: rowContent.bottom
+                    anchors.leftMargin: DesignTokens.spaceSm
+                    anchors.rightMargin: DesignTokens.spaceSm
+                    // A folder conflict gives every row the same reason, which the banner already says.
+                    text: secretRow.name === dialog.clearErrorName ? dialog.clearError : (secretRow.status === "error" && SecretsController.folderConflict === "" ? secretRow.detail : "")
                 }
 
                 Rectangle {
@@ -206,7 +306,7 @@ Dialog {
         onAccepted: dialog.close()
     }
 
-    // Set-value sub-dialog.
+    // Set-value sub-dialog. Closes only when the value was stored.
     Dialog {
         id: setDialog
         modal: true
@@ -218,15 +318,31 @@ Dialog {
         padding: DesignTokens.spaceLg
         focus: true
         property string secretName: ""
+        property string error: ""
         header: DialogHeader {
             title: qsTr("Set secret")
         }
 
         function openFor(name) {
             secretName = name;
+            error = "";
             valueField.text = "";
             open();
             valueField.forceActiveFocus();
+        }
+
+        function save() {
+            if (SecretsController.store(secretName, valueField.text)) {
+                close();
+            } else {
+                error = SecretsController.lastError;
+            }
+        }
+
+        // The secret must not linger in the field once the dialog is gone.
+        onAboutToHide: {
+            valueField.text = "";
+            revealToggle.checked = false;
         }
 
         background: Rectangle {
@@ -245,17 +361,102 @@ Dialog {
             }
             GlassTextField {
                 id: valueField
+                objectName: "secretValueField"
                 Layout.fillWidth: true
-                echoMode: TextInput.Password
+                echoMode: revealToggle.checked ? TextInput.Normal : TextInput.Password
                 placeholderText: qsTr("value (not shown)")
-                onAccepted: setDialog.accept()
+                onTextEdited: setDialog.error = ""
+                onAccepted: setDialog.save()
+            }
+            CheckBox {
+                id: revealToggle
+                text: qsTr("Show value")
+                checked: false
+                contentItem: Text {
+                    text: revealToggle.text
+                    color: DesignTokens.textSecondary
+                    font.pointSize: DesignTokens.fontLabelPointSize
+                    leftPadding: revealToggle.indicator.width + DesignTokens.spaceSm
+                    verticalAlignment: Text.AlignVCenter
+                }
+                indicator: Rectangle {
+                    implicitWidth: 16
+                    implicitHeight: 16
+                    radius: 4
+                    y: (revealToggle.height - height) / 2
+                    color: revealToggle.checked ? DesignTokens.accent : DesignTokens.surfaceRaised
+                    border.width: 1
+                    border.color: revealToggle.checked ? DesignTokens.accent : DesignTokens.borderStrong
+                    Text {
+                        anchors.centerIn: parent
+                        visible: revealToggle.checked
+                        text: "✓"
+                        color: DesignTokens.textInverse
+                        font.pointSize: DesignTokens.fontCaptionPointSize
+                        font.weight: DesignTokens.weightBold
+                    }
+                }
+            }
+            FieldError {
+                objectName: "setSecretError"
+                Layout.fillWidth: true
+                text: setDialog.error
             }
         }
         footer: DialogButtons {
             okText: qsTr("Save")
-            onAccepted: setDialog.accept()
+            onAccepted: setDialog.save()
             onRejected: setDialog.reject()
         }
-        onAccepted: SecretsController.store(secretName, valueField.text)
+    }
+
+    // Rebinding the project id moves secret access away from the old folder,
+    // so it needs both folders in front of the user before it happens.
+    Dialog {
+        id: moveDialog
+        modal: true
+        enter: PopupEnter {}
+        exit: PopupExit {}
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(460, Overlay.overlay ? Overlay.overlay.width - 64 : 460)
+        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
+        padding: DesignTokens.spaceLg
+        // Captured on open, so the folders confirmed are the folders that were read.
+        property string shownOwner: ""
+        property string shownHere: ""
+        header: DialogHeader {
+            title: qsTr("Use this project's secrets here?")
+        }
+
+        function openFor(owner, here) {
+            shownOwner = owner;
+            shownHere = here;
+            open();
+        }
+
+        background: Rectangle {
+            radius: DesignTokens.radiusLg
+            color: DesignTokens.surfaceRaised
+            border.width: 1
+            border.color: DesignTokens.glassBorder
+        }
+
+        contentItem: Label {
+            objectName: "moveFolders"
+            text: qsTr("Secrets for this project id belong to:\n%1\n\nThey will be used from this folder instead:\n%2\n\nThe old folder loses access to them. To move them back, open the old folder and confirm the move there.").arg(moveDialog.shownOwner).arg(moveDialog.shownHere)
+            color: DesignTokens.textPrimary
+            font.pixelSize: DesignTokens.fontLabel
+            wrapMode: Text.Wrap
+        }
+
+        footer: DialogButtons {
+            okText: qsTr("Use secrets here")
+            okDestructive: true
+            onAccepted: {
+                dialog.moveError = SecretsController.confirmMove(moveDialog.shownOwner) ? "" : SecretsController.lastError;
+                moveDialog.close();
+            }
+            onRejected: moveDialog.reject()
+        }
     }
 }

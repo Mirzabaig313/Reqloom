@@ -1,6 +1,5 @@
-// HistoryModel — past runs from the engine's history store, for the history
-// view. A flat list model populated by AppController from
-// ExecutionEngine::listRuns(); C++ owns the rows, QML renders them.
+// HistoryModel — past runs from the engine's history store, populated by AppController from
+// ExecutionEngine::listRuns().
 #pragma once
 
 #include <reqloom/engine/PublicApi.h>

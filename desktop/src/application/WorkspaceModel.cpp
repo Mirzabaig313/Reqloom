@@ -1,4 +1,4 @@
-// WorkspaceModel — see header. Multi-Project Workspace Plan, Phase 1.
+// WorkspaceModel — see header.
 
 #include "WorkspaceModel.h"
 
@@ -12,8 +12,7 @@
 namespace reqloom::desktop {
 
 WorkspaceModel::WorkspaceModel(QObject* parent) : QObject(parent) {
-    // Start with one project so `active()` is always valid, matching the
-    // single-project lifetime the app relied on before the workspace existed.
+    // Start with one project so `active()` is always valid.
     projects_.push_back(std::make_unique<ProjectModel>());
 }
 
@@ -70,21 +69,58 @@ void WorkspaceModel::removeProject(int index) {
     }
     projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(index));
     if (projects_.empty()) {
-        // Never leave the workspace empty — a fresh sentinel keeps active()
-        // valid so every hasProject() guard still holds.
+        // Never leave the workspace empty: a fresh sentinel keeps active() valid.
         projects_.push_back(std::make_unique<ProjectModel>());
         activeIndex_ = 0;
         emit activeChanged();
         return;
     }
     if (activeIndex_ == index) {
-        // The active project was removed: clamp to a surviving neighbour.
         activeIndex_ = std::min(index, count() - 1);
         emit activeChanged();
     } else if (activeIndex_ > index) {
-        // Same active project, its index just shifted down — not a change.
+        // Same active project with its index shifted down: not a change.
         --activeIndex_;
     }
+}
+
+void WorkspaceModel::markUnavailable(const QString& path,
+                                     const QString& name,
+                                     const QString& reason) {
+    for (UnavailableProject& entry : unavailable_) {
+        if (entry.path == path) {
+            entry.reason = reason;
+            if (!name.isEmpty()) {
+                entry.name = name;
+            }
+            return;
+        }
+    }
+    unavailable_.append(UnavailableProject{.path = path, .name = name, .reason = reason});
+}
+
+bool WorkspaceModel::forgetUnavailable(const QString& path) {
+    return unavailable_.removeIf([&](const UnavailableProject& e) { return e.path == path; }) > 0;
+}
+
+bool WorkspaceModel::isUnavailable(const QString& path) const {
+    return std::ranges::any_of(unavailable_,
+                               [&](const UnavailableProject& e) { return e.path == path; });
+}
+
+QList<WorkspaceModel::SavedProject> WorkspaceModel::savedProjects() const {
+    QList<SavedProject> saved;
+    for (const auto& project : projects_) {
+        if (project->hasProject()) {
+            saved.append(SavedProject{.path = project->rootPath(), .name = project->name()});
+        }
+    }
+    for (const UnavailableProject& entry : unavailable_) {
+        if (indexOfRoot(entry.path) < 0) {
+            saved.append(SavedProject{.path = entry.path, .name = entry.name});
+        }
+    }
+    return saved;
 }
 
 }  // namespace reqloom::desktop

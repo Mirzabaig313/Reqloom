@@ -10,8 +10,7 @@
 namespace reqloom::desktop::qml {
 
 ProjectTreeFilterModel::ProjectTreeFilterModel(QObject* parent) : QSortFilterProxyModel(parent) {
-    // Keep a parent visible when any descendant matches — mirrors the old
-    // explorer (a resource folder stays if one of its operations matches).
+    // Keep a parent visible when any descendant matches.
     setRecursiveFilteringEnabled(true);
 }
 
@@ -33,8 +32,8 @@ QString ProjectTreeFilterModel::nodeKey(const QModelIndex& index) const {
     if (!index.isValid()) {
         return {};
     }
-    // 0x1F (unit separator) can't appear in ids/names, so it's a safe join char.
-    // Field order must match ExplorerPanel.qml keyForDelegate().
+    // 0x1F (unit separator) can't appear in ids/names; field order must match ExplorerPanel.qml
+    // keyForDelegate().
     const QChar sep(u'\x1f');
     return index.data(ProjectTreeModel::KindRole).toString() + sep +
            index.data(ProjectTreeModel::ProjectRootRole).toString() + sep +
@@ -53,8 +52,7 @@ bool ProjectTreeFilterModel::filterAcceptsRow(int sourceRow,
     if (!idx.isValid()) {
         return false;
     }
-    // Only operation rows are matched directly; groups/resources/actors survive
-    // solely via recursive filtering when a descendant operation matches.
+    // Only operation rows match directly; other rows survive via recursive filtering.
     if (idx.data(ProjectTreeModel::KindRole).toString() != QLatin1String("operation")) {
         return false;
     }
@@ -63,10 +61,8 @@ bool ProjectTreeFilterModel::filterAcceptsRow(int sourceRow,
     const QString path = idx.data(ProjectTreeModel::PathRole).toString();
     const QString name = idx.data(ProjectTreeModel::NameRole).toString();
 
-    // Space-separated tokens are AND-ed, and each token may fuzzy-match any of
-    // the operation's fields (id / verb / path / display name). So "get
-    // sections" or "post /attendance" narrow the way a user expects, instead of
-    // the whole phrase having to be one subsequence of the id.
+    // Space-separated tokens are AND-ed; each may fuzzy-match any operation field (id, verb, path,
+    // name).
     const QStringList tokens = needle.split(QLatin1Char(' '), Qt::SkipEmptyParts);
     for (const QString& token : tokens) {
         const bool hit =

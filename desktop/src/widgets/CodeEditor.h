@@ -1,9 +1,6 @@
-// CodeEditor — the desktop hook-script editor, built on the vendored Scintilla
-// engine (permissive licence; NOT QScintilla, which is GPL). It wraps
-// ScintillaEditBase and configures a line-number margin, current-line
-// highlight, monospace font and our own container-driven syntax styling for
-// JavaScript / JSON. The public API mirrors the QPlainTextEdit it replaced
-// (setPlainText / toPlainText / applyTheme) so callers are unaffected.
+// CodeEditor — the desktop hook-script editor on the vendored Scintilla (permissive licence; NOT
+// QScintilla, which is GPL), with container-driven JavaScript / JSON styling. API mirrors
+// QPlainTextEdit (setPlainText / toPlainText / applyTheme).
 #pragma once
 
 #include <ScintillaEditBase.h>
@@ -29,21 +26,19 @@ public:
     explicit CodeEditor(QWidget* parent = nullptr);
     ~CodeEditor() override;
 
-    /// Apply appearance colours (editor surface, gutter, caret, selection) and
-    /// select the syntax language. Safe to call again to re-skin.
+    /// Apply appearance colours and select the syntax language; safe to call again to re-skin.
     void applyTheme(const theming::Palette& palette, Language language);
 
     void setPlainText(const QString& text);
     [[nodiscard]] QString toPlainText() const;
 
 private:
-    /// Re-tokenise the whole buffer and push style bytes to Scintilla. Cheap
-    /// for hook-sized scripts; driven from the content-changed signal.
+    /// Re-tokenise the whole buffer and push style bytes to Scintilla; cheap for hook-sized
+    /// scripts.
     void styleDocument();
-    /// Defer styling to the next event-loop tick. Styling must NOT run inside
-    /// Scintilla's modification notification (re-entrancy crash), so we never
-    /// call styleDocument() directly from a notify handler or right after
-    /// SCI_SETTEXT — we post it instead.
+    /// Defer styling to the next event-loop tick: it must not run inside Scintilla's modification
+    /// notification (re-entrancy crash), so post it instead of calling styleDocument() from a
+    /// notify handler or after SCI_SETTEXT.
     void scheduleStyling();
 
     Language language_{Language::JavaScript};

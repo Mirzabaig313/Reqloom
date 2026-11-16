@@ -26,8 +26,12 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_NETWORK_TIMEOUT";
         case ErrorCode::NetworkDns:
             return "E_NETWORK_DNS";
+        case ErrorCode::NetworkConnect:
+            return "E_NETWORK_CONNECT";
         case ErrorCode::NetworkTls:
             return "E_NETWORK_TLS";
+        case ErrorCode::NetworkPolicy:
+            return "E_NETWORK_POLICY";
         case ErrorCode::UploadFileUnreadable:
             return "E_UPLOAD_FILE_UNREADABLE";
         case ErrorCode::Http5xx:
@@ -62,6 +66,10 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_LLM_RESPONSE_INVALID";
         case ErrorCode::Cancelled:
             return "E_CANCELLED";
+        case ErrorCode::ProjectExists:
+            return "E_PROJECT_EXISTS";
+        case ErrorCode::WriteFailed:
+            return "E_WRITE_FAILED";
         case ErrorCode::Internal:
             return "E_INTERNAL";
     }
@@ -88,8 +96,12 @@ std::string_view humanize(ErrorCode code) noexcept {
             return "Request timed out";
         case ErrorCode::NetworkDns:
             return "Could not resolve host";
+        case ErrorCode::NetworkConnect:
+            return "Could not connect to host";
         case ErrorCode::NetworkTls:
             return "TLS handshake failed";
+        case ErrorCode::NetworkPolicy:
+            return "Blocked by transport limits";
         case ErrorCode::UploadFileUnreadable:
             return "Upload file unreadable";
         case ErrorCode::Http5xx:
@@ -124,6 +136,10 @@ std::string_view humanize(ErrorCode code) noexcept {
             return "AI response was invalid";
         case ErrorCode::Cancelled:
             return "Cancelled";
+        case ErrorCode::ProjectExists:
+            return "A project already exists there";
+        case ErrorCode::WriteFailed:
+            return "Could not write project files";
         case ErrorCode::Internal:
             return "Internal error";
     }
@@ -131,10 +147,8 @@ std::string_view humanize(ErrorCode code) noexcept {
 }
 
 std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
-    // Reverse of toCodeString, matched against the full enumerator list.
-    // The drift guard below fails the build if a code is added without
-    // growing this array.
-    constexpr std::array<ErrorCode, 28> kAll = {
+    // Reverse of toCodeString; the drift guard below fails the build if this array lags the enum.
+    constexpr std::array<ErrorCode, 32> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,
         ErrorCode::Cycle,
@@ -144,7 +158,9 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::IndexedRefOutOfRange,
         ErrorCode::NetworkTimeout,
         ErrorCode::NetworkDns,
+        ErrorCode::NetworkConnect,
         ErrorCode::NetworkTls,
+        ErrorCode::NetworkPolicy,
         ErrorCode::UploadFileUnreadable,
         ErrorCode::Http5xx,
         ErrorCode::Http4xx,
@@ -162,6 +178,8 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::LlmRequestFailed,
         ErrorCode::LlmResponseInvalid,
         ErrorCode::Cancelled,
+        ErrorCode::ProjectExists,
+        ErrorCode::WriteFailed,
         ErrorCode::Internal,
     };
     // Internal is the last enumerator, so its value + 1 is the count.
@@ -179,6 +197,7 @@ bool isRetryable(ErrorCode code) noexcept {
     switch (code) {
         case ErrorCode::NetworkTimeout:
         case ErrorCode::NetworkDns:
+        case ErrorCode::NetworkConnect:
         case ErrorCode::Http5xx:
             return true;
         default:
@@ -202,7 +221,9 @@ ErrorClass classify(ErrorCode code) noexcept {
 
         case ErrorCode::NetworkTimeout:
         case ErrorCode::NetworkDns:
+        case ErrorCode::NetworkConnect:
         case ErrorCode::NetworkTls:
+        case ErrorCode::NetworkPolicy:
             return ErrorClass::Network;
 
         case ErrorCode::UploadFileUnreadable:
@@ -236,6 +257,10 @@ ErrorClass classify(ErrorCode code) noexcept {
         case ErrorCode::LlmRequestFailed:
         case ErrorCode::LlmResponseInvalid:
             return ErrorClass::Llm;
+
+        case ErrorCode::ProjectExists:
+        case ErrorCode::WriteFailed:
+            return ErrorClass::Schema;
 
         case ErrorCode::Cancelled:
         case ErrorCode::Internal:

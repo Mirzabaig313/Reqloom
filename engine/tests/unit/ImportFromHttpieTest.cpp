@@ -5,11 +5,13 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -118,6 +120,8 @@ TEST(ImportFromHttpie, collection_becomes_resource_and_requests_become_operation
 
     const auto* create = findOp(project, "orders.create_order");
     ASSERT_NE(create, nullptr);
+    ASSERT_TRUE(create->provenance.has_value());
+    EXPECT_EQ(create->provenance->source, ce::Provenance::Source::HttpieImport);
     EXPECT_EQ(create->method, ce::HttpMethod::Post);
     EXPECT_EQ(create->pathTemplate, "/api/v1/orders");
     ASSERT_TRUE(create->bodyTemplate.has_value());
@@ -134,9 +138,11 @@ TEST(ImportFromHttpie, default_environment_seeds_baseurl_and_query_is_kept) {
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     const auto& project = outcome->project;
 
-    ASSERT_TRUE(project.environments.contains("default"));
-    EXPECT_EQ(project.environments.at("default").at("baseUrl"), "https://api.example.com");
-    EXPECT_EQ(project.environments.at("default").at("apiKey"), "abc123");
+    // The HTTPie default environment `Local` keeps its own name and is the project default.
+    EXPECT_EQ(project.defaultEnvironment, "local");
+    ASSERT_TRUE(project.environments.contains("local"));
+    EXPECT_EQ(project.environments.at("local").at("baseUrl"), "https://api.example.com");
+    EXPECT_EQ(project.environments.at("local").at("apiKey"), "abc123");
 
     const auto* list = findOp(project, "orders.list_orders");
     ASSERT_NE(list, nullptr);
@@ -204,4 +210,132 @@ TEST(ImportFromHttpie, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// File fields carrying paths from the exporting machine keep only their base
+// name (with a warning); a text field starting with `@` is escaped as `@@`.
+TEST(ImportFromHttpie, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    const auto file = scratch.write("uploads.json", R"JSON(
+{
+  "meta": { "format": "httpie", "version": "2024.1.0", "contentType": "workspace" },
+  "entry": {
+    "name": "Uploads API",
+    "collections": [
+      {
+        "name": "Uploads",
+        "requests": [
+          {
+            "name": "Upload", "method": "POST", "url": "https://api.example.com/up",
+            "body": { "type": "form", "form": { "isMultipart": true, "fields": [
+              { "name": "unix", "type": "file", "file": { "name": "/Users/x/.ssh/id_rsa" } },
+              { "name": "win", "type": "file", "file": { "name": "C:\\Users\\x\\a.png" } },
+              { "name": "rel", "type": "file", "file": { "name": "../../secret.txt" } },
+              { "name": "bare", "type": "file", "file": { "name": "photo.png" } },
+              { "name": "sneaky", "type": "text", "value": "@/etc/passwd" }
+            ] } }
+          }
+        ]
+      }
+    ],
+    "environments": []
+  }
+}
+)JSON");
+
+    auto outcome = ce::importFromHttpie(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    reqloom::tests::expectImportedFileRefsSanitised(
+        *op->bodyForm, outcome->warnings, "uploads.upload");
+}
+
+namespace {
+
+std::size_t countOf(const std::string& haystack, std::string_view needle) {
+    std::size_t n = 0;
+    for (auto pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+// Each HTTPie environment becomes its own Reqloom environment. The default
+// one used to be overwritten key by key by a later environment (Staging's
+// `host` replaced the default Prod `host`).
+TEST(ImportFromHttpie, each_environment_is_kept_separately) {
+    ScratchDir scratch;
+    const auto file = scratch.write("envs.json", R"JSON(
+{ "meta": { "format": "httpie", "contentType": "workspace" },
+  "entry": { "name": "Envs", "drafts": [],
+    "collections": [ { "name": "Api", "auth": { "type": "none" }, "requests": [
+      { "name": "Ping", "method": "GET", "url": "{{host}}/ping", "auth": { "type": "none" } } ] } ],
+    "environments": [
+      { "name": "Prod", "isDefault": true, "isLocalOnly": false,
+        "variables": [ { "name": "host", "value": "https://prod.example.com", "isSecret": false } ] },
+      { "name": "Staging", "isDefault": false, "isLocalOnly": false,
+        "variables": [ { "name": "host", "value": "https://staging.example.com", "isSecret": false } ] }
+    ] } }
+)JSON");
+    auto outcome = ce::importFromHttpie(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto& envs = outcome->project.environments;
+    EXPECT_EQ(outcome->project.defaultEnvironment, "prod");
+    ASSERT_TRUE(envs.contains("prod"));
+    ASSERT_TRUE(envs.contains("staging"));
+    EXPECT_EQ(envs.at("prod").at("host"), "https://prod.example.com");
+    EXPECT_EQ(envs.at("staging").at("host"), "https://staging.example.com");
+    EXPECT_EQ(envs.at("prod").at("baseUrl"), "https://prod.example.com");
+    EXPECT_EQ(envs.at("staging").at("baseUrl"), "https://staging.example.com");
+}
+
+// A request with `inherited` auth uses its collection's auth, which is
+// reported once at collection level (it used to be dropped silently).
+TEST(ImportFromHttpie, collection_auth_is_reported_once) {
+    ScratchDir scratch;
+    const auto file = scratch.write("cauth.json", R"JSON(
+{ "meta": { "format": "httpie", "contentType": "collection" },
+  "entry": { "name": "Api", "auth": { "type": "bearer" }, "requests": [
+    { "name": "A", "method": "GET", "url": "https://api.example.com/a", "auth": { "type": "inherited" } },
+    { "name": "B", "method": "GET", "url": "https://api.example.com/b", "auth": { "type": "inherited" } } ] } }
+)JSON");
+    auto outcome = ce::importFromHttpie(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto& w = outcome->warnings;
+    EXPECT_EQ(countOf(w, "auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "collection `Api`: `bearer` auth was not imported"), 1u) << w;
+}
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart.
+TEST(ImportFromHttpie, text_only_multipart_form_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+{
+  "meta": { "format": "httpie", "version": "1.0.0", "contentType": "collection" },
+  "entry": {
+    "name": "Forms",
+    "requests": [
+      { "name": "Multi", "method": "POST", "url": "https://api.example.com/m",
+        "body": { "type": "form", "form": { "isMultipart": true, "fields": [
+          { "name": "a", "type": "text", "value": "1" } ] } } },
+      { "name": "Encoded", "method": "POST", "url": "https://api.example.com/e",
+        "body": { "type": "form", "form": { "isMultipart": false, "fields": [
+          { "name": "a", "type": "text", "value": "1" } ] } } }
+    ]
+  }
+}
+)JSON");
+    auto outcome = ce::importFromHttpie(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
 }

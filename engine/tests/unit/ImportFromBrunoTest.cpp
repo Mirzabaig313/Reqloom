@@ -5,11 +5,13 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -137,9 +139,11 @@ TEST(ImportFromBruno, environment_vars_seed_baseurl_and_query_is_kept) {
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     const auto& project = outcome->project;
 
-    ASSERT_TRUE(project.environments.contains("default"));
-    EXPECT_EQ(project.environments.at("default").at("baseUrl"), "https://api.example.com");
-    EXPECT_EQ(project.environments.at("default").at("apiKey"), "abc123");
+    // The Bruno environment `Local` keeps its own name and is the project default.
+    EXPECT_EQ(project.defaultEnvironment, "local");
+    ASSERT_TRUE(project.environments.contains("local"));
+    EXPECT_EQ(project.environments.at("local").at("baseUrl"), "https://api.example.com");
+    EXPECT_EQ(project.environments.at("local").at("apiKey"), "abc123");
 
     const auto* list = findOp(project, "orders.list_orders");
     ASSERT_NE(list, nullptr);
@@ -156,4 +160,147 @@ TEST(ImportFromBruno, accepts_bruno_json_path_and_derives_root) {
     auto outcome = ce::importFromBruno(scratch.path() / "bruno.json", scratch.path());
     ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
     EXPECT_TRUE(outcome->project.resources.contains(ce::ResourceId{"orders"}));
+}
+
+// Bruno writes multipart file fields as `@file(<path>)`. Paths from the
+// exporting machine keep only their base name (with a warning); a text field
+// starting with `@` is escaped as `@@`.
+TEST(ImportFromBruno, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    scratch.write("bruno.json", R"({"version":"1","name":"Uploads API","type":"collection"})");
+    scratch.write("Uploads/Upload.bru",
+                  "meta {\n"
+                  "  name: Upload\n"
+                  "}\n"
+                  "\n"
+                  "post {\n"
+                  "  url: https://api.example.com/up\n"
+                  "  body: multipartForm\n"
+                  "}\n"
+                  "\n"
+                  "body:multipart-form {\n"
+                  "  unix: @file(/Users/x/.ssh/id_rsa)\n"
+                  "  win: @file(C:\\Users\\x\\a.png)\n"
+                  "  rel: @file(../../secret.txt)\n"
+                  "  bare: @file(photo.png)\n"
+                  "  sneaky: @/etc/passwd\n"
+                  "}\n");
+
+    auto outcome = ce::importFromBruno(scratch.path(), scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    reqloom::tests::expectImportedFileRefsSanitised(
+        *op->bodyForm, outcome->warnings, "uploads.upload");
+}
+
+namespace {
+
+std::size_t countOf(const std::string& haystack, std::string_view needle) {
+    std::size_t n = 0;
+    for (auto pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+// `params:path` used to be parsed as a block named `params` and turned into
+// query parameters (`/users/:id?id=123`). The path parameter becomes the
+// shared `{{resource.id}}` reference and `params:query` stays a query.
+TEST(ImportFromBruno, params_path_becomes_path_parameter_not_query) {
+    ScratchDir scratch;
+    scratch.write("bruno.json", R"({"version":"1","name":"Users","type":"collection"})");
+    scratch.write("Users/Get User.bru",
+                  "meta {\n  name: Get User\n}\n\n"
+                  "get {\n  url: https://api.example.com/users/:id?verbose=true\n}\n\n"
+                  "params:query {\n  verbose: true\n}\n\n"
+                  "params:path {\n  id: 123\n}\n");
+    auto outcome = ce::importFromBruno(scratch.path(), scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "users.get_user");
+    ASSERT_NE(op, nullptr);
+    EXPECT_EQ(op->pathTemplate, "/users/{{users.id}}");
+    EXPECT_FALSE(op->queryParams.contains("id"));
+    EXPECT_EQ(op->queryParams.at("verbose"), "true");
+    EXPECT_NE(outcome->warnings.find("`123`"), std::string::npos) << outcome->warnings;
+}
+
+// Bruno disables a line with a leading `~`; it used to be imported as an
+// enabled header named `~X-Debug`.
+TEST(ImportFromBruno, tilde_disabled_entries_are_skipped) {
+    ScratchDir scratch;
+    scratch.write("bruno.json", R"({"version":"1","name":"Api","type":"collection"})");
+    scratch.write("Ping.bru",
+                  "get {\n  url: https://api.example.com/ping\n}\n\n"
+                  "headers {\n  ~X-Debug: 1\n  X-Live: 1\n}\n\n"
+                  "query {\n  ~trace: on\n}\n");
+    auto outcome = ce::importFromBruno(scratch.path(), scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "api.ping");
+    ASSERT_NE(op, nullptr);
+    EXPECT_FALSE(op->headers.contains("~X-Debug"));
+    EXPECT_FALSE(op->headers.contains("X-Debug"));
+    EXPECT_EQ(op->headers.at("X-Live"), "1");
+    EXPECT_TRUE(op->queryParams.empty());
+}
+
+// Request auth (`auth: bearer`) and collection.bru auth each warn once;
+// `auth: none` and `auth: inherit` do not.
+TEST(ImportFromBruno, auth_warnings_once_per_scope) {
+    ScratchDir scratch;
+    scratch.write("bruno.json", R"({"version":"1","name":"Api","type":"collection"})");
+    scratch.write("collection.bru", "auth {\n  mode: basic\n}\n");
+    scratch.write("A.bru", "get {\n  url: https://api.example.com/a\n  auth: bearer\n}\n");
+    scratch.write("B.bru", "get {\n  url: https://api.example.com/b\n  auth: inherit\n}\n");
+    scratch.write("C.bru", "get {\n  url: https://api.example.com/c\n  auth: none\n}\n");
+    auto outcome = ce::importFromBruno(scratch.path(), scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto& w = outcome->warnings;
+    EXPECT_EQ(countOf(w, "auth was not imported"), 2u) << w;
+    EXPECT_EQ(countOf(w, "collection `Api`: `basic` auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "operation api.a: `bearer` auth was not imported"), 1u) << w;
+}
+
+// Each environments/*.bru file becomes its own environment (they used to be
+// merged last-wins in directory order); the first by name is the default.
+TEST(ImportFromBruno, each_environment_file_is_kept_separately) {
+    ScratchDir scratch;
+    scratch.write("bruno.json", R"({"version":"1","name":"Api","type":"collection"})");
+    scratch.write("environments/Local.bru", "vars {\n  host: http://localhost:3000\n}\n");
+    scratch.write("environments/Prod.bru", "vars {\n  host: https://prod.example.com\n}\n");
+    scratch.write("Ping.bru", "get {\n  url: {{host}}/ping\n}\n");
+    auto outcome = ce::importFromBruno(scratch.path(), scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto& envs = outcome->project.environments;
+    EXPECT_EQ(outcome->project.defaultEnvironment, "local");
+    ASSERT_TRUE(envs.contains("local"));
+    ASSERT_TRUE(envs.contains("prod"));
+    EXPECT_EQ(envs.at("local").at("host"), "http://localhost:3000");
+    EXPECT_EQ(envs.at("prod").at("host"), "https://prod.example.com");
+    EXPECT_EQ(envs.at("local").at("baseUrl"), "http://localhost:3000");
+    EXPECT_EQ(envs.at("prod").at("baseUrl"), "https://prod.example.com");
+}
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart.
+TEST(ImportFromBruno, text_only_multipart_form_stays_multipart) {
+    ScratchDir scratch;
+    scratch.write("bruno.json", R"({"version":"1","name":"Forms","type":"collection"})");
+    scratch.write("Forms/Multi.bru",
+                  "meta {\n  name: Multi\n}\n\npost {\n  url: https://api.example.com/m\n"
+                  "  body: multipartForm\n}\n\nbody:multipart-form {\n  a: 1\n}\n");
+    scratch.write("Forms/Encoded.bru",
+                  "meta {\n  name: Encoded\n}\n\npost {\n  url: https://api.example.com/e\n"
+                  "  body: formUrlEncoded\n}\n\nbody:form-urlencoded {\n  a: 1\n}\n");
+    auto outcome = ce::importFromBruno(scratch.path(), scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
 }

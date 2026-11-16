@@ -19,30 +19,30 @@ ApplicationWindow {
     visible: true
     title: {
         const p = AppController.projectName;
-        return p.length > 0 ? (p + " — Reqloom") : qsTr("Reqloom");
+        const base = p.length > 0 ? (p + " — Reqloom") : qsTr("Reqloom");
+        // Qt Quick has no native modified flag, so the title carries it.
+        return AppController.unsavedTabCount > 0 ? qsTr("%1 — Edited").arg(base) : base;
     }
     color: DesignTokens.canvasBottom
 
-    property bool quitAfterDraftDiscard: false
-    property bool closingAfterDraftDiscard: false
-    property bool discardAfterSaveConfirmationCloses: false
-    property bool discardConfirmationActive: false
-    readonly property bool endpointConfirmationActive: discardConfirmationActive || workbench.endpointSaveConfirmationActive
+    property bool quitApproved: false
+    readonly property bool endpointConfirmationActive: unsavedChangesDialog.opened || workbench.endpointSaveConfirmationActive
     readonly property bool globalShortcutBlocked: endpointConfirmationActive || workbench.editConfirmationActive
 
-    // Persist layout on every close attempt. A transient endpoint is never
-    // persisted, so close only resumes after the shared discard confirmation.
+    // Persist layout on every close attempt. Unsaved environment edits, then
+    // unsaved tabs, hold the close until the person saves or discards them.
     onClosing: event => {
         workbench.saveLayout();
-        if (AppController.newOperationDraftOpen && !window.closingAfterDraftDiscard) {
+        if (!window.quitApproved && manageEnvironmentDialog.holdsQuit(window.close)) {
             event.accepted = false;
-            window.quitAfterDraftDiscard = true;
-            if (workbench.endpointSaveConfirmationActive) {
-                window.discardAfterSaveConfirmationCloses = true;
-                workbench.closeEndpointSaveConfirmation();
-            } else if (!window.discardConfirmationActive) {
-                AppController.requestDiscardNewOperation();
-            }
+            return;
+        }
+        if (window.quitApproved || AppController.requestQuit()) {
+            return;
+        }
+        event.accepted = false;
+        if (workbench.endpointSaveConfirmationActive) {
+            workbench.closeEndpointSaveConfirmation();
         }
     }
 
@@ -249,24 +249,21 @@ ApplicationWindow {
         function onNotify(message, isError) {
             toast.show(message, isError);
         }
+        function onNotifyWarning(message) {
+            toast.warn(message);
+        }
         function onImportNeedsOverwrite(specFile, targetDir) {
             importOverwriteDialog.confirmFor(specFile, targetDir);
         }
         function onImportReviewNotes(notes) {
             importNotesDialog.showNotes(notes);
         }
-        function onNewOperationDiscardRequested() {
-            if (!window.discardConfirmationActive) {
-                window.discardConfirmationActive = true;
-                discardNewEndpointDialog.open();
-            }
+        function onUnsavedChangesPrompt(title, message, saveText, discardText, cancelText) {
+            unsavedChangesDialog.ask(title, message, saveText, discardText, cancelText);
         }
-        function onNewOperationDraftDiscarded() {
-            if (window.quitAfterDraftDiscard) {
-                window.quitAfterDraftDiscard = false;
-                window.closingAfterDraftDiscard = true;
-                Qt.callLater(window.close);
-            }
+        function onQuitApproved() {
+            window.quitApproved = true;
+            Qt.callLater(window.close);
         }
     }
     Connections {
@@ -379,6 +376,7 @@ ApplicationWindow {
                 function reload() {
                     const open = AppController.openProjects();
                     const openPaths = open.map(o => o.path);
+                    const unavailablePaths = AppController.unavailableProjects.map(u => u.path);
                     const list = [];
                     for (const o of open) {
                         list.push({
@@ -390,7 +388,7 @@ ApplicationWindow {
                     }
                     const recents = [];
                     for (const r of AppController.recentProjects()) {
-                        if (!openPaths.includes(r.path)) {
+                        if (!openPaths.includes(r.path) && !unavailablePaths.includes(r.path)) {
                             recents.push({
                                 kind: "recent",
                                 label: r.name,
@@ -405,6 +403,20 @@ ApplicationWindow {
                         });
                         for (const r of recents) {
                             list.push(r);
+                        }
+                    }
+                    const unavailable = AppController.unavailableProjects;
+                    if (unavailable.length > 0) {
+                        list.push({
+                            kind: "header",
+                            label: qsTr("Unavailable")
+                        });
+                        for (const u of unavailable) {
+                            list.push({
+                                kind: "unavailable",
+                                label: u.name.length > 0 ? u.name : u.path,
+                                path: u.path
+                            });
                         }
                     }
                     items = list;
@@ -455,7 +467,7 @@ ApplicationWindow {
                                 anchors.verticalCenter: parent.verticalCenter
                                 visible: !swItem.isHeader
                                 text: swItem.modelData.kind === "open" ? ((swItem.modelData.active ? "●  " : "") + swItem.modelData.label) : swItem.modelData.label
-                                color: DesignTokens.textPrimary
+                                color: swItem.modelData.kind === "unavailable" ? DesignTokens.textSecondary : DesignTokens.textPrimary
                                 font.pointSize: DesignTokens.fontBodyPointSize
                                 font.family: DesignTokens.fontSans
                                 elide: Text.ElideRight
@@ -466,6 +478,8 @@ ApplicationWindow {
                                 AppController.activateProject(swItem.modelData.projectIndex);
                             else if (swItem.modelData.kind === "recent")
                                 AppController.openProjectPath(swItem.modelData.path);
+                            else if (swItem.modelData.kind === "unavailable")
+                                AppController.retryUnavailableProject(swItem.modelData.path);
                         }
                     }
                     onObjectAdded: (index, object) => switcherMenu.insertItem(index, object)
@@ -651,12 +665,7 @@ ApplicationWindow {
         id: workbench
         anchors.fill: parent
         onEndpointSaveConfirmationClosed: {
-            if (window.discardAfterSaveConfirmationCloses) {
-                window.discardAfterSaveConfirmationCloses = false;
-                if (AppController.newOperationDraftOpen && !window.discardConfirmationActive) {
-                    AppController.requestDiscardNewOperation();
-                }
-            } else if (!window.discardConfirmationActive) {
+            if (!unsavedChangesDialog.opened) {
                 workbench.restoreFocusAfterDraftDiscard();
             }
         }
@@ -676,13 +685,9 @@ ApplicationWindow {
         onDiagnosticNavigationFailed: message => toast.show(message, true)
     }
 
-    // ── Toast overlay (bottom centre) ──────────────────────────────────────
+    // ── Toast overlay (bottom centre, above dialogs) ───────────────────────
     Toast {
         id: toast
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: DesignTokens.spaceLg
-        z: 100
     }
 
     // ── Dialogs ────────────────────────────────────────────────────────────
@@ -838,56 +843,11 @@ ApplicationWindow {
         onAccepted: AppController.createProject(folderUrl, npNameField.text)
     }
 
-    Dialog {
-        id: discardNewEndpointDialog
-        title: qsTr("Discard new endpoint?")
-        modal: true
-        enter: PopupEnter {}
-        exit: PopupExit {}
-        anchors.centerIn: Overlay.overlay
-        width: Math.min(440, Overlay.overlay ? Overlay.overlay.width - 64 : 440)
-        height: Math.min(implicitHeight, Overlay.overlay ? Overlay.overlay.height - 64 : implicitHeight)
-        padding: DesignTokens.spaceLg
-        focus: true
-
-        header: DialogHeader {
-            title: qsTr("Discard new endpoint?")
-        }
-
-        background: Rectangle {
-            radius: DesignTokens.radiusLg
-            color: DesignTokens.surfaceRaised
-            border.width: 1
-            border.color: DesignTokens.glassBorder
-        }
-
-        contentItem: Label {
-            text: qsTr("This closes the “New endpoint” tab and discards all unsaved changes.")
-            color: DesignTokens.textSecondary
-            font.pixelSize: DesignTokens.fontLabel
-            wrapMode: Text.WordWrap
-        }
-
-        footer: DialogButtons {
-            cancelText: qsTr("Keep editing")
-            okText: qsTr("Discard draft")
-            okDestructive: true
-            onAccepted: discardNewEndpointDialog.accept()
-            onRejected: discardNewEndpointDialog.reject()
-        }
-
-        onAccepted: AppController.confirmDiscardNewOperation()
-        onRejected: {
-            window.quitAfterDraftDiscard = false;
-            AppController.keepEditingNewOperation();
-        }
-        onClosed: {
-            window.discardConfirmationActive = false;
-            if (window.quitAfterDraftDiscard && AppController.newOperationDraftOpen && !window.discardAfterSaveConfirmationCloses) {
-                AppController.requestDiscardNewOperation();
-            } else if (!window.closingAfterDraftDiscard) {
-                workbench.restoreFocusAfterDraftDiscard();
-            }
+    UnsavedChangesDialog {
+        id: unsavedChangesDialog
+        onChoice: value => {
+            AppController.resolveUnsavedChanges(value);
+            workbench.restoreFocusAfterDraftDiscard();
         }
     }
 
@@ -1140,8 +1100,10 @@ ApplicationWindow {
         }
         MenuSeparator {}
         GlassMenuItem {
-            text: AppController.environment.length > 0 ? qsTr("Delete “%1”").arg(AppController.environment) : qsTr("Delete")
+            // A disabled menu item gets no hover, so the reason is in the label.
+            text: AppController.environments.length <= 1 ? qsTr("Delete — a project needs at least one environment") : AppController.environment.length > 0 ? qsTr("Delete “%1”").arg(AppController.environment) : qsTr("Delete")
             enabled: AppController.environments.length > 1 && AppController.environment.length > 0
+            opacity: enabled ? 1.0 : 0.5
             onTriggered: envDeleteDialog.openFor(AppController.environment)
         }
     }

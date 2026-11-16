@@ -1,7 +1,5 @@
-// StaticHookTypingsEmitter — see header. The emitted body matches the hook
-// `ctx` surface (codecs + crypto helpers). When the QuickJS bridge exposes
-// these helpers, the binding code reads THIS file's shape — the typings
-// stay the source of truth for what hook authors can rely on.
+// StaticHookTypingsEmitter — see header. The typings are the source of truth for the hook `ctx`
+// surface.
 #include "StaticHookTypingsEmitter.h"
 
 #include <fstream>
@@ -16,9 +14,7 @@ namespace reqloom::engine {
 
 namespace {
 
-// The full body of `reqloom.d.ts`. Kept as a single literal so the
-// emitter is trivially auditable — what you read here is exactly what
-// hook authors see in their editor.
+// The full body of `reqloom.d.ts`, one literal so it is auditable.
 constexpr std::string_view kTypingsBody = R"TS(// reqloom.d.ts
 //
 // TypeScript declarations for the Reqloom hook sandbox `ctx` object.
@@ -142,10 +138,8 @@ std::expected<void, ReqloomError> writeAtomic(const fs::path& target, std::strin
         }
     }
 
-    // On POSIX, rename(2) atomically replaces the target. On Windows,
-    // std::filesystem::rename fails when the target exists — remove it
-    // first. The small race (crash between remove and rename leaves the
-    // file gone) is acceptable for a generated typings file.
+    // POSIX rename(2) replaces atomically; Windows rename fails if the target exists, so remove it
+    // first (a crash in between loses a generated file, which is acceptable).
 #ifdef _WIN32
     std::error_code removeEc;
     fs::remove(target, removeEc);

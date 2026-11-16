@@ -1,8 +1,5 @@
-// TabModel — the open editor tabs (endpoints + actors) for the centre pane.
-// Each row is one open tab; TabState carries a full snapshot of that tab's
-// live editor state so AppController can swap the single set of live models /
-// scalars in and out on tab switch (per-tab state preservation). C++ owns the
-// buffers; QML renders the tab strip and drives activate/close.
+// TabModel — the open editor tabs (endpoints + actors) for the centre pane. TabState snapshots each
+// tab's live editor state so AppController can swap the single set of live models on tab switch.
 #pragma once
 
 #include "AuthStepListModel.h"  // AuthStepListModel::StepSeed for actor login steps
@@ -16,6 +13,7 @@
 #include <QtCore/QStringList>
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -24,14 +22,14 @@ namespace reqloom::desktop::qml {
 /// Ordered key/value rows as captured from an EditableKeyValueModel.
 using TabKvPairs = std::vector<std::pair<QString, QString>>;
 
-/// A full snapshot of one tab's editor state. An operation tab uses the op*/
-/// edit*/response fields; an actor tab uses the actor* fields. Defaults mirror
-/// AppController's member initializers so a freshly-opened tab matches a fresh
-/// controller.
+/// A full snapshot of one tab's editor state: operation tabs use the op*/edit*/response fields,
+/// actor tabs the actor* fields. Defaults mirror AppController's member initializers.
 struct TabState {
     enum class Kind : std::uint8_t { Operation, Actor };
 
     Kind kind{Kind::Operation};
+    /// Stable identity for the tab's lifetime, assigned by TabModel on insert; never reused.
+    std::uint64_t uid{0};
     /// Operation tabs: fully-qualified "module.op". Actor tabs: actor id.
     /// A never-saved new-actor draft has an empty id.
     QString id;
@@ -44,8 +42,8 @@ struct TabState {
     bool operationDraft{false};  ///< Transient endpoint creation row; never persisted.
 
     // ── Operation identity ──
-    // Read fields (method/path/headers/…) are re-derived from the project on
-    // restore (loadOperationReadState), so only the op name is stored here.
+    // Read fields are re-derived on restore (loadOperationReadState), so only the op name is
+    // stored.
     QString opName;
 
     // ── Operation edit state ──
@@ -59,6 +57,10 @@ struct TabState {
     QString editBody;
     bool editBodyIsForm{false};
     QString editBodyType{QStringLiteral("none")};
+    /// The GraphQL editor's text while editBodyType is "graphql". The variables may be invalid
+    /// JSON for a while, during which editBody keeps the last valid body.
+    QString editGraphqlQuery;
+    QString editGraphqlVariables;
     bool chainFieldsLoaded{false};
 
     QString editAuthType{QStringLiteral("none")};
@@ -104,11 +106,14 @@ struct TabState {
     std::vector<QString> editDependencies;
 
     // ── Whole-chain editor snapshot (per tab) ──
-    // The Chain tab's per-step depends_on / extract / for-each editors. Captured
-    // so unsaved chain wiring survives a tab switch instead of being re-derived
-    // from the saved project. Only meaningful for an operation tab in edit mode.
+    // Parked so unsaved chain wiring survives a tab switch. Only meaningful for an operation tab in
+    // edit mode.
     std::vector<ChainEditorModel::OpSeed> chainSeeds;
     bool chainSnapshotValid{false};
+
+    /// The edits as they were when editing began (or after the last chain save): the tab is dirty
+    /// while its edits differ from this. Null when not editing. Actor tabs keep theirs here too.
+    std::shared_ptr<const TabState> editBaseline;
 
     // ── Actor state ──
     QString actorId;
@@ -128,6 +133,18 @@ struct TabState {
     QString actorRefreshPath;
     QString actorRefreshBody;
 
+    // ── Actor edit state ──
+    // The actor* fields above are the persisted values (the config, step and refresh-extract tables
+    // are edited in place); these hold the panel's edit copies of the scalar fields.
+    bool actorEditing{false};
+    QString actorEditName;
+    QString actorEditDescription;
+    QString actorEditStrategy;
+    bool actorEditRefreshEnabled{false};
+    QString actorEditRefreshMethod{QStringLiteral("POST")};
+    QString actorEditRefreshPath;
+    QString actorEditRefreshBody;
+
     // ── Response snapshot (per tab) ──
     bool hasResponse{false};
     int respStatus{0};
@@ -139,10 +156,10 @@ struct TabState {
     QString shownExample;
 
     // ── Run timeline snapshot (per tab) ──
-    // The live TimelineModel is a single instance; each tab parks its own run
-    // timeline here so switching tabs restores that tab's timeline instead of
-    // wiping it.
+    // The live TimelineModel is a single instance; each tab parks its own timeline here.
     TimelineModel::Snapshot timeline;
+    /// operationId → status token of this tab's latest run, for the chain graph.
+    QHash<QString, QString> chainStatus;
 };
 
 /// List of open tabs. Owns the TabState buffers; exposes lightweight display
@@ -182,17 +199,18 @@ public:
     /// Index of the tab matching (kind, id), or -1. A blank-id actor draft is
     /// never matched (each "New actor" opens its own tab).
     [[nodiscard]] int indexOf(TabState::Kind kind, const QString& id) const;
+    /// Index of the tab with `uid`, or -1.
+    [[nodiscard]] int indexOfUid(std::uint64_t uid) const;
+    /// Number of tabs whose `dirty` flag is set.
+    [[nodiscard]] int dirtyCount() const;
 
-    /// The label QML shows for `index`: `TabState::title` on its own, or
-    /// "<module>.<title>" when another open tab carries the same bare title.
-    ///
-    /// Two operations named alike in different modules ("worker.industries" and
-    /// "employer.industries") otherwise render as two identical tabs. Derived on
-    /// read rather than written into `TabState::title` so the qualification
-    /// disappears by itself once the colliding tab closes.
+    /// The label QML shows for `index`: `TabState::title`, or "<module>.<title>" when another open
+    /// tab has the same bare title. Derived on read so the qualification disappears once the
+    /// colliding tab closes.
     [[nodiscard]] QString displayTitle(int index) const;
 
-    /// Insert `state` at `index`; returns the inserted index, or -1 when invalid.
+    /// Insert `state` at `index`, giving it a fresh uid unless it already has one (a tab re-added
+    /// after `clearAll` keeps its identity); returns the inserted index, or -1 when invalid.
     int insert(int index, TabState state);
     /// Append `state` as a new tab; returns its index.
     int append(TabState state);
@@ -207,12 +225,12 @@ public:
     void refreshRow(int index);
 
 private:
-    /// Re-emit TitleRole for every row. Opening, closing, or renaming one tab
-    /// can create or clear a collision for a different tab, so the whole strip
-    /// has to re-read its labels, not just the row that changed.
+    /// Re-emit TitleRole for every row: one tab opening, closing or renaming can change another's
+    /// collision.
     void refreshTitles();
 
     std::vector<TabState> tabs_;
+    std::uint64_t nextUid_{1};
 };
 
 }  // namespace reqloom::desktop::qml

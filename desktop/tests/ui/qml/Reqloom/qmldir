@@ -1,0 +1,8 @@
+module Reqloom
+singleton DesignTokens 1.0 DesignTokens.qml
+singleton AppController 1.0 AppController.qml
+PopupEnter 1.0 PopupEnter.qml
+PopupExit 1.0 PopupExit.qml
+ColorMotion 1.0 ColorMotion.qml
+SpringMotion 1.0 SpringMotion.qml
+singleton SecretsController 1.0 SecretsController.qml

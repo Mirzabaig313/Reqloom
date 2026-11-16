@@ -59,11 +59,9 @@ void OAuth2AuthCodeFlow::start(const Config& config) {
     }
 
     const auto isLoopback = [](const QString& host) {
-        return host == QLatin1String("127.0.0.1") || host == QLatin1String("localhost") ||
-               host == QLatin1String("::1");
+        return !loopbackAddressesFor(host).isEmpty();
     };
-    // Secrets (code_verifier, client_secret, the token) cross authUrl/tokenUrl.
-    // Require HTTPS; only loopback may use plain http (local test servers).
+    // Secrets cross authUrl/tokenUrl: require HTTPS, except plain http on loopback.
     const auto isSecure = [&](const QUrl& u) {
         return u.scheme() == QLatin1String("https") ||
                (u.scheme() == QLatin1String("http") && isLoopback(u.host()));
@@ -85,14 +83,16 @@ void OAuth2AuthCodeFlow::start(const Config& config) {
     verifier_ = randomVerifier();
     state_ = base64Url(QUuid::createUuid().toRfc4122());
 
-    server_ = std::make_unique<QTcpServer>();
-    if (!server_->listen(QHostAddress::LocalHost, static_cast<quint16>(callback.port()))) {
-        finishErr(
-            tr("Could not bind the callback port %1 (already in use?).").arg(callback.port()));
+    auto servers = listenLoopback(callback.host(), static_cast<quint16>(callback.port()));
+    if (!servers) {
+        finishErr(servers.error());
         return;
     }
-    connect(
-        server_.get(), &QTcpServer::newConnection, this, &OAuth2AuthCodeFlow::onCallbackConnection);
+    servers_ = std::move(*servers);
+    for (const auto& server : servers_) {
+        QTcpServer* raw = server.get();
+        connect(raw, &QTcpServer::newConnection, this, [this, raw] { onCallbackConnection(raw); });
+    }
 
     timeout_ = new QTimer(this);
     timeout_->setSingleShot(true);
@@ -101,7 +101,6 @@ void OAuth2AuthCodeFlow::start(const Config& config) {
     });
     timeout_->start(kTimeoutMs);
 
-    // Build the authorization request (RFC 6749 §4.1.1 + RFC 7636 §4.3).
     QUrl authUrl(config_.authUrl);
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("response_type"), QStringLiteral("code"));
@@ -124,8 +123,51 @@ void OAuth2AuthCodeFlow::start(const Config& config) {
     }
 }
 
-void OAuth2AuthCodeFlow::onCallbackConnection() {
-    QTcpSocket* socket = server_->nextPendingConnection();
+QList<QHostAddress> OAuth2AuthCodeFlow::loopbackAddressesFor(const QString& host) {
+    if (host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0) {
+        return {QHostAddress(QHostAddress::LocalHost), QHostAddress(QHostAddress::LocalHostIPv6)};
+    }
+    if (host == QLatin1String("127.0.0.1")) {
+        return {QHostAddress(QHostAddress::LocalHost)};
+    }
+    if (host == QLatin1String("::1")) {
+        return {QHostAddress(QHostAddress::LocalHostIPv6)};
+    }
+    return {};
+}
+
+std::expected<std::vector<std::unique_ptr<QTcpServer>>, QString> OAuth2AuthCodeFlow::listenLoopback(
+    const QString& host, quint16 port) {
+    std::vector<std::unique_ptr<QTcpServer>> servers;
+    for (const QHostAddress& address : loopbackAddressesFor(host)) {
+        auto server = std::make_unique<QTcpServer>();
+        if (server->listen(address, port)) {
+            servers.push_back(std::move(server));
+            continue;
+        }
+        // The browser may pick either family for `localhost`; a port another process holds
+        // on one of them could receive the authorization code.
+        if (server->serverError() == QAbstractSocket::AddressInUseError) {
+            return std::unexpected(
+                tr("Could not bind the callback port %1 on %2 (already in use?).")
+                    .arg(port)
+                    .arg(address.toString()));
+        }
+    }
+    if (servers.empty()) {
+        return std::unexpected(tr("Could not bind the callback port %1.").arg(port));
+    }
+    return servers;
+}
+
+void OAuth2AuthCodeFlow::closeServers() {
+    for (const auto& server : servers_) {
+        server->close();
+    }
+}
+
+void OAuth2AuthCodeFlow::onCallbackConnection(QTcpServer* server) {
+    QTcpSocket* socket = server->nextPendingConnection();
     if (socket == nullptr) {
         return;
     }
@@ -145,18 +187,12 @@ void OAuth2AuthCodeFlow::onCallbackConnection() {
         }
         *handled = true;
 
-        // First line: "GET /callback?code=...&state=... HTTP/1.1".
         const QByteArray firstLine = buffer->left(eol);
         const auto parts = firstLine.split(' ');
 
-        // Only the configured callback PATH is the genuine redirect. A browser
-        // can open other connections to this loopback origin around the same
-        // time (favicon, a reload, an OPTIONS preflight); if such a stray
-        // request finished parsing first it would win the flow and fire a
-        // spurious "no code" failure while the real callback is still in
-        // flight. Reply 404 to anything that isn't the callback path (and to a
-        // malformed request line) and keep listening — do NOT touch done_ or
-        // server_ here.
+        // Only the configured callback path is the genuine redirect. Reply 404 to anything else
+        // (favicon, reload, preflight, malformed line) and keep listening; touching done_/servers_
+        // here would fire a spurious failure.
         QString requestPath;
         if (parts.size() >= 2) {
             requestPath =
@@ -180,7 +216,6 @@ void OAuth2AuthCodeFlow::onCallbackConnection() {
             return;  // ignore; keep the server waiting for the real callback
         }
 
-        // Genuine callback → parse the OAuth response parameters.
         const QUrl target(QStringLiteral("http://localhost") + QString::fromLatin1(parts.at(1)));
         const QUrlQuery q(target);
         const QString code = q.queryItemValue(QStringLiteral("code"));
@@ -198,12 +233,9 @@ void OAuth2AuthCodeFlow::onCallbackConnection() {
         socket->flush();
         socket->disconnectFromHost();
 
-        // Stop accepting further loopback connections before the async token
-        // exchange, so a stray request (favicon, reload) can't fire a spurious
-        // failure mid-flight.
-        if (server_) {
-            server_->close();
-        }
+        // Stop accepting loopback connections before the async token exchange so a stray request
+        // can't fail the flow.
+        closeServers();
 
         if (!providerError.isEmpty()) {
             finishErr(tr("Authorization denied: %1").arg(providerError));
@@ -221,7 +253,6 @@ void OAuth2AuthCodeFlow::exchangeCode(const QString& code) {
     if (net_ == nullptr) {
         net_ = new QNetworkAccessManager(this);
     }
-    // RFC 6749 §4.1.3 + RFC 7636 §4.5 — code_verifier proves possession.
     QUrlQuery form;
     form.addQueryItem(QStringLiteral("grant_type"), QStringLiteral("authorization_code"));
     form.addQueryItem(QStringLiteral("code"), code);
@@ -272,9 +303,7 @@ void OAuth2AuthCodeFlow::finishOk(const QString& token) {
         return;
     }
     done_ = true;
-    if (server_) {
-        server_->close();
-    }
+    closeServers();
     emit succeeded(token);
 }
 
@@ -283,9 +312,7 @@ void OAuth2AuthCodeFlow::finishErr(const QString& error) {
         return;
     }
     done_ = true;
-    if (server_) {
-        server_->close();
-    }
+    closeServers();
     emit failed(error);
 }
 

@@ -15,9 +15,12 @@ public:
     YamlSchemaWriter& operator=(YamlSchemaWriter&&) = delete;
     ~YamlSchemaWriter() override;
 
-    SchemaWriteResult write(const std::filesystem::path& targetDir,
-                            const Project& project,
-                            bool overwrite = false) override;
+    SchemaWriteResult write(
+        const std::filesystem::path& targetDir,
+        const Project& project,
+        bool overwrite = false,
+        bool pruneStale = true,
+        std::map<std::filesystem::path, std::size_t>* loadedFiles = nullptr) override;
 };
 
 }  // namespace reqloom::engine

@@ -1,14 +1,6 @@
-// HookTypingsEmitter — writes `reqloom.d.ts` to a project directory
-// so hook authors get TypeScript autocomplete on the sandbox `ctx` object.
-//
-// The typings shape is static today — every project gets the same
-// `ReqloomContext` interface. The per-project emitter API is kept
-// (rather than shipping a static file) for two reasons:
-//   1. The shape will grow per-project once `ctx.actors.<id>.token` is typed.
-//   2. Importer-generated projects need to drop the typings file alongside
-//      the YAML output, so the writer is the right shape for the consumer.
-//
-// Same atomic-write pattern as `YamlSchemaWriter`.
+// HookTypingsEmitter — writes `reqloom.d.ts` so hook authors get TypeScript autocomplete on the
+// sandbox `ctx`. Static today; the per-project API lets importer-generated projects drop it beside
+// the YAML. Same atomic-write pattern as `YamlSchemaWriter`.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>

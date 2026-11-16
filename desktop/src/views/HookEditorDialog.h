@@ -1,9 +1,6 @@
-// HookEditorDialog — a standalone Widgets window for editing an operation's
-// pre-request and post-response JavaScript hooks with the CodeEditor. This is
-// the QML Migration Roadmap's sanctioned Widgets fallback (Principle 6): a
-// code editor is hard to rebuild in QML, so it lives as a separate dialog
-// window launched from the QML app. Presentation only — AppController owns
-// loading the scripts in and persisting the edits out.
+// HookEditorDialog — standalone Widgets window for editing an operation's pre-request and
+// post-response JavaScript hooks with the CodeEditor (a code editor is hard to rebuild in QML).
+// AppController owns loading and persisting.
 #pragma once
 
 #include <QtWidgets/QDialog>
@@ -27,9 +24,8 @@ class HookEditorDialog : public QDialog {
     Q_OBJECT
 
 public:
-    /// `*Ref` is the source file path when a hook came from a `./hooks/*.js`
-    /// reference (empty for inline hooks) — shown as a read-only hint so the
-    /// author knows the edit lands in that file.
+    /// `*Ref` is the source file path when a hook came from a `./hooks/*.js` reference (empty for
+    /// inline); shown as a read-only hint.
     HookEditorDialog(const QString& operationId,
                      const QString& preScript,
                      const QString& preRef,
@@ -43,10 +39,8 @@ public:
     [[nodiscard]] QString postScript() const;
 
 private:
-    /// Dry-run both hook scripts in the engine sandbox against a sample
-    /// context and report per-phase OK / error in the status line. Lets the
-    /// author catch a syntax or runtime error before saving and running. Runs
-    /// off the GUI thread (the sandbox has a 1s/phase budget).
+    /// Dry-run both hook scripts in the engine sandbox against a sample context and report
+    /// per-phase OK / error. Runs off the GUI thread (the sandbox has a 1s/phase budget).
     void validateHooks();
 
     /// Off-thread validation result, delivered back via `validateWatcher_`.

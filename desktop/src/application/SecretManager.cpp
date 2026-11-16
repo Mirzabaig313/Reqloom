@@ -4,7 +4,11 @@
 #include "ProjectModel.h"
 
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/ProjectIdentity.h>
+#include <reqloom/engine/ProjectTrustStore.h>
 
+#include <optional>
+#include <string>
 #include <utility>
 
 namespace reqloom::desktop {
@@ -12,10 +16,16 @@ namespace reqloom::desktop {
 SecretManager::SecretManager(QObject* parent)
     : QObject(parent),
       store_(engine::makeKeychainSecretStore()),
+      trust_(engine::makeFileProjectTrustStore()),
       backendAvailable_(engine::keychainBackendAvailable()) {}
 
-SecretManager::SecretManager(std::unique_ptr<engine::SecretStore> store, QObject* parent)
-    : QObject(parent), store_(std::move(store)), backendAvailable_(true) {}
+SecretManager::SecretManager(std::unique_ptr<engine::SecretStore> store,
+                             std::unique_ptr<engine::ProjectTrustStore> trust,
+                             QObject* parent)
+    : QObject(parent),
+      store_(std::move(store)),
+      trust_(std::move(trust)),
+      backendAvailable_(true) {}
 
 SecretManager::~SecretManager() = default;
 
@@ -29,13 +39,30 @@ QList<SecretEntry> SecretManager::referencedSecrets(const ProjectModel& project)
         return entries;
     }
 
-    // Ask the engine which secrets the project actually references — we only
-    // probe the keychain for those names, never enumerate the whole store.
-    for (const auto& name : engine::collectSecretReferences(project.project())) {
+    // Probe the keychain only for names the project references, never enumerating the store.
+    const auto names = engine::collectSecretReferences(project.project());
+    // No keychain access at all unless this folder owns the project id.
+    const auto trusted = names.empty()
+                             ? std::expected<void, engine::ReqloomError>{}
+                             : engine::checkProjectFolder(trust_.get(), project.project());
+    for (const auto& name : names) {
         SecretEntry entry;
         entry.name = QString::fromStdString(name);
 
-        auto result = store_->read(name);
+        if (!trusted) {
+            entry.state = SecretState::ReadError;
+            entry.detail = QString::fromStdString(trusted.error().detail);
+            entries.append(std::move(entry));
+            continue;
+        }
+        const auto key = engine::projectSecretKey(project.project(), name);
+        if (!key) {
+            entry.state = SecretState::ReadError;
+            entry.detail = QString::fromStdString(key.error().detail);
+            entries.append(std::move(entry));
+            continue;
+        }
+        auto result = store_->read(*key);
         if (!result) {
             entry.state = SecretState::ReadError;
             entry.detail = QString::fromStdString(result.error().detail);
@@ -49,8 +76,45 @@ QList<SecretEntry> SecretManager::referencedSecrets(const ProjectModel& project)
     return entries;
 }
 
-bool SecretManager::store(const QString& name, const QString& value, QString& error) {
-    auto result = store_->write(name.toStdString(), value.toStdString());
+namespace {
+
+/// The namespaced store key for `name`, or nullopt with `error` set when the project has no
+/// id or this folder does not own it.
+std::optional<std::string> keyFor(engine::ProjectTrustStore* trust,
+                                  const ProjectModel& project,
+                                  const QString& name,
+                                  QString& error) {
+    if (!project.hasProject()) {
+        error = QStringLiteral("No project loaded.");
+        return std::nullopt;
+    }
+    if (auto trusted = engine::checkProjectFolder(trust, project.project()); !trusted) {
+        error = QString::fromStdString(trusted.error().detail);
+        return std::nullopt;
+    }
+    auto key = engine::projectSecretKey(project.project(), name.toStdString());
+    if (!key) {
+        error = QString::fromStdString(key.error().detail);
+        return std::nullopt;
+    }
+    return std::move(*key);
+}
+
+}  // namespace
+
+bool SecretManager::store(const ProjectModel& project,
+                          const QString& name,
+                          const QString& value,
+                          QString& error) {
+    if (value.isEmpty()) {
+        error = QStringLiteral("Enter a value. To remove the secret, use Clear instead.");
+        return false;
+    }
+    const auto key = keyFor(trust_.get(), project, name, error);
+    if (!key) {
+        return false;
+    }
+    auto result = store_->write(*key, value.toStdString());
     if (!result) {
         error = QString::fromStdString(result.error().detail);
         return false;
@@ -58,8 +122,46 @@ bool SecretManager::store(const QString& name, const QString& value, QString& er
     return true;
 }
 
-bool SecretManager::clear(const QString& name, QString& error) {
-    auto result = store_->remove(name.toStdString());
+QString SecretManager::folderConflict(const ProjectModel& project) const {
+    if (!project.hasProject() || !trust_) {
+        return {};
+    }
+    const auto other = engine::projectFolderConflict(*trust_, project.project());
+    return other ? QString::fromStdString(other->string()) : QString{};
+}
+
+bool SecretManager::confirmMove(const ProjectModel& project,
+                                const QString& shownOwner,
+                                QString& error) {
+    if (!project.hasProject()) {
+        error = QStringLiteral("No project loaded.");
+        return false;
+    }
+    if (!trust_) {
+        error = QStringLiteral("No project trust store is available.");
+        return false;
+    }
+    // The person approved handing over one specific folder's secrets; a changed record needs a
+    // fresh look.
+    if (const QString owner = folderConflict(project); owner.isEmpty() || owner != shownOwner) {
+        error = QStringLiteral(
+            "The folder recorded for this project changed since it was shown. "
+            "Review the folders again before moving.");
+        return false;
+    }
+    if (auto bound = engine::rebindProjectFolder(*trust_, project.project()); !bound) {
+        error = QString::fromStdString(bound.error().detail);
+        return false;
+    }
+    return true;
+}
+
+bool SecretManager::clear(const ProjectModel& project, const QString& name, QString& error) {
+    const auto key = keyFor(trust_.get(), project, name, error);
+    if (!key) {
+        return false;
+    }
+    auto result = store_->remove(*key);
     if (!result) {
         error = QString::fromStdString(result.error().detail);
         return false;

@@ -14,8 +14,8 @@ The operation id is `<resource>.<operation>` — the resource name from your
 schema, not the filename. `resources/orders.yaml` declaring `name: order` gives
 you `order.create`, not `orders.create`.
 
-**The operation must come first.** Flags are parsed after it, so
-`reqloom run --env staging order.create` fails with `unknown argument`.
+Options may come before or after the operation, `--name=value` works as well as
+`--name value`, and `--` ends the options.
 
 ## Options
 
@@ -25,8 +25,9 @@ you `order.create`, not `orders.create`.
 | `--env <name>` | Environment to run against | the schema's `default_environment` |
 | `--var KEY=VALUE` | Override one environment variable. Repeatable | — |
 | `--format <fmt>` | `text`, `json`, or `junit` | `text` |
-| `--output <file>` | Write the rendered result to a file | stdout |
+| `--output <file>` | Write the report to a file. The file is replaced only by a complete new report | stdout |
 | `--quiet` | Suppress live progress | off |
+| `--failure-body-size <size>` | How much response text a failure message quotes: bytes, or a whole number with `KiB` or `MiB`; `0` for none; at most 1 MiB | `4KiB` |
 | `--help` / `-h` | Show usage | — |
 
 There are no short forms other than `-h`, and no `--dry-run`, `--timeout`,
@@ -87,13 +88,14 @@ The failing step prints to stderr, and everything downstream is marked
 ```ansi
 Running: refund.approve (chain of 7 steps, env=local)
   [1] Running: product.create (attempt 1)
-  [1] FAILED: product.create [E_SESSION_REFRESH_FAILED] —
+  [1] FAILED: product.create [E_SESSION_REFRESH_FAILED] — actor 'vendor' could not sign in: auth: network error during step 'login': curl error: Could not connect to server
 
 Result: FAILED
 
 --- Chain Summary ---
 Target: refund.approve   Env: local   Outcome: FAILED
   FAIL   product.create (0ms) err=E_SESSION_REFRESH_FAILED
+         actor 'vendor' could not sign in: auth: network error during step 'login': curl error: Could not connect to server
   BLOCK  product.publish (0ms) err=—
   BLOCK  cart.add_item (0ms) err=—
   BLOCK  order.create (0ms) err=—
@@ -103,11 +105,62 @@ Target: refund.approve   Env: local   Outcome: FAILED
 ```
 
 That's the real output when the vendor's login can't reach the server: step 1
-fails on auth, and the other six never run. `BLOCK` is your signal to fix the
-first failure and re-run rather than debug seven things.
+fails on auth, and the other six never run. The line under the `FAIL` row is the
+failure message. `BLOCK` is your signal to fix the first failure and re-run
+rather than debug seven things.
 
 Exit code is `1`. The `E_*` code tells you the class of problem — see
 [error codes](/reference/error-codes/).
+
+### A failed assertion says why
+
+Under a failed assertion the summary prints what was compared: the value found
+and what was expected.
+
+```ansi
+$.status was "pending", expected == "paid"
+$.items was an array of 0 items, expected > 0
+$.code was "ab", which does not match "^[0-9]+$"
+$.order.id was missing, expected == 7
+```
+
+Values are masked like every other message, so an assertion against a secret
+reads `expected == "<redacted>"`, and a long value is cut to 200 bytes. For
+`&&` and `||` the line reports the sub-expression that decided the result.
+
+### Failure messages quote the response
+
+When a status isn't in `expect_status`, the message includes the API's response,
+with secrets masked:
+
+```ansi
+  FAIL   user.create (1ms) err=E_HTTP_4XX
+         HTTP 422 (expected 201) — {"error":{"message":"email is taken","code":"conflict"},"trace":"xxxx… (truncated, 5.9 KiB total)
+```
+
+A run quotes at most 4 KiB of response text per failure, and marks a longer one
+as truncated with its full size. `--failure-body-size` changes the limit for the
+run:
+
+```bash
+reqloom run user.create --failure-body-size 16KiB
+reqloom run user.create --failure-body-size 0       # status line only
+```
+
+Values above `1MiB` are treated as `1MiB`. Anything that isn't a whole number of
+bytes or a whole number followed by `KiB` or `MiB` is exit code `2`:
+
+```ansi
+reqloom run: --failure-body-size must be a byte count or a size in KiB or MiB such as 16KiB, got '4KB'
+```
+
+To quote only the useful fields, set
+[`failure_message.show`](/schema/secrets-and-transport/#failure-messages) in the
+schema:
+
+```ansi
+         HTTP 422 (expected 201) — $.error.message: email is taken; $.error.code: conflict
+```
 
 ## Output formats
 
@@ -127,6 +180,7 @@ reqloom run refund.approve --format json
 
 ```json
 {
+  "schema_version": 1,
   "run_id": 1,
   "target": "refund.approve",
   "environment": "local",
@@ -140,6 +194,7 @@ reqloom run refund.approve --format json
     "for_each_iterations": 0,
     "poll_attempts": 0
   },
+  "error": null,
   "steps": [
     {
       "op": "product.create",
@@ -149,7 +204,7 @@ reqloom run refund.approve --format json
       "error_code": "E_SESSION_REFRESH_FAILED",
       "poll_attempt": null,
       "for_each_index": null,
-      "detail": "",
+      "detail": "actor 'vendor' could not sign in: auth: network error during step 'login': curl error: Could not connect to server",
       "assertions": []
     }
   ]
@@ -161,6 +216,44 @@ reqloom run refund.approve --format json
 `for_each_iterations` are counted separately in `summary` and excluded from the
 status totals, so `succeeded + failed + skipped + blocked + cancelled` equals
 the number of real steps.
+
+Each entry of `assertions` is
+`{ "name", "expr", "passed", "detail" }`; `detail` is the
+[reason](#a-failed-assertion-says-why) for a failed assertion and empty for a
+passed one.
+
+`schema_version` is `1`. Fields may be added without changing it; it changes
+only if a field is renamed, removed or changes meaning.
+
+**A run that never starts still writes one document.** When the operation or
+environment is unknown, the project isn't found or doesn't load, or the engine
+refuses the run, `outcome` is `ERROR`, `steps` is empty, `run_id` is `null` and
+`error` holds the reason:
+
+```json
+{
+  "schema_version": 1,
+  "run_id": null,
+  "target": "nope.missing",
+  "environment": "local",
+  "outcome": "ERROR",
+  "summary": { "succeeded": 0, "failed": 0, "skipped": 0, "blocked": 0, "cancelled": 0, "for_each_iterations": 0, "poll_attempts": 0 },
+  "error": {
+    "code": "E_CLI_UNKNOWN_OPERATION",
+    "detail": "unknown operation 'nope.missing'; the project has: cart.add_item, …"
+  },
+  "steps": []
+}
+```
+
+`error.code` is an engine [error code](/reference/error-codes/) or one of the
+[command-line codes](/reference/error-codes/#command-line). The same message
+also goes to stderr.
+
+`detail` and every other text field pass through the engine's
+[masking](/schema/secrets-and-transport/#masking): secret values and token-like
+fields appear as `<redacted>`. The CLI keeps no run history, so `run_id` numbers
+the runs of one invocation and starts at 1 each time.
 
 ### junit
 
@@ -181,7 +274,7 @@ reqloom run checkout.complete --format junit --output results.xml
       <property name="reqloom.run_id" value="1"/>
     </properties>
     <testcase classname="reqloom.refund.approve" name="product.create" time="0">
-      <failure type="E_SESSION_REFRESH_FAILED" message=""/>
+      <failure type="E_SESSION_REFRESH_FAILED" message="actor &apos;vendor&apos; could not sign in: auth: network error during step &apos;login&apos;: curl error: Could not connect to server"/>
     </testcase>
     <testcase classname="reqloom.refund.approve" name="product.publish" time="0">
       <error type="BLOCKED" message="upstream step failed; this step did not run"/>
@@ -191,7 +284,9 @@ reqloom run checkout.complete --format junit --output results.xml
 ```
 
 Note the mapping: a failed step becomes `<failure>`, while **blocked and
-cancelled steps become `<error>`**. Skipped steps become `<skipped>`. Polling
+cancelled steps become `<error>`**. A step whose assertions failed has one
+`<failure>` per failed assertion, with the reason and the expression in the
+element body. A run that never starts is a document with one `<error>`. Skipped steps become `<skipped>`. Polling
 attempts and for-each iterations fold into their parent `<testcase>` as
 `<system-out>` instead of inflating the test count.
 
@@ -231,12 +326,18 @@ reqloom run order.create --env staging
 With no `--env`, the schema's `default_environment` is used (itself `local` if
 unset).
 
-:::caution[A misspelled environment does not error]
-If `--env` names an environment your schema doesn't define, the run proceeds
-with **zero variables** rather than failing. Every `{{env.X}}` is then
-unresolved, which usually surfaces as a confusing URL or a 404 rather than a
-clear error. Check the `Env:` line in the summary if a run behaves oddly.
-:::
+An environment the project doesn't define is exit code `2`:
+
+```ansi
+Error: unknown environment 'nope'; the project has: local
+```
+
+## Interrupting a run
+
+Ctrl-C (SIGINT) or SIGTERM cancels the run. A request in flight is stopped
+within about a second, the remaining steps are marked `CANCEL`, and the report
+is still written in full, in every format. The exit code is `130` after SIGINT
+and `143` after SIGTERM. A second signal exits at once without a report.
 
 ## In CI
 
@@ -257,16 +358,18 @@ clear error. Check the `Env:` line in the summary if a run behaves oddly.
     path: results.xml
 ```
 
-Exit code `1` fails the step on a broken API. Codes `2` and `3` mean the
-invocation itself is wrong — see [exit codes](/cli/overview/#exit-codes).
+Exit code `1` fails the step on a broken API. Code `2` means the invocation is
+wrong and `3` that the report couldn't be written — see
+[exit codes](/cli/overview/#exit-codes).
 
 ## Troubleshooting
 
 ### The run takes minutes against a server that isn't up
 
-Expected, and worth understanding. Each step retries **3 times** by default, and
-each attempt waits out the connect timeout (5s default). A seven-step chain
-against a dead host is therefore several minutes of mostly waiting.
+Expected, and worth understanding. A step can be sent up to **3 times** by
+default (`retry.max` counts every send), and an attempt against a host that
+doesn't answer waits out the connect timeout (5s default). A long chain against a
+dead host is therefore mostly waiting.
 
 Shorten the connect timeout while developing offline:
 
@@ -275,12 +378,12 @@ transport:
   connect_timeout: 100ms
 ```
 
-### `E_REF_UNDEFINED` naming an operation I'm sure exists
+### `unknown operation` for an operation I'm sure exists
 
 The resource id comes from `name:` inside the file, not the filename:
 
 ```ansi
-Engine error [E_REF_UNDEFINED]: Resource not found: nope (referenced by operation nope.missing)
+Error: unknown operation 'nope.missing'; the project has: cart.add_item, cart.view, order.create, …
 ```
 
 Run [`reqloom lint`](/cli/lint/) — it prints the actor, resource, and operation

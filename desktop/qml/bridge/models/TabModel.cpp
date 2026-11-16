@@ -56,18 +56,25 @@ int TabModel::indexOf(TabState::Kind kind, const QString& id) const {
     return -1;
 }
 
+int TabModel::indexOfUid(std::uint64_t uid) const {
+    const auto it = std::ranges::find(tabs_, uid, &TabState::uid);
+    return it == tabs_.end() ? -1 : static_cast<int>(it - tabs_.begin());
+}
+
+int TabModel::dirtyCount() const {
+    return static_cast<int>(std::ranges::count(tabs_, true, &TabState::dirty));
+}
+
 QString TabModel::displayTitle(int index) const {
     if (!valid(index)) {
         return {};
     }
     const TabState& tab = tabs_.at(static_cast<std::size_t>(index));
-    // A draft has no saved name to qualify, and an actor tab has no module —
-    // both keep their bare label.
+    // A draft or actor tab keeps its bare label (no saved name or module to qualify).
     if (tab.module.isEmpty() || tab.operationDraft) {
         return tab.title;
     }
-    // Identity by address, not by index: every element lives in `tabs_`, so
-    // this is just "some other row shares my bare title".
+    // Compare by address: ambiguous when another row shares this bare title.
     const bool ambiguous = std::ranges::any_of(tabs_, [&tab](const TabState& other) {
         return &other != &tab && other.title == tab.title;
     });
@@ -77,6 +84,9 @@ QString TabModel::displayTitle(int index) const {
 int TabModel::insert(int index, TabState state) {
     if (index < 0 || index > count()) {
         return -1;
+    }
+    if (state.uid == 0) {
+        state.uid = nextUid_++;
     }
     beginInsertRows({}, index, index);
     tabs_.insert(tabs_.begin() + static_cast<std::ptrdiff_t>(index), std::move(state));
@@ -127,8 +137,7 @@ void TabModel::refreshRow(int index) {
     }
     const QModelIndex idx = createIndex(index, 0);
     emit dataChanged(idx, idx);
-    // A rename (draft promotion, actor save) can start or end a collision for
-    // some other row, so the rest of the strip re-reads its titles too.
+    // A rename can start or end a collision for another row, so re-read every title.
     refreshTitles();
 }
 

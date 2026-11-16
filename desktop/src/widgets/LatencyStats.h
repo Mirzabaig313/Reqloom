@@ -1,13 +1,15 @@
-// LatencyStats — pure summary statistics + histogram binning for response
-// latencies (the timeline sparkline / distribution). No Qt dependency, so it's
-// unit-tested in isolation. Percentiles use linear interpolation (type-7); the
-// histogram uses the Freedman–Diaconis rule (bin width = 2·IQR·n^(-1/3)), with
-// a √n fallback when that degenerates (n < 2 or zero IQR).
+// LatencyStats — pure summary statistics and histogram binning for response latencies. Percentiles
+// are type-7; the histogram uses Freedman–Diaconis (bin width = 2·IQR·n^(-1/3)) with a √n fallback
+// when n < 2 or IQR is zero.
 #pragma once
 
+#include <cstddef>
 #include <vector>
 
 namespace reqloom::desktop::stats {
+
+/// Most bins histogram() returns, so one slow outlier cannot produce thousands of bars.
+inline constexpr int kMaxHistogramBins = 64;
 
 /// Summary of a latency sample set (all values in the input unit, e.g. ms).
 struct Summary {
@@ -33,7 +35,8 @@ struct Histogram {
 [[nodiscard]] Summary summarize(std::vector<double> samples);
 
 /// Freedman–Diaconis histogram of `samples`. Falls back to ⌈√n⌉ bins when the
-/// IQR is zero or n < 2. A single distinct value yields one unit-width bin.
+/// IQR is zero or n < 2, and widens the bins when more than kMaxHistogramBins
+/// would be needed. A single distinct value yields one unit-width bin.
 [[nodiscard]] Histogram histogram(std::vector<double> samples);
 
 /// Linear-interpolated percentile (`q` in [0,1]) of an already-sorted,

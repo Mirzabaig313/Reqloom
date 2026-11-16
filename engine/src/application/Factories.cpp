@@ -1,6 +1,7 @@
 // Factories — concrete-implementation factory entry points.
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/Hook.h>
+#include <reqloom/engine/ProjectTrustStore.h>
 
 #include "ImportFromApidog.h"
 #include "ImportFromBruno.h"
@@ -8,6 +9,7 @@
 #include "ImportFromHttpFile.h"
 #include "ImportFromHttpie.h"
 #include "ImportFromInsomnia.h"
+#include "ImportFromJsonHelpers.h"
 #include "ImportFromOpenApi.h"
 #include "ImportFromPostman.h"
 #include "ImportFromThunderClient.h"
@@ -23,15 +25,18 @@
 #include "../infrastructure/schema/SchemaWriter.h"
 #include "../infrastructure/schema/YamlSchemaParser.h"
 #include "../infrastructure/schema/YamlSchemaWriter.h"
+#include "../infrastructure/secrets/FileProjectTrustStore.h"
 #include "../infrastructure/secrets/KeychainSecretStore.h"
 #include "../infrastructure/secrets/SecretStore.h"
 #include "../infrastructure/storage/HistoryStore.h"
 #include "../infrastructure/storage/SqliteHistoryStore.h"
 #include "../infrastructure/typings/StaticHookTypingsEmitter.h"
 
+#include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <format>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -42,8 +47,7 @@ namespace reqloom::engine {
 
 namespace {
 
-/// Convert the public sample request to the engine-internal view used by
-/// HookRunner. The two mirror each other field-for-field.
+/// Convert the public sample request to the engine-internal view used by HookRunner.
 [[nodiscard]] HookRequestView toInternal(const HookSampleRequest& req) {
     return HookRequestView{req.method, req.url, req.headers, req.body};
 }
@@ -62,8 +66,6 @@ namespace {
 
 }  // namespace
 
-// Dependencies special members (out-of-line for incomplete-type users)
-
 ExecutionEngine::Dependencies::Dependencies() = default;
 
 ExecutionEngine::Dependencies::Dependencies(std::unique_ptr<HttpClient> httpIn,
@@ -81,8 +83,6 @@ ExecutionEngine::Dependencies::~Dependencies() = default;
 ExecutionEngine::Dependencies::Dependencies(Dependencies&&) noexcept = default;
 ExecutionEngine::Dependencies& ExecutionEngine::Dependencies::operator=(Dependencies&&) noexcept =
     default;
-
-// Factories
 
 std::unique_ptr<HttpClient> makeCurlHttpClient() {
     return std::make_unique<CurlHttpClient>();
@@ -104,6 +104,22 @@ bool keychainBackendAvailable() noexcept {
     return KeychainSecretStore::backendAvailable();
 }
 
+std::expected<std::filesystem::path, ReqloomError> defaultProjectTrustStorePath() {
+    return FileProjectTrustStore::defaultPath();
+}
+
+std::unique_ptr<ProjectTrustStore> makeFileProjectTrustStore() {
+    auto path = FileProjectTrustStore::defaultPath();
+    if (!path) {
+        return std::make_unique<FileProjectTrustStore>(path.error());
+    }
+    return std::make_unique<FileProjectTrustStore>(std::move(*path));
+}
+
+std::unique_ptr<ProjectTrustStore> makeFileProjectTrustStore(const std::filesystem::path& file) {
+    return std::make_unique<FileProjectTrustStore>(file);
+}
+
 std::unique_ptr<HookRunner> makeQuickJsHookRunner() {
     return std::make_unique<QuickJsHookRunner>();
 }
@@ -113,18 +129,28 @@ std::unique_ptr<LlmClient> makeHttpLlmClient(HttpClient& transport) {
 }
 
 ExecutionEngine::Dependencies makeDefaultDependencies() {
-    return ExecutionEngine::Dependencies{
+    ExecutionEngine::Dependencies deps{
         makeCurlHttpClient(),
         makeYamlSchemaParser(),
         makeSqliteHistoryStore(),
         makeKeychainSecretStore(),
         makeQuickJsHookRunner(),
     };
+    deps.trust = makeFileProjectTrustStore();
+    return deps;
 }
 
 std::expected<Project, ReqloomError> parseProject(const std::filesystem::path& reqloomYaml) {
     YamlSchemaParser parser;
-    return parser.parse(reqloomYaml);
+    auto project = parser.parse(reqloomYaml);
+    if (project) {
+        std::error_code ec;
+        auto root = std::filesystem::absolute(reqloomYaml, ec).parent_path();
+        if (!ec) {
+            project->rootDir = root.lexically_normal();
+        }
+    }
+    return project;
 }
 
 std::expected<void, ReqloomError> validateProject(const Project& project) {
@@ -136,9 +162,13 @@ std::vector<std::string> collectSecretReferences(const Project& project) {
 }
 
 std::expected<std::filesystem::path, ReqloomError> writeProject(
-    const std::filesystem::path& targetDir, const Project& project, bool overwrite) {
+    const std::filesystem::path& targetDir,
+    const Project& project,
+    bool overwrite,
+    bool pruneStale,
+    std::map<std::filesystem::path, std::size_t>* loadedFiles) {
     YamlSchemaWriter writer;
-    return writer.write(targetDir, project, overwrite);
+    return writer.write(targetDir, project, overwrite, pruneStale, loadedFiles);
 }
 
 std::expected<std::filesystem::path, ReqloomError> emitHookTypings(
@@ -147,117 +177,84 @@ std::expected<std::filesystem::path, ReqloomError> emitHookTypings(
     return emitter.emit(targetDir, project, overwrite);
 }
 
+namespace {
+
+/// Run one importer. Import input is untrusted JSON, so an nlohmann exception an importer
+/// lets escape becomes a ReqloomError.
+template <typename Importer>
+[[nodiscard]] std::expected<OpenApiImportOutcome, ReqloomError> runImporter(
+    const std::filesystem::path& input, const std::filesystem::path& projectRoot) {
+    try {
+        Importer const importer;
+        auto inner = importer.run(input, projectRoot);
+        if (!inner) {
+            return std::unexpected(inner.error());
+        }
+        std::vector<SourceSecretVariable> flagged;
+        if constexpr (requires { inner->secretVariables; }) {
+            flagged = std::move(inner->secretVariables);
+        }
+        auto credentials = detectImportedCredentials(inner->project, flagged);
+        return OpenApiImportOutcome{
+            std::move(inner->project), std::move(inner->warnings), std::move(credentials)};
+    } catch (const nlohmann::json::exception& e) {
+        return std::unexpected(ReqloomError{ErrorCode::SchemaInvalid,
+                                            ErrorClass::Schema,
+                                            std::string{"import: malformed input: "} + e.what()});
+    }
+}
+
+}  // namespace
+
 std::expected<OpenApiImportOutcome, ReqloomError> importFromOpenApi(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
-    ImportFromOpenApi const importer;
-    auto inner = importer.run(spec, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromOpenApi>(spec, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromPostman(
     const std::filesystem::path& collection, const std::filesystem::path& projectRoot) {
-    ImportFromPostman const importer;
-    auto inner = importer.run(collection, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromPostman>(collection, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromInsomnia(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromInsomnia const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromInsomnia>(exportFile, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromThunderClient(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromThunderClient const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromThunderClient>(exportFile, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromHoppscotch(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromHoppscotch const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromHoppscotch>(exportFile, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpFile(
     const std::filesystem::path& file, const std::filesystem::path& projectRoot) {
-    ImportFromHttpFile const importer;
-    auto inner = importer.run(file, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromHttpFile>(file, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromBruno(
     const std::filesystem::path& input, const std::filesystem::path& projectRoot) {
-    ImportFromBruno const importer;
-    auto inner = importer.run(input, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromBruno>(input, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromHttpie(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromHttpie const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromHttpie>(exportFile, projectRoot);
 }
 
 std::expected<OpenApiImportOutcome, ReqloomError> importFromApidog(
     const std::filesystem::path& exportFile, const std::filesystem::path& projectRoot) {
-    ImportFromApidog const importer;
-    auto inner = importer.run(exportFile, projectRoot);
-    if (!inner) {
-        return std::unexpected(inner.error());
-    }
-    return OpenApiImportOutcome{std::move(inner->project), std::move(inner->warnings)};
+    return runImporter<ImportFromApidog>(exportFile, projectRoot);
 }
 
 namespace {
 
-/// Read up to 8 KiB of a file's head for content sniffing. Empty on error —
-/// the caller then falls back to the default (OpenAPI) importer.
-[[nodiscard]] std::string readHead(const std::filesystem::path& path) {
-    std::ifstream in{path, std::ios::binary};
-    if (!in) {
-        return {};
-    }
-    std::string head(8192, '\0');
-    in.read(head.data(), static_cast<std::streamsize>(head.size()));
-    head.resize(static_cast<std::size_t>(in.gcount()));
-    return head;
-}
-
-[[nodiscard]] bool contains(const std::string& haystack, std::string_view needle) {
-    return haystack.find(needle) != std::string::npos;
-}
-
-/// Read a whole file for the structural-detection fallback, bounded to 32 MiB
-/// (the largest importer size cap). Empty on error or oversize.
+/// Read a whole file for detection, bounded to 32 MiB (the largest importer cap); empty on
+/// error or oversize.
 [[nodiscard]] std::string readAll(const std::filesystem::path& path) {
     std::error_code ec;
     if (const auto size = std::filesystem::file_size(path, ec);
@@ -271,36 +268,6 @@ namespace {
     std::ostringstream ss;
     ss << in.rdbuf();
     return ss.str();
-}
-
-/// True only when the head has an HTTPie meta marker: a `"format"` key whose
-/// string value is `httpie` (whitespace-tolerant). A bare `contains("httpie")`
-/// false-positives on any file that merely mentions httpie (a description, a
-/// URL, or HTTPie's own JSON *schema* file), misrouting it to the HTTPie
-/// importer where it hard-fails instead of falling through.
-[[nodiscard]] bool metaFormatIsHttpie(const std::string& head) {
-    constexpr std::string_view key = "\"format\"";
-    const auto isSpace = [](char c) {
-        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-    };
-    std::size_t pos = 0;
-    while ((pos = head.find(key, pos)) != std::string::npos) {
-        std::size_t i = pos + key.size();
-        while (i < head.size() && isSpace(head[i])) {
-            ++i;
-        }
-        if (i < head.size() && head[i] == ':') {
-            ++i;
-            while (i < head.size() && isSpace(head[i])) {
-                ++i;
-            }
-            if (head.compare(i, 8, "\"httpie\"") == 0) {
-                return true;
-            }
-        }
-        pos += key.size();
-    }
-    return false;
 }
 
 using ImportFn = std::expected<OpenApiImportOutcome, ReqloomError> (*)(
@@ -329,24 +296,38 @@ using ImportFn = std::expected<OpenApiImportOutcome, ReqloomError> (*)(
     return false;
 }
 
-/// Pick an importer from a parsed JSON document by its actual structure (not
-/// substrings anywhere), so a supported collection is detected even when its
-/// marker sits past the fast head-sniff window. Returns nullptr for
-/// OpenAPI/Swagger (or anything unrecognised) so the caller falls through.
+/// `info` with `_postman_id` or a getpostman.com `schema`, or the `info` + `item[]` shape.
+[[nodiscard]] bool isPostmanCollection(const nlohmann::json& d) {
+    const auto info = d.find("info");
+    if (info == d.end() || !info->is_object()) {
+        return false;
+    }
+    return info->contains("_postman_id") ||
+           import_json::stringOr(*info, "schema", std::string{}).find("getpostman.com") !=
+               std::string::npos ||
+           (d.contains("item") && d["item"].is_array());
+}
+
+/// Pick an importer by top-level structure, never a substring search, so a value that merely
+/// mentions another format's marker cannot misroute the file. OpenAPI/Swagger go first.
 [[nodiscard]] ImportFn detectJsonImporter(const nlohmann::json& d) {
     const bool obj = d.is_object();
+    if (obj && (d.contains("openapi") || d.contains("swagger"))) {
+        return &importFromOpenApi;
+    }
     if (obj && d.contains("meta") && d["meta"].is_object() &&
-        d["meta"].value("format", std::string{}) == "httpie") {
+        import_json::stringOr(d["meta"], "format", std::string{}) == "httpie") {
         return &importFromHttpie;
     }
     if (obj && d.contains("apidogProject")) {
         return &importFromApidog;
     }
-    if (obj && d.contains("info") && d.contains("item") && d["item"].is_array()) {
+    if (obj && isPostmanCollection(d)) {
         return &importFromPostman;
     }
-    if (obj && d.contains("__export_format") && d.contains("resources") &&
-        d["resources"].is_array()) {
+    if (obj && d.contains("resources") && d["resources"].is_array() &&
+        (d.contains("__export_format") ||
+         import_json::stringOr(d, "_type", std::string{}) == "export")) {
         return &importFromInsomnia;
     }
     if (obj && d.contains("colName")) {
@@ -370,12 +351,38 @@ using ImportFn = std::expected<OpenApiImportOutcome, ReqloomError> (*)(
     return nullptr;
 }
 
+/// How a non-JSON file parses as YAML, the only other structured input.
+enum class YamlShape : std::uint8_t { Unparseable, OpenApi, Other };
+
+[[nodiscard]] YamlShape yamlShape(const std::string& text) {
+    try {
+        const YAML::Node root = YAML::Load(text);
+        if (root.IsMap() && (root["openapi"] || root["swagger"])) {
+            return YamlShape::OpenApi;
+        }
+        return YamlShape::Other;
+    } catch (const YAML::Exception&) {
+        return YamlShape::Unparseable;
+    }
+}
+
+[[nodiscard]] ReqloomError unrecognisedFormat(std::string_view why) {
+    return ReqloomError{
+        ErrorCode::SchemaInvalid,
+        ErrorClass::Schema,
+        std::format("import: unrecognised input format ({}). Supported formats: OpenAPI 3.x and "
+                    "Swagger 2.0 (YAML or JSON); Postman Collection v2.0/v2.1, Insomnia v4, "
+                    "Thunder Client, Hoppscotch, HTTPie and Apidog JSON exports; a Bruno "
+                    "collection (its directory, bruno.json or a .bru file); REST Client "
+                    ".http/.rest files",
+                    why)};
+}
+
 }  // namespace
 
 std::expected<OpenApiImportOutcome, ReqloomError> importAny(
     const std::filesystem::path& spec, const std::filesystem::path& projectRoot) {
-    // `.http` / `.rest` are text (not JSON), so route them by extension before
-    // the content sniffs.
+    // `.http` / `.rest` are text, so route them by extension before the content checks.
     std::string ext = spec.extension().string();
     for (auto& c : ext) {
         if (c >= 'A' && c <= 'Z') {
@@ -392,65 +399,45 @@ std::expected<OpenApiImportOutcome, ReqloomError> importAny(
         return importFromBruno(spec, projectRoot);
     }
 
-    const std::string head = readHead(spec);
-    // HTTPie export ({"meta":{"format":"httpie",...}}). Match the exact
-    // meta.format marker, not a bare "httpie" mention.
-    if (metaFormatIsHttpie(head)) {
-        return importFromHttpie(spec, projectRoot);
+    // An unreadable, empty or oversized file goes to the OpenAPI importer, whose checks report
+    // it precisely.
+    const std::string full = readAll(spec);
+    if (full.empty()) {
+        return importFromOpenApi(spec, projectRoot);
     }
-    // Apidog native export.
-    if (contains(head, "apidogProject")) {
-        return importFromApidog(spec, projectRoot);
+    nlohmann::json doc;
+    bool parsed = false;
+    try {
+        doc = nlohmann::json::parse(full);
+        parsed = true;
+    } catch (const nlohmann::json::parse_error&) {
+        parsed = false;  // not JSON (e.g. a YAML OpenAPI spec)
     }
-    // Postman collection export.
-    if (contains(head, "schema.getpostman.com") || contains(head, "_postman_id")) {
-        return importFromPostman(spec, projectRoot);
-    }
-    // Insomnia v4 export.
-    if (contains(head, "__export_format") &&
-        (contains(head, "insomnia") || contains(head, "\"resources\""))) {
-        return importFromInsomnia(spec, projectRoot);
-    }
-    // Thunder Client (VS Code) collection export.
-    if (contains(head, "containerId") || contains(head, "colName")) {
-        return importFromThunderClient(spec, projectRoot);
-    }
-    // Hoppscotch collection export (requests carry an `endpoint` field).
-    if (contains(head, "\"endpoint\"")) {
-        return importFromHoppscotch(spec, projectRoot);
-    }
-    // The fast head-sniff missed. A supported JSON collection whose marker sat
-    // past the sniff window still gets detected here by parsing the file and
-    // dispatching on its actual top-level structure.
-    if (const std::string full = readAll(spec); !full.empty()) {
-        nlohmann::json doc;
-        bool parsed = false;
-        try {
-            doc = nlohmann::json::parse(full);
-            parsed = true;
-        } catch (const nlohmann::json::parse_error&) {
-            parsed = false;  // not JSON (e.g. a YAML OpenAPI spec) → fall through
+    if (parsed) {
+        if (const ImportFn fn = detectJsonImporter(doc); fn != nullptr) {
+            return fn(spec, projectRoot);
         }
-        if (parsed) {
-            if (const ImportFn fn = detectJsonImporter(doc); fn != nullptr) {
-                return fn(spec, projectRoot);
-            }
-            // A JSON Schema document describes a format; it isn't an export.
-            // Say so plainly rather than falling through to a cryptic
-            // "not OpenAPI" error (users mistake schema files for exports).
-            if (doc.is_object() && doc.contains("$schema") && doc["$schema"].is_string() &&
-                doc["$schema"].get<std::string>().find("json-schema.org") != std::string::npos) {
-                return std::unexpected(ReqloomError{
-                    ErrorCode::SchemaInvalid,
-                    ErrorClass::Schema,
-                    "import: this is a JSON Schema document (it defines a format), not an API "
-                    "export. Export your collection from the tool (Postman, HTTPie, Insomnia, "
-                    "etc.) and import that file instead."});
-            }
+        // A JSON Schema document describes a format; users mistake it for an export.
+        if (doc.is_object() && doc.contains("$schema") && doc["$schema"].is_string() &&
+            doc["$schema"].get<std::string>().find("json-schema.org") != std::string::npos) {
+            return std::unexpected(ReqloomError{
+                ErrorCode::SchemaInvalid,
+                ErrorClass::Schema,
+                "import: this is a JSON Schema document (it defines a format), not an API "
+                "export. Export your collection from the tool (Postman, HTTPie, Insomnia, "
+                "etc.) and import that file instead."});
         }
+        return std::unexpected(unrecognisedFormat("JSON with no known top-level structure"));
     }
-    // Default: OpenAPI (its own error surfaces for unrecognised input).
-    return importFromOpenApi(spec, projectRoot);
+    switch (yamlShape(full)) {
+        case YamlShape::OpenApi:
+        case YamlShape::Unparseable:
+            return importFromOpenApi(spec, projectRoot);
+        case YamlShape::Other:
+            break;
+    }
+    return std::unexpected(
+        unrecognisedFormat("not JSON, and YAML without a top-level `openapi`/`swagger` key"));
 }
 
 std::expected<HookDryRunResult, ReqloomError> dryRunHook(const HookDryRunInput& input) {

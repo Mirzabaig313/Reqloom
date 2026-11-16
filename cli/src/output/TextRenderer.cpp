@@ -16,10 +16,8 @@ namespace {
 
 namespace ce = reqloom::engine;
 
-// C++23 <print> only provides std::println(FILE*, ...) and std::println(...)
-// overloads — no std::ostream overload. Xcode 15.4's libc++ correctly rejects
-// std::println(ostream, ...) per the standard, so we format via std::format
-// and stream the result with a trailing newline (println semantics).
+// C++23 <print> has no std::ostream overload (libc++ rejects it), so format with std::format
+// and stream the result with a trailing newline.
 template <typename... Args>
 void ostreamPrintln(std::ostream& out, std::format_string<Args...> fmt, Args&&... args) {
     out << std::format(fmt, std::forward<Args>(args)...) << '\n';
@@ -75,7 +73,6 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
                 ostreamPrintln(
                     progress_, "  [{}] Skipped: {} (cached)", e.stepIndex + 1, e.op.value);
             } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
-                // Failures always go to stderr, even when quiet — CI logs need them.
                 ostreamPrintln(err_,
                                "  [{}] FAILED: {} [{}] — {}",
                                e.stepIndex + 1,
@@ -95,35 +92,17 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
 void TextRenderer::render(const ce::OperationId& target,
                           std::string_view environment,
                           const ce::RunResult& result) {
-    // Summary table prints even in quiet mode — it's the canonical record
-    // of which steps ran. Suppressing it would make the run silent on
-    // success, which defeats `--quiet` consumers that do their own parsing.
+    // The summary prints even in quiet mode: it is the canonical record of which steps ran.
     ostreamPrintln(summary_, "\n--- Chain Summary ---");
     ostreamPrintln(summary_,
                    "Target: {}   Env: {}   Outcome: {}",
                    target.value,
-                   environment.empty() ? std::string_view{"<default>"} : environment,
+                   environment,
                    std::string(runOutcomeName(result.outcome)));
 
     for (const auto& step : result.steps) {
-        if (step.pollAttempt) {
-            ostreamPrintln(summary_,
-                           "    poll #{:<2} {:<6} {} ({}ms){}",
-                           *step.pollAttempt,
-                           std::string(statusGlyph(step.status)),
-                           step.op.value,
-                           step.elapsed.count(),
-                           step.detail.empty() ? std::string{} : "  " + step.detail);
-            continue;
-        }
-        if (step.forEachIndex) {
-            ostreamPrintln(summary_,
-                           "    iter #{:<2} {:<6} {} ({}ms){}",
-                           *step.forEachIndex,
-                           std::string(statusGlyph(step.status)),
-                           step.op.value,
-                           step.elapsed.count(),
-                           step.detail.empty() ? std::string{} : "  " + step.detail);
+        if (step.pollAttempt || step.forEachIndex) {
+            printChildRow(step);
             continue;
         }
         ostreamPrintln(summary_,
@@ -135,11 +114,41 @@ void TextRenderer::render(const ce::OperationId& target,
         if (!step.detail.empty()) {
             ostreamPrintln(summary_, "         {}", step.detail);
         }
-        for (const auto& a : step.assertions) {
-            ostreamPrintln(summary_,
-                           "         {} assert: {}",
-                           a.passed ? std::string{"\u2713"} : std::string{"\u2717"},
-                           a.name);
+        printAssertions(step, "");
+    }
+}
+
+void TextRenderer::printChildRow(const ce::StepResult& row) {
+    std::string label;
+    if (row.forEachIndex) {
+        label = std::format("iter #{:<2}", *row.forEachIndex);
+    }
+    if (row.pollAttempt) {
+        label = row.forEachIndex
+                    ? std::format("iter #{} poll #{:<2}", *row.forEachIndex, *row.pollAttempt)
+                    : std::format("poll #{:<2}", *row.pollAttempt);
+    }
+    ostreamPrintln(summary_,
+                   "    {} {:<6} {} ({}ms){}",
+                   label,
+                   std::string(statusGlyph(row.status)),
+                   row.op.value,
+                   row.elapsed.count(),
+                   row.detail.empty() ? std::string{} : "  " + row.detail);
+    if (row.forEachIndex && !row.pollAttempt) {
+        printAssertions(row, std::format(" (iter #{})", *row.forEachIndex));
+    }
+}
+
+void TextRenderer::printAssertions(const ce::StepResult& row, std::string_view attribution) {
+    for (const auto& a : row.assertions) {
+        ostreamPrintln(summary_,
+                       "         {} assert{}: {}",
+                       a.passed ? std::string{"\u2713"} : std::string{"\u2717"},
+                       attribution,
+                       a.name);
+        if (!a.passed && !a.detail.empty()) {
+            ostreamPrintln(summary_, "             {}", a.detail);
         }
     }
 }

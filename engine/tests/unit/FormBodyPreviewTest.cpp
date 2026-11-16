@@ -90,3 +90,41 @@ TEST(PreviewFormBody, missing_file_is_upload_unreadable) {
     ASSERT_FALSE(out.has_value());
     EXPECT_EQ(out.error().code, ce::ErrorCode::UploadFileUnreadable);
 }
+
+TEST(PreviewFormBody, double_at_template_is_text_with_one_at_removed) {
+    const auto out = ce::previewFormBody({{"handle", "@@mirza"}});
+    ASSERT_TRUE(out.has_value()) << out.error().detail;
+    EXPECT_EQ(out->kind, ce::FormBodyKind::UrlEncoded);
+    EXPECT_EQ(out->urlEncoded, "handle=%40mirza");
+}
+
+TEST(PreviewFormBody, relative_file_path_resolves_against_project_root) {
+    TempFile file{"rooted"};
+    const fs::path filePath{file.path()};
+    const auto out =
+        ce::previewFormBody({{"doc", "@" + file.filename()}}, {}, filePath.parent_path());
+    ASSERT_TRUE(out.has_value()) << out.error().detail;
+    EXPECT_EQ(out->kind, ce::FormBodyKind::Multipart);
+    ASSERT_EQ(out->parts.size(), 1u);
+    EXPECT_TRUE(out->parts.front().isFile);
+    EXPECT_TRUE(fs::equivalent(out->parts.front().resolvedPath, filePath));
+    EXPECT_EQ(out->parts.front().sizeBytes, 6u);
+}
+
+TEST(FormTemplateText, only_a_single_leading_at_is_a_file) {
+    EXPECT_TRUE(ce::isFormFileTemplate("@photo.png"));
+    EXPECT_TRUE(ce::isFormFileTemplate("@"));
+    EXPECT_FALSE(ce::isFormFileTemplate("@@mirza"));
+    EXPECT_FALSE(ce::isFormFileTemplate("plain"));
+    EXPECT_FALSE(ce::isFormFileTemplate(""));
+}
+
+TEST(FormTemplateText, text_with_leading_at_round_trips_through_the_escape) {
+    EXPECT_EQ(ce::formTextTemplate("@mirza"), "@@mirza");
+    EXPECT_EQ(ce::formTextTemplate("@@x"), "@@@x");
+    EXPECT_EQ(ce::formTextTemplate("plain"), "plain");
+    EXPECT_EQ(ce::formTemplateText("@@mirza"), "@mirza");
+    EXPECT_EQ(ce::formTemplateText("plain"), "plain");
+    EXPECT_EQ(ce::formTemplateText(ce::formTextTemplate("@@x")), "@@x");
+    EXPECT_FALSE(ce::isFormFileTemplate(ce::formTextTemplate("@mirza")));
+}

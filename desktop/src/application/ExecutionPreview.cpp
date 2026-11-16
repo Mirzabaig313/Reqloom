@@ -11,11 +11,11 @@ namespace reqloom::desktop {
 
 namespace {
 
-/// Locate an operation by its "<resource>.<op_name>" id. Returns nullptr when
-/// either half is unknown, which callers render as a missing step.
+/// Locate an operation by its "<resource>.<op_name>" id, split at the first dot as the engine
+/// does (an operation name may contain dots). Returns nullptr when either half is unknown.
 [[nodiscard]] const engine::Operation* findOperation(const engine::Project& project,
                                                      const std::string& id) {
-    const std::size_t dot = id.rfind('.');
+    const std::size_t dot = id.find('.');
     if (dot == std::string::npos || dot == 0 || dot + 1 >= id.size()) {
         return nullptr;
     }
@@ -27,25 +27,17 @@ namespace {
     return opIt == resourceIt->second.operations.end() ? nullptr : &opIt->second;
 }
 
-/// Resource half of an operation id ("orders.create" → "orders"), which is also
-/// the namespace its extracted variables are referenced under. Empty when the id
-/// has no resource half.
+/// Resource half of an operation id ("orders.create" → "orders"), also the namespace of its
+/// extracted variables. Empty if none.
 [[nodiscard]] QString resourceOf(const QString& operationId) {
-    const qsizetype dot = operationId.lastIndexOf(QLatin1Char('.'));
+    const qsizetype dot = operationId.indexOf(QLatin1Char('.'));
     return dot > 0 ? operationId.left(dot) : QString{};
 }
 
-/// Namespace an extraction name the way a template must reference it:
-/// `<producing resource>.<stored key>`.
-///
-/// The prefix is applied even when the stored key itself contains a dot. An
-/// extraction declared as `employer.org_id` on `admin_organization.list` is
-/// stored as the literal key "employer.org_id" inside resource
-/// `admin_organization`, and `substituteRef` splits a reference at its FIRST dot
-/// only — so the reference that reaches it is
-/// `{{admin_organization.employer.org_id}}`. Skipping the prefix for dotted keys
-/// would print `{{employer.org_id}}`, which resolves against something else
-/// entirely (an `employer` actor's session, if one exists) or not at all.
+/// Namespace an extraction name as a template must reference it: `<producing resource>.<stored
+/// key>`. The prefix applies even to dotted keys: `substituteRef` splits at the FIRST dot only, so
+/// `employer.org_id` stored in `admin_organization` is referenced as
+/// `{{admin_organization.employer.org_id}}`.
 [[nodiscard]] QString qualifyVariable(const QString& resource, const QString& variableName) {
     if (resource.isEmpty()) {
         return variableName;
@@ -53,9 +45,8 @@ namespace {
     return resource + QLatin1Char('.') + variableName;
 }
 
-/// Producer ids per consumer, de-duplicated: an explicit `depends_on` and an
-/// implicit `{{var}}` reference between the same pair are one dependency to a
-/// reader, even though the plan carries them as separate edges.
+/// Producer ids per consumer, de-duplicated: an explicit depends_on and an implicit `{{var}}`
+/// reference are one dependency to a reader.
 [[nodiscard]] std::map<std::string, std::set<std::string>> producersByConsumer(
     const engine::ResolvedPlan& plan) {
     std::map<std::string, std::set<std::string>> producers;
@@ -97,7 +88,6 @@ std::vector<PreviewStep> buildExecutionPreview(const engine::ResolvedPlan& plan,
         PreviewStep step;
         step.number = static_cast<int>(i) + 1;
         step.operationId = QString::fromStdString(id);
-        // The plan is ordered dependencies-first, so the target is last.
         step.isTarget = (i + 1 == plan.order.size());
 
         if (const auto producerIt = producers.find(id); producerIt != producers.end()) {
@@ -105,8 +95,6 @@ std::vector<PreviewStep> buildExecutionPreview(const engine::ResolvedPlan& plan,
             for (const std::string& producer : producerIt->second) {
                 step.dependsOn.append(QString::fromStdString(producer));
             }
-            // std::set already orders these; sort() keeps the guarantee explicit
-            // for readers and survives a change of container.
             step.dependsOn.sort();
         }
 
@@ -138,15 +126,9 @@ QStringList consumersOfVariable(const engine::ResolvedPlan& plan,
         return {};
     }
 
-    // Edges spell the variable "<producing resource>.<stored key>" while
-    // extraction events report just the stored key, so normalise instead of
-    // trusting the caller's form.
-    //
-    // The guard is "already starts with this resource's prefix", NOT "contains a
-    // dot": a stored key may legitimately contain dots (`employer.org_id`) and
-    // still needs the prefix. Ambiguity remains only for a key literally named
-    // "<own resource>.<x>", which is vanishingly rare and unresolvable from the
-    // name alone.
+    // Edges spell the variable "<producing resource>.<stored key>" while extraction events report
+    // the stored key, so normalise. Guard on "already starts with this resource's prefix", not
+    // "contains a dot": stored keys may contain dots.
     const QString resource = resourceOf(producerOperationId);
     const QString qualified =
         (resource.isEmpty() || variable.startsWith(resource + QLatin1Char('.')))
@@ -158,8 +140,8 @@ QStringList consumersOfVariable(const engine::ResolvedPlan& plan,
 
     std::set<std::string> consumers;
     for (const auto& edge : plan.edges) {
-        // Explicit depends_on edges carry no variable, so they are not evidence
-        // that this particular value was consumed.
+        // Explicit depends_on edges carry no variable, so they aren't evidence this value was
+        // consumed.
         if (edge.producer.value == producer && edge.variable == wanted) {
             consumers.insert(edge.consumer.value);
         }

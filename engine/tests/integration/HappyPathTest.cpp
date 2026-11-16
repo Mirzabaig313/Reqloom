@@ -6,6 +6,8 @@
 //   - Extracted variables flow correctly between steps
 #include "MockSutHarness.h"
 
+#include <support/HermeticDependencies.h>
+
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
 
@@ -38,6 +40,15 @@ namespace {
     return std::move(*project);
 }
 
+/// The sample's `!secret` passwords come from memory, never the developer's keychain.
+[[nodiscard]] ce::ExecutionEngine::Dependencies marketplaceDependencies() {
+    constexpr const char* kProjectId = "b24c09e7-400e-461e-be0f-ab5f28c1c347";
+    return ct::makeHermeticDependencies({
+        {std::string{kProjectId} + "/ADMIN_PASSWORD", "admin-test-password"},
+        {std::string{kProjectId} + "/VENDOR_PASSWORD", "vendor-test-password"},
+    });
+}
+
 }  // namespace
 
 class MarketplaceHappyPath : public ::testing::Test {
@@ -52,7 +63,7 @@ protected:
 
 TEST_F(MarketplaceHappyPath, RefundApproveResolvesAndExecutes) {
     auto project = loadMarketplace(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(marketplaceDependencies());
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"refund.approve"}, ctx);
@@ -69,7 +80,7 @@ TEST_F(MarketplaceHappyPath, RefundApproveResolvesAndExecutes) {
 
 TEST_F(MarketplaceHappyPath, RerunUsesCachedSessions) {
     auto project = loadMarketplace(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(marketplaceDependencies());
     ce::RunContext ctx;
 
     auto first = engine.run(project, ce::OperationId{"refund.approve"}, ctx);
@@ -89,7 +100,7 @@ TEST_F(MarketplaceHappyPath, RerunUsesCachedSessions) {
 
 TEST_F(MarketplaceHappyPath, ChainContainsExpectedOperations) {
     auto project = loadMarketplace(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(marketplaceDependencies());
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"refund.approve"}, ctx);
@@ -132,7 +143,7 @@ TEST_F(MarketplaceHappyPath, ExtractionTraceCapturesEveryDeclaredExtraction) {
     // ctx.extractionTrace(). The marketplace fixture has at least one
     // extraction per resource — product.id, order.id, refund.id.
     auto project = loadMarketplace(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(marketplaceDependencies());
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"refund.approve"}, ctx);
@@ -163,7 +174,7 @@ TEST_F(MarketplaceHappyPath, ExtractionCompletedEventEmittedPerExtraction) {
     // the executor evaluates. Subscribers see the per-extraction outcome
     // live without inspecting the trace after the fact.
     auto project = loadMarketplace(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(marketplaceDependencies());
 
     std::vector<ce::ExtractionCompleted> events;
     engine.subscribe([&](const ce::RunEvent& ev) {

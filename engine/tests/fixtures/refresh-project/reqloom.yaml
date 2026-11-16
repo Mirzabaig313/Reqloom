@@ -1,5 +1,6 @@
 version: 1
 name: Refresh Smoke Project
+id: 29b55008-04d7-44a8-9bf3-eb40aedc56ca
 default_environment: local
 
 environments:

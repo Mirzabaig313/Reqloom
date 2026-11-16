@@ -1,5 +1,6 @@
 // Request override path/query canonicalization coverage. Desktop Requirement §6.2.
 #include "appcontroller/AppControllerInternal.h"
+#include "application/EditBody.h"
 #include "application/RunController.h"
 
 #include <gtest/gtest.h>
@@ -234,6 +235,50 @@ TEST(RequestQuerySync, appending_params_preserves_trailing_empty_query_segment) 
 
     EXPECT_EQ(qml::visiblePathWithAppendedQueryPairs(QStringLiteral("/search?raw=1&"), pairs),
               QStringLiteral("/search?raw=1&&next=2"));
+}
+
+TEST(RequestOverride, body_type_none_sends_no_body_and_no_form) {
+    RequestOverride requestOverride;
+
+    applyEditBody(requestOverride,
+                  QStringLiteral("none"),
+                  QStringLiteral(R"({"kept":"in memory"})"),
+                  {{QStringLiteral("field"), QStringLiteral("value")}});
+
+    EXPECT_FALSE(requestOverride.bodyIsForm);
+    EXPECT_TRUE(requestOverride.body.isEmpty());
+    EXPECT_TRUE(requestOverride.formFields.empty());
+}
+
+TEST(RequestOverride, raw_and_form_body_types_carry_their_own_content) {
+    const std::vector<std::pair<QString, QString>> form{{QStringLiteral("k"), QStringLiteral("v")}};
+    RequestOverride raw;
+    RequestOverride multipart;
+
+    applyEditBody(raw, QStringLiteral("json"), QStringLiteral("{}"), form);
+    applyEditBody(multipart, QStringLiteral("form-data"), QStringLiteral("{}"), form);
+
+    EXPECT_FALSE(raw.bodyIsForm);
+    EXPECT_EQ(raw.body, QStringLiteral("{}"));
+    EXPECT_TRUE(raw.formFields.empty());
+    EXPECT_TRUE(multipart.bodyIsForm);
+    EXPECT_TRUE(multipart.body.isEmpty());
+    EXPECT_EQ(multipart.formFields, (std::map<std::string, std::string>{{"k", "v"}}));
+}
+
+TEST(RequestOverride, removing_the_body_drops_only_an_editor_managed_content_type) {
+    const std::vector<std::pair<QString, QString>> managed{
+        {QStringLiteral("content-type"), QStringLiteral("application/json; charset=utf-8")},
+        {QStringLiteral("Accept"), QStringLiteral("*/*")}};
+    const std::vector<std::pair<QString, QString>> custom{
+        {QStringLiteral("Content-Type"), QStringLiteral("application/vnd.api+json")}};
+
+    const auto withoutManaged = withoutManagedContentType(managed);
+    const auto withoutCustom = withoutManagedContentType(custom);
+
+    ASSERT_EQ(withoutManaged.size(), 1U);
+    EXPECT_EQ(withoutManaged.front().first, QStringLiteral("Accept"));
+    EXPECT_EQ(withoutCustom, custom);
 }
 
 }  // namespace reqloom::desktop::tests

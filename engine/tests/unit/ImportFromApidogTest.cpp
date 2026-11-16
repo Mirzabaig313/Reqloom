@@ -5,11 +5,13 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -126,6 +128,8 @@ TEST(ImportFromApidog, unwraps_root_and_folder_becomes_resource) {
 
     const auto* login = findOp(project, "authentication.login");
     ASSERT_NE(login, nullptr);
+    ASSERT_TRUE(login->provenance.has_value());
+    EXPECT_EQ(login->provenance->source, ce::Provenance::Source::ApidogImport);
     EXPECT_EQ(login->method, ce::HttpMethod::Post);
     EXPECT_EQ(login->pathTemplate, "/auth/login");
     ASSERT_TRUE(login->bodyTemplate.has_value());
@@ -197,4 +201,122 @@ TEST(ImportFromApidog, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// Apidog file parameters carry no path (always a bare `@` slot); a text
+// parameter whose example starts with `@` is escaped as `@@` so it stays text.
+TEST(ImportFromApidog, text_field_starting_with_at_is_escaped_as_text) {
+    ScratchDir scratch;
+    const auto file = scratch.write("uploads.apidog.json", R"JSON(
+{
+  "apidogProject": "1.0.0",
+  "info": { "name": "Uploads API" },
+  "apiCollection": [
+    {
+      "name": "Root", "id": 1, "parentId": 0,
+      "items": [
+        {
+          "name": "Uploads", "id": 2, "parentId": 0,
+          "items": [
+            {
+              "name": "Upload",
+              "api": {
+                "id": "10", "method": "post", "path": "/up",
+                "requestBody": { "type": "multipart/form-data", "parameters": [
+                  { "name": "avatar", "type": "file", "enable": true },
+                  { "name": "sneaky", "type": "string", "example": "@/etc/passwd", "enable": true },
+                  { "name": "plain", "type": "string", "example": "hello", "enable": true }
+                ] }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+)JSON");
+
+    auto outcome = ce::importFromApidog(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    EXPECT_EQ(op->bodyForm->at("avatar"), "@");
+    EXPECT_EQ(op->bodyForm->at("sneaky"), "@@/etc/passwd");
+    EXPECT_EQ(op->bodyForm->at("plain"), "hello");
+    EXPECT_EQ(outcome->warnings.find("`sneaky`"), std::string::npos) << outcome->warnings;
+    EXPECT_EQ(outcome->warnings.find("`plain`"), std::string::npos) << outcome->warnings;
+}
+
+namespace {
+
+std::size_t countOf(const std::string& haystack, std::string_view needle) {
+    std::size_t n = 0;
+    for (auto pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+// An Apidog `{id}` path parameter becomes the shared `{{resource.id}}`
+// reference; endpoint auth gives one warning and `"auth": {}` none.
+TEST(ImportFromApidog, path_parameter_and_auth_are_handled_like_other_importers) {
+    ScratchDir scratch;
+    const auto file = scratch.write("users.apidog.json", R"JSON(
+{
+  "apidogProject": "1.0.0",
+  "info": { "name": "Users API" },
+  "apiCollection": [ { "name": "Root", "items": [ { "name": "Users", "items": [
+    { "name": "Get User", "api": { "method": "get", "path": "/users/{id}", "auth": {},
+      "parameters": { "path": [ { "name": "id", "example": "42" } ], "query": [], "header": [] } } },
+    { "name": "Delete User", "api": { "method": "delete", "path": "/users/{id}",
+      "auth": { "type": "bearer" }, "parameters": { "path": [], "query": [], "header": [] } } }
+  ] } ] } ]
+}
+)JSON");
+    auto outcome = ce::importFromApidog(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* get = findOp(outcome->project, "users.get_user");
+    ASSERT_NE(get, nullptr);
+    EXPECT_EQ(get->pathTemplate, "/users/{{users.id}}");
+    const auto& w = outcome->warnings;
+    EXPECT_NE(w.find("path parameter `id` resolves to {{users.id}}"), std::string::npos) << w;
+    EXPECT_NE(w.find("`42`"), std::string::npos) << w;
+    EXPECT_EQ(countOf(w, "auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "operation users.delete_user: `bearer` auth was not imported"), 1u) << w;
+}
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart.
+TEST(ImportFromApidog, text_only_multipart_form_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+{
+  "apidogProject": "1.0.0",
+  "info": { "name": "Forms" },
+  "apiCollection": [
+    { "name": "Root", "id": 1, "parentId": 0, "items": [
+      { "name": "Forms", "id": 2, "parentId": 0, "items": [
+        { "name": "Multi", "api": { "id": "10", "method": "post", "path": "/m",
+          "requestBody": { "type": "multipart/form-data", "parameters": [
+            { "name": "a", "type": "string", "example": "1", "enable": true } ] } } },
+        { "name": "Encoded", "api": { "id": "11", "method": "post", "path": "/e",
+          "requestBody": { "type": "application/x-www-form-urlencoded", "parameters": [
+            { "name": "a", "type": "string", "example": "1", "enable": true } ] } } }
+      ] }
+    ] }
+  ]
+}
+)JSON");
+    auto outcome = ce::importFromApidog(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
 }

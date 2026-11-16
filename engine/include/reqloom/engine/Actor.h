@@ -48,9 +48,8 @@ struct AuthStep {
     std::vector<Extraction> extractions;
 };
 
-/// Optional refresh block. Used when the actor's session expires; the
-/// engine sends this single request and merges its extractions into the
-/// existing session, sidestepping a full re-login.
+/// Optional refresh block: sent when the session expires, merging its extractions into the session
+/// instead of a full re-login.
 struct SessionRefresh {
     HttpMethod method{HttpMethod::Post};
     std::string pathTemplate;
@@ -62,10 +61,8 @@ struct SessionRefresh {
     /// `expectStatusList` is empty.
     std::optional<int> expectStatus;
 
-    /// Multi-value `expect_status: [200, 204]`. When non-empty takes
-    /// precedence over `expectStatus`. When both are unset, runRefresh
-    /// accepts any 2xx as success — backwards-compatible with schemas
-    /// that predate this field.
+    /// Multi-value `expect_status: [200, 204]`; takes precedence over `expectStatus`. When both are
+    /// unset, runRefresh accepts any 2xx.
     std::vector<int> expectStatusList;
 };
 
@@ -82,16 +79,18 @@ struct Actor {
     AuthStrategy strategy{AuthStrategy::Simple};
     std::vector<AuthStep> authSteps;  ///< For `simple`, exactly one step.
 
-    /// Strategy-specific config for non-step-based strategies.
-    /// `basic` reads `username`/`password`, `api_key` reads `key`/`location`/`name`, etc.
-    /// Values may contain {{X.y}} references resolved at auth time.
-    /// Step-based strategies (Simple, Chain) ignore this map.
+    /// Config for non-step strategies (`basic`: `username`/`password`; `api_key`:
+    /// `key`/`location`/`name`). Values may contain {{X.y}} references resolved at auth time.
+    /// Step-based strategies ignore it.
     std::map<std::string, std::string> authConfig;
 
     std::chrono::seconds sessionTtl{15 * 60};
     std::optional<SessionRefresh> refresh;
 
     ActorInjection inject;
+
+    /// Where the actor was defined; see `SourceLocation`.
+    SourceLocation source;
 };
 
 }  // namespace reqloom::engine

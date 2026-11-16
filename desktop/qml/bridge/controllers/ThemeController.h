@@ -1,8 +1,5 @@
-// ThemeController — QML-facing singleton that owns the appearance mode
-// (Light/Dark/System) and density, and persists them via QSettings (mirroring
-// the Widgets ThemeManager). DesignTokens reads the resolved appearance from
-// this singleton to return the correct palette. QML binds to its properties
-// and gets repainted on mode change via NOTIFY.
+// ThemeController — QML-facing singleton owning the appearance mode (Light/Dark/System) and
+// density, persisted via QSettings. DesignTokens reads the resolved appearance from it.
 #pragma once
 
 #include "theming/Theme.h"

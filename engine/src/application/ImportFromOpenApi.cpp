@@ -1,6 +1,7 @@
 // ImportFromOpenApi — OpenAPI 3.x → Project parser.
 #include "ImportFromOpenApi.h"
 
+#include "ImportSupport.h"
 #include "Verifier.h"
 
 #include "../domain/DependencyResolver.h"
@@ -18,6 +19,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -29,13 +31,14 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 
 ReqloomError invalid(std::string detail) {
     return ReqloomError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
 }
 
-// Containment check: resolved path must live under projectRoot with a
-// path-separator boundary so `/home/user/proj` doesn't admit `/home/user/proj-evil`.
+// Containment: resolved path must live under projectRoot with a separator boundary (`/proj` must
+// not admit `/proj-evil`).
 std::expected<fs::path, ReqloomError> canonicalSpecPath(const fs::path& spec,
                                                         const fs::path& projectRoot) {
     std::error_code ec;
@@ -192,7 +195,6 @@ constexpr bool isOpenApiMethod(std::string_view m) noexcept {
            m == "head" || m == "options";
 }
 
-// Pick the first 2xx status declared on the operation, falling back to 200.
 int pickExpectedStatus(const YAML::Node& responses) {
     if (!responses || !responses.IsMap()) {
         return 200;
@@ -228,8 +230,7 @@ std::string nowIso8601Utc() {
                        tm.tm_sec);
 }
 
-/// Server URL → environment baseUrl. Only `servers[0]` is consumed; later
-/// slices can offer environment-per-server.
+/// Server URL → environment baseUrl; only `servers[0]` is consumed.
 std::string firstServerUrl(const YAML::Node& root) {
     const auto& servers = root["servers"];
     if (!servers || !servers.IsSequence() || servers.size() == 0) {
@@ -258,41 +259,23 @@ std::string swagger2BaseUrl(const YAML::Node& root) {
     return scheme + "://" + host + basePath;
 }
 
-/// Rewrite `{name}` path parameters into `{{<resource>.<name>}}` template
-/// references. The engine's variable resolver will then pull the value
-/// from a previously-extracted upstream variable. Linking the upstream
-/// op that *produces* the value is left to the user (or to an AI import
-/// pass) — we surface a warning per parameter to make the gap visible.
-struct PathRewriteResult {
-    std::string rewritten;
-    std::vector<std::string> paramNames;
-};
-
-PathRewriteResult rewritePathParams(std::string_view pathTemplate, std::string_view resourceId) {
-    PathRewriteResult out;
-    out.rewritten.reserve(pathTemplate.size());
-
-    std::size_t i = 0;
-    while (i < pathTemplate.size()) {
-        const auto open = pathTemplate.find('{', i);
-        if (open == std::string_view::npos) {
-            out.rewritten.append(pathTemplate.substr(i));
-            break;
+/// Comma-joined names of the schemes a `security` list asks for; empty when absent, `[]`, or
+/// only the optional `{}`.
+std::string requiredSecuritySchemes(const YAML::Node& security) {
+    std::string out;
+    if (!security || !security.IsSequence()) {
+        return out;
+    }
+    for (const auto& requirement : security) {
+        if (!requirement.IsMap()) {
+            continue;
         }
-        out.rewritten.append(pathTemplate.substr(i, open - i));
-        const auto close = pathTemplate.find('}', open);
-        if (close == std::string_view::npos) {
-            out.rewritten.append(pathTemplate.substr(open));
-            break;
+        for (const auto& kv : requirement) {
+            const auto name = kv.first.as<std::string>("");
+            if (!name.empty() && out.find(name) == std::string::npos) {
+                out += (out.empty() ? "" : ", ") + name;
+            }
         }
-        const auto param = pathTemplate.substr(open + 1, close - open - 1);
-        out.paramNames.emplace_back(param);
-        out.rewritten.append("{{");
-        out.rewritten.append(resourceId);
-        out.rewritten.push_back('.');
-        out.rewritten.append(param);
-        out.rewritten.append("}}");
-        i = close + 1;
     }
     return out;
 }
@@ -364,11 +347,8 @@ bool isScalarSchemaType(std::string_view t) noexcept {
     return t == "string" || t == "integer" || t == "number" || t == "boolean";
 }
 
-// YAML::Node's destructor is not marked noexcept upstream (yaml-cpp 0.8),
-// so the implicit ~UnwrappedSchema is noexcept-suspect. In practice
-// yaml-cpp's destructor only releases ref-counted nodes and cannot throw.
-// Silenced locally rather than wrapping a noexcept dtor in try/catch.
-// NOLINTNEXTLINE(bugprone-exception-escape)
+// yaml-cpp 0.8's YAML::Node destructor isn't noexcept, but it only releases ref-counted nodes and
+// cannot throw. NOLINTNEXTLINE(bugprone-exception-escape)
 struct UnwrappedSchema {
     YAML::Node schema;
     bool wrappedInData{false};
@@ -432,7 +412,21 @@ std::vector<std::pair<std::string, std::string>> inferExtractionsFromSchema(
 
 constexpr int kMaxYamlToJsonDepth = 64;
 
-nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
+/// Upper bound on nodes converted from YAML to JSON per import: the depth cap does not bound
+/// breadth, since yaml-cpp aliases are re-walked on every use.
+constexpr std::size_t kMaxYamlToJsonNodes = 1'000'000;
+
+struct YamlToJsonBudget {
+    std::size_t remaining{kMaxYamlToJsonNodes};
+    bool exceeded{false};
+};
+
+nlohmann::json yamlToJson(const YAML::Node& node, YamlToJsonBudget& budget, int depth = 0) {
+    if (budget.exceeded || budget.remaining == 0) {
+        budget.exceeded = true;
+        return nlohmann::json{nullptr};
+    }
+    --budget.remaining;
     if (depth > kMaxYamlToJsonDepth) {
         return nlohmann::json{nullptr};
     }
@@ -460,9 +454,8 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
                 fc.ec == std::errc{} && fc.ptr == last) {
                 return nlohmann::json(asInt);
             }
-            // libc++ on Apple Clang 16 / Xcode 16.4 has not yet implemented
-            // std::from_chars for floating-point types. Use std::strtod for
-            // portability; raw is a std::string and therefore null-terminated.
+            // libc++ on Apple Clang 16 lacks floating-point std::from_chars; strtod is fine as raw
+            // is null-terminated.
             char* end = nullptr;
             errno = 0;
             const double asDouble = std::strtod(raw.c_str(), &end);
@@ -476,7 +469,7 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
     if (node.IsSequence()) {
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& item : node) {
-            arr.push_back(yamlToJson(item, depth + 1));
+            arr.push_back(yamlToJson(item, budget, depth + 1));
         }
         return arr;
     }
@@ -484,7 +477,7 @@ nlohmann::json yamlToJson(const YAML::Node& node, int depth = 0) {
     if (node.IsMap()) {
         nlohmann::json obj = nlohmann::json::object();
         for (const auto& kv : node) {
-            obj[kv.first.as<std::string>("")] = yamlToJson(kv.second, depth + 1);
+            obj[kv.first.as<std::string>("")] = yamlToJson(kv.second, budget, depth + 1);
         }
         return obj;
     }
@@ -501,9 +494,7 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
         return std::unexpected(canonical.error());
     }
 
-    // 8 MiB cap. Real-world OpenAPI specs (Stripe, GitHub) clock in around
-    // 5 MiB; anything bigger is almost certainly an attack or a runaway
-    // generator. yaml-cpp will happily allocate gigabytes if we let it.
+    // 8 MiB cap: real specs are ~5 MiB, and yaml-cpp will allocate gigabytes on a hostile one.
     constexpr std::uintmax_t kMaxSpecBytes = std::uintmax_t{8} * 1024 * 1024;
     std::error_code sizeEc;
     const auto specSize = fs::file_size(*canonical, sizeEc);
@@ -565,6 +556,28 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
     std::vector<std::string> warnings;
 
     std::set<std::string> seenOpIds;
+    YamlToJsonBudget jsonBudget;
+    // Derived resource ids are sanitised (`1.0` would break `{{scope.field}}` splitting);
+    // distinct segments that sanitise to the same id get distinct ids.
+    std::map<std::string, std::string> resourceIdBySegment;
+    std::set<std::string> usedResourceIds;
+    const auto safeResourceId = [&](const std::string& derived) {
+        if (const auto it = resourceIdBySegment.find(derived); it != resourceIdBySegment.end()) {
+            return it->second;
+        }
+        const auto base = is::identifier(derived, "root");
+        std::string id = base;
+        for (int n{2}; usedResourceIds.contains(id); ++n) {
+            id = std::format("{}_{}", base, n);
+        }
+        usedResourceIds.insert(id);
+        resourceIdBySegment.emplace(derived, id);
+        return id;
+    };
+
+    if (const auto schemes = requiredSecuritySchemes(root["security"]); !schemes.empty()) {
+        is::warnDroppedAuth(warnings, std::format("spec `{}`", title), schemes);
+    }
 
     for (const auto& pathKv : paths) {
         const auto pathTemplate = pathKv.first.as<std::string>("");
@@ -574,7 +587,7 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
         }
 
         const auto derivation = deriveResourceIdDetailed(pathTemplate);
-        const auto& resourceId = derivation.id;
+        const auto resourceId = safeResourceId(derivation.id);
         auto& resource = outcome.project.resources[ResourceId{resourceId}];
         if (resource.id.value.empty()) {
             resource.id = ResourceId{resourceId};
@@ -592,8 +605,8 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
             }
 
             auto opName = deriveOperationName(methodLower, pathTemplate);
-            // Disambiguate collisions (e.g. two GETs on different paths
-            // mapping to the same resource both calling themselves "list").
+            // Disambiguate operations that collide within a resource (e.g. two GETs both called
+            // "list").
             std::string uniqueName = opName;
             int suffix = 2;
             while (resource.operations.contains(uniqueName) ||
@@ -607,8 +620,8 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
             op.resource = ResourceId{resourceId};
             op.method = parseHttpMethod(methodLower);
 
-            auto pathRewrite = rewritePathParams(pathTemplate, resourceId);
-            op.pathTemplate = std::move(pathRewrite.rewritten);
+            const auto pathRewrite = is::convertPathParams(pathTemplate, resourceId);
+            op.pathTemplate = pathRewrite.path;
             op.expectStatus = pickExpectedStatus(opNode["responses"]);
 
             Provenance prov;
@@ -626,18 +639,9 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
                 !opIdSpec.empty()) {
                 prov.evidence["operationId"] = opIdSpec;
             }
-            for (const auto& param : pathRewrite.paramNames) {
-                prov.evidence["path_param." + param] = std::format(
-                    "rewritten to {{{{{}.{}}}}}; "
-                    "ensure an upstream operation extracts {}",
-                    resourceId,
-                    param,
-                    param);
-            }
 
-            // Top-level scalar response fields become candidate extractions.
-            // When an example payload is present, the verifier confirms
-            // each candidate path; results land in provenance evidence.
+            // Top-level scalar response fields become candidate extractions, confirmed against an
+            // example payload when present.
             const auto schemaNode = firstJsonResponseSchema(opNode);
             const auto exampleNode = firstJsonResponseExample(opNode);
             const auto candidates = inferExtractionsFromSchema(schemaNode);
@@ -654,7 +658,13 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
                 SampleResponse sample;
                 sample.kind = Provenance::VerifiedAgainst::OpenApiExample;
                 sample.statusCode = op.expectStatus.value_or(200);
-                const auto exampleJson = yamlToJson(*exampleNode);
+                const auto exampleJson = yamlToJson(*exampleNode, jsonBudget);
+                if (jsonBudget.exceeded) {
+                    return std::unexpected(invalid(std::format(
+                        "openapi import: response examples expand to more than {} nodes "
+                        "(nested YAML aliases?); refusing to import",
+                        kMaxYamlToJsonNodes)));
+                }
                 sample.body = exampleJson.dump();
                 if (auto report = verifier.verify(op, sample); report) {
                     bool anyVerified = false;
@@ -705,21 +715,13 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
                     op.extractions.size()));
             }
 
-            op.provenance = std::move(prov);
-
-            // Each rewritten path parameter shows up as one warning so the
-            // user's review loop sees exactly what needs to be linked.
-            for (const auto& param : pathRewrite.paramNames) {
-                warnings.push_back(std::format(
-                    "operation {}: path parameter `{}` resolves to {{{{{}.{}}}}} — wire an "
-                    "upstream operation that extracts `{}` into resource `{}`",
-                    op.id.value,
-                    param,
-                    resourceId,
-                    param,
-                    param,
-                    resourceId));
+            is::notePathParams(pathRewrite, op.id.value, resourceId, {}, prov, warnings);
+            // Operation-level `security` replaces the spec-level one.
+            if (const auto schemes = requiredSecuritySchemes(opNode["security"]);
+                !schemes.empty()) {
+                is::warnDroppedAuth(warnings, "operation " + op.id.value, schemes);
             }
+            op.provenance = std::move(prov);
 
             resource.operations.emplace(uniqueName, std::move(op));
         }
@@ -729,9 +731,8 @@ std::expected<ImportFromOpenApi::Outcome, ReqloomError> ImportFromOpenApi::run(
         return std::unexpected(invalid("openapi import: spec yielded zero importable operations"));
     }
 
-    // Same load-time validation the YAML parser runs — the importer
-    // builds a Project directly and would otherwise skip it. Harmless
-    // today (generated ops can't cycle), cheap insurance for later.
+    // Run the load-time validation the YAML parser runs; the importer builds a Project directly and
+    // would skip it.
     if (auto valid = DependencyResolver{}.validate(outcome.project); !valid) {
         return std::unexpected(valid.error());
     }

@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <numeric>
 #include <vector>
 
@@ -69,6 +70,21 @@ TEST(LatencyStats, max_value_lands_in_last_bin) {
     const Histogram h = histogram(v);
     ASSERT_FALSE(h.counts.empty());
     EXPECT_GE(h.counts.back(), 1);  // the value 10 is not dropped past the edge
+}
+
+TEST(LatencyStats, one_slow_outlier_keeps_the_bin_count_bounded) {
+    std::vector<double> v;
+    for (int i = 0; i < 200; ++i) {
+        v.push_back(10.0 + static_cast<double>(i % 5));
+    }
+    v.push_back(30000.0);
+
+    const Histogram h = histogram(v);
+
+    EXPECT_LE(h.counts.size(), static_cast<std::size_t>(kMaxHistogramBins));
+    EXPECT_EQ(std::accumulate(h.counts.begin(), h.counts.end(), 0), static_cast<int>(v.size()));
+    EXPECT_GE(h.counts.back(), 1);
+    EXPECT_DOUBLE_EQ(h.start + h.binWidth * static_cast<double>(h.counts.size()), 30000.0);
 }
 
 }  // namespace reqloom::desktop::stats::tests

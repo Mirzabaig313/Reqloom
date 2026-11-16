@@ -1,11 +1,11 @@
 // ImportFromThunderClient — Thunder Client (VS Code) collection export (JSON) →
 // Project parser. Sibling of ImportFromPostman.
-//
-// path/id/url helpers mirror ImportFromPostman rather than share a
-// header (the existing importers do the same). Upgrade path: extract a shared
-// ImportSupport.h once the duplication is worth removing.
+// Helpers mirror ImportFromPostman rather than share a header.
 
 #include "ImportFromThunderClient.h"
+#include "ImportFromFileRefs.h"
+#include "ImportFromJsonHelpers.h"
+#include "ImportSupport.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -31,6 +31,7 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 using json = nlohmann::json;
 
 constexpr std::uintmax_t kMaxExportBytes = std::uintmax_t{16} * 1024 * 1024;
@@ -140,9 +141,9 @@ HttpMethod parseMethod(std::string_view methodRaw) {
     return HttpMethod::Get;
 }
 
-/// Rewrite bare `{{var}}` references to `{{env.var}}`. Already-scoped names
-/// (containing '.') pass through; nothing here is treated as dynamic.
-std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced) {
+/// Rewrite `{{var}}` references to `{{env.<key>}}`; a dotted name is
+/// sanitised to an environment key. Nothing here is treated as dynamic.
+std::string rewriteTokens(std::string_view in, is::VarRefs& referenced) {
     std::string out;
     out.reserve(in.size());
     std::size_t i = 0;
@@ -167,11 +168,8 @@ std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced
         }
         if (inner.empty()) {
             out.append("{{}}");
-        } else if (inner.find('.') != std::string_view::npos) {
-            out.append("{{").append(inner).append("}}");
         } else {
-            referenced.emplace(inner);
-            out.append("{{env.").append(inner).append("}}");
+            out.append(is::envRef(inner, referenced));
         }
         i = close + 2;
     }
@@ -198,7 +196,7 @@ SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::stri
             while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
                 name.remove_suffix(1);
             }
-            if (const auto it = vars.find(std::string{name}); it != vars.end()) {
+            if (const auto it = vars.find(is::envKey(name)); it != vars.end()) {
                 out.base = it->second;
             }
             std::string_view rest = noQuery.substr(close + 2);
@@ -274,8 +272,7 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                          std::string{"thunder client import: invalid JSON: "} + e.what()});
     }
 
-    // Normalise to a list of collection objects. "Export Collection" gives an
-    // array; a single object is also accepted.
+    // Accept an "Export Collection" array or a single collection object.
     std::vector<const json*> collections;
     if (doc.is_array()) {
         for (const auto& c : doc) {
@@ -333,13 +330,35 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
     };
 
     const auto importedAt = nowIso8601Utc();
-    std::set<std::string> referencedVars;
+    is::VarRefs referencedVars;
     std::set<std::string> seenOpIds;
     std::string projectBase;
     bool multipleBasesWarned = false;
     auto rewrite = [&](std::string_view s) {
         return rewriteTokens(s, referencedVars);
     };
+
+    // Collection- and folder-level auth lives in `settings.auth`; reported once per container.
+    const auto settingsAuthType = [](const json& node) -> std::string {
+        const auto settings = node.find("settings");
+        if (settings == node.end() || !settings->is_object() || !settings->contains("auth")) {
+            return {};
+        }
+        return jsonStr((*settings)["auth"], "type");
+    };
+    for (const json* c : collections) {
+        is::warnDroppedAuth(
+            warnings, std::format("collection `{}`", jsonStr(*c, "colName")), settingsAuthType(*c));
+        if (c->contains("folders") && (*c)["folders"].is_array()) {
+            for (const auto& f : (*c)["folders"]) {
+                if (f.is_object()) {
+                    is::warnDroppedAuth(warnings,
+                                        std::format("folder `{}`", jsonStr(f, "name")),
+                                        settingsAuthType(f));
+                }
+            }
+        }
+    }
 
     for (const json* c : collections) {
         if (!c->contains("requests") || !(*c)["requests"].is_array()) {
@@ -384,13 +403,20 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                     multipleBasesWarned = true;
                 }
             }
-            op.pathTemplate = rewrite(split.path);
+            const auto pathParams = is::convertPathParams(rewrite(split.path), resourceId);
+            op.pathTemplate = pathParams.path;
+            is::VarMap pathValues;
 
-            // Query params — skip path variables (isPath) and disabled rows.
+            // Path variables (isPath) only supply a path parameter value; disabled rows are
+            // skipped.
             if (item.contains("params") && item["params"].is_array()) {
                 for (const auto& q : item["params"]) {
-                    if (!q.is_object() || q.value("isPath", false) ||
-                        q.value("isDisabled", false)) {
+                    if (q.is_object() && import_json::boolOr(q, "isPath", false)) {
+                        pathValues[is::identifier(jsonStr(q, "name"), "param")] =
+                            jsonStr(q, "value");
+                        continue;
+                    }
+                    if (!q.is_object() || import_json::boolOr(q, "isDisabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(q, "name");
@@ -400,10 +426,9 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                 }
             }
 
-            // Headers.
             if (item.contains("headers") && item["headers"].is_array()) {
                 for (const auto& h : item["headers"]) {
-                    if (!h.is_object() || h.value("isDisabled", false)) {
+                    if (!h.is_object() || import_json::boolOr(h, "isDisabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(h, "name");
@@ -413,21 +438,21 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                 }
             }
 
-            // Body.
             if (item.contains("body") && item["body"].is_object()) {
                 const json& body = item["body"];
                 const auto type = jsonStr(body, "type");
                 const auto raw = jsonStr(body, "raw");
-                if (type == "formencoded" || type == "form") {
+                if (type == "formencoded" || type == "form" || type == "formdata") {
                     std::map<std::string, std::string> form;
                     if (body.contains("form") && body["form"].is_array()) {
                         for (const auto& f : body["form"]) {
-                            if (!f.is_object() || f.value("isDisabled", false)) {
+                            if (!f.is_object() || import_json::boolOr(f, "isDisabled", false)) {
                                 continue;
                             }
                             const auto key = jsonStr(f, "name");
                             if (!key.empty()) {
-                                form[key] = rewrite(jsonStr(f, "value"));
+                                form[key] = import_files::textFieldValue(
+                                    jsonStr(f, "value"), op.id.value, key, warnings, rewrite);
                             }
                         }
                     }
@@ -438,11 +463,15 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
                                 continue;
                             }
                             const auto path = jsonStr(f, "value");
-                            form[key] = path.empty() ? "@" : "@" + rewrite(path);
+                            form[key] = import_files::fileFieldValue(
+                                path, op.id.value, key, warnings, rewrite);
                         }
                     }
                     if (!form.empty()) {
                         op.bodyForm = std::move(form);
+                        if (type == "formdata") {
+                            is::keepMultipart(op);
+                        }
                     }
                 } else if (!raw.empty()) {
                     // json / text / xml / graphql all carry the payload in `raw`.
@@ -451,13 +480,17 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
             }
 
             Provenance prov;
-            prov.source = Provenance::Source::HandWritten;  // no TC-specific enum value
+            prov.source = Provenance::Source::ThunderClientImport;
             prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
             prov.importedAt = importedAt;
             prov.evidence["imported_from"] = "thunder_client";
             if (!reqName.empty()) {
                 prov.evidence["thunder_name"] = reqName;
             }
+            is::notePathParams(pathParams, op.id.value, resourceId, pathValues, prov, warnings);
+            is::warnDroppedAuth(warnings,
+                                "operation " + op.id.value,
+                                item.contains("auth") ? jsonStr(item["auth"], "type") : "");
             op.provenance = std::move(prov);
 
             resource.operations.emplace(unique, std::move(op));
@@ -476,7 +509,8 @@ std::expected<ImportFromThunderClient::Outcome, ReqloomError> ImportFromThunderC
             "no host could be derived from the requests — set `baseUrl` in the environment");
     }
 
-    for (const auto& ref : referencedVars) {
+    is::warnRenamedVars(referencedVars, warnings);
+    for (const auto& ref : referencedVars.referenced) {
         if (!env.contains(ref)) {
             env[ref] = "";
             warnings.push_back(std::format(

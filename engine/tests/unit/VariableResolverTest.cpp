@@ -9,15 +9,24 @@
 
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <iomanip>
+#include <map>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace ce = reqloom::engine;
 
 namespace {
+
+[[nodiscard]] ce::ResourceInstance instanceWith(std::map<std::string, std::string> variables) {
+    ce::ResourceInstance instance;
+    instance.variables = std::move(variables);
+    return instance;
+}
 
 ce::ResolveContext makeResolveCtx() {
     ce::ResolveContext rctx;
@@ -143,8 +152,8 @@ TEST(VariableResolver, preserves_indexed_resource_lookup) {
     ce::RunContext ctx;
     const auto rctx = makeResolveCtx();
 
-    ctx.appendInstance(ce::ResourceId{"order"}, ce::ResourceInstance{{{"id", "ord-1"}}});
-    ctx.appendInstance(ce::ResourceId{"order"}, ce::ResourceInstance{{{"id", "ord-2"}}});
+    ctx.appendInstance(ce::ResourceId{"order"}, instanceWith({{"id", "ord-1"}}));
+    ctx.appendInstance(ce::ResourceId{"order"}, instanceWith({{"id", "ord-2"}}));
 
     EXPECT_EQ(resolver.resolve("{{order[1].id}}", ctx, rctx).output, "ord-1");
     EXPECT_EQ(resolver.resolve("{{order[2].id}}", ctx, rctx).output, "ord-2");
@@ -164,9 +173,9 @@ TEST(VariableResolver, for_each_iteration_binding_selects_the_bound_instance) {
     const auto rctx = makeResolveCtx();
 
     const ce::ResourceId order{"order"};
-    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-1"}}});
-    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-2"}}});
-    ctx.appendInstance(order, ce::ResourceInstance{{{"id", "ord-3"}}});
+    ctx.appendInstance(order, instanceWith({{"id", "ord-1"}}));
+    ctx.appendInstance(order, instanceWith({{"id", "ord-2"}}));
+    ctx.appendInstance(order, instanceWith({{"id", "ord-3"}}));
 
     // No binding → most-recent.
     EXPECT_EQ(resolver.resolve("{{order.id}}", ctx, rctx).output, "ord-3");
@@ -379,8 +388,7 @@ TEST(VariableResolver, url_path_encodes_only_query_template_outputs) {
     ce::VariableResolver resolver;
     ce::RunContext ctx;
     const auto rctx = makeResolveCtx();
-    ctx.appendInstance(ce::ResourceId{"resource"},
-                       ce::ResourceInstance{{{"value", "ok&admin=true#"}}});
+    ctx.appendInstance(ce::ResourceId{"resource"}, instanceWith({{"value", "ok&admin=true#"}}));
 
     const auto result =
         resolver.resolveUrlPath("/search?x={{resource.value}}&x=fixed%20value#results", ctx, rctx);
@@ -409,8 +417,7 @@ TEST(VariableResolver, url_path_encodes_embedded_path_segment_substitutions) {
     ce::VariableResolver resolver;
     ce::RunContext ctx;
     const auto rctx = makeResolveCtx();
-    ctx.appendInstance(ce::ResourceId{"resource"},
-                       ce::ResourceInstance{{{"id", "ok?admin=true#/child"}}});
+    ctx.appendInstance(ce::ResourceId{"resource"}, instanceWith({{"id", "ok?admin=true#/child"}}));
 
     const auto result = resolver.resolveUrlPath("/items/{{resource.id}}?scope=user", ctx, rctx);
 
@@ -488,4 +495,107 @@ TEST(VariableResolver, preserves_duplicate_unresolved_occurrences) {
     EXPECT_EQ(result.unresolvedOccurrences[0].component, ce::VariableResolver::Component::UrlPath);
     EXPECT_EQ(result.unresolvedOccurrences[1].token, "missing.id");
     EXPECT_EQ(result.unresolvedOccurrences[1].component, ce::VariableResolver::Component::UrlPath);
+}
+
+namespace {
+
+void setProcessEnv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+}  // namespace
+
+TEST(VariableResolver, env_builtin_resolves_only_names_listed_in_allowed_env) {
+    setProcessEnv("REQLOOM_TEST_ALLOWED_ENV", "allowed-value");
+    setProcessEnv("REQLOOM_TEST_DENIED_ENV", "denied-value");
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    auto rctx = makeResolveCtx();
+    rctx.allowedEnv = {"REQLOOM_TEST_ALLOWED_ENV"};
+
+    EXPECT_EQ(resolver.resolve("{{$.env.REQLOOM_TEST_ALLOWED_ENV}}", ctx, rctx).output,
+              "allowed-value");
+
+    const auto denied = resolver.resolve("{{$.env.REQLOOM_TEST_DENIED_ENV}}", ctx, rctx);
+    EXPECT_EQ(denied.output, "{{$.env.REQLOOM_TEST_DENIED_ENV}}");
+    ASSERT_EQ(denied.unresolvedOccurrences.size(), 1u);
+    EXPECT_EQ(denied.unresolvedOccurrences[0].token, "$.env.REQLOOM_TEST_DENIED_ENV");
+}
+
+TEST(VariableResolver, env_builtin_is_unresolved_when_allowed_env_is_empty) {
+    setProcessEnv("REQLOOM_TEST_DENIED_ENV", "denied-value");
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const auto result = resolver.resolve("{{$.env.REQLOOM_TEST_DENIED_ENV}}", ctx, rctx);
+    EXPECT_EQ(result.output.find("denied-value"), std::string::npos);
+    EXPECT_EQ(result.unresolvedOccurrences.size(), 1u);
+}
+
+// Item 7: an unknown faker name is unresolved (it used to resolve to a junk
+// `faker_<name>_<hex>` placeholder, so a typo was sent to the API).
+TEST(VariableResolver, unknown_faker_name_is_unresolved_not_a_placeholder) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+
+    const auto typo = resolver.resolve("{{$.faker.emial}}", ctx, rctx);
+    ASSERT_EQ(typo.unresolved.size(), 1u) << "output: " << typo.output;
+    EXPECT_EQ(typo.unresolved[0], "$.faker.emial");
+    EXPECT_EQ(typo.output, "{{$.faker.emial}}");
+
+    const auto email = resolver.resolve("{{$.faker.email}}", ctx, rctx);
+    EXPECT_TRUE(email.unresolved.empty());
+    EXPECT_TRUE(email.output.starts_with("test+")) << email.output;
+    const auto phone = resolver.resolve("{{$.faker.phone}}", ctx, rctx);
+    EXPECT_TRUE(phone.unresolved.empty());
+    EXPECT_TRUE(phone.output.starts_with("+1555")) << phone.output;
+}
+
+// A resource accrues fields across operations (create extracts `token`, a later op extracts
+// `user`), so a field the newest instance never mentions comes from an older one.
+TEST(VariableResolver, missing_field_on_newest_instance_falls_back_to_older_instance) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+    ctx.appendInstance(ce::ResourceId{"session"}, instanceWith({{"token", "old-token"}}));
+    ctx.appendInstance(ce::ResourceId{"session"}, instanceWith({{"user", "u2"}}));
+
+    const auto result = resolver.resolve("{{session.token}}", ctx, rctx);
+    EXPECT_TRUE(result.unresolved.empty());
+    EXPECT_EQ(result.output, "old-token");
+}
+
+TEST(VariableResolver, field_recorded_null_on_newest_instance_does_not_fall_back) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+    ctx.appendInstance(ce::ResourceId{"session"}, instanceWith({{"token", "old-token"}}));
+    ce::ResourceInstance latest;
+    latest.nullVariables.insert("token");
+    ctx.appendInstance(ce::ResourceId{"session"}, std::move(latest));
+
+    const auto result = resolver.resolve("{{session.token}}", ctx, rctx);
+
+    ASSERT_EQ(result.unresolved.size(), 1U);
+    EXPECT_EQ(result.output.find("old-token"), std::string::npos);
+}
+
+TEST(VariableResolver, field_recorded_missing_on_newest_instance_does_not_fall_back) {
+    ce::VariableResolver resolver;
+    ce::RunContext ctx;
+    const auto rctx = makeResolveCtx();
+    ctx.appendInstance(ce::ResourceId{"session"}, instanceWith({{"token", "old-token"}}));
+    ce::ResourceInstance latest;
+    latest.missingVariables.insert("token");
+    ctx.appendInstance(ce::ResourceId{"session"}, std::move(latest));
+
+    const auto result = resolver.resolve("{{session.token}}", ctx, rctx);
+
+    EXPECT_EQ(result.unresolved.size(), 1U);
 }

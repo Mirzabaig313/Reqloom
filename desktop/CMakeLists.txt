@@ -46,14 +46,25 @@ qt_add_executable(reqloom-desktop
     qml/bridge/models/ExampleListModel.h
     qml/bridge/models/TabModel.cpp
     qml/bridge/models/TabModel.h
+    qml/bridge/models/TabEdits.cpp
+    qml/bridge/models/TabEdits.h
+    qml/bridge/models/EnvironmentEdits.cpp
+    qml/bridge/models/EnvironmentEdits.h
     qml/bridge/appcontroller/AppController.cpp
     qml/bridge/appcontroller/AppController.h
     qml/bridge/appcontroller/AppControllerInternal.h
     qml/bridge/appcontroller/AppControllerChain.cpp
     qml/bridge/appcontroller/AppControllerEntities.cpp
     qml/bridge/appcontroller/AppControllerTabs.cpp
+    qml/bridge/appcontroller/AppControllerUnsaved.cpp
+    qml/bridge/appcontroller/AppControllerRun.cpp
+    qml/bridge/appcontroller/RunTabRouter.cpp
+    qml/bridge/appcontroller/RunTabRouter.h
     src/application/ProjectModel.cpp
     src/application/ProjectModel.h
+    src/application/ProjectEdits.cpp
+    src/application/ProjectModelEntities.cpp
+    src/application/ProjectEdits.h
     src/application/WorkspaceModel.cpp
     src/application/WorkspaceModel.h
     src/application/Bootstrapper.cpp
@@ -66,6 +77,8 @@ qt_add_executable(reqloom-desktop
     src/application/ExecutionPreview.h
     src/application/SavedResponseStore.cpp
     src/application/SavedResponseStore.h
+    src/application/ImportJob.cpp
+    src/application/ImportJob.h
     src/application/EnvironmentSettings.cpp
     src/application/EnvironmentSettings.h
     src/application/LayoutSettings.cpp
@@ -80,6 +93,8 @@ qt_add_executable(reqloom-desktop
     src/widgets/FuzzyMatch.h
     src/widgets/LineDiff.cpp
     src/widgets/LineDiff.h
+    src/widgets/BodyText.cpp
+    src/widgets/BodyText.h
     src/widgets/GraphLayout.cpp
     src/widgets/GraphLayout.h
     src/widgets/ConstraintLayout.cpp
@@ -122,6 +137,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/EnvironmentSelector.qml
         qml/widgets/GlassMenuItem.qml
         qml/widgets/DialogButtons.qml
+        qml/widgets/UnsavedChangesDialog.qml
         qml/widgets/GlassTextField.qml
         qml/widgets/FieldLabel.qml
         qml/widgets/FieldError.qml
@@ -199,6 +215,10 @@ target_link_libraries(reqloom-desktop
         # QScintilla code editor) can be shown as a standalone dialog window.
         # QML-first; Widgets only as a fallback .
         Qt6::Widgets
+        # Response bodies are parsed with nlohmann so 64-bit integers keep their digits.
+        nlohmann_json::nlohmann_json
+        # SavedResponseStore keeps examples in a per-user SQLite file (the engine's sqlite3).
+        SQLite3::SQLite3
 )
 
 target_include_directories(reqloom-desktop
@@ -216,6 +236,10 @@ target_include_directories(reqloom-desktop
 set_target_properties(reqloom-desktop PROPERTIES
     OUTPUT_NAME "Reqloom"
     MACOSX_BUNDLE ON
+    # Permanent: macOS keys settings, keychain access and "Open with" on it.
+    MACOSX_BUNDLE_GUI_IDENTIFIER "tech.reqloom.Reqloom"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     # Build as a GUI-subsystem app on Windows so launching it does not also
     # open a console window (the GUI app has no use for an attached console).
     WIN32_EXECUTABLE ON

@@ -1,8 +1,9 @@
 // HeaderNameAutocomplete — a Postman-style dropdown of common HTTP header names
-// for a header Key TextField. On focus it lists the standard headers; typing
-// filters them (case-insensitive substring); picking one emits `picked(name)`.
-// The host wires keys via `Keys.forwardTo: [<id>.keyTarget]` — keys are only
-// consumed while the popup is open, so normal typing/editing is unaffected.
+// for a header Key TextField. Typing lists the standard headers that contain the
+// text (prefix matches first); a click, or Enter on a row chosen with the arrow
+// keys, emits `picked(name)`. The host wires keys via
+// `Keys.forwardTo: [<id>.keyTarget]` — keys are only consumed while the popup is
+// open, so normal typing/editing is unaffected.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -17,7 +18,7 @@ Item {
     // Off for non-header key fields (query/form) — then it never opens.
     property bool active: true
 
-    // Emitted when the user accepts a header name (click / Enter / Tab).
+    // Emitted when the user accepts a header name (click / Enter on a chosen row).
     signal picked(string name)
 
     // Forward target for the host's Keys.forwardTo.
@@ -32,62 +33,55 @@ Item {
     readonly property var commonHeaders: ["Accept", "Accept-Charset", "Accept-Encoding", "Accept-Language", "Access-Control-Request-Headers", "Access-Control-Request-Method", "Authorization", "Cache-Control", "Connection", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Length", "Content-Type", "Cookie", "Date", "ETag", "Expect", "Forwarded", "From", "Host", "If-Match", "If-Modified-Since", "If-None-Match", "If-Range", "If-Unmodified-Since", "Idempotency-Key", "Origin", "Pragma", "Prefer", "Proxy-Authorization", "Range", "Referer", "TE", "Trailer", "Transfer-Encoding", "Upgrade", "User-Agent", "Via", "Warning", "X-Api-Key", "X-Correlation-ID", "X-CSRF-Token", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Requested-With"]
 
     property var _filtered: []
-    property int _index: 0
-    // Set on pick so the model-driven text change that follows (which still
-    // substring-matches sibling headers, e.g. "Accept" → "Accept-Charset")
-    // doesn't immediately reopen the popup. Cleared on the next refresh.
-    property bool _suppress: false
+    // -1 until the user moves the highlight with the arrow keys; Enter only
+    // accepts a highlighted row, so an untouched popup never rewrites a key.
+    property int _index: -1
 
     function refresh() {
-        if (root._suppress) {
-            root._suppress = false;
-            popup.close();
-            return;
-        }
         if (!root.active || !root.field || !root.field.activeFocus) {
             popup.close();
             return;
         }
         const q = (root.field.text || "").toLowerCase();
-        const out = [];
+        const prefix = [];
+        const inner = [];
         for (let i = 0; i < root.commonHeaders.length; ++i) {
             const h = root.commonHeaders[i];
-            const hl = h.toLowerCase();
-            // Skip an exact full match (nothing left to complete).
-            if (hl === q) {
-                continue;
-            }
-            if (q.length === 0 || hl.indexOf(q) >= 0) {
-                out.push(h);
+            const at = h.toLowerCase().indexOf(q);
+            if (at === 0) {
+                prefix.push(h);
+            } else if (at > 0) {
+                inner.push(h);
             }
         }
+        const out = prefix.concat(inner);
         root._filtered = out;
-        if (out.length === 0) {
+        root._index = -1;
+        const exact = out.length > 0 && out[0].toLowerCase() === q;
+        if (q.length === 0 || out.length === 0 || exact) {
             popup.close();
             return;
         }
-        root._index = 0;
         if (!popup.visible) {
             popup.open();
         }
     }
 
     function apply(name) {
-        root._suppress = true;
-        root.picked(name);
         popup.close();
+        root.picked(name);
     }
 
+    // Opens on typing only: focus alone, or a key set by the model, must not
+    // offer to replace what is already there.
     Connections {
         target: root.field
         enabled: root.active
-        function onTextChanged() {
+        function onTextEdited() {
             Qt.callLater(root.refresh);
         }
         function onActiveFocusChanged() {
-            if (root.field.activeFocus) {
-                Qt.callLater(root.refresh);
-            } else {
+            if (!root.field.activeFocus) {
                 popup.close();
             }
         }
@@ -106,15 +100,17 @@ Item {
             } else if (event.key === Qt.Key_Up) {
                 root._index = Math.max(root._index - 1, 0);
                 event.accepted = true;
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Tab) {
-                if (root._filtered.length > 0) {
-                    root.apply(root._filtered[root._index]);
-                }
+            } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && root._index >= 0) {
+                root.apply(root._filtered[root._index]);
                 event.accepted = true;
             } else if (event.key === Qt.Key_Escape) {
                 popup.close();
                 event.accepted = true;
             } else {
+                // Tab and an un-navigated Enter keep their normal meaning.
+                if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    popup.close();
+                }
                 event.accepted = false;
             }
         }

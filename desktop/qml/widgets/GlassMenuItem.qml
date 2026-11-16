@@ -12,7 +12,8 @@ MenuItem {
     contentItem: Text {
         id: label
         text: item.text
-        color: DesignTokens.textPrimary
+        color: item.enabled ? DesignTokens.textPrimary : DesignTokens.textSecondary
+        opacity: item.enabled ? 1.0 : 0.6
         font.pixelSize: DesignTokens.fontBody
         font.family: DesignTokens.fontSans
         verticalAlignment: Text.AlignVCenter

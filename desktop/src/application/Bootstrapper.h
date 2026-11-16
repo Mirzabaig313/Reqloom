@@ -6,9 +6,7 @@
 
 namespace reqloom::desktop {
 
-/// Constructs an ExecutionEngine with concrete infrastructure implementations
-/// and exposes it to the rest of the desktop. Centralising the wiring here
-/// keeps view models free of dependency-injection logic.
+/// Constructs an ExecutionEngine with concrete infrastructure and exposes it to the desktop.
 class Bootstrapper {
 public:
     Bootstrapper();

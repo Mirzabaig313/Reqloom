@@ -6,8 +6,6 @@
 
 namespace reqloom::desktop::qml {
 
-// ── SecretListModel ─────────────────────────────────────────────────────────
-
 int SecretListModel::rowCount(const QModelIndex& parent) const {
     return parent.isValid() ? 0 : entries_.size();
 }
@@ -62,47 +60,88 @@ void SecretListModel::clear() {
     endResetModel();
 }
 
-// ── SecretsController ────────────────────────────────────────────────────────
-
 SecretsController::SecretsController(QObject* parent) : QObject(parent) {}
 
 SecretsController::~SecretsController() = default;
 
 void SecretsController::refresh() {
-    // Reach AppController through its singleton create() — safe on the GUI
-    // thread; both singletons are created in the same thread.
+    // Reach AppController via its singleton create(); both singletons live on the GUI thread.
     const auto* ctrl = AppController::create(nullptr, nullptr);
     project_ = ctrl->projectRaw();
+    reloadList();
+}
+
+void SecretsController::reloadList() {
+    QString conflict;
+    QString folder;
     if (project_ == nullptr || !project_->hasProject()) {
         list_.clear();
+    } else {
+        conflict = manager_.folderConflict(*project_);
+        folder = project_->rootPath();
+        list_.reload(manager_.referencedSecrets(*project_));
+    }
+    if (conflict != folderConflict_) {
+        folderConflict_ = conflict;
+        emit folderConflictChanged();
+    }
+    if (folder != currentFolder_) {
+        currentFolder_ = folder;
+        emit currentFolderChanged();
+    }
+}
+
+void SecretsController::setLastError(const QString& error) {
+    if (error == lastError_) {
         return;
     }
-    list_.reload(manager_.referencedSecrets(*project_));
+    lastError_ = error;
+    emit lastErrorChanged();
+}
+
+bool SecretsController::confirmMove(const QString& shownOwner) {
+    QString error;
+    if (project_ == nullptr || !manager_.confirmMove(*project_, shownOwner, error)) {
+        setLastError(QStringLiteral("Couldn't use the secrets here: %1")
+                         .arg(project_ == nullptr ? QStringLiteral("no project loaded.") : error));
+        reloadList();
+        return false;
+    }
+    setLastError({});
+    reloadList();
+    emit notify(QStringLiteral("This folder now owns the project's secrets."), false);
+    return true;
 }
 
 bool SecretsController::store(const QString& name, const QString& value) {
     QString error;
-    if (manager_.store(name, value, error)) {
-        if (project_ != nullptr) {
-            list_.reload(manager_.referencedSecrets(*project_));
-        }
+    if (project_ == nullptr) {
+        setLastError(QStringLiteral("Failed to set secret: no project loaded."));
+        return false;
+    }
+    if (manager_.store(*project_, name, value, error)) {
+        setLastError({});
+        reloadList();
         emit notify(QStringLiteral("Set secret \u201C%1\u201D").arg(name), false);
         return true;
     }
-    emit notify(QStringLiteral("Failed to set secret: %1").arg(error), true);
+    setLastError(QStringLiteral("Failed to set secret: %1").arg(error));
     return false;
 }
 
 bool SecretsController::clear(const QString& name) {
     QString error;
-    if (manager_.clear(name, error)) {
-        if (project_ != nullptr) {
-            list_.reload(manager_.referencedSecrets(*project_));
-        }
+    if (project_ == nullptr) {
+        setLastError(QStringLiteral("Failed to clear secret: no project loaded."));
+        return false;
+    }
+    if (manager_.clear(*project_, name, error)) {
+        setLastError({});
+        reloadList();
         emit notify(QStringLiteral("Cleared secret \u201C%1\u201D").arg(name), false);
         return true;
     }
-    emit notify(QStringLiteral("Failed to clear secret: %1").arg(error), true);
+    setLastError(QStringLiteral("Failed to clear secret: %1").arg(error));
     return false;
 }
 

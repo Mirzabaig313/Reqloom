@@ -1,12 +1,12 @@
-// AppController — the QML-facing application controller. Owns the (UI-agnostic)
-// ProjectModel logic and the QML-facing ResourceListModel, and exposes project
-// state to QML. C++ owns logic/state; QML binds to these properties.
+// AppController — the QML-facing application controller. Owns the ProjectModel logic and the
+// ResourceListModel; QML binds to its properties.
 #pragma once
 
 #include "AuthStepListModel.h"
 #include "ChainEditorModel.h"
 #include "DependencyEditModel.h"
 #include "EditableKeyValueModel.h"
+#include "EnvironmentEdits.h"
 #include "ExampleListModel.h"
 #include "HistoryModel.h"
 #include "KeyValueModel.h"
@@ -15,10 +15,14 @@
 #include "ProjectTreeModel.h"
 #include "ResourceListModel.h"
 #include "ResponseBodyModel.h"
+#include "RunTabRouter.h"
+#include "TabEdits.h"
 #include "TabModel.h"
 #include "TimelineModel.h"
 #include "application/Bootstrapper.h"
 #include "application/EnvironmentSettings.h"
+#include "application/ImportJob.h"
+#include "application/ProjectEdits.h"
 #include "application/RunController.h"
 #include "application/SavedResponseStore.h"
 
@@ -29,6 +33,7 @@
 #include <QtCore/QFutureWatcher>
 #include <QtCore/QHash>
 #include <QtCore/QObject>
+#include <QtCore/QSet>
 #include <QtCore/QSettings>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
@@ -36,9 +41,13 @@
 #include <QtCore/QUrl>
 #include <QtCore/QVariant>
 
+#include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include <cstdint>
 
@@ -67,30 +76,26 @@ class AppController : public QObject {
     Q_PROPERTY(OperationListModel* operations READ operations CONSTANT)
     Q_PROPERTY(QString selectedModule READ selectedModule NOTIFY selectionChanged)
 
-    // ── Open editor tabs (endpoints + actors) ────────────────────────────────
-    // The centre pane shows the active tab. Each tab keeps a full snapshot of
-    // its editor state; switching tabs swaps the single live models/scalars.
+    // ── Open editor tabs (endpoints + actors) ──
+    // Each tab keeps a snapshot of editor state; switching swaps the single live models/scalars.
     Q_PROPERTY(TabModel* tabModel READ tabModel CONSTANT)
     Q_PROPERTY(int activeTabIndex READ activeTabIndex NOTIFY activeTabChanged)
     Q_PROPERTY(int tabCount READ tabCount NOTIFY activeTabChanged)
+    // Open tabs with unsaved edits; the window shows the modified state while it is non-zero.
+    Q_PROPERTY(int unsavedTabCount READ unsavedTabCount NOTIFY unsavedTabsChanged)
 
-    // Explorer tree (Actors + Resources → operations → examples) + its filter.
     Q_PROPERTY(QAbstractItemModel* explorerModel READ explorerModel CONSTANT)
-    // Live fuzzy filter for the explorer (the sidebar search box). Empty shows
-    // everything. Thin passthrough to the tree filter model so QML binds a
-    // typed QString instead of reaching into explorerModel's dynamic props.
+    // Live fuzzy filter for the sidebar search; empty shows everything.
     Q_PROPERTY(QString explorerFilter READ explorerFilter WRITE setExplorerFilter NOTIFY
                    explorerFilterChanged)
     Q_PROPERTY(int operationCount READ operationCount NOTIFY projectChanged)
     Q_PROPERTY(int actorCount READ actorCount NOTIFY projectChanged)
     Q_PROPERTY(QString projectDefaultAuthLabel READ projectDefaultAuthLabel NOTIFY projectChanged)
-    // Pickers for the create dialogs.
     Q_PROPERTY(QStringList moduleNames READ moduleNames NOTIFY projectChanged)
     Q_PROPERTY(QStringList actorNames READ actorNames NOTIFY projectChanged)
     Q_PROPERTY(QStringList actorStrategies READ actorStrategies CONSTANT)
     Q_PROPERTY(QStringList operationIds READ operationIds NOTIFY projectChanged)
 
-    // Selected operation (request editor)
     // ── Actor detail (read-only panel in the centre pane) ───────────────────
     Q_PROPERTY(bool hasActor READ hasActor NOTIFY actorSelectionChanged)
     Q_PROPERTY(QString selectedActorName READ selectedActorName NOTIFY actorSelectionChanged)
@@ -98,6 +103,22 @@ class AppController : public QObject {
         QString selectedActorDescription READ selectedActorDescription NOTIFY actorSelectionChanged)
     Q_PROPERTY(
         QString selectedActorStrategy READ selectedActorStrategy NOTIFY actorSelectionChanged)
+    // The actor panel's edit copies of the scalar fields, parked per tab with the edited tables.
+    Q_PROPERTY(bool actorEditing READ actorEditing NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditName READ actorEditName WRITE setActorEditName NOTIFY
+                   actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditDescription READ actorEditDescription WRITE setActorEditDescription
+                   NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditStrategy READ actorEditStrategy WRITE setActorEditStrategy NOTIFY
+                   actorEditFieldsChanged)
+    Q_PROPERTY(bool actorEditRefreshEnabled READ actorEditRefreshEnabled WRITE
+                   setActorEditRefreshEnabled NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditRefreshMethod READ actorEditRefreshMethod WRITE
+                   setActorEditRefreshMethod NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditRefreshPath READ actorEditRefreshPath WRITE setActorEditRefreshPath
+                   NOTIFY actorEditFieldsChanged)
+    Q_PROPERTY(QString actorEditRefreshBody READ actorEditRefreshBody WRITE setActorEditRefreshBody
+                   NOTIFY actorEditFieldsChanged)
 
     Q_PROPERTY(bool hasOperation READ hasOperation NOTIFY operationChanged)
     Q_PROPERTY(QString opName READ opName NOTIFY operationChanged)
@@ -110,10 +131,8 @@ class AppController : public QObject {
     Q_PROPERTY(KeyValueModel* opQuery READ opQuery CONSTANT)
     Q_PROPERTY(KeyValueModel* opExtractions READ opExtractions CONSTANT)
     Q_PROPERTY(KeyValueModel* opAssertions READ opAssertions CONSTANT)
-    // Read-only headers the HTTP client adds automatically (User-Agent,
-    // Accept, Accept-Encoding, Connection, Host). Shown in the Headers tab's
-    // "auto-generated" section. Values come from engine::HttpDefaults so the
-    // panel never drifts from what the transport actually sends.
+    // Read-only headers the HTTP client adds automatically; values come from engine::HttpDefaults
+    // so they never drift from the transport.
     Q_PROPERTY(QVariantList autoGeneratedHeaders READ autoGeneratedHeaders CONSTANT)
 
     // Environment + run state
@@ -130,8 +149,7 @@ class AppController : public QObject {
     Q_PROPERTY(int respBodySize READ respBodySize NOTIFY responseChanged)
     Q_PROPERTY(QString respHeaders READ respHeaders NOTIFY responseChanged)
     Q_PROPERTY(QString respBody READ respBody NOTIFY responseChanged)
-    /// Parsed JSON tree of the current response body (virtualized in C++ so
-    /// large bodies render without the per-response JS tree build stuttering).
+    /// Parsed JSON tree of the response body, virtualized so large bodies render smoothly.
     Q_PROPERTY(ResponseBodyModel* responseBody READ responseBody CONSTANT)
     Q_PROPERTY(QString runOutcome READ runOutcome NOTIFY responseChanged)
     /// Name of the saved example currently shown (empty when showing a live run).
@@ -143,11 +161,9 @@ class AppController : public QObject {
     // Past runs (persisted history store), newest-first, for the history view.
     Q_PROPERTY(HistoryModel* history READ history CONSTANT)
 
-    // ── Editable request surface (Override / Edit mode, WS-B) ──────────────
-    // `editing` toggles the read preview ↔ editable controls. The editable
-    // scalars + models are seeded from the open operation on beginEdit (a
-    // faithful copy the user then tweaks); applyAndRun builds a one-shot
-    // RequestOverride, saveOperation patches the real op and persists it.
+    // ── Editable request surface ──
+    // Seeded from the open operation on beginEdit; applyAndRun builds a one-shot RequestOverride,
+    // saveOperation persists.
     Q_PROPERTY(bool editing READ editing NOTIFY editingChanged)
     Q_PROPERTY(bool creatingOperation READ creatingOperation NOTIFY editingChanged)
     Q_PROPERTY(bool newOperationDraftOpen READ newOperationDraftOpen NOTIFY activeTabChanged)
@@ -165,10 +181,14 @@ class AppController : public QObject {
     Q_PROPERTY(QString editBody READ editBody WRITE setEditBody NOTIFY editChanged)
     Q_PROPERTY(bool editBodyIsForm READ editBodyIsForm WRITE setEditBodyIsForm NOTIFY editChanged)
     Q_PROPERTY(QString editBodyType READ editBodyType WRITE setEditBodyType NOTIFY editChanged)
-    // Per-operation inline auth (actor-less). editAuthType is one of
-    // "none"/"bearer"/"basic"/"apikey"; the rest carry the credential for the
-    // selected type. Seeded from the op in beginEdit, folded into the request
-    // override on save/run.
+    // The GraphQL editor's texts; each change rebuilds editBody while the variables are valid.
+    Q_PROPERTY(
+        QString editGraphqlQuery READ editGraphqlQuery WRITE setEditGraphqlQuery NOTIFY editChanged)
+    Q_PROPERTY(QString editGraphqlVariables READ editGraphqlVariables WRITE setEditGraphqlVariables
+                   NOTIFY editChanged)
+    Q_PROPERTY(QString editGraphqlError READ editGraphqlError NOTIFY editChanged)
+    // Inline (actor-less) auth. editAuthType is none/bearer/basic/apikey; the rest carry that
+    // type's credential.
     Q_PROPERTY(QString editAuthType READ editAuthType WRITE setEditAuthType NOTIFY editChanged)
     Q_PROPERTY(QString editAuthToken READ editAuthToken WRITE setEditAuthToken NOTIFY editChanged)
     Q_PROPERTY(
@@ -245,16 +265,12 @@ class AppController : public QObject {
     Q_PROPERTY(EditableKeyValueModel* editQuery READ editQuery CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editForm READ editForm CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editActorConfig READ editActorConfig CONSTANT)
-    // Actor auth config as a key→value map, for typed strategy-specific fields
-    // (Basic/API Key/OAuth/AWS). Reactive so fields refresh when the editor is
-    // seeded on prepareEdit/NewActor.
+    // Actor auth config as a key→value map; reactive so fields refresh on prepareEdit/NewActor.
     Q_PROPERTY(QVariantMap actorConfig READ actorConfigMap NOTIFY actorEditChanged)
     Q_PROPERTY(EditableKeyValueModel* editEnvVars READ editEnvVars CONSTANT)
     Q_PROPERTY(QString editEnvBaseUrl READ editEnvBaseUrl WRITE setEditEnvBaseUrl NOTIFY
                    editEnvBaseUrlChanged)
-    // Actor auth-endpoint editor (login request + refresh). Read-only seeds for
-    // the inline ActorDetail panel (set on prepareEdit/NewActor); the panel
-    // passes edits back to saveActorInline. The kv models are mutated by QML.
+    // Actor auth-endpoint editor seeds (read-only); the panel passes edits back to saveActorInline.
     Q_PROPERTY(QString actorAuthMethod READ actorAuthMethod NOTIFY actorEditChanged)
     Q_PROPERTY(QString actorAuthPath READ actorAuthPath NOTIFY actorEditChanged)
     Q_PROPERTY(QString actorAuthBody READ actorAuthBody NOTIFY actorEditChanged)
@@ -265,9 +281,7 @@ class AppController : public QObject {
     Q_PROPERTY(QString actorRefreshBody READ actorRefreshBody NOTIFY actorEditChanged)
     Q_PROPERTY(EditableKeyValueModel* actorAuthExtract READ actorAuthExtract CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* actorRefreshExtract READ actorRefreshExtract CONSTANT)
-    // N-step login chain editor: one row per auth step (method/path/body/expect
-    // + that step's own extractions). Edited inline in ActorDetail; read back on
-    // saveActorInline. Seeded by prepareEdit/NewActor.
+    // N-step login chain editor, one row per auth step; read back on saveActorInline.
     Q_PROPERTY(AuthStepListModel* actorAuthSteps READ actorAuthSteps CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editExtractions READ editExtractions CONSTANT)
     Q_PROPERTY(EditableKeyValueModel* editAssertions READ editAssertions CONSTANT)
@@ -280,17 +294,21 @@ class AppController : public QObject {
     Q_PROPERTY(bool editBodyFilled READ editBodyFilled NOTIFY editChanged)
     Q_PROPERTY(int editChainCount READ editChainCount NOTIFY editChanged)
     Q_PROPERTY(int editAssertionsCount READ editAssertionsCount NOTIFY editChanged)
-    // Execution-chain nodes for the visual preview ({operationId, method,
-    // isTarget}). Recomputed from the open op (read) or the edited deps (edit).
+    // Chain preview nodes ({operationId, method, isTarget}).
     Q_PROPERTY(QVariantList chainNodes READ chainNodes NOTIFY chainChanged)
-    // Layered DAG of the target's transitive dependency chain, with computed
-    // node coordinates + edges, for the graph ChainView.
+    // Layered DAG of the target's dependency chain, with node coordinates and edges.
     Q_PROPERTY(QVariantMap chainGraph READ chainGraph NOTIFY chainChanged)
-    // Live per-operation run status (operationId → status token) so the chain
-    // graph can colour each node as a run streams (running/success/error/…).
+    // Why the target's chain can't be resolved (a cycle, an ambiguous producer), or empty; the
+    // chain graph and execution preview are empty while it is set.
+    Q_PROPERTY(QString chainResolveError READ chainResolveError NOTIFY chainChanged)
+    // Saved projects that could not be opened at startup or on retry; kept until removed.
+    Q_PROPERTY(QVariantList unavailableProjects READ unavailableProjects NOTIFY openProjectsChanged)
+    // Non-fatal findings from loading the active project (unknown keys, empty imports), each
+    // prefixed with `file:line:column:`.
+    Q_PROPERTY(QStringList loadWarnings READ loadWarnings NOTIFY projectChanged)
+    // operationId → status token, so the chain graph colours nodes as a run streams.
     Q_PROPERTY(QVariantMap chainStatus READ chainStatus NOTIFY chainStatusChanged)
-    // Whole-chain editor: every operation in the target's transitive chain,
-    // each with its own editable depends_on + extract.
+    // Whole-chain editor: every op in the target's chain, each with editable depends_on + extract.
     Q_PROPERTY(ChainEditorModel* chainEditor READ chainEditor CONSTANT)
 
 public:
@@ -309,8 +327,7 @@ public:
     [[nodiscard]] int resourceCount() const;
     [[nodiscard]] int latencySloP95Ms() const;
     [[nodiscard]] QString status() const { return status_; }
-    /// Returns a raw pointer to the current ProjectModel for C++ consumers
-    /// such as SecretsController (never exposed as a QML property).
+    /// Raw pointer to the current ProjectModel for C++ consumers; never a QML property.
     [[nodiscard]] const ProjectModel* projectRaw() const noexcept { return &activeProject(); }
     [[nodiscard]] ResourceListModel* resources() { return &resources_; }
     [[nodiscard]] OperationListModel* operations() { return &operations_; }
@@ -320,24 +337,20 @@ public:
     [[nodiscard]] TabModel* tabModel() { return &tabs_; }
     [[nodiscard]] int activeTabIndex() const { return activeTabIndex_; }
     [[nodiscard]] int tabCount() const { return tabs_.count(); }
-    /// Make the tab at `index` active: snapshot the current tab, then restore
-    /// the target tab's buffer into the live models/scalars.
+    [[nodiscard]] int unsavedTabCount() const { return tabs_.dirtyCount(); }
+    /// Make the tab at `index` active, swapping its buffer into the live models.
     Q_INVOKABLE void activateTab(int index);
-    /// Reorder tabs: move the tab at `from` to `to` (drag-and-drop in the
-    /// strip). The active tab follows the reorder; the open set persists.
+    /// Move the tab at `from` to `to`; the active tab follows.
     Q_INVOKABLE void moveTab(int from, int to);
-    /// Request closing the tab at `index`. A transient endpoint draft asks QML
-    /// for discard confirmation before removal; all other tabs close immediately.
+    /// Close the tab; with unsaved edits it first asks Save, Discard or Cancel.
     Q_INVOKABLE void closeTab(int index);
-    /// Request closing every tab except `index`; confirms first when that would
-    /// discard a transient endpoint draft.
+    /// Close every tab except `index`, asking first when that drops unsaved edits.
     Q_INVOKABLE void closeOtherTabs(int index);
-    /// Request discard confirmation for the transient endpoint draft, if any.
-    Q_INVOKABLE void requestDiscardNewOperation();
-    /// Complete the pending draft-close request after the user confirms discard.
-    Q_INVOKABLE void confirmDiscardNewOperation();
-    /// Cancel the pending draft-close request and keep the draft open.
-    Q_INVOKABLE void keepEditingNewOperation();
+    /// Answer the pending `unsavedChangesPrompt`: 0 saves, 1 discards, anything else cancels.
+    Q_INVOKABLE void resolveUnsavedChanges(int choice);
+    /// True when the window may close now; otherwise asks about the unsaved tabs and emits
+    /// `quitApproved` once they are saved or discarded.
+    Q_INVOKABLE bool requestQuit();
 
     [[nodiscard]] QAbstractItemModel* explorerModel() { return &treeFilter_; }
     [[nodiscard]] QString explorerFilter() const;
@@ -347,9 +360,7 @@ public:
     [[nodiscard]] QStringList moduleNames() const;
     [[nodiscard]] QStringList actorNames() const;
 
-    /// Human-readable auth strategy for `actorName` (e.g. "Basic Auth",
-    /// "API Key", "OAuth 2.0 (Client Credentials)"), for the Authorization
-    /// tab. Empty actor → "No authentication".
+    /// Human-readable auth strategy for `actorName`; empty actor → "No authentication".
     Q_INVOKABLE [[nodiscard]] QString actorAuthLabel(const QString& actorName) const;
 
     /// The selectable auth strategy labels for the actor editor's combo.
@@ -361,23 +372,23 @@ public:
     /// Load an existing actor's config into the editor's config table.
     Q_INVOKABLE void prepareEditActor(const QString& actorId);
 
-    /// Show an actor's read-only detail in the centre pane. Activates the
-    /// owning collection, seeds the actor accessors (via prepareEditActor), and
-    /// clears any open operation (they share the centre pane).
+    /// Show an actor's read-only detail in the centre pane, clearing any open operation.
     Q_INVOKABLE void selectActor(const QString& projectRoot, const QString& actorId);
-    /// Start a brand-new actor in the inline ActorDetail panel: seed a blank
-    /// editable state (via prepareNewActor), show the panel with an empty
-    /// selection so it opens straight in edit mode. Requires an open project.
+    /// Start a new actor in the inline panel, opening in edit mode. Requires an open project.
     Q_INVOKABLE void newActor();
-    /// Select an existing actor and immediately enter inline edit mode (used by
-    /// the explorer's "Edit…" menu, replacing the old modal dialog).
+    /// Select an existing actor and enter inline edit mode.
     Q_INVOKABLE void requestActorEdit(const QString& projectRoot, const QString& actorId);
-    /// Discard a never-saved new-actor draft, clearing the panel.
-    Q_INVOKABLE void cancelActorDraft();
-    /// Save an actor edited inline in ActorDetail. The login steps come from the
-    /// actorAuthSteps model (full N-step chain); config from `editActorConfig`.
-    /// `originalId` empty → create; otherwise edit (rename when `name` differs).
-    /// Returns true on success (the panel stays in edit mode on failure).
+    /// Put the active actor tab in edit mode, seeding the edit copies from the actor; a no-op while
+    /// it is already editing, so its edits survive.
+    Q_INVOKABLE void beginActorEdit();
+    /// Drop the active actor tab's edits and return to the read view; a never-saved draft's tab
+    /// closes.
+    Q_INVOKABLE void discardActorEdits();
+    /// Save the active actor tab's edits with saveActorInline. Returns false, keeping the edits and
+    /// showing why, when the save is rejected.
+    Q_INVOKABLE bool saveActorEdits();
+    /// Save an actor edited inline. `originalId` empty → create, else edit (rename when `name`
+    /// differs). Returns true on success; the panel stays in edit mode on failure.
     Q_INVOKABLE bool saveActorInline(const QString& originalId,
                                      const QString& name,
                                      const QString& strategyLabel,
@@ -394,32 +405,36 @@ public:
     Q_INVOKABLE void prepareNewEnvironment();
     /// Load an existing environment's variables into the editor table.
     Q_INVOKABLE void prepareEditEnvironment(const QString& name);
-    /// Create-or-update an environment (`originalName` empty → create; rename
-    /// when `name` differs). Variables come from `editEnvVars`. Returns true on
-    /// success so the dialog stays open on a rejected save.
+    /// Create or update an environment (`originalName` empty → create). Returns true on success so
+    /// the dialog stays open on rejection.
     Q_INVOKABLE bool saveEnvironmentEdits(const QString& originalName, const QString& name);
     /// Delete an environment.
     Q_INVOKABLE void deleteEnvironment(const QString& name);
+    /// Whether the environment editor, with its name field holding `name`, differs from what was
+    /// loaded by the last prepare or save.
+    Q_INVOKABLE [[nodiscard]] bool environmentEditsChanged(const QString& name) const;
+    /// The unsaved-changes dialog texts (title, message, saveText, discardText, cancelText) for the
+    /// environment `title`. `reason`: 0 closes the dialog, 1 opens another environment, 2 quits.
+    Q_INVOKABLE [[nodiscard]] QVariantMap environmentUnsavedPrompt(const QString& title,
+                                                                   int reason) const;
 
-    /// Set the project's p95 latency SLO budget (ms); 0 clears it. Persists
-    /// to reqloom.yaml and refreshes the latency chart's verdict.
+    /// Set the project's p95 latency SLO budget in ms; 0 clears it.
     Q_INVOKABLE void setLatencySlo(int ms);
 
-    /// Load / persist the set of expanded explorer-tree node keys (see
-    /// ProjectTreeFilterModel::nodeKey) so the tree's open/closed state survives
-    /// model rebuilds and app restarts. Stored in QSettings, app-global.
+    /// Load / persist the expanded explorer-tree node keys (see ProjectTreeFilterModel::nodeKey);
+    /// QSettings, app-global.
     [[nodiscard]] Q_INVOKABLE QStringList loadTreeExpansion() const;
     Q_INVOKABLE void saveTreeExpansion(const QStringList& keys) const;
 
-    /// Reload the history view from the engine's run-history store (newest
-    /// first). Called after each run completes and on project load.
+    /// Reload the history view from the run-history store, newest first.
     Q_INVOKABLE void refreshHistory();
 
-    /// Replay a past run into the live timeline by its history runId. Lets
-    /// the history view reconstruct a prior run's step-by-step timeline.
+    /// Replay a past run into the timeline of its operation's tab (opened or focused first).
+    /// Refused while that tab has a run in flight.
     Q_INVOKABLE void replayRun(qulonglong runId);
 
-    /// Delete all runs for the current project's history, then refresh the view.
+    /// Delete all runs for the current project's history, then refresh the view. Refused while a
+    /// run is in flight.
     Q_INVOKABLE void clearHistory();
 
     [[nodiscard]] QString actorAuthMethod() const { return actorAuthMethod_; }
@@ -440,6 +455,21 @@ public:
     [[nodiscard]] QString selectedActorName() const { return selectedActorName_; }
     [[nodiscard]] QString selectedActorDescription() const { return selectedActorDescription_; }
     [[nodiscard]] QString selectedActorStrategy() const { return selectedActorStrategy_; }
+    [[nodiscard]] bool actorEditing() const { return actorEditing_; }
+    [[nodiscard]] QString actorEditName() const { return actorEditName_; }
+    [[nodiscard]] QString actorEditDescription() const { return actorEditDescription_; }
+    [[nodiscard]] QString actorEditStrategy() const { return actorEditStrategy_; }
+    [[nodiscard]] bool actorEditRefreshEnabled() const { return actorEditRefreshEnabled_; }
+    [[nodiscard]] QString actorEditRefreshMethod() const { return actorEditRefreshMethod_; }
+    [[nodiscard]] QString actorEditRefreshPath() const { return actorEditRefreshPath_; }
+    [[nodiscard]] QString actorEditRefreshBody() const { return actorEditRefreshBody_; }
+    void setActorEditName(const QString& value);
+    void setActorEditDescription(const QString& value);
+    void setActorEditStrategy(const QString& value);
+    void setActorEditRefreshEnabled(bool value);
+    void setActorEditRefreshMethod(const QString& value);
+    void setActorEditRefreshPath(const QString& value);
+    void setActorEditRefreshBody(const QString& value);
 
     [[nodiscard]] bool hasOperation() const { return hasOperation_; }
     [[nodiscard]] QString opName() const { return opName_; }
@@ -490,6 +520,9 @@ public:
     [[nodiscard]] QString editBody() const { return editBody_; }
     [[nodiscard]] bool editBodyIsForm() const { return editBodyIsForm_; }
     [[nodiscard]] QString editBodyType() const { return editBodyType_; }
+    [[nodiscard]] QString editGraphqlQuery() const { return editGraphqlQuery_; }
+    [[nodiscard]] QString editGraphqlVariables() const { return editGraphqlVariables_; }
+    [[nodiscard]] QString editGraphqlError() const;
     [[nodiscard]] QString editAuthType() const { return editAuthType_; }
     [[nodiscard]] QString editAuthToken() const { return editAuthToken_; }
     [[nodiscard]] QString editAuthUsername() const { return editAuthUsername_; }
@@ -537,11 +570,12 @@ public:
     void setEditForce(bool force);
     void setEditBody(const QString& body);
     void setEditBodyIsForm(bool isForm);
-    /// Body kind selector: "none", "form-data", "x-www-form-urlencoded",
-    /// "json", "xml", "text", or "graphql". Keeps editBodyIsForm in sync and
-    /// politely sets the Content-Type header to the kind's canonical type
-    /// (preserving a custom Content-Type the user set themselves).
+    /// Body kind: none, form-data, x-www-form-urlencoded, json, xml, text or graphql. Keeps
+    /// editBodyIsForm in sync and sets the canonical Content-Type unless the user set a custom one.
+    /// Switching to graphql splits the current body into the GraphQL editor's texts.
     void setEditBodyType(const QString& type);
+    void setEditGraphqlQuery(const QString& query);
+    void setEditGraphqlVariables(const QString& variables);
     void setEditAuthType(const QString& type);
     void setEditAuthToken(const QString& token);
     void setEditAuthUsername(const QString& username);
@@ -563,9 +597,8 @@ public:
     void setEditAuthOauth2AuthUrl(const QString& value);
     void setEditAuthOauth2CallbackUrl(const QString& value);
     void setEditAuthOauth2PkceMethod(const QString& value);
-    /// Run the interactive Authorization Code + PKCE flow (opens the browser,
-    /// catches the loopback redirect, exchanges the code) and, on success,
-    /// stores the obtained token so this request injects it as a Bearer.
+    /// Run the interactive Authorization Code + PKCE flow and store the obtained token for Bearer
+    /// injection.
     Q_INVOKABLE void oauth2GetNewToken();
     void setEditAuthOauth2TokenUrl(const QString& value);
     void setEditAuthOauth2ClientId(const QString& value);
@@ -579,9 +612,8 @@ public:
     void setEditAuthMtlsKeyPassword(const QString& value);
     void setEditAuthMtlsFormat(const QString& value);
     void setEditAuthMtlsCaCertPath(const QString& value);
-    /// Open a native file-open dialog and return the chosen path (empty if
-    /// cancelled). `nameFilter` uses Qt's filter syntax, e.g.
-    /// "Certificates (*.pem *.crt *.p12 *.pfx)".
+    /// Native file-open dialog; returns the chosen path (empty if cancelled). `nameFilter` uses
+    /// Qt's filter syntax.
     Q_INVOKABLE [[nodiscard]] QString pickFile(const QString& title,
                                                const QString& nameFilter) const;
     [[nodiscard]] EditableKeyValueModel* editHeaders() { return &editHeaders_; }
@@ -589,8 +621,7 @@ public:
     [[nodiscard]] EditableKeyValueModel* editForm() { return &editForm_; }
     [[nodiscard]] EditableKeyValueModel* editActorConfig() { return &actorConfig_; }
     [[nodiscard]] QVariantMap actorConfigMap() const;
-    /// Upsert one auth-config key (empty value clears it). Drives the typed
-    /// per-strategy fields in the actor editor.
+    /// Upsert one auth-config key (empty value clears it).
     Q_INVOKABLE void setActorConfigValue(const QString& key, const QString& value);
     [[nodiscard]] EditableKeyValueModel* editEnvVars() { return &envVars_; }
     [[nodiscard]] QString editEnvBaseUrl() const { return editEnvBaseUrl_; }
@@ -606,88 +637,68 @@ public:
     [[nodiscard]] int editAssertionsCount() const;
     [[nodiscard]] QVariantList chainNodes() const;
     [[nodiscard]] QVariantMap chainGraph() const;
+    [[nodiscard]] QString chainResolveError() const;
+    [[nodiscard]] QStringList loadWarnings() const;
     [[nodiscard]] Q_INVOKABLE QVariantList executionPreview() const;
     [[nodiscard]] Q_INVOKABLE QStringList extractionConsumers(const QString& producerOperationId,
                                                               const QString& variable) const;
     [[nodiscard]] QVariantMap chainStatus() const;
     [[nodiscard]] ChainEditorModel* chainEditor() { return &chainEditor_; }
 
-    /// Rebuild the whole-chain editor from the open operation's transitive
-    /// dependency chain (each step seeded from the project). Call when the
-    /// Chain tab is shown.
+    /// Rebuild the whole-chain editor from the open operation's transitive dependency chain. Call
+    /// when the Chain tab is shown.
     Q_INVOKABLE void prepareChainEditor();
-    /// Re-derive the chain editor's step membership from the current (possibly
-    /// unsaved) dependency edits, preserving every step's in-progress edits.
-    /// Called after a dependency is added/removed so a newly-referenced step
-    /// becomes an editable row immediately (matching the New Endpoint dialog).
+    /// Re-derive chain editor membership from the current (possibly unsaved) dependency edits,
+    /// preserving in-progress step edits.
     Q_INVOKABLE void syncChainEditorMembership();
 
-    /// Add `operationId` as a dependency of the chain's target (the open op),
-    /// then re-derive membership so it appears as an editable row.
+    /// Add `operationId` as a dependency of the chain's target, then re-derive membership.
     Q_INVOKABLE void chainAddDependency(const QString& operationId);
-    /// Remove `operationId` from every step's dependencies, then re-derive
-    /// membership so the now-unreferenced step drops out of the chain.
+    /// Remove `operationId` from every step's dependencies, then re-derive membership.
     Q_INVOKABLE void chainRemoveStep(const QString& operationId);
-    /// Persist every chain operation's edited depends_on + extract in one
-    /// validated write. Returns true on success (dialog/banner stays on error).
+    /// Persist every chain operation's edited depends_on + extract in one validated write. Returns
+    /// true on success.
     Q_INVOKABLE bool saveChainEdits();
 
-    /// The `{{resource.variable}}` tokens an operation extracts from its
-    /// response — shown under a dependency so the user knows which variables
-    /// each prerequisite makes available to reference.
+    /// The `{{resource.variable}}` tokens an operation extracts, shown under a dependency.
     Q_INVOKABLE [[nodiscard]] QStringList extractedVariablesFor(const QString& operationId) const;
 
-    /// The variable/path pairs an operation extracts from its response, for
-    /// read-only display in a dependent's "Depends on" table. Each entry is a
-    /// map with "key" (bare variable name) and "value" (source path).
+    /// Variable/path pairs an operation extracts, as {key, value} (bare name, source path).
     Q_INVOKABLE [[nodiscard]] QVariantList extractionPairsFor(const QString& operationId) const;
 
-    /// Variables referenceable at `operationId` for `{{` autocomplete: upstream
-    /// extracts, the actor's session tokens, env vars, declared secrets, and
-    /// `$.` built-ins. Each entry is a map {token, kind, detail}. Empty if the
-    /// chain can't be resolved (cycle / undefined ref) or no project is open.
+    /// Variables referenceable at `operationId` for `{{` autocomplete, as {token, kind, detail}
+    /// maps. Empty if the chain can't be resolved or no project is open.
     Q_INVOKABLE [[nodiscard]] QVariantList variableSuggestions(const QString& operationId) const;
 
-    /// Candidate concrete values for a `{{resource.var}}` token, sourced from
-    /// the producing operation's saved example responses (e.g. the list
-    /// endpoint). Powers the value picker so the user chooses a real id rather
-    /// than typing it. Empty when there's no producer or no saved example yet.
+    /// Candidate values for a `{{resource.var}}` token from the producing op's saved examples.
+    /// Empty when there is no producer or example.
     Q_INVOKABLE [[nodiscard]] QStringList candidateValues(const QString& token) const;
 
-    /// The operation id that produces `{{resource.var}}` (extracts that
-    /// variable), or empty if nothing does. Lets the value picker explain an
-    /// empty list ("nothing produces this") vs. "producer exists, Re-fetch".
+    /// The operation id that extracts `{{resource.var}}`, or empty if none does.
     Q_INVOKABLE [[nodiscard]] QString producerOpFor(const QString& token) const;
 
-    /// Pin / clear a concrete value for a `{{resource.var}}` token (value
-    /// picker, Option A). Empty `value` clears the pin. Stored per session and
-    /// applied to every subsequent run until changed. Clearing/changing a pin
-    /// resets the extraction cache so a stale value can't linger.
+    /// Pin or clear (empty `value`) a concrete value for a `{{resource.var}}` token, applied to
+    /// every later run. Changing a pin resets the extraction cache.
     Q_INVOKABLE void setVariableOverride(const QString& token, const QString& value);
     /// The currently pinned value for `token`, or empty if none.
     Q_INVOKABLE [[nodiscard]] QString variableOverride(const QString& token) const;
 
-    /// Re-fetch candidate values: run the producing (list) endpoint for
-    /// `token`, auto-save its response as an example, and refresh the picker so
-    /// newly added ids appear. No-op while a run is in flight.
+    /// Run the producing (list) endpoint for `token`, auto-save its response as an example and
+    /// refresh the picker. No-op while a run is in flight.
     Q_INVOKABLE void refreshCandidates(const QString& token);
 
-    /// The live, editable extract model for a step in the open chain editor,
-    /// looked up by operation id (so a dependency's variables can be edited
-    /// inline from a dependent's chain table). Returns nullptr if not in the
-    /// chain. Edits are persisted by saveChainEdits like any other step.
+    /// The live, editable extract model for a step in the chain editor, or nullptr if not in the
+    /// chain. Persisted by saveChainEdits.
     Q_INVOKABLE [[nodiscard]] EditableKeyValueModel* chainExtractModelFor(
         const QString& operationId);
 
-    /// Resources the given chain step can fan out over (the distinct resources
-    /// of the *other* steps in the chain). Used to populate the for-each combo.
+    /// Resources the step can fan out over (the other steps' resources), for the for-each combo.
     Q_INVOKABLE [[nodiscard]] QStringList chainForEachOptions(const QString& operationId) const;
 
     /// The resource the given chain step currently iterates ("" = run once).
     Q_INVOKABLE [[nodiscard]] QString chainForEachOver(const QString& operationId) const;
 
-    /// Set (or clear, when `overResource` is empty) the for-each target of a
-    /// chain step. Persisted by saveChainEdits like any other step edit.
+    /// Set (or clear, when empty) the for-each target of a chain step.
     Q_INVOKABLE void chainSetForEach(const QString& operationId, const QString& overResource);
 
     /// Whether the given chain step keeps running after a failed iteration.
@@ -697,86 +708,72 @@ public:
     Q_INVOKABLE void chainSetForEachContinueOnError(const QString& operationId,
                                                     bool continueOnError);
 
-    /// Validate an extraction path against the step operation's available
-    /// response (the live body when it's the open op, else its latest saved
-    /// example). Returns {state: "match"|"nomatch"|"neutral", value: "<first
-    /// match>"} so the chain editor can flag the path and preview its resolved
-    /// value before running. "neutral" when there's nothing to check against.
+    /// Validate an extraction path against the step's response (live body for the open op, else its
+    /// latest example). Returns {state: "match"|"nomatch"|"neutral", value}; "neutral" when there
+    /// is nothing to check.
     Q_INVOKABLE [[nodiscard]] QVariantMap evaluateExtractionPath(const QString& operationId,
                                                                  const QString& path) const;
 
-    /// Leaf JSONPaths in the step's available response matching `prefix`
-    /// (case-insensitive substring; empty = all), for the path field's
-    /// autocomplete. Empty when there's no response/example to draw from.
+    /// Leaf JSONPaths in the step's response matching `prefix` (case-insensitive; empty = all).
+    /// Empty when there is no response.
     Q_INVOKABLE [[nodiscard]] QStringList suggestExtractionPaths(const QString& operationId,
                                                                  const QString& prefix) const;
 
-    /// Save a value from the current operation's response as an extracted
-    /// variable (the response-driven picker). `sourcePath` is a JSONPath such
-    /// as "$.data[2].id"; `variableName` is the bare name. Persists immediately
-    /// and returns true on success.
+    /// Save a value from the current response as an extracted variable (`sourcePath` is a
+    /// JSONPath). Persists immediately; returns true on success.
     Q_INVOKABLE bool addExtraction(const QString& variableName, const QString& sourcePath);
 
-    /// Evaluate an assertion / predicate `expression` against the current
-    /// response (body + status) using the engine's predicate grammar, for a
-    /// live "test expression" badge. Returns a map {valid, passed, error}:
-    /// `valid==false` with a non-empty `error` means the expression is
-    /// malformed; otherwise `passed` is the boolean outcome. Evaluates against
-    /// the latest response — gate the UI on `hasResponse`.
+    /// Evaluate a predicate `expression` against the latest response using the engine's grammar.
+    /// Returns {valid, passed, error}; `valid==false` means malformed. Gate the UI on
+    /// `hasResponse`.
     Q_INVOKABLE [[nodiscard]] QVariantMap evaluateAssertion(const QString& expression) const;
 
-    /// Preview how the current edit-mode `form-data` body would be encoded:
-    /// urlencoded vs multipart, with per-part metadata (name, isFile, filename,
-    /// sizeBytes) and any file error. Reads referenced files, so call on demand
-    /// (a button), not per keystroke. Returns a map
-    /// {valid, error, multipart, contentType, totalBytes, parts:[...]}.
+    /// Preview how the edit-mode form-data body would be encoded, as {valid, error, multipart,
+    /// contentType, totalBytes, parts}. Reads referenced files, so call on demand, not per
+    /// keystroke.
     Q_INVOKABLE [[nodiscard]] QVariantMap previewFormBody() const;
 
-    /// Per-actor cookie jars accumulated during the current run context, for a
-    /// cookie inspector. Returns a list of {actor, cookies:[{name,value}]},
-    /// omitting actors with an empty jar. Empty until a run populates cookies.
+    /// Per-actor cookie jars from the current run context, as {actor, cookies:[{name,value}]};
+    /// empty jars omitted.
     Q_INVOKABLE [[nodiscard]] QVariantList cookieJars() const;
 
     /// Open a project directory (the folder containing reqloom.yaml).
     Q_INVOKABLE void openProject(const QUrl& directory);
 
-    /// Switch to a known project by its absolute directory path. Used by the
-    /// workspace switcher, which lists every project opened/imported this and
-    /// prior sessions so many collections live in one window.
+    /// Switch to a known project by absolute directory path (used by the workspace switcher).
     Q_INVOKABLE void openProjectPath(const QString& path);
 
-    /// The workspace's recent projects, newest first, as a list of
-    /// {name, path} maps. Stale entries (no reqloom.yaml on disk) are filtered
-    /// out. Persisted across sessions via QSettings.
+    /// Recent projects, newest first, as {name, path} maps; entries with no reqloom.yaml are
+    /// filtered out.
     Q_INVOKABLE [[nodiscard]] QVariantList recentProjects() const;
 
     /// Drop a project from the workspace switcher list (does not touch disk).
     Q_INVOKABLE void removeRecentProject(const QString& path);
 
-    /// The projects currently OPEN in the workspace (loaded collections), as a
-    /// list of {name, path, index, active} maps, in workspace order. Drives the
-    /// switcher's open-collections section.
+    /// Open projects as {name, path, index, active} maps in workspace order.
     Q_INVOKABLE [[nodiscard]] QVariantList openProjects();
 
-    /// Switch the active project to the open project at `index` (rebinds all
-    /// views + the run controller). No-op while a run is in flight.
+    /// Saved projects that could not be opened, as {path, name, reason} maps.
+    [[nodiscard]] QVariantList unavailableProjects() const;
+    /// Try to open an unavailable saved project again; it stays listed with the new reason if
+    /// it still fails.
+    Q_INVOKABLE void retryUnavailableProject(const QString& path);
+    /// Remove an unavailable project from the saved workspace (does not touch disk).
+    Q_INVOKABLE void removeUnavailableProject(const QString& path);
+
+    /// Switch the active project to the open one at `index`. No-op while a run is in flight.
     Q_INVOKABLE void activateProject(int index);
 
-    /// Close the open project at `index` (removes it from the workspace; does
-    /// not delete anything on disk). No-op while a run is in flight on it.
+    /// Close the open project at `index` (nothing on disk is deleted). No-op while a run is in
+    /// flight on it.
     Q_INVOKABLE void closeProject(int index);
 
-    /// Close the open collection identified by its root path. Used by the
-    /// aggregated tree's per-project context menu.
+    /// Close the open collection identified by its root path.
     Q_INVOKABLE void closeProjectByRoot(const QString& projectRoot);
 
-    /// Import an OpenAPI 3.x document (`specFile`) into a Reqloom project
-    /// written to `targetDir`, then load it. `overwrite` must be true to
-    /// replace an existing reqloom.yaml in `targetDir`. The parse + write run
-    /// off the GUI thread; results are delivered via `notify` (success summary
-    /// or error) and `importReviewNotes` (engine warnings). When the target
-    /// already holds a project and `overwrite` is false, emits
-    /// `importNeedsOverwrite` so the UI can confirm before clobbering.
+    /// Import an OpenAPI 3.x document into a project written to `targetDir`, then load it. Parse +
+    /// write run off the GUI thread; results arrive via `notify` and `importReviewNotes`. If
+    /// `targetDir` already holds a project and `overwrite` is false, emits `importNeedsOverwrite`.
     Q_INVOKABLE void importOpenApi(const QUrl& specFile, const QUrl& targetDir, bool overwrite);
 
     /// Select a module by id; populates `operations` with its endpoints.
@@ -791,41 +788,31 @@ public:
     /// `dryRun` previews without sending; `clean` resets caches first.
     Q_INVOKABLE void runSelected(bool clean, bool dryRun);
 
-    // ── Edit mode (one-shot override + save-to-project, WS-B) ──────────────
-    /// Turn on Edit mode for the open operation: seed every editable control
-    /// from the operation so the edit starts as a faithful copy.
+    // ── Edit mode ──
+    /// Turn on Edit mode: seed every editable control from the open operation.
     Q_INVOKABLE void beginEdit();
     /// Leave Edit mode without applying (read preview returns).
     Q_INVOKABLE void cancelEdit();
-    /// Run the open operation with the current edits applied as a one-shot
-    /// RequestOverride (the loaded project is never mutated). `clean` resets
-    /// caches first; `dryRun` previews without sending.
+    /// Run with the current edits as a one-shot RequestOverride; the loaded project is never
+    /// mutated.
     Q_INVOKABLE void applyAndRun(bool clean, bool dryRun);
-    /// Persist the current edits to the project: patch the real operation via
-    /// applyOverrideToOperation, then ProjectModel::saveOperation (which
-    /// validates via the engine — a chain that forms a cycle or names an
-    /// undefined op is rejected with a notify() and nothing is written).
+    /// Persist the edits: patch the real operation, then ProjectModel::saveOperation, which
+    /// validates (a cycle or undefined op is rejected with a notify()).
     Q_INVOKABLE void saveOperation();
 
-    /// Persist the current edit-auth fields as the project-wide default auth
-    /// (the target of endpoints whose Auth Type is "Inherit from parent").
+    /// Persist the edit-auth fields as the project-wide default (used by "Inherit from parent").
     Q_INVOKABLE void saveProjectDefaultAuth();
 
-    /// Human label for the current project default auth type, e.g. "bearer" or
-    /// "(none set)". A property (not an invokable) so the Inherit hint refreshes
-    /// when the project changes (e.g. after Save as project default).
+    /// Label for the project default auth type. A property so the Inherit hint refreshes when the
+    /// project changes.
     [[nodiscard]] QString projectDefaultAuthLabel() const;
 
-    /// Open the standalone hook-script editor (a Widgets dialog — the QML
-    /// Migration Roadmap's sanctioned fallback) for the current operation.
-    /// Edits to the pre-request / post-response JavaScript are persisted on
-    /// Save; file-referenced hooks are written back to their `.js` file.
+    /// Open the standalone hook-script editor (a Widgets dialog) for the current operation; edits
+    /// persist on Save.
     Q_INVOKABLE void openHookEditor();
 
-    /// Write `reqloom.d.ts` (the hook sandbox `ctx` type surface) into the
-    /// project root and report the path. Hook authors keep it beside their
-    /// `./hooks/*.js` scripts so a TypeScript-aware editor offers autocomplete
-    /// on `ctx.request`, `ctx.env`, `ctx.hmac`, etc.
+    /// Write `reqloom.d.ts` (the hook sandbox `ctx` types) into the project root and report the
+    /// path, so a TypeScript-aware editor autocompletes in `./hooks/*.js`.
     Q_INVOKABLE void generateHookTypings();
 
     /// Cancel the in-flight run, if any.
@@ -833,81 +820,83 @@ public:
     /// Reset the run context's session + extraction caches (refused mid-run).
     Q_INVOKABLE void resetCaches();
 
-    /// Save the currently-displayed response as a named example for the open
-    /// operation (Apidog "examples"). No-op if there's no response/operation.
+    /// Save the displayed response as a named example for the open operation. No-op without a
+    /// response or operation.
     Q_INVOKABLE void saveResponse(const QString& name);
 
-    /// Show a saved example (by name) of the currently-open operation in the
-    /// response panel. Convenience for the panel's examples dropdown.
+    /// Show a saved example (by name) of the open operation in the response panel.
     Q_INVOKABLE void showExample(const QString& name);
 
-    /// Body of a saved example (by name) for the currently-open operation, or
-    /// an empty string if there's no such example. Used by the response panel's
-    /// Diff tab to compare the live body against a saved baseline.
+    /// Body of a saved example of the open operation, or empty if none; used by the Diff tab.
     Q_INVOKABLE [[nodiscard]] QString exampleBody(const QString& name) const;
 
-    /// LCS line diff of `oldText` → `newText` for the response Diff tab. Returns
-    /// rows [{sign, text}] where sign is "+" (added), "-" (removed) or " "
-    /// (context), ordered for display. Reuses the tested widgets::diff::lineDiff.
+    /// LCS line diff of `oldText` → `newText` as [{sign, text}] rows; sign is "+", "-" or " "
+    /// (context). Inputs too large to diff give one row {tooLarge: true, text: <message>}.
     Q_INVOKABLE [[nodiscard]] QVariantList lineDiff(const QString& oldText,
                                                     const QString& newText) const;
 
-    /// Copy `text` to the system clipboard and surface a confirmation toast
-    /// (`label` names what was copied, e.g. a JSONPath). Used by the Body (Tree)
-    /// click-to-copy-JSONPath affordance.
+    /// Indent JSON two spaces per level, keeping number and string tokens exactly as written;
+    /// other text comes back unchanged. `unwrapEncoded` formats a JSON string holding a document.
+    Q_INVOKABLE [[nodiscard]] QString prettyJson(const QString& text,
+                                                 bool unwrapEncoded = false) const;
+
+    /// HTML (or Markdown) for the response preview with every image, background image and other
+    /// loadable reference removed, so showing it fetches nothing.
+    Q_INVOKABLE [[nodiscard]] QString inertPreviewHtml(const QString& source, bool markdown) const;
+
+    /// Copy `text` to the clipboard and toast a confirmation (`label` names what was copied).
     Q_INVOKABLE void copyToClipboard(const QString& text, const QString& label);
 
-    /// Convert a file picker URL (e.g. from a QML FileDialog) to a local
-    /// filesystem path. Used by the form-data editor to fill a file field
-    /// with the engine's `@<path>` upload convention.
+    /// Convert a file-picker URL to a local path, for the form-data editor's `@<path>` upload
+    /// convention.
     Q_INVOKABLE [[nodiscard]] QString localFileFromUrl(const QUrl& url) const;
 
+    /// Form-field `@` rules, delegated to the engine (FormBody.h).
+    Q_INVOKABLE [[nodiscard]] bool isFormFileValue(const QString& value) const;
+    Q_INVOKABLE [[nodiscard]] QString formValueText(const QString& value) const;
+    Q_INVOKABLE [[nodiscard]] QString formTextValue(const QString& text) const;
+    /// The open operation's form body as it will be sent: [{key, text, isFile}], where `text` is
+    /// the literal value or, for a file field, its path. Empty when the body is not a form.
+    Q_INVOKABLE [[nodiscard]] QVariantList readBodyFormRows() const;
+
     // ── Explorer selection / activation by fully-qualified id ──────────────
-    /// Select an operation row ("<resource>.<op>") and open it in the editor
-    /// (select-to-preview). Resolves the module + endpoint.
+    /// Select an operation row ("<resource>.<op>") and open it (select-to-preview).
     Q_INVOKABLE void selectOperationById(const QString& operationId);
-    /// Open an operation by id and immediately enter Edit mode — used by the
-    /// chain graph so any step's dependencies/extractions can be edited in the
-    /// UI without hand-editing YAML.
+    /// Open an operation by id and enter Edit mode; used by the chain graph.
     Q_INVOKABLE void editOperationById(const QString& operationId);
     /// Activate an operation row (double-click / Enter): open it and run it.
     Q_INVOKABLE void activateOperationById(const QString& operationId);
 
     // ── Multi-project selection (aggregated explorer tree) ───────────────────
-    /// Select an operation in a specific open collection: activate that project
-    /// (if not already active) then open the operation. Used by the aggregated
-    /// tree where a row's owning project may differ from the active one.
+    /// Select an operation in a specific open collection, activating that project first if needed.
     Q_INVOKABLE void selectOperationInProject(const QString& projectRoot,
                                               const QString& operationId);
     /// Like selectOperationInProject, then run it (double-click / Enter).
     Q_INVOKABLE void activateOperationInProject(const QString& projectRoot,
                                                 const QString& operationId);
-    /// Make the collection with `projectRoot` active without opening an
-    /// operation. Returns true if the collection is now (or was already) active,
-    /// false if it couldn't switch (unknown root, or a run is in flight) — the
-    /// caller must not perform a project-scoped action when false.
+    /// Make the collection with `projectRoot` active without opening an operation. Returns false if
+    /// it couldn't switch (unknown root or a run in flight); callers must then skip project-scoped
+    /// actions.
     Q_INVOKABLE bool activateProjectByRoot(const QString& projectRoot);
 
-    // ── Create / rename / delete (each routes through ProjectModel, which
-    //    validates via the engine before writing — cycles/undefined refs are
-    //    rejected and nothing changes on disk). Emit `notify` on the outcome. ─
-    /// Validate a module/endpoint name the way ProjectModel does (non-empty and
-    /// free of the id-breaking '.', '/', '\\'). Single-sources the rule so the
-    /// dialogs can enable/disable OK without duplicating logic in QML.
+    // ── Create / rename / delete (validated by the engine via ProjectModel; emit `notify`) ──
+    /// Validate a name as ProjectModel does (the engine's file-stem rule plus no '.'), so dialogs
+    /// can gate OK.
     Q_INVOKABLE [[nodiscard]] bool isValidName(const QString& name) const;
+
+    /// Operations a delete would change, for the confirmation dialog: `kind` "operation" or
+    /// "resource" lists those whose depends_on loses it; "actor" lists those that run as it.
+    Q_INVOKABLE [[nodiscard]] QStringList dependentsOf(const QString& kind,
+                                                       const QString& id) const;
 
     Q_INVOKABLE void createResource(const QString& name, const QString& description);
 
-    /// Scaffold and open a brand-new empty project in `directory` named `name`.
-    /// This is the "New Project" onboarding entry point: it gives a first-time
-    /// user a way to go from an empty app to a loaded project without an
-    /// existing reqloom.yaml to open. Toasts success/failure; on success the
-    /// `loaded` chain refreshes the whole UI.
+    /// Scaffold and open a new empty project named `name` in `directory` (the "New Project" entry
+    /// point). Toasts the outcome.
     Q_INVOKABLE void createProject(const QUrl& directory, const QString& name);
 
-    /// Start a transient endpoint draft for `preselectedResource` in the existing
-    /// request editor. The draft is not persisted until Save; Cancel restores
-    /// the previously active tab and its complete unsaved editor state.
+    /// Start a transient endpoint draft for `preselectedResource`; not persisted until Save, and
+    /// Cancel restores the previous tab.
     Q_INVOKABLE void prepareNewEndpoint(const QString& preselectedResource);
 
     Q_INVOKABLE void renameOperation(const QString& operationId, const QString& newName);
@@ -915,9 +904,7 @@ public:
     Q_INVOKABLE void renameResource(const QString& resourceId, const QString& newName);
     Q_INVOKABLE void deleteResource(const QString& resourceId);
 
-    // ── Saved examples (explorer child rows). Selection shows the stored
-    //    response in the response panel; mutation routes through the
-    //    SavedResponseStore and refreshes the explorer's example rows. ────────
+    // ── Saved examples (explorer child rows) ──
     Q_INVOKABLE void selectExample(const QString& operationId, const QString& exampleName);
     Q_INVOKABLE void renameExample(const QString& operationId,
                                    const QString& oldName,
@@ -929,196 +916,199 @@ signals:
     void projectChanged();
     /// Emitted when the explorer's live filter text changes.
     void explorerFilterChanged();
-    /// Emitted when the workspace's recent-projects list changes (a project was
-    /// opened, imported, or removed), so the switcher refreshes.
+    /// Emitted when the recent-projects list changes.
     void recentProjectsChanged();
-    /// Emitted when the set of OPEN projects changes (opened, closed, or the
-    /// active one switched), so the switcher's open-collections list refreshes.
+    /// Emitted when the set of open projects or the active one changes.
     void openProjectsChanged();
     void selectionChanged();
     void operationChanged();
     void environmentChanged();
     void runningChanged();
     void responseChanged();
-    /// Fired after replayRun() has rebuilt the timeline from a past run, so the
-    /// UI can reveal and switch to the Timeline view.
+    /// Fired after replayRun() rebuilt the timeline, so the UI can switch to it.
     void runReplayed();
     void captureBodiesChanged();
     void editingChanged();
-    /// Fired on any editable-field or edit-model change (drives live tab
-    /// counts, the edit banner, and re-evaluation of the editable bindings).
+    /// Fired on any editable-field or edit-model change.
     void editChanged();
 
-    /// Fired after prepareNewActor/prepareEditActor seeds the actor editor, so
-    /// the dialog's read-only bindings (auth method/path/body/refresh) refresh.
+    /// Fired after prepareNewActor/prepareEditActor seeds the actor editor.
     void actorEditChanged();
-    /// Fired when the read-only actor detail selection changes (an actor was
-    /// selected, or cleared because an operation/module was opened).
+    /// Fired when the read-only actor detail selection changes.
     void actorSelectionChanged();
-    /// Fired when the active tab changes or the tab set changes (open/close),
-    /// so the tab strip re-highlights and centre-pane visibility updates.
+    /// Fired when actor edit mode or one of its edit copies changes.
+    void actorEditFieldsChanged();
+    /// Fired when the active tab or the tab set changes.
     void activeTabChanged();
-    /// Fired when a close action would discard the transient endpoint draft.
-    void newOperationDiscardRequested();
-    /// Fired after the user confirms and the transient endpoint tab is removed.
+    /// Fired after an endpoint draft's tab closed.
     void newOperationDraftDiscarded();
-    /// Fired when the inline actor panel should switch into edit mode (a new
-    /// draft, or an "Edit…" request from the explorer).
-    void actorEditRequested();
+    /// Ask whether to save the unsaved edits an action would drop; answer with
+    /// `resolveUnsavedChanges`.
+    void unsavedChangesPrompt(
+        QString title, QString message, QString saveText, QString discardText, QString cancelText);
+    /// The unsaved tabs were saved or discarded after `requestQuit`; the window may close.
+    void quitApproved();
+    void unsavedTabsChanged();
 
     /// Fired when the env editor's Base URL field is seeded programmatically.
     void editEnvBaseUrlChanged();
-    /// Fired when the execution-chain preview needs to re-render (operation
-    /// opened, edit toggled, or dependencies edited).
+    /// Fired when the chain preview needs to re-render.
     void chainChanged();
     /// Fired when a run streams a new per-operation status (chain graph colours).
     void chainStatusChanged();
-    /// Fired when a value-picker pin is set or cleared (drives the picker's
-    /// current-value highlight).
+    /// Fired when a value-picker pin is set or cleared.
     void variableOverridesChanged();
-    /// Transient feedback for create/rename/delete outcomes and errors.
-    /// `isError` tints the message (full Toast UI lands in WS-D).
+    /// Transient feedback for create/rename/delete outcomes; `isError` tints the message.
     void notify(QString message, bool isError);
+    /// Something worth reading that is not a failure, such as load warnings; stays until dismissed.
+    void notifyWarning(QString message);
 
-    /// Emitted after a successful OpenAPI import when the engine produced
-    /// per-operation review notes (path params to wire to upstream
-    /// extractions, etc.) so the UI can present them for follow-up.
+    /// Emitted after an OpenAPI import when the engine produced per-operation review notes.
     void importReviewNotes(QString notes);
 
-    /// Emitted when an import target already contains a reqloom.yaml and the
-    /// caller did not pass `overwrite`. Carries the original arguments so the
-    /// UI can confirm and re-invoke `importOpenApi(..., true)`.
+    /// Emitted when an import target already holds a reqloom.yaml and `overwrite` was not passed;
+    /// carries the original arguments so the UI can confirm and re-invoke.
     void importNeedsOverwrite(QUrl specFile, QUrl targetDir);
 
-    /// Fired after a run completes, when the per-actor cookie jars may have
-    /// changed, so a cookie inspector can refresh.
+    /// Fired after a run, when the cookie jars may have changed.
     void cookiesChanged();
+
+    /// An operation of the active project got a new id (its rename or its module's); emitted
+    /// before the project's `projectChanged`, after its saved examples moved to `newId`.
+    void operationRenamed(QString oldId, QString newId);
+    /// An operation of the active project was deleted (alone or with its module).
+    void operationRemoved(QString operationId);
 
 private:
     void onLoaded();
     void onSaved();
     void onLoadFailed(const QString& code, const QString& detail);
+    void onOperationRenamed(const QString& oldId, const QString& newId);
+    void onOperationRemoved(const QString& operationId);
+    /// Fall back to the project's default environment when the selected one no longer exists.
+    void ensureEnvironmentExists();
     void loadSampleIfPresent();
-    /// Best-effort refresh of the project's `reqloom.d.ts` hook typings. Called
-    /// when the hook editor opens so file-referenced hooks have up-to-date
-    /// `ctx.*` autocomplete; failures are swallowed (typings are a convenience,
-    /// never a blocker for editing hooks).
+    /// Best-effort refresh of the project's `reqloom.d.ts` hook typings; failures are swallowed.
     void refreshHookTypings();
-    /// Open (or switch to) the per-project run-history database. The path is
-    /// derived from a hash of the project root and lives under the app-data
-    /// dir, so each project keeps its own history and the repo stays clean.
+    /// Open (or switch to) the per-project run-history database, whose path derives from a hash of
+    /// the project root.
     void openProjectHistory(const QString& projectRoot);
-    /// The workspace's active project — the collection the UI currently edits
-    /// and runs. Never null (the workspace always holds at least one project),
-    /// so this is the single indirection every former `project_` call goes
-    /// through. Multi-Project Workspace Plan, Phase 1.
+    /// The workspace's active project. Never null: the workspace always holds at least one project.
     [[nodiscard]] ProjectModel& activeProject() noexcept;
     [[nodiscard]] const ProjectModel& activeProject() const noexcept;
-    /// Persist the just-loaded project into the workspace switcher's recent
-    /// list (newest first, de-duplicated by path, capped). Emits
-    /// `recentProjectsChanged`.
+    /// Add the just-loaded project to the recent list (newest first, de-duplicated by path,
+    /// capped). Emits `recentProjectsChanged`.
     void recordRecentProject(const QString& name, const QString& path);
     /// Bind a project's load/save/failure signals to this controller's slots.
-    /// Called for the initial project and every one added to the workspace.
     void bindProject(ProjectModel* project);
-    /// Rebind every per-active-project view + the run controller to the current
-    /// active project. Shared by a fresh load (`onLoaded`) and a plain switch
-    /// (`activateProject`).
+    /// Rebind every per-active-project view and the run controller. Shared by a fresh load and a
+    /// plain switch.
     void rebindActiveProject(bool repopulateTree = true);
     /// Rebuild the aggregated explorer tree from every open collection.
     void populateWorkspaceTree();
-    /// Select the active project's first module (used after a fresh load or a
-    /// switcher activation so the centre pane isn't empty).
+    /// Select the active project's first module so the centre pane isn't empty.
     void selectFirstModule();
     /// Clear the read-only actor detail (an operation/module took the pane).
     void clearActorSelection();
 
     // ── Tab state snapshot / restore (multi-tab editor) ──
-    /// Copy the live editor state into the active tab's buffer. No-op when
-    /// there's no active tab. Called before switching away from a tab and
-    /// right after loading a freshly-opened one.
+    /// Copy the live editor state into the active tab's buffer; no-op without an active tab.
     void captureActiveTab();
-    /// Load the active tab's buffer into the live models/scalars and emit the
-    /// full set of change signals so QML rebinds. Re-derives an operation tab's
-    /// read fields from the project (they only change on save), then overlays
-    /// the tab's edit + response snapshot.
+    /// Load the active tab's buffer into the live models and emit every change signal. An operation
+    /// tab's read fields are re-derived from the project, then the edit + response snapshot is
+    /// overlaid.
     void restoreActiveTab();
-    /// Snapshot the live operation edit/response state into `tab` (read fields
-    /// are re-derived on restore, so they aren't captured).
+    /// Snapshot the live operation edit/response state into `tab` (read fields are re-derived on
+    /// restore).
     void captureOperationInto(TabState& tab) const;
     /// Snapshot the live actor edit state into `tab`.
     void captureActorInto(TabState& tab) const;
-    /// Load an operation's read fields (method/path/headers/…) from the project
-    /// into the live op* state. Does not touch tabs, actor state, or emit —
-    /// callers orchestrate that. Returns false if the op no longer exists
-    /// (refresh callers may ignore the result and fire-and-continue).
+    /// Load an operation's read fields from the project into the live op* state, without touching
+    /// tabs or emitting. Returns false if the op no longer exists.
     bool loadOperationReadState(const QString& moduleName, const QString& opName);
     /// Restore the live edit-mode scalars + models + response from `tab`.
     void restoreOperationEditFrom(const TabState& tab);
     /// Restore the live actor edit models + scalars from `tab`.
     void restoreActorFrom(const TabState& tab);
-    /// Open (or focus) an operation tab for `module.opName` in `projectRoot`.
-    /// Snapshots the outgoing tab, loads the operation live, and appends +
-    /// activates a new tab when one isn't already open.
+    /// Rebuild editBody from the GraphQL editor's texts and emit the edit signals.
+    void syncGraphqlBody();
+    /// Open (or focus) an operation tab, snapshotting the outgoing tab first.
     void openOperationTab(const QString& projectRoot,
                           const QString& moduleName,
                           const QString& opName);
-    /// Open (or focus) an actor tab. `isNewDraft` opens a fresh unsaved actor
-    /// (blank id) in edit mode; otherwise focuses/loads the saved actor.
+    /// Open (or focus) an actor tab; `isNewDraft` opens a blank unsaved actor in edit mode.
     void openActorTab(const QString& projectRoot, const QString& actorId, bool isNewDraft);
-    /// After activeTabIndex_ changed, sync hasOperation_/hasActor_ from the
-    /// active tab kind (or clear both when there are no tabs) and emit.
+    /// Sync hasOperation_/hasActor_ from the active tab kind (both cleared with no tabs) and emit.
     void syncActiveKindFlags();
-    /// Recompute the active tab's dirty flag (operation: in edit mode; actor:
-    /// unsaved draft) and refresh its strip row when it changed.
+    /// Recompute the active tab's dirty flag and refresh its strip row if it changed.
     void updateActiveTabDirty();
-    /// Make the collection with `projectRoot` active (no tree repopulate, no
-    /// auto-select) so a subsequent select/run/context action targets it.
-    /// Returns false if it couldn't switch (unknown root, or a run is running).
-    [[nodiscard]] bool activateForRow(const QString& projectRoot);
-    /// Persist the open-project set + active project so the workspace restores
-    /// on next launch. `restoreOpenProjects` re-opens them at construction.
+    /// Queue one updateActiveTabDirty for the next event-loop turn.
+    void scheduleActiveTabDirtyUpdate();
+    /// Seed the actor edit copies from the selected actor's saved values.
+    void seedActorEditFields();
+    /// Leave actor edit mode and drop the active actor tab's baseline.
+    void endActorEdit();
+    /// Assign `value` to the actor edit copy `field`, emitting when it changed.
+    template <typename T>
+    void setActorEditField(T& field, const T& value);
+    /// Start or drop the active tab's edit baseline as edit mode starts or ends.
+    void onActiveTabEditingChanged();
+    /// The live edits of the active operation tab, with its baseline, for the dirty check.
+    [[nodiscard]] TabState liveOperationEdits() const;
+    /// The chain fields were reseeded from a save: take them into the active tab's baseline.
+    void rebaseChainEdits();
+    /// Connect tab bookkeeping (dirty count, renamed/deleted operations, per-tab chain status).
+    void wireTabTracking();
+    void renameOperationInTabs(const QString& oldId, const QString& newId);
+    void removeOperationFromTabs(const QString& operationId);
+    /// Ask about the unsaved tabs among `closing`; `proceed` runs once they are saved or
+    /// discarded. Returns false when none is unsaved (nothing was asked).
+    bool askAboutUnsaved(const std::vector<int>& closing,
+                         UnsavedReason reason,
+                         std::function<void()> proceed);
+    /// Activate and save the tab at `index` as the Save button would; false when it stays unsaved.
+    bool saveTabAt(int index);
+    /// Keep the unsaved edits of a tab whose operation no longer exists as an endpoint draft.
+    void detachTab(int index);
+    /// Make the collection with `projectRoot` active (no tree repopulate, no auto-select). Returns
+    /// false if it couldn't switch.
+    [[nodiscard]] bool activateForRow(const QString& projectRoot, std::function<void()> retry = {});
+    /// Persist the open-project set and active project for restore on next launch.
     void persistOpenProjects();
     void persistActiveProject();
     void restoreOpenProjects();
-    /// Persist / restore the open editor tabs (kind + id + active index) per
-    /// project root in QSettings, so the tab strip survives a project switch-
-    /// and-return and an app restart. Only tab descriptors are stored — never
-    /// the per-tab edit buffers (which may hold secrets); a restored tab re-
-    /// derives its read state from the project.
+    /// Persist the open editor tabs (kind, id, active index) per project root in QSettings.
+    /// Only descriptors are stored, never edit buffers (which may hold secrets).
     void persistOpenTabs() const;
     void restoreOpenTabs(const QString& projectRoot);
-    /// Refresh `exampleList_` for the open operation, and rebuild the explorer
-    /// tree's example child rows from the store. Called on load + after any
-    /// example mutation so the panel and explorer stay in sync.
+    /// Refresh `exampleList_` for the open operation and rebuild the explorer's example child rows.
     void refreshExamples();
-    /// Refresh ONLY the open operation's example list for the response panel
-    /// dropdown — does not touch the explorer tree (so selecting an operation
-    /// doesn't reset/collapse the TreeView). Called on every selection.
+    /// Refresh only the open operation's example list; the explorer tree is untouched so selecting
+    /// does not collapse it.
     void refreshOpenOpExamples();
-    /// Push the active project's per-actor session state into the explorer tree
-    /// (FR-5.1), and start or stop `sessionTicker_` so a live session's TTL
-    /// counts down without polling when nothing is authenticated.
+    /// Point `exampleStore_` at the active project and import its legacy examples file once.
+    void openExampleStore();
+    /// Open folders an import must not write into now (a run in flight, unsaved edits), and why.
+    [[nodiscard]] std::vector<BlockedFolder> importBlockedFolders() const;
+    /// Load the project a successful import wrote (reloading it when already open), then report.
+    void finishImport(const ImportOutcome& outcome);
+    /// Push per-actor session state into the explorer tree and start/stop `sessionTicker_` so TTLs
+    /// count down only while a session is live.
     void refreshActorSessions();
-    /// Re-seed the open operation's edit-mode depends_on / extract models from
-    /// the project. Keeps the endpoint editor's Save (buildOverride) and the
-    /// "EXECUTION CHAIN" preview in sync after the Chain tab's "Save chain"
-    /// rewrites the wiring, so a subsequent endpoint Save can't clobber it.
+    /// Re-seed the edit-mode depends_on / extract models from the project, so a later endpoint Save
+    /// can't clobber a Chain-tab save.
     void seedEditChainFromProject();
-    /// Find the operation that produces `token` (a `{{...}}` reference) and the
-    /// JSONPath it extracts from. Matches the token against both the namespaced
-    /// form (`<resource>.<var>`) and the bare variable name, so it works
-    /// whether the variable was named plainly or with dots. Returns
-    /// {operationId, sourcePath}, both empty if nothing produces it.
-    [[nodiscard]] std::pair<QString, QString> findVariableProducer(const QString& token) const;
+    /// The operation the engine would run to produce `token` ("<resource>.<var>") for the open
+    /// request, unsaved edits included, or why there is none.
+    [[nodiscard]] ProducerLookup findVariableProducer(const QString& token) const;
     /// Best response body to check a step's extraction against without a
     /// re-run: the live body when it's the open op, else its latest example.
     [[nodiscard]] QString responseBodyFor(const QString& operationId) const;
     /// Fully-qualified id of the open operation ("<module>.<op>"), or empty.
     [[nodiscard]] QString currentOperationId() const;
-    /// Block a project transition while a transient endpoint draft is open.
-    /// Focuses the draft and tells the user to Save or Cancel first.
-    [[nodiscard]] bool canLeaveActiveProject();
+    /// True when the active project's tabs may close now; otherwise asks about their unsaved
+    /// edits and runs `retry` once they are saved or discarded.
+    [[nodiscard]] bool canLeaveActiveProject(const std::function<void()>& retry);
     /// Clear the active transient creation identity without touching its tab row.
     void clearNewOperationDraftIdentity();
     /// Remove a tab without prompting; shared by ordinary closes and confirmed discard.
@@ -1129,48 +1119,60 @@ private:
     [[nodiscard]] int operationDraftIndex() const;
     /// Persist the transient draft once through ProjectModel's complete-operation path.
     void saveNewOperation();
-    /// Assemble a one-shot RequestOverride from the current edit state. Mirrors
-    /// the old RequestEditorPanel::buildOverride (chainEdited tracks the guard).
+    /// Assemble a one-shot RequestOverride from the current edit state.
     [[nodiscard]] RequestOverride buildOverride() const;
 
     /// Build an InlineAuth from the current edit-auth fields, or nullopt when
     /// the type is "none". Shared by buildOverride and saveProjectDefaultAuth.
     [[nodiscard]] std::optional<engine::InlineAuth> buildInlineAuthFromEdit() const;
 
-    /// Set the Content-Type header in editHeaders_ to `desired`, but only when
-    /// the current Content-Type is empty or a canonical type we manage — never
-    /// clobber a custom Content-Type the user typed.
+    /// Set the Content-Type in editHeaders_ to `desired` only when the current one is empty or a
+    /// managed canonical type.
     void setManagedContentType(const QString& desired);
+
+    // ── Run routing (AppControllerRun.cpp): a run's events belong to the tab that started it ──
+    void wireRunEvents();
+    void wireRunLifecycle();
+    void wireRunSteps();
+    void wireRunResponses();
+    void wireRunChecks();
+    /// Store the refresh-candidates producer's 2xx body as its "Latest" example, once per arming.
+    void saveCandidateExample(const QString& op, int status, const QString& body);
+    /// A run was accepted from the shown tab: make it the run's tab and clear its response.
+    void beginRunInActiveTab();
+    /// The worker finished: show an engine refusal, park a hidden tab's timeline, end the run.
+    void finishRun(const RunReport& report);
+    [[nodiscard]] RunTabRouter::TabKey activeTabKey() const;
+    /// Index of the run's tab, or -1 when it is gone or the run started with no tab open.
+    [[nodiscard]] int runTabIndex() const;
+    [[nodiscard]] bool runTabShown() const;
+    /// Timeline for the run's next event, or nullptr when the event belongs nowhere.
+    [[nodiscard]] TimelineModel* runTimeline();
+    void applyTargetResponse(
+        int status, const QString& headers, int bodySize, qint64 elapsedMs, const QString& body);
+    void applyRunOutcome(const QString& outcome);
+    /// Cancel the in-flight run once the tab that started it is no longer open.
+    void cancelRunIfItsTabClosed();
+    /// About to show the run's tab: park what it gathered while hidden in the tab's snapshot.
+    void parkHiddenRunTimeline();
+    /// Open or focus the tab of a replayed run's operation, so a replay never lands in another
+    /// operation's tab; false (after telling the person why) when the replay must not run.
+    [[nodiscard]] bool focusReplayTab(const std::vector<engine::RunEvent>& events);
 
     std::unique_ptr<WorkspaceModel> workspace_;
     std::unique_ptr<Bootstrapper> bootstrapper_;
     std::unique_ptr<RunController> runController_;
 
-    /// Result of an off-thread OpenAPI import, handed back to the GUI thread
-    /// by `importWatcher_` so the project load + toasts run where they're safe.
-    struct ImportOutcome {
-        enum class Status : std::uint8_t { Success, ImportFailed, WriteFailed, NeedsOverwrite };
-        Status status{Status::ImportFailed};
-        QString errorDetail;
-        int resources{0};
-        int operations{0};
-        QString notes;
-        QString loadDir;
-        /// Echoed back so a NeedsOverwrite outcome can re-invoke the import with
-        /// overwrite=true against the same source + destination base.
-        QString specPath;
-        QString baseDir;
-    };
+    /// Delivers the off-thread import result (`runImportJob`) back to the GUI thread.
     QFutureWatcher<ImportOutcome> importWatcher_;
     SavedResponseStore exampleStore_;
+    /// Project roots whose unreadable legacy examples file was already reported this session.
+    QSet<QString> legacyExamplesReported_;
     ResourceListModel resources_;
     OperationListModel operations_;
     ProjectTreeModel tree_;
-    // Re-reads actor session TTLs so the explorer's amber "expiring" dot ages
-    // truthfully. Runs only while some actor holds a live session.
-    // ponytail: a 15s poll, not an engine expiry callback. Ceiling — the dot can
-    // lag reality by up to 15s. Upgrade path: have RunContext emit on session
-    // state change and drop the timer.
+    // Re-reads actor session TTLs while some actor holds a live session. A 15s poll, so the dot can
+    // lag by up to 15s; the upgrade is a RunContext state-change signal.
     QTimer sessionTicker_;
     ProjectTreeFilterModel treeFilter_;
     TimelineModel timeline_;
@@ -1179,16 +1181,16 @@ private:
     ExampleListModel exampleList_;
     TabModel tabs_;
     int activeTabIndex_{-1};
-    /// True while restoreOpenTabs is re-opening saved tabs, so the per-mutation
-    /// persistOpenTabs() calls don't rewrite settings mid-restore.
+    /// True while restoreOpenTabs re-opens saved tabs, so persistOpenTabs() doesn't rewrite
+    /// settings mid-restore.
     bool restoringTabs_{false};
     KeyValueModel opHeaders_;
     KeyValueModel opQuery_;
     KeyValueModel opExtractions_;
     KeyValueModel opAssertions_;
 
-    // Editable request surface (Edit mode). Seeded from the open op on
-    // beginEdit; the trailing ghost-row models grow as the user types.
+    // Editable request surface (Edit mode), seeded on beginEdit; trailing ghost-row models grow as
+    // the user types.
     EditableKeyValueModel editHeaders_;
     EditableKeyValueModel editQuery_;
     // Prevent URL-origin model resets and Params-origin path writes from
@@ -1218,13 +1220,32 @@ private:
     QString actorRefreshMethod_;
     QString actorRefreshPath_;
     QString actorRefreshBody_;
+    bool actorEditing_{false};
+    QString actorEditName_;
+    QString actorEditDescription_;
+    QString actorEditStrategy_;
+    bool actorEditRefreshEnabled_{false};
+    QString actorEditRefreshMethod_{QStringLiteral("POST")};
+    QString actorEditRefreshPath_;
+    QString actorEditRefreshBody_;
+    /// The environment editor as last prepared or saved.
+    EnvironmentEdits envBaseline_;
     DependencyEditModel editDependencies_;
-    enum class PendingDraftClose : std::uint8_t { None, SingleTab, CloseOtherTabs };
+    /// An action waiting on the unsaved-changes prompt: the unsaved tabs it would drop, and what
+    /// to do once they are saved or discarded.
+    struct PendingUnsaved {
+        std::vector<std::uint64_t> uids;
+        std::function<void()> proceed;
+    };
+    std::optional<PendingUnsaved> pendingUnsaved_;
+    /// Set while a project transition the person already answered for runs.
+    bool leaveApproved_{false};
+    /// The tab that started the OAuth2 browser flow, which receives its token.
+    std::uint64_t oauthTabUid_{0};
+    bool dirtyUpdatePending_{false};
 
     bool editing_{false};
     bool creatingOperation_{false};
-    PendingDraftClose pendingDraftClose_{PendingDraftClose::None};
-    std::optional<TabState> pendingDraftCloseKeepTab_;
     QString newOperationModule_;
     QString newOperationDraftId_;
     QString newOperationName_;
@@ -1237,6 +1258,8 @@ private:
     QString editBody_;
     bool editBodyIsForm_{false};
     QString editBodyType_{QStringLiteral("none")};
+    QString editGraphqlQuery_;
+    QString editGraphqlVariables_;
     QString editAuthType_{QStringLiteral("none")};
     QString editAuthToken_;
     QString editAuthUsername_;
@@ -1272,8 +1295,8 @@ private:
     QString editAuthMtlsKeyPath_;
     QString editAuthMtlsKeyPassword_;
     QString editAuthMtlsCaCertPath_;
-    /// True once the Chain tab has been seeded for the open op, so the override
-    /// only stamps chainEdited when the wiring it captures is a real snapshot.
+    /// True once the Chain tab is seeded for the open op, so chainEdited is only stamped on a real
+    /// snapshot.
     bool chainFieldsLoaded_{false};
     QString projectName_;
     QString status_;
@@ -1288,15 +1311,30 @@ private:
 
     QStringList environments_;
     QString environment_;
+    /// The new name while the active environment is being renamed, so the selection follows it.
+    QString environmentRenameTarget_;
+    /// The last chain-graph resolution, reused until any of its inputs change.
+    struct ChainPlanCache {
+        std::shared_ptr<const engine::Project> source;
+        QString target;
+        bool creating{false};
+        bool patchedDeps{false};
+        std::vector<std::string> deps;
+        std::shared_ptr<const engine::Project> project;
+        std::expected<engine::ResolvedPlan, engine::ReqloomError> plan{
+            std::unexpected(engine::ReqloomError{})};
+    };
+    mutable std::optional<ChainPlanCache> chainPlanCache_;
+    /// The chain graph's plan for the open operation, resolved at most once per edit state; null
+    /// when there is nothing to resolve.
+    [[nodiscard]] const ChainPlanCache* chainPlan() const;
     bool running_{false};
-    // Live chain-graph run state: index→op (from stepStarted) lets index-only
-    // events (responseReceived) find their node; op→status token feeds colours.
-    QHash<int, QString> runStepOp_;
+    RunTabRouter runRouter_;
+    // Live chain-graph run state: op→status token feeds colours.
     QHash<QString, QString> chainStatus_;
     // Value-picker pins: "<resource>.<var>" → chosen concrete value.
     QHash<QString, QString> variableOverrides_;
-    // Producer op whose response should be saved as an example when it lands
-    // (set by refreshCandidates), then cleared.
+    // Producer op whose response is saved as an example when it lands (set by refreshCandidates).
     QString pendingCandidateOp_;
     bool captureBodies_{true};
     bool hasResponse_{false};

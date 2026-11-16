@@ -10,6 +10,7 @@
 #include "MockSutHarness.h"
 
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/FormBody.h>
 #include <reqloom/engine/PublicApi.h>
 
 #include <gtest/gtest.h>
@@ -23,6 +24,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
@@ -94,6 +96,66 @@ private:
     env["baseUrl"] = mockBaseUrl;
     env["uploadFile"] = filePath;
     return std::move(*project);
+}
+
+/// A self-cleaning directory, created empty, standing in for a project folder.
+class TempProjectDir {
+public:
+    TempProjectDir() : path_(ct::uniqueTempPath("reqloom-mp-project")) {
+        fs::create_directories(path_);
+    }
+    ~TempProjectDir() {
+        std::error_code ec;
+        fs::remove_all(path_, ec);
+    }
+    TempProjectDir(const TempProjectDir&) = delete;
+    TempProjectDir& operator=(const TempProjectDir&) = delete;
+
+    /// Write `contents` to `name` inside the directory; returns its path.
+    fs::path write(const std::string& name, const std::string& contents) const {
+        const auto p = path_ / name;
+        std::ofstream out(p, std::ios::binary);
+        out << contents;
+        return p;
+    }
+    [[nodiscard]] const fs::path& path() const noexcept { return path_; }
+
+private:
+    fs::path path_;
+};
+
+/// Replace the `body_form` of `form.url_encoded` (an op with no
+/// Content-Type header, so multipart is chosen only by the fields).
+void setPlainFormFields(ce::Project& project, std::map<std::string, std::string> fields) {
+    project.resources.at(ce::ResourceId{"form"}).operations.at("url_encoded").bodyForm =
+        std::move(fields);
+}
+
+/// Run `form.url_encoded` and return the captured request.
+[[nodiscard]] nlohmann::json runPlainForm(const ce::Project& project, const std::string& baseUrl) {
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"form.url_encoded"}, ctx);
+    EXPECT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
+    if (result) {
+        EXPECT_TRUE(result->succeeded());
+        for (const auto& step : result->steps) {
+            EXPECT_EQ(step.status, ce::StepResult::Status::Succeeded)
+                << step.op.value << " failed: " << step.detail;
+        }
+    }
+    return fetchLastRequest(baseUrl, "/api/v1/forms");
+}
+
+/// The single part named `name` in a captured multipart request.
+[[nodiscard]] nlohmann::json partNamed(const nlohmann::json& cap, const std::string& name) {
+    for (const auto& p : cap["parts"]) {
+        if (p["name"].get<std::string>() == name) {
+            return p;
+        }
+    }
+    ADD_FAILURE() << "no part named " << name << " in " << cap.dump();
+    return nlohmann::json::object();
 }
 
 }  // namespace
@@ -183,4 +245,118 @@ TEST_F(MultipartFixture, missing_upload_file_fails_with_upload_unreadable) {
         }
     }
     EXPECT_TRUE(sawUploadError);
+}
+
+// --- Where a relative upload path is looked up ---
+
+TEST_F(MultipartFixture, relative_upload_path_is_found_in_the_project_folder) {
+    const TempProjectDir dir;
+    dir.write("photo.txt", "bytes-from-the-project-folder");
+    auto project = loadProject(harness_->baseUrl(), "unused");
+    project.rootDir = dir.path();
+    setPlainFormFields(project, {{"file", "@photo.txt"}});
+
+    const auto cap = runPlainForm(project, harness_->baseUrl());
+    ASSERT_TRUE(cap["found"].get<bool>());
+    EXPECT_NE(cap["content_type"].get<std::string>().find("multipart/form-data"), std::string::npos)
+        << "a file field written as `@...` must route to multipart";
+    const auto part = partNamed(cap, "file");
+    EXPECT_EQ(part.value("filename", ""), "photo.txt");
+    EXPECT_EQ(part.value("content_text", ""), "bytes-from-the-project-folder");
+}
+
+TEST_F(MultipartFixture, relative_upload_path_falls_back_to_cwd_without_project_root) {
+    const auto name = ct::uniqueTempPath("reqloom-mp-cwd", ".txt").filename();
+    const auto inCwd = fs::current_path() / name;
+    {
+        std::ofstream out(inCwd, std::ios::binary);
+        out << "bytes-from-the-cwd";
+    }
+    auto project = loadProject(harness_->baseUrl(), "unused");
+    project.rootDir.clear();
+    setPlainFormFields(project, {{"file", "@" + name.string()}});
+
+    const auto cap = runPlainForm(project, harness_->baseUrl());
+    std::error_code ec;
+    fs::remove(inCwd, ec);
+    ASSERT_TRUE(cap["found"].get<bool>());
+    EXPECT_EQ(partNamed(cap, "file").value("content_text", ""), "bytes-from-the-cwd");
+}
+
+TEST_F(MultipartFixture, upload_path_built_from_a_variable_after_the_at_uploads) {
+    const TempProjectDir dir;
+    dir.write("name.txt", "bytes-via-variable-path");
+    auto project = loadProject(harness_->baseUrl(), "unused");
+    project.environments["local"]["dir"] = dir.path().string();
+    setPlainFormFields(project, {{"file", "@{{env.dir}}/name.txt"}});
+
+    const auto cap = runPlainForm(project, harness_->baseUrl());
+    ASSERT_TRUE(cap["found"].get<bool>());
+    EXPECT_EQ(partNamed(cap, "file").value("content_text", ""), "bytes-via-variable-path");
+}
+
+// --- File or text is decided from the template, not the resolved value ---
+
+TEST_F(MultipartFixture, variable_resolving_to_at_path_is_sent_as_text_not_a_file) {
+    TempUploadFile secret{"secret-file-contents-must-not-leave"};
+    auto project = loadProject(harness_->baseUrl(), "unused");
+    project.environments["local"]["sneaky"] = "@" + secret.path().string();
+    setPlainFormFields(project, {{"note", "{{env.sneaky}}"}});
+
+    const auto cap = runPlainForm(project, harness_->baseUrl());
+    ASSERT_TRUE(cap["found"].get<bool>());
+    EXPECT_EQ(cap["content_type"].get<std::string>(), "application/x-www-form-urlencoded")
+        << "a text field must not switch the body to multipart";
+    const auto raw = cap["raw_body"].get<std::string>();
+    EXPECT_EQ(raw.find(secret.contents()), std::string::npos) << raw;
+    EXPECT_TRUE(raw.starts_with("note=%40")) << raw;
+}
+
+TEST_F(MultipartFixture, variable_resolving_to_at_path_is_a_text_part_under_multipart_header) {
+    TempUploadFile secret{"secret-file-contents-must-not-leave"};
+    auto project = loadProject(harness_->baseUrl(), "unused");
+    project.environments["local"]["sneaky"] = "@" + secret.path().string();
+    project.resources.at(ce::ResourceId{"upload"}).operations.at("with_file").bodyForm =
+        std::map<std::string, std::string>{{"documentType", "{{env.sneaky}}"}};
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"upload.with_file"}, ctx);
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    ASSERT_TRUE(result->succeeded());
+
+    const auto cap = fetchLastRequest(harness_->baseUrl(), "/api/v1/uploads");
+    ASSERT_TRUE(cap["found"].get<bool>());
+    const auto part = partNamed(cap, "documentType");
+    EXPECT_EQ(part.value("filename", ""), "");
+    EXPECT_EQ(part.value("content_text", ""), "@" + secret.path().string());
+    EXPECT_EQ(cap.dump().find(secret.contents()), std::string::npos) << cap.dump();
+}
+
+TEST_F(MultipartFixture, double_at_sends_literal_text_starting_with_at) {
+    auto project = loadProject(harness_->baseUrl(), "unused");
+    setPlainFormFields(project, {{"handle", "@@handle"}});
+
+    const auto cap = runPlainForm(project, harness_->baseUrl());
+    ASSERT_TRUE(cap["found"].get<bool>());
+    EXPECT_EQ(cap["content_type"].get<std::string>(), "application/x-www-form-urlencoded");
+    EXPECT_EQ(cap["raw_body"].get<std::string>(), "handle=%40handle");
+}
+
+TEST_F(MultipartFixture, preview_reports_the_path_the_run_uploads) {
+    const TempProjectDir dir;
+    const auto file = dir.write("photo.txt", "preview-and-run-bytes");
+    auto project = loadProject(harness_->baseUrl(), "unused");
+    project.rootDir = dir.path();
+    const std::map<std::string, std::string> fields{{"file", "@photo.txt"}};
+    setPlainFormFields(project, fields);
+
+    const auto preview = ce::previewFormBody(fields, {}, project.rootDir);
+    ASSERT_TRUE(preview.has_value()) << preview.error().detail;
+    ASSERT_EQ(preview->parts.size(), 1U);
+    EXPECT_TRUE(fs::equivalent(preview->parts.front().resolvedPath, file));
+
+    const auto cap = runPlainForm(project, harness_->baseUrl());
+    ASSERT_TRUE(cap["found"].get<bool>());
+    EXPECT_EQ(partNamed(cap, "file").value("content_text", ""), "preview-and-run-bytes");
 }

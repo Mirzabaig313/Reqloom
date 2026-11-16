@@ -1,7 +1,5 @@
-// Subsequence fuzzy matching for the command palette. Pure functions, no Qt
-// widgets — unit-tested. A query matches a candidate when its characters
-// appear in order (not necessarily adjacent); the score rewards contiguous
-// runs and word-boundary starts so "ordcr" ranks "order.create" highly.
+// Subsequence fuzzy matching for the command palette: a query matches when its characters appear in
+// order, and the score rewards contiguous runs and word-boundary starts.
 #pragma once
 
 #include <QtCore/QString>

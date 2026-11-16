@@ -4,6 +4,8 @@
 // headers, query params, and form-data body in Edit mode. C++ owns row state.
 // When `allowFiles` is set (form-data body), each row gains a file-attach
 // button that fills the value with the engine's `@<path>` upload convention.
+// A file value in any form body shows as a chip that can only be removed, so
+// editing it can never quietly turn a file into literal text.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -20,12 +22,27 @@ ColumnLayout {
     property string valuePlaceholder: qsTr("value")
     // Show a per-row file-attach button (form-data body only).
     property bool allowFiles: false
+    // Values are `body_form` templates: a typed leading `@` is stored as `@@`
+    // so it stays text, and shown without the escape.
+    property bool formValues: false
     // Offer a Postman-style dropdown of common HTTP header names on the Key
     // field (headers tab only; off for query/form/config tables).
     property bool suggestHeaderNames: false
 
     // Row whose attach button opened the file dialog (-1 = none).
     property int fileTargetRow: -1
+    // Rows whose value is a file upload (form bodies only).
+    readonly property int fileRowCount: {
+        if (!root.formValues)
+            return 0;
+        let n = 0;
+        for (let i = 0; i < rowRepeater.count; ++i) {
+            const item = rowRepeater.itemAt(i);
+            if (item && root.isFileValue(item.value))
+                n += 1;
+        }
+        return n;
+    }
 
     spacing: DesignTokens.spaceXs
 
@@ -54,8 +71,21 @@ ColumnLayout {
         return true;
     }
 
+    // Drop rows left blank once focus has left them; the row still being typed in is kept.
+    function pruneBlankRows() {
+        let focusedRow = -1;
+        for (let i = 0; i < rowRepeater.count; ++i) {
+            const item = rowRepeater.itemAt(i);
+            if (item && item.editingRow) {
+                focusedRow = i;
+                break;
+            }
+        }
+        root.kvModel.pruneBlankRows(focusedRow);
+    }
+
     function isFileValue(v) {
-        return typeof v === "string" && v.startsWith("@");
+        return typeof v === "string" && AppController.isFormFileValue(v);
     }
     function fileBaseName(v) {
         const path = v.substring(1);
@@ -108,8 +138,17 @@ ColumnLayout {
             required property string key
             required property string value
             required property bool isGhost
+            readonly property bool editingRow: keyField.activeFocus || valueField.activeFocus
+            readonly property bool isFile: root.formValues && root.isFileValue(row.value)
             Layout.fillWidth: true
             spacing: DesignTokens.spaceXs
+
+            // Deferred so focus moving between this row's own fields does not count as leaving it.
+            onEditingRowChanged: {
+                if (!editingRow) {
+                    Qt.callLater(root.pruneBlankRows);
+                }
+            }
 
             function focusValue() {
                 if (!valueField.visible) {
@@ -153,15 +192,15 @@ ColumnLayout {
                 // Useful editing floor; with the key's 96 shrink minimum the row
                 // stays one-line and usable down to ~270 DIP.
                 Layout.minimumWidth: 120
-                visible: !root.allowFiles || !root.isFileValue(row.value)
-                text: row.value
+                visible: !row.isFile
+                text: root.formValues && !row.isFile ? AppController.formValueText(row.value) : row.value
                 placeholderText: root.valuePlaceholder
-                onTextEdited: root.kvModel.setValue(row.index, text)
+                onTextEdited: root.kvModel.setValue(row.index, root.formValues ? AppController.formTextValue(text) : text)
             }
             Rectangle {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 120
-                visible: root.allowFiles && root.isFileValue(row.value)
+                visible: row.isFile
                 implicitHeight: Math.max(DesignTokens.controlHeight, chipRow.implicitHeight + DesignTokens.spaceXs * 2)
                 radius: DesignTokens.radiusSm
                 color: DesignTokens.surfaceSunken
@@ -203,7 +242,10 @@ ColumnLayout {
                         implicitWidth: 24
                         implicitHeight: 24
                         text: "\u2715"
-                        onClicked: root.kvModel.setValue(row.index, "")
+                        onClicked: {
+                            root.kvModel.setValue(row.index, "");
+                            root.pruneBlankRows();
+                        }
                         contentItem: Text {
                             text: clearFile.text
                             color: DesignTokens.textSecondary

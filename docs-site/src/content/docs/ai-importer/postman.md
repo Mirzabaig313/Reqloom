@@ -80,8 +80,14 @@ set by whichever request ran last, so the collection only works if you run it in
 order. In Reqloom the value belongs to the resource, so the engine can work out the
 order itself.
 
-**Auth.** Postman's auth helpers and a pasted bearer token both become an
-`Authorization` header on each request. Replace them with an actor:
+**Auth.** Postman's auth helpers are not converted: each collection, folder, or
+request auth setting produces one review note ("`bearer` auth was not imported —
+create an actor for it and attach it"). A bearer token pasted into a header stays
+an `Authorization` header on that request, with the token itself
+[moved into the project's secrets](/cli/import/#credentials-move-into-secrets) —
+`Bearer {{secret.NAME}}` — so it isn't in the YAML. A variable marked
+`"type": "secret"` in the collection is moved the same way. Either way the token
+is a fixed one; replace the header with an actor that logs in:
 
 ```yaml title="actors/user.yaml"
 name: user

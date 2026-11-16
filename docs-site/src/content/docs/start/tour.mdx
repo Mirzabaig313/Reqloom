@@ -153,8 +153,9 @@ because the vendor's login couldn't reach the server, and the other six are
 fix the first failure rather than debug seven things.
 
 <Aside type="tip" title="Make offline failures fast">
-Each step retries 3 times, and each attempt waits out the 5s connect timeout, so
-a dead host takes minutes. While experimenting, cut it:
+A step can be sent up to 3 times, and each attempt against a host that doesn't
+answer waits out the 5s connect timeout, so a dead host is slow to fail. While
+experimenting, cut it:
 
 ```yaml title="environments/local.yaml"
 transport:
@@ -169,7 +170,9 @@ reqloom run refund.approve --var baseUrl=https://your-api.example.com
 ```
 
 Or edit `environments/local.yaml`. The passwords are `!secret` entries, so add
-those to your keychain first — see [secrets](/schema/secrets-and-transport/#secrets).
+those to your keychain first — **Manage Secrets** in the desktop app is the easy
+way. They are stored under the sample's `id:`, and the first run ties that id to
+the folder you cloned into; see [secrets](/schema/secrets-and-transport/#secrets).
 
 ## Try a few variations
 

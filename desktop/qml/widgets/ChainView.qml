@@ -16,6 +16,9 @@ Rectangle {
     // Laid-out graph from AppController.chainGraph (empty map → empty state).
     property var graph: ({})
     property string emptyText: ""
+    // Why the chain can't be resolved (a cycle, an ambiguous producer); replaces the graph.
+    property string resolveError: AppController.chainResolveError
+    readonly property bool showingError: root.resolveError.length > 0
     // operationId → live run status token (running/success/error/…), for colour.
     property var statusMap: ({})
     // Operation being inspected elsewhere (the timeline's selected step), rung
@@ -133,7 +136,7 @@ Rectangle {
     color: DesignTokens.surfaceSunken
     border.width: 1
     border.color: DesignTokens.borderSubtle
-    implicitHeight: root.nodes.length === 0 ? 56 : Math.min(graphH + DesignTokens.spaceLg * 2, 320)
+    implicitHeight: root.showingError ? Math.max(56, errorRow.implicitHeight + DesignTokens.spaceMd * 2) : root.nodes.length === 0 ? 56 : Math.min(graphH + DesignTokens.spaceLg * 2, 320)
 
     onGraphChanged: root.syncNodes()
     Component.onCompleted: root.syncNodes()
@@ -150,7 +153,7 @@ Rectangle {
     Label {
         anchors.fill: parent
         anchors.margins: DesignTokens.spaceMd
-        visible: root.nodes.length === 0
+        visible: root.nodes.length === 0 && !root.showingError
         text: root.emptyText
         color: DesignTokens.textSecondary
         font.pixelSize: DesignTokens.fontLabel
@@ -158,11 +161,41 @@ Rectangle {
         verticalAlignment: Text.AlignVCenter
     }
 
+    RowLayout {
+        id: errorRow
+        anchors.fill: parent
+        anchors.margins: DesignTokens.spaceMd
+        visible: root.showingError
+        spacing: DesignTokens.spaceSm
+
+        AppIcon {
+            Layout.alignment: Qt.AlignTop
+            name: "x"
+            size: 14
+            color: DesignTokens.statusError
+        }
+        TextEdit {
+            Layout.fillWidth: true
+            text: root.resolveError
+            readOnly: true
+            selectByMouse: true
+            textFormat: TextEdit.PlainText
+            wrapMode: TextEdit.Wrap
+            color: DesignTokens.statusError
+            selectionColor: DesignTokens.accentMuted
+            selectedTextColor: DesignTokens.textPrimary
+            font.pixelSize: DesignTokens.fontLabel
+            font.family: DesignTokens.fontMono
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: qsTr("Chain can't be resolved: %1").arg(root.resolveError)
+        }
+    }
+
     Flickable {
         id: flick
         anchors.fill: parent
         anchors.margins: DesignTokens.spaceMd
-        visible: root.nodes.length > 0
+        visible: root.nodes.length > 0 && !root.showingError
         clip: true
         contentWidth: plane.width * root.zoom
         contentHeight: plane.height * root.zoom
@@ -425,7 +458,7 @@ Rectangle {
 
     // Zoom control (Ctrl+wheel also zooms). Overlays the top-right corner.
     Rectangle {
-        visible: root.nodes.length > 1
+        visible: root.nodes.length > 1 && !root.showingError
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.margins: DesignTokens.spaceSm

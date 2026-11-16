@@ -5,6 +5,8 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,19 +17,24 @@ namespace reqloom::engine {
 struct ResolveContext {
     std::map<std::string, std::string> envVars;
     std::map<std::string, std::string> secrets;
-    /// Per-environment transport overrides. The executor stamps this
-    /// onto every outbound HttpRequest before send so authenticators,
-    /// poll loops, and the main step builder all see the same TLS /
-    /// proxy / connect-timeout settings.
+    /// Process environment variable names `{{$.env.NAME}}` may read
+    /// (Project::allowedEnv). Any other name is left unresolved.
+    std::set<std::string> allowedEnv;
+    /// Per-environment transport overrides, stamped onto every outbound HttpRequest so all senders
+    /// agree.
     TransportConfig transport;
 };
+
+/// Why a `$.env.NAME` builtin token did not resolve, as user-facing text,
+/// or nullopt when `token` is not a `$.env.` builtin.
+[[nodiscard]] std::optional<std::string> envBuiltinFailureReason(std::string_view token,
+                                                                 const ResolveContext& rctx);
 
 class VariableResolver {
 public:
     VariableResolver();
 
-    // Identifies where the unresolved token appeared. resolve() emits Value;
-    // resolveUrlPath() distinguishes path, raw query, and fragment components.
+    // Where the token appeared; resolveUrlPath() distinguishes path, raw query and fragment.
     enum class Component : std::uint8_t {
         Value,
         UrlPath,
@@ -50,10 +57,8 @@ public:
 
     /// Resolve a URL path template without letting values add URL syntax.
     ///
-    /// Literal URL bytes and separators remain unchanged. Resolved references
-    /// embedded in path segments or the raw query are percent-encoded while
-    /// existing `%HH` escapes stay intact. A reference that occupies the whole
-    /// path remains raw so response `Location` templates keep working.
+    /// Values in path segments or the raw query are percent-encoded (existing `%HH` kept); a
+    /// reference that is the whole path stays raw so response `Location` templates work.
     ///
     /// @param templateStr  Path, optional raw query, and optional fragment.
     /// @param ctx          Current run state used for extracted values.
@@ -63,9 +68,8 @@ public:
                                         const RunContext& ctx,
                                         const ResolveContext& resolveCtx) const;
 
-    /// Substitute every `{{X.y}}` reference. Unresolved references are
-    /// listed; the caller decides whether to fail (live run) or surface
-    /// `<UNRESOLVED: X.y>` markers (dry run).
+    /// Substitute every `{{X.y}}` reference; unresolved ones are listed for the caller to fail
+    /// (live run) or mark `<UNRESOLVED: X.y>` (dry run).
     [[nodiscard]] Result resolve(std::string_view templateStr,
                                  const RunContext& ctx,
                                  const ResolveContext& resolveCtx) const;

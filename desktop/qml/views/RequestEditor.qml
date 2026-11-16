@@ -223,27 +223,10 @@ ColumnLayout {
 
     // Format JSON for display or editing, unwrapping one common encoded-JSON
     // layer while leaving empty and invalid bodies byte-for-byte unchanged.
+    // C++ keeps number tokens exact, so a large integer is never rewritten.
     function beautifiedJson(body) {
         const original = "" + body;
-        const trimmed = original.trim();
-        if (trimmed.length === 0)
-            return original;
-        try {
-            let value = JSON.parse(trimmed);
-            if (typeof value === "string") {
-                const inner = value.trim();
-                if (inner.startsWith("{") || inner.startsWith("[")) {
-                    try {
-                        value = JSON.parse(inner);
-                    } catch (innerError) {
-                        // The quoted value resembles JSON but is incomplete.
-                    }
-                }
-            }
-            return JSON.stringify(value, null, 2);
-        } catch (error) {
-            return original;
-        }
+        return original.trim().length === 0 ? original : AppController.prettyJson(original, true);
     }
 
     // ── Breadcrumb + actor chip ──
@@ -905,6 +888,12 @@ ColumnLayout {
                 id: readBody
                 spacing: DesignTokens.spaceXs
                 readonly property string beautifiedBody: editor.beautifiedJson(AppController.opBody)
+                // A form body is shown field by field as it will be sent (`@@x` is the text `@x`;
+                // a single `@` marks a file), not in its stored template form.
+                readonly property var formRows: {
+                    AppController.opBody;
+                    return AppController.readBodyFormRows();
+                }
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -913,7 +902,7 @@ ColumnLayout {
                     }
                     Button {
                         id: readBeautifyBtn
-                        visible: AppController.opBody.trim().length > 0 && readBody.beautifiedBody !== AppController.opBody
+                        visible: readBody.formRows.length === 0 && AppController.opBody.trim().length > 0 && readBody.beautifiedBody !== AppController.opBody
                         Layout.alignment: Qt.AlignRight
                         implicitHeight: Math.max(30, contentItem.implicitHeight + DesignTokens.spaceXs * 2)
                         leftPadding: DesignTokens.spaceMd
@@ -942,9 +931,54 @@ ColumnLayout {
                     }
                 }
 
+                ScrollView {
+                    id: readFormScroll
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: readBody.formRows.length > 0
+                    clip: true
+                    contentWidth: availableWidth
+                    ColumnLayout {
+                        width: readFormScroll.availableWidth
+                        spacing: DesignTokens.spaceXs
+                        Repeater {
+                            model: readBody.formRows
+                            delegate: RowLayout {
+                                id: readFormRow
+                                required property var modelData
+                                Layout.fillWidth: true
+                                spacing: DesignTokens.spaceSm
+                                Label {
+                                    Layout.preferredWidth: 160
+                                    text: readFormRow.modelData.key
+                                    color: DesignTokens.textSecondary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.family: DesignTokens.fontMono
+                                    elide: Text.ElideRight
+                                }
+                                AppIcon {
+                                    visible: readFormRow.modelData.isFile
+                                    name: "paperclip"
+                                    size: 14
+                                    color: DesignTokens.accent
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: readFormRow.modelData.isFile ? (readFormRow.modelData.text.length > 0 ? qsTr("file: %1").arg(readFormRow.modelData.text) : qsTr("file: (none chosen)")) : readFormRow.modelData.text
+                                    color: DesignTokens.textPrimary
+                                    font.pixelSize: DesignTokens.fontLabel
+                                    font.family: DesignTokens.fontMono
+                                    elide: Text.ElideMiddle
+                                }
+                            }
+                        }
+                    }
+                }
+
                 CodeView {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    visible: readBody.formRows.length === 0
                     text: readBeautifyBtn.checked ? readBody.beautifiedBody : AppController.opBody
                     language: editor.bodyLanguage(AppController.opBody)
                     placeholder: qsTr("No request body.")
@@ -1022,10 +1056,47 @@ ColumnLayout {
         enabled: visible
         spacing: DesignTokens.spaceSm
 
+        // Labels carry live counts, so they are written into a fixed seven-row model in place:
+        // replacing the model on every keystroke would rebuild the tabs and drop the indicator.
+        readonly property var editTabLabels: [AppController.editParamsCount > 0 ? qsTr("Params  %1").arg(AppController.editParamsCount) : qsTr("Params"), AppController.editHeadersCount > 0 ? qsTr("Headers  %1").arg(AppController.editHeadersCount) : qsTr("Headers"), AppController.editBodyFilled ? qsTr("Body  ●") : qsTr("Body"), qsTr("Auth"), qsTr("Options"), AppController.editChainCount > 0 ? qsTr("Chain  %1").arg(AppController.editChainCount) : qsTr("Chain"), AppController.editAssertionsCount > 0 ? qsTr("Assertions  %1").arg(AppController.editAssertionsCount) : qsTr("Assertions")]
+        function syncEditTabLabels() {
+            for (let i = 0; i < editTabLabels.length; ++i) {
+                if (editTabModel.get(i).label !== editTabLabels[i])
+                    editTabModel.setProperty(i, "label", editTabLabels[i]);
+            }
+        }
+        onEditTabLabelsChanged: syncEditTabLabels()
+        Component.onCompleted: syncEditTabLabels()
+
+        ListModel {
+            id: editTabModel
+            ListElement {
+                label: ""
+            }
+            ListElement {
+                label: ""
+            }
+            ListElement {
+                label: ""
+            }
+            ListElement {
+                label: ""
+            }
+            ListElement {
+                label: ""
+            }
+            ListElement {
+                label: ""
+            }
+            ListElement {
+                label: ""
+            }
+        }
+
         LineTabBar {
             id: editTabs
             Layout.fillWidth: true
-            model: [AppController.editParamsCount > 0 ? qsTr("Params  %1").arg(AppController.editParamsCount) : qsTr("Params"), AppController.editHeadersCount > 0 ? qsTr("Headers  %1").arg(AppController.editHeadersCount) : qsTr("Headers"), AppController.editBodyFilled ? qsTr("Body  ●") : qsTr("Body"), qsTr("Auth"), qsTr("Options"), AppController.editChainCount > 0 ? qsTr("Chain  %1").arg(AppController.editChainCount) : qsTr("Chain"), AppController.editAssertionsCount > 0 ? qsTr("Assertions  %1").arg(AppController.editAssertionsCount) : qsTr("Assertions")]
+            model: editTabModel
         }
 
         StackLayout {
@@ -1138,10 +1209,51 @@ ColumnLayout {
                 id: bodyBox
                 spacing: DesignTokens.spaceSm
 
-                // GraphQL is stored as a JSON body {query, variables}; these
-                // hold the split halves while the GraphQL editor is shown.
-                property string gqlQuery: ""
-                property string gqlVars: ""
+                // The editor's per-tab state was replaced (tab, operation or edit session), so
+                // an upload check of the previous state may not stay on screen.
+                Connections {
+                    target: AppController
+                    function onActiveTabChanged() {
+                        uploadSummary.clear();
+                    }
+                    function onOperationChanged() {
+                        uploadSummary.clear();
+                    }
+                    function onEditingChanged() {
+                        uploadSummary.clear();
+                    }
+                }
+                Connections {
+                    target: AppController.editForm
+                    function onDataChanged() {
+                        uploadSummary.clear();
+                    }
+                    function onRowsInserted() {
+                        uploadSummary.clear();
+                    }
+                    function onRowsRemoved() {
+                        uploadSummary.clear();
+                    }
+                    function onModelReset() {
+                        uploadSummary.clear();
+                    }
+                }
+                // A Content-Type header can turn the form into multipart, so the check covers it too.
+                Connections {
+                    target: AppController.editHeaders
+                    function onDataChanged() {
+                        uploadSummary.clear();
+                    }
+                    function onRowsInserted() {
+                        uploadSummary.clear();
+                    }
+                    function onRowsRemoved() {
+                        uploadSummary.clear();
+                    }
+                    function onModelReset() {
+                        uploadSummary.clear();
+                    }
+                }
 
                 function bodyPageIndex(t) {
                     if (t === "none")
@@ -1162,28 +1274,6 @@ ColumnLayout {
                 // Keep edit-mode behavior aligned with the read-only preview.
                 function beautify() {
                     AppController.editBody = editor.beautifiedJson(AppController.editBody);
-                }
-                function loadGraphql() {
-                    try {
-                        const o = JSON.parse(AppController.editBody);
-                        bodyBox.gqlQuery = o.query || "";
-                        bodyBox.gqlVars = o.variables ? JSON.stringify(o.variables, null, 2) : "";
-                    } catch (e) {
-                        bodyBox.gqlQuery = AppController.editBody;
-                        bodyBox.gqlVars = "";
-                    }
-                }
-                function syncGraphql() {
-                    let vars = {};
-                    try {
-                        vars = bodyBox.gqlVars.trim().length > 0 ? JSON.parse(bodyBox.gqlVars) : {};
-                    } catch (e) {
-                        vars = {};
-                    }
-                    AppController.editBody = JSON.stringify({
-                        query: bodyBox.gqlQuery,
-                        variables: vars
-                    });
                 }
 
                 // Body-type pills.
@@ -1232,9 +1322,7 @@ ColumnLayout {
                             rightPadding: DesignTokens.spaceMd
                             onClicked: {
                                 AppController.editBodyType = bodyPill.modelData.id;
-                                if (bodyPill.modelData.id === "graphql") {
-                                    bodyBox.loadGraphql();
-                                }
+                                uploadSummary.clear();
                             }
                             background: Rectangle {
                                 radius: DesignTokens.radiusPill
@@ -1284,9 +1372,21 @@ ColumnLayout {
                                 width: formScroll.availableWidth
                                 kvModel: AppController.editForm
                                 allowFiles: AppController.editBodyType === "form-data"
+                                formValues: true
                                 keyPlaceholder: qsTr("field")
                                 valuePlaceholder: AppController.editBodyType === "form-data" ? qsTr("value  (or attach a file)") : qsTr("value")
                             }
+                        }
+
+                        // A file row left over from form-data is still a file to the engine, so the
+                        // body goes out as multipart until those rows are removed.
+                        Label {
+                            Layout.fillWidth: true
+                            visible: AppController.editBodyType === "x-www-form-urlencoded" && formEditor.fileRowCount > 0
+                            text: qsTr("%n field(s) attach a file, so this body is sent as multipart/form-data. Remove the file to send it as x-www-form-urlencoded.", "", formEditor.fileRowCount)
+                            color: DesignTokens.statusWarning
+                            font.pixelSize: DesignTokens.fontCaption
+                            wrapMode: Text.WordWrap
                         }
 
                         // Upload preview (form-data only). On-demand because it
@@ -1323,6 +1423,9 @@ ColumnLayout {
                                 property var result: ({})
                                 function refresh() {
                                     result = AppController.previewFormBody();
+                                }
+                                function clear() {
+                                    result = ({});
                                 }
                                 function summarise() {
                                     if (result.valid === undefined)
@@ -1440,7 +1543,6 @@ ColumnLayout {
                     // 3 — GraphQL (query + variables → JSON body)
                     ColumnLayout {
                         spacing: DesignTokens.spaceXs
-                        Component.onCompleted: bodyBox.loadGraphql()
                         FieldLabel {
                             text: qsTr("Query")
                         }
@@ -1456,16 +1558,15 @@ ColumnLayout {
                                 anchors.margins: DesignTokens.spaceXs
                                 clip: true
                                 TextArea {
-                                    text: bodyBox.gqlQuery
+                                    text: AppController.editGraphqlQuery
                                     placeholderText: qsTr("query { … }")
                                     color: DesignTokens.textPrimary
                                     placeholderTextColor: DesignTokens.textSecondary
                                     font.pixelSize: DesignTokens.fontLabel
                                     font.family: DesignTokens.fontMono
                                     wrapMode: TextEdit.WrapAnywhere
-                                    onTextChanged: if (text !== bodyBox.gqlQuery) {
-                                        bodyBox.gqlQuery = text;
-                                        bodyBox.syncGraphql();
+                                    onTextChanged: if (text !== AppController.editGraphqlQuery) {
+                                        AppController.editGraphqlQuery = text;
                                     }
                                     background: null
                                 }
@@ -1486,20 +1587,27 @@ ColumnLayout {
                                 anchors.margins: DesignTokens.spaceXs
                                 clip: true
                                 TextArea {
-                                    text: bodyBox.gqlVars
+                                    text: AppController.editGraphqlVariables
                                     placeholderText: "{ }"
                                     color: DesignTokens.textPrimary
                                     placeholderTextColor: DesignTokens.textSecondary
                                     font.pixelSize: DesignTokens.fontLabel
                                     font.family: DesignTokens.fontMono
                                     wrapMode: TextEdit.WrapAnywhere
-                                    onTextChanged: if (text !== bodyBox.gqlVars) {
-                                        bodyBox.gqlVars = text;
-                                        bodyBox.syncGraphql();
+                                    onTextChanged: if (text !== AppController.editGraphqlVariables) {
+                                        AppController.editGraphqlVariables = text;
                                     }
                                     background: null
                                 }
                             }
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            visible: AppController.editGraphqlError.length > 0
+                            text: AppController.editGraphqlError
+                            color: DesignTokens.statusError
+                            font.pixelSize: DesignTokens.fontCaption
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }
@@ -2109,7 +2217,9 @@ ColumnLayout {
                                 verticalAlignment: Text.AlignVCenter
                                 readOnly: !timeoutSpin.editable
                                 validator: timeoutSpin.validator
-                                onEditingFinished: timeoutSpin.value = timeoutSpin.valueFromText(text)
+                                // Commit to the model, not to `value`: assigning `value` would drop
+                                // its binding and skip valueModified, so the edit never reached Send.
+                                onEditingFinished: AppController.editTimeout = Math.max(timeoutSpin.from, Math.min(timeoutSpin.to, timeoutSpin.valueFromText(text)))
                             }
                             down.indicator: Rectangle {
                                 x: 0

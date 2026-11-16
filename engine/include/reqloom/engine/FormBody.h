@@ -1,19 +1,18 @@
 // Public, stateless form-body preview.
 //
-// Given an operation's `body_form` fields (and optionally its headers), reports
-// how the engine would encode the request body at run time: as
-// application/x-www-form-urlencoded, or as multipart/form-data when a field is
-// a file reference (`@/path`) or the headers ask for multipart. Lets an editor
-// show "this uploads 2 files / 3 fields" and surface a missing/oversized file
-// before a real run — without exposing file bytes to the UI.
+// Reports how the engine would encode an operation's `body_form` at run time (urlencoded or
+// multipart), so an editor can show uploads and surface missing or oversized files without exposing
+// file bytes.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>
 
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace reqloom::engine {
@@ -45,16 +44,28 @@ struct FormBodyPreview {
                                   ///< multipart boundary/header framing).
 };
 
-/// Preview how `formFields` (already `{{var}}`-substituted, or literal) would
-/// be encoded. `headers` is consulted only for a `Content-Type:
-/// multipart/form-data` opt-in. Returns `ReqloomError{UploadFileUnreadable}`
-/// when an `@path` field names a missing file, a non-regular file, or one over
-/// the 50 MiB upload cap — the same checks applied at run time.
+/// Preview how `formFields` would be encoded. Each value is a `body_form` template as written
+/// (`{{var}}` is not substituted). A field is a file upload only when its template starts with a
+/// single `@`; `@@` sends text with one `@` removed. `headers` is consulted only for a
+/// `Content-Type: multipart/form-data` opt-in.
 ///
-/// Reads each referenced file once to validate it; intended for an on-demand
-/// preview, not per-keystroke. Pure aside from those reads; never mutates.
+/// A relative path resolves against `projectRoot` (else the working directory). Returns
+/// `ReqloomError{UploadFileUnreadable}` for a missing, non-regular or over-50 MiB file. Reads each
+/// file once; for on-demand preview, not per keystroke.
 [[nodiscard]] std::expected<FormBodyPreview, ReqloomError> previewFormBody(
     const std::map<std::string, std::string>& formFields,
-    const std::map<std::string, std::string>& headers = {});
+    const std::map<std::string, std::string>& headers = {},
+    const std::filesystem::path& projectRoot = {});
+
+/// True when a `body_form` template is a file upload (one leading `@`, not `@@`).
+[[nodiscard]] bool isFormFileTemplate(std::string_view tmpl) noexcept;
+
+/// The `body_form` template that sends `text` literally: a leading `@` is
+/// escaped as `@@`. Inverse of `formTemplateText`.
+[[nodiscard]] std::string formTextTemplate(std::string_view text);
+
+/// The text a non-file template sends (`@@mirza` -> `@mirza`). A file
+/// template is returned unchanged.
+[[nodiscard]] std::string formTemplateText(std::string_view tmpl);
 
 }  // namespace reqloom::engine

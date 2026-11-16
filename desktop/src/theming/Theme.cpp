@@ -1,5 +1,4 @@
-// Theme — see header. Resolves the OKLCH token values from
-// to sRGB and assembles the application QSS.
+// Theme — see header. Resolves OKLCH token values to sRGB and assembles the application QSS.
 #include "Theme.h"
 
 #include "Color.h"
@@ -11,14 +10,13 @@ namespace reqloom::desktop::theming {
 
 namespace {
 
-// Neutrals are tinted toward the marine identity (Morphous Abalone, theme.json):
-// a cool teal-graphite hue ties the pearl surfaces to the iridescent-teal accent.
+// Neutrals are tinted toward the marine identity: a cool teal-graphite hue ties the surfaces to the
+// teal accent.
 constexpr double kAccentHue = 200.0;
 
 [[nodiscard]] Palette resolveLight() {
     Palette p;
-    // theme.json "Morphous Abalone" — light. Pearl-grey canvas with near-white
-    // raised cards (panels lift via lightness), iridescent-teal accent.
+    // Light palette: pearl-grey canvas, near-white raised cards, iridescent-teal accent.
     p.surfaceBase = oklch(0.933, 0.007, 260.7);    // Pearl Grey canvas
     p.surfaceRaised = oklch(0.985, 0.003, 264.5);  // Shell Pearl cards
     p.surfaceSunken = oklch(0.952, 0.006, 264.5);  // inputs within cards
@@ -26,10 +24,8 @@ constexpr double kAccentHue = 200.0;
     p.borderSubtle = oklch(0.880, 0.008, 232.4);
     p.borderStrong = oklch(0.722, 0.015, 207.9);  // Weathered Shell
     p.textPrimary = oklch(0.209, 0.017, 216.6);   // Graphite Nacre
-    // Secondary text is normal-size body/caption, so it must clear AA (4.5:1).
-    // Solve its lightness against the worst-case surface it sits on — the
-    // darkest light surface, surfaceBase — so it passes on raised/sunken too.
-    // Keeps the designed hue/chroma; only darkens enough to reach the floor.
+    // Secondary text must clear AA (4.5:1): solve its lightness against the darkest light surface
+    // (surfaceBase) so it passes on raised and sunken surfaces too.
     p.textSecondary = oklchForContrast(0.016, 210.0, p.surfaceBase, 4.55, 0.540);
     p.textDisabled = oklch(0.760, 0.010, 210.0);
     p.textInverse = oklch(0.985, 0.003, 264.5);
@@ -37,11 +33,8 @@ constexpr double kAccentHue = 200.0;
     p.accentHover = oklch(0.580, 0.115, 193.2);
     p.accentMuted = oklch(0.910, 0.030, 195.0);  // light teal selection tint
 
-    // Status + method foregrounds are solved to AA contrast (≥4.5:1) against
-    // their own 16% tint over the raised surface, rather than hand-tuned: the
-    // designed hue/chroma/lightness is the starting point and the lightness is
-    // nudged only if it falls short (WCAG §1.4.3, §2.7). The tint
-    // itself shifts with the solved foreground, so iterate to a fixed point.
+    // Status + method foregrounds are solved to AA contrast against their own 16% tint over the
+    // raised surface; the tint shifts with the foreground, so iterate to a fixed point.
     const QColor raisedLight = p.surfaceRaised;
     const auto accessible = [&raisedLight](double l, double c, double h, double tintWeight) {
         constexpr double kTarget = 4.55;  // small margin over the 4.5 AA floor
@@ -60,8 +53,8 @@ constexpr double kAccentHue = 200.0;
         return fg;
     };
 
-    // Status badges fill the hue at 16%, method chips at 18% (statusTint /
-    // methodTint) — solve each against its own tint weight.
+    // Status badges fill at 16%, method chips at 18% (statusTint / methodTint); solve each against
+    // its own weight.
     p.statusIdle = oklch(0.722, 0.012, kAccentHue);
     p.statusRunning = accessible(0.555, 0.150, 230.0, 0.16);
     p.statusSuccess = accessible(0.560, 0.150, 150.0, 0.16);
@@ -70,17 +63,15 @@ constexpr double kAccentHue = 200.0;
     p.statusCancelled = accessible(0.550, 0.010, kAccentHue, 0.16);
     p.statusBlocked = accessible(0.560, 0.150, 320.0, 0.16);
 
-    // Tint tokens (§2.9): teal-leaning surface tints, opaque.
+    // Tint tokens: teal-leaning, opaque surface tints.
     p.tintCache = oklch(0.945, 0.020, 195.0);
     p.tintSubstituted = oklch(0.910, 0.035, 5.7);  // Blush Pearl accent tint
-    // Diff tints: success/error hue at a light, low-saturation surface
-    // lightness so text stays readable on top (§2.9 / §6.4).
+    // Diff tints: low-saturation, light surface lightness so text stays readable.
     p.tintDiffAdd = oklch(0.930, 0.040, 150.0);
     p.tintDiffRemove = oklch(0.930, 0.045, 27.0);
 
-    // HTTP method vocabulary (§6.2a): mnemonic hues, distinct from status.
-    // GET blue(255), POST green(150), PUT orange(55), PATCH yellow(95),
-    // DELETE red(27). Lightness solved for AA text on the method tint.
+    // HTTP method hues, mnemonic and distinct from status: GET blue, POST green, PUT orange, PATCH
+    // yellow, DELETE red. Lightness solved for AA text on the method tint.
     p.methodGet = accessible(0.550, 0.150, 255.0, 0.18);
     p.methodPost = accessible(0.560, 0.150, 150.0, 0.18);
     p.methodPut = accessible(0.600, 0.150, 55.0, 0.18);
@@ -91,8 +82,8 @@ constexpr double kAccentHue = 200.0;
 
 [[nodiscard]] Palette resolveDark() {
     Palette p;
-    // theme.json "Morphous Abalone" — dark. Deep tidepool-graphite canvas with
-    // slightly lighter dark-pearl cards, luminous seafoam-teal accent.
+    // Dark palette: deep tidepool-graphite canvas, slightly lighter dark-pearl cards, luminous
+    // seafoam-teal accent.
     p.surfaceBase = oklch(0.191, 0.022, 205.9);    // Tidepool Shadow
     p.surfaceRaised = oklch(0.230, 0.020, 207.3);  // dark pearl cards (lift)
     p.surfaceSunken = oklch(0.165, 0.020, 206.0);  // inputs darker
@@ -107,10 +98,8 @@ constexpr double kAccentHue = 200.0;
     p.accentHover = oklch(0.850, 0.090, 185.2);
     p.accentMuted = oklch(0.324, 0.045, 200.0);
 
-    // Status + method foregrounds solved to AA (≥4.5:1) against their 16% tint
-    // over the dark raised surface; designed values are kept when already
-    // accessible (WCAG §1.4.3, §2.7). Iterate: the tint shifts with
-    // the solved foreground.
+    // Status + method foregrounds solved to AA against their 16% tint over the dark raised surface;
+    // iterate as the tint shifts.
     const QColor raisedDark = p.surfaceRaised;
     const auto accessible = [&raisedDark](double l, double c, double h, double tintWeight) {
         constexpr double kTarget = 4.55;
@@ -139,13 +128,12 @@ constexpr double kAccentHue = 200.0;
 
     p.tintCache = oklch(0.300, 0.040, 195.0);
     p.tintSubstituted = oklch(0.320, 0.045, 5.7);  // Blush Pearl accent tint
-    // Diff tints: success/error hue at a low, low-saturation surface lightness
-    // so light text stays readable on top in dark mode (§2.9 / §6.4).
+    // Diff tints: low surface lightness so light text stays readable in dark mode.
     p.tintDiffAdd = oklch(0.300, 0.050, 150.0);
     p.tintDiffRemove = oklch(0.310, 0.060, 27.0);
 
-    // HTTP method vocabulary (§6.2a): brighter in dark to clear AA on the
-    // raised surface, same hues as light. Lightness solved for AA on the tint.
+    // Method hues are brighter in dark to clear AA on the raised surface; lightness solved on the
+    // tint.
     p.methodGet = accessible(0.720, 0.140, 255.0, 0.18);
     p.methodPost = accessible(0.780, 0.160, 150.0, 0.18);
     p.methodPut = accessible(0.770, 0.150, 55.0, 0.18);
@@ -186,9 +174,8 @@ QColor Theme::status(StatusToken token) const noexcept {
 }
 
 QColor Theme::statusTint(StatusToken token) const noexcept {
-    // Opaque mix of the status colour toward the raised surface — a precomputed
-    // tint rather than an alpha composite , so contrast is
-    // predictable regardless of what sits behind the pill. ~16% status weight.
+    // Opaque mix of the status colour toward the raised surface (~16% weight), precomputed rather
+    // than an alpha composite so contrast is predictable behind the pill.
     const QColor base = status(token);
     const QColor surface = palette_.surfaceRaised;
     constexpr double kStatusWeight = 0.16;
@@ -219,8 +206,7 @@ QColor Theme::method(MethodColor token) const noexcept {
 }
 
 QColor Theme::methodTint(MethodColor token) const noexcept {
-    // Same opaque-mix technique as statusTint  §2.9): blend the
-    // method hue toward the raised surface so the chip fill is predictable.
+    // Same opaque-mix technique as statusTint, for the method chip fill.
     const QColor base = method(token);
     const QColor surface = palette_.surfaceRaised;
     constexpr double kMethodWeight = 0.18;
@@ -251,7 +237,6 @@ int Theme::space(Space step) noexcept {
 }
 
 QFont Theme::font(TextStyle style) const {
-    // Derive from the system base font so OS scaling is respected (§4.1/§4.2).
     QFont base = QApplication::font();
     const double basePt = base.pointSizeF() > 0 ? base.pointSizeF() : 13.0;
 
@@ -284,8 +269,7 @@ QFont Theme::font(TextStyle style) const {
             QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
             mono.setPointSizeF(scaled(0.92));
             mono.setStyleHint(QFont::Monospace);
-            // Tabular figures so columns of status codes, durations, and byte
-            // counts don't jitter as digit widths vary  §4.3).
+            // Tabular figures so columns of codes, durations and byte counts don't jitter.
             mono.setFeature("tnum", 1);
             return mono;
         }
@@ -299,13 +283,12 @@ QString Theme::styleSheet() const {
         return c.name(QColor::HexRgb);
     };
 
-    // Spacing pulled from the scale so QSS padding stays consistent with §5.1.
     const int sm = space(Space::Sm);
     const int md = space(Space::Md);
     const int xs = space(Space::Xs);
 
-    // One central sheet, token-derived  §13: no inline per-widget
-    // styles, no raw literals). Object-name selectors target specific roles.
+    // One central, token-derived sheet: no inline per-widget styles or raw literals. Object-name
+    // selectors target roles.
     return QStringLiteral(R"(
 QWidget {
     background-color: %1;

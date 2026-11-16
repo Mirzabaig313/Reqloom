@@ -115,10 +115,9 @@ eleven, set with `auth.strategy`:
 
 `strategy` defaults to `simple`.
 
-:::caution[An unrecognised strategy silently becomes `simple`]
-There is no error. Note the value is `oauth2_client_credentials` — plain `oauth2`
-is not valid, and writing it gets you the `simple` strategy, which then tries to
-POST to an empty path.
+:::caution[It's `oauth2_client_credentials`, not `oauth2`]
+Plain `oauth2` is not a strategy. An unrecognised strategy fails the load, and
+the message lists the accepted values.
 :::
 
 Several need no request at all, because the credential already exists:

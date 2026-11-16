@@ -5,11 +5,14 @@
 
 #include <gtest/gtest.h>
 
+#include <support/ImportFileRefChecks.h>
 #include <support/TempPath.h>
 
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -147,4 +150,174 @@ TEST(ImportFromInsomnia, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// D-20: a non-boolean `disabled` (null, "true", 1) used to throw
+// nlohmann::json::type_error out of the importer. It must import cleanly,
+// treating the non-boolean value as the default (not disabled).
+TEST(ImportFromInsomnia, non_boolean_disabled_does_not_throw) {
+    for (const std::string disabled : {"null", "\"true\"", "1"}) {
+        ScratchDir scratch;
+        const std::string body =
+            R"({"_type":"export","__export_format":4,"resources":[
+{"_id":"wrk_1","_type":"workspace","name":"D"},
+{"_id":"req_1","_type":"request","parentId":"wrk_1","name":"Ping","method":"POST",
+"url":"https://api.example.com/ping",
+"headers":[{"name":"X-H","value":"v","disabled":)" +
+            disabled + R"(}],
+"parameters":[{"name":"q","value":"1","disabled":)" +
+            disabled + R"(}],
+"body":{"mimeType":"application/x-www-form-urlencoded","params":[{"name":"f","value":"x","disabled":)" +
+            disabled + R"(}]}}]})";
+        const auto file = scratch.write("d.insomnia.json", body);
+        std::expected<ce::OpenApiImportOutcome, ce::ReqloomError> outcome =
+            std::unexpected(ce::ReqloomError{});
+        ASSERT_NO_THROW(outcome = ce::importFromInsomnia(file, scratch.path())) << disabled;
+        ASSERT_TRUE(outcome.has_value()) << disabled << ": " << outcome.error().detail;
+        ASSERT_EQ(outcome->project.resources.size(), 1u);
+        const auto& ops = outcome->project.resources.begin()->second.operations;
+        ASSERT_EQ(ops.size(), 1u);
+        const auto& op = ops.begin()->second;
+        EXPECT_TRUE(op.headers.contains("X-H")) << disabled;
+        EXPECT_TRUE(op.queryParams.contains("q")) << disabled;
+    }
+}
+
+// File fields carrying paths from the exporting machine keep only their base
+// name (with a warning); a text field starting with `@` is escaped as `@@`.
+TEST(ImportFromInsomnia, file_field_paths_are_reduced_to_base_names_with_warnings) {
+    ScratchDir scratch;
+    const auto file = scratch.write("uploads.json", R"JSON(
+{
+  "_type": "export", "__export_format": 4,
+  "resources": [
+    { "_id": "wrk_1", "_type": "workspace", "name": "Uploads API" },
+    { "_id": "fld_1", "_type": "request_group", "parentId": "wrk_1", "name": "Uploads" },
+    {
+      "_id": "req_1", "_type": "request", "parentId": "fld_1", "name": "Upload",
+      "method": "POST", "url": "https://api.example.com/up",
+      "body": { "mimeType": "multipart/form-data", "params": [
+        { "name": "unix", "type": "file", "fileName": "/Users/x/.ssh/id_rsa" },
+        { "name": "win", "type": "file", "fileName": "C:\\Users\\x\\a.png" },
+        { "name": "rel", "type": "file", "fileName": "../../secret.txt" },
+        { "name": "bare", "type": "file", "fileName": "photo.png" },
+        { "name": "sneaky", "value": "@/etc/passwd" }
+      ] }
+    }
+  ]
+}
+)JSON");
+
+    auto outcome = ce::importFromInsomnia(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* op = findOp(outcome->project, "uploads.upload");
+    ASSERT_NE(op, nullptr);
+    ASSERT_TRUE(op->bodyForm.has_value());
+    reqloom::tests::expectImportedFileRefsSanitised(
+        *op->bodyForm, outcome->warnings, "uploads.upload");
+}
+
+namespace {
+
+std::size_t countOf(const std::string& haystack, std::string_view needle) {
+    std::size_t n = 0;
+    for (auto pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+// Insomnia nested environment data (`{{ _.api.url }}`) used to abort the
+// import with RefUndefined; it maps to the flattened key `api_url`. The base
+// environment is `default`; each sub-environment becomes its own
+// environment with its overrides applied, instead of a last-wins merge.
+TEST(ImportFromInsomnia, nested_env_and_sub_environments) {
+    ScratchDir scratch;
+    const auto file = scratch.write("nested.json", R"JSON(
+{ "_type": "export", "__export_format": 4, "resources": [
+  { "_id": "wrk_1", "_type": "workspace", "name": "Nested" },
+  { "_id": "env_base", "_type": "environment", "parentId": "wrk_1", "name": "Base Environment",
+    "data": { "api": { "url": "https://base.example.com" }, "region": "eu" } },
+  { "_id": "env_dev", "_type": "environment", "parentId": "env_base", "name": "Dev",
+    "data": { "api": { "url": "https://dev.example.com" } } },
+  { "_id": "env_prod", "_type": "environment", "parentId": "env_base", "name": "Prod",
+    "data": { "region": "us" } },
+  { "_id": "req_1", "_type": "request", "parentId": "wrk_1", "name": "Ping", "method": "GET",
+    "url": "{{ _.api.url }}/ping", "headers": [ { "name": "X-Region", "value": "{{ _.region }}" } ] }
+] }
+)JSON");
+    auto outcome = ce::importFromInsomnia(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto& envs = outcome->project.environments;
+    EXPECT_EQ(outcome->project.defaultEnvironment, "default");
+    ASSERT_TRUE(envs.contains("default"));
+    ASSERT_TRUE(envs.contains("dev"));
+    ASSERT_TRUE(envs.contains("prod"));
+    EXPECT_EQ(envs.at("default").at("api_url"), "https://base.example.com");
+    EXPECT_EQ(envs.at("default").at("region"), "eu");
+    EXPECT_EQ(envs.at("dev").at("api_url"), "https://dev.example.com");
+    EXPECT_EQ(envs.at("dev").at("region"), "eu");
+    EXPECT_EQ(envs.at("prod").at("region"), "us");
+    EXPECT_EQ(envs.at("default").at("baseUrl"), "https://base.example.com");
+    EXPECT_EQ(envs.at("dev").at("baseUrl"), "https://dev.example.com");
+    const auto* op = findOp(outcome->project, "nested.ping");
+    ASSERT_NE(op, nullptr);
+    EXPECT_EQ(op->pathTemplate, "/ping");
+    EXPECT_EQ(op->headers.at("X-Region"), "{{env.region}}");
+}
+
+// `{}` and `{"type":"none"}` are "no auth" (the latter used to warn); a real
+// scheme warns once per request, and a folder's auth once per folder.
+TEST(ImportFromInsomnia, auth_warnings_only_for_real_schemes) {
+    ScratchDir scratch;
+    const auto file = scratch.write("auth.json", R"JSON(
+{ "_type": "export", "__export_format": 4, "resources": [
+  { "_id": "wrk_1", "_type": "workspace", "name": "Auth" },
+  { "_id": "fld_1", "_type": "request_group", "parentId": "wrk_1", "name": "Admin",
+    "authentication": { "type": "basic" } },
+  { "_id": "r1", "_type": "request", "parentId": "fld_1", "name": "Empty", "method": "GET",
+    "url": "https://api.example.com/a", "authentication": {} },
+  { "_id": "r2", "_type": "request", "parentId": "fld_1", "name": "None", "method": "GET",
+    "url": "https://api.example.com/b", "authentication": { "type": "none" } },
+  { "_id": "r3", "_type": "request", "parentId": "fld_1", "name": "Bearer", "method": "GET",
+    "url": "https://api.example.com/c", "authentication": { "type": "bearer", "token": "t" } }
+] }
+)JSON");
+    auto outcome = ce::importFromInsomnia(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto& w = outcome->warnings;
+    EXPECT_EQ(countOf(w, "auth was not imported"), 2u) << w;
+    EXPECT_EQ(countOf(w, "folder `Admin`: `basic` auth was not imported"), 1u) << w;
+    EXPECT_EQ(countOf(w, "operation admin.bearer: `bearer` auth was not imported"), 1u) << w;
+}
+
+// Reqloom sends a text-only form urlencoded unless the operation says multipart.
+TEST(ImportFromInsomnia, text_only_multipart_form_stays_multipart) {
+    ScratchDir scratch;
+    const auto file = scratch.write("forms.json", R"JSON(
+{
+  "_type": "export", "__export_format": 4,
+  "resources": [
+    { "_id": "wrk_1", "_type": "workspace", "name": "Forms" },
+    { "_id": "req_1", "_type": "request", "parentId": "wrk_1", "name": "Multi",
+      "method": "POST", "url": "https://api.example.com/m",
+      "body": { "mimeType": "multipart/form-data", "params": [ { "name": "a", "value": "1" } ] } },
+    { "_id": "req_2", "_type": "request", "parentId": "wrk_1", "name": "Encoded",
+      "method": "POST", "url": "https://api.example.com/e",
+      "body": { "mimeType": "application/x-www-form-urlencoded",
+                "params": [ { "name": "a", "value": "1" } ] } }
+  ]
+}
+)JSON");
+    auto outcome = ce::importFromInsomnia(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const auto* multi = findOp(outcome->project, "forms.multi");
+    ASSERT_NE(multi, nullptr);
+    EXPECT_EQ(multi->headers.at("Content-Type"), "multipart/form-data");
+    const auto* encoded = findOp(outcome->project, "forms.encoded");
+    ASSERT_NE(encoded, nullptr);
+    EXPECT_TRUE(encoded->headers.empty());
 }

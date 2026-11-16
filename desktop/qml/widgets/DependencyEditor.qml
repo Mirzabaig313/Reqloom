@@ -31,7 +31,19 @@ ColumnLayout {
 
             // The {{...}} variables this dependency makes available (so you
             // know which prerequisite provides which variable).
-            readonly property var providedVars: (!row.isGhost && row.value.length > 0) ? AppController.extractedVariablesFor(row.value) : []
+            property var providedVars: []
+            function refreshProvidedVars() {
+                row.providedVars = (!row.isGhost && row.value.length > 0) ? AppController.extractedVariablesFor(row.value) : [];
+            }
+            onValueChanged: row.refreshProvidedVars()
+            onIsGhostChanged: row.refreshProvidedVars()
+            Component.onCompleted: row.refreshProvidedVars()
+            Connections {
+                target: AppController
+                function onProjectChanged() {
+                    row.refreshProvidedVars();
+                }
+            }
 
             RowLayout {
                 Layout.fillWidth: true
@@ -90,7 +102,7 @@ ColumnLayout {
                 color: row.providedVars.length > 0 ? DesignTokens.statusSuccess : DesignTokens.textSecondary
                 font.pixelSize: DesignTokens.fontCaption
                 font.family: row.providedVars.length > 0 ? DesignTokens.fontMono : DesignTokens.fontSans
-                wrapMode: Text.WrapAnywhere
+                wrapMode: Text.Wrap
             }
         }
     }

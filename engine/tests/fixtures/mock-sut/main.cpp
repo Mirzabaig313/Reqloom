@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -38,6 +39,7 @@
 #include <print>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -62,6 +64,9 @@ struct Route {
         std::vector<std::pair<std::string, std::string>> headers;
     };
     std::vector<Step> sequence;
+
+    /// Milliseconds the handler waits before answering, for tests that need a request in flight.
+    int delayMs{0};
 };
 
 /// Snapshot of the most recent request received on a captured route.
@@ -106,6 +111,7 @@ struct CaptureStore {
         route.method = r.value("method", "GET");
         route.path = r.value("path", "/");
         route.status = r.value("status", 200);
+        route.delayMs = r.value("delayMs", 0);
         if (r.contains("body")) {
             route.body = r["body"].is_string() ? r["body"].get<std::string>() : r["body"].dump();
         }
@@ -166,6 +172,9 @@ void registerRoute(httplib::Server& server, const Route& route, CaptureStore& ca
 
     auto handler = [route, callCount, &captures](const httplib::Request& req,
                                                  httplib::Response& res) {
+        if (route.delayMs > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{route.delayMs});
+        }
         // Capture every request so the integration tests can assert on
         // Content-Type, raw body, and multipart structure. The store is
         // keyed by path so a test can inspect the request to a specific
@@ -240,6 +249,12 @@ void registerRoute(httplib::Server& server, const Route& route, CaptureStore& ca
         server.Patch(route.path, handler);
     else if (route.method == "DELETE")
         server.Delete(route.path, handler);
+    else if (route.method == "HEAD")
+        // httplib answers HEAD from the GET handler table: headers (incl.
+        // Content-Length) are sent, the body is suppressed.
+        server.Get(route.path, handler);
+    else if (route.method == "OPTIONS")
+        server.Options(route.path, handler);
     else
         server.Get(route.path, handler);
 }
@@ -303,13 +318,19 @@ int main(int argc, char** argv) {
         res.set_content("OK", "text/plain");
     });
 
-    auto port = server.bind_to_any_port("127.0.0.1");
-    if (port < 0) {
-        std::println(stderr, "mock-sut: failed to bind");
-        return 2;
-    }
-    if (requestedPort != 0 && port != requestedPort) {
-        // Caller wanted a specific port but we got something else; not fatal.
+    int port{};
+    if (requestedPort != 0) {
+        if (!server.bind_to_port("127.0.0.1", requestedPort)) {
+            std::println(stderr, "mock-sut: failed to bind port {}", requestedPort);
+            return 2;
+        }
+        port = requestedPort;
+    } else {
+        port = server.bind_to_any_port("127.0.0.1");
+        if (port < 0) {
+            std::println(stderr, "mock-sut: failed to bind");
+            return 2;
+        }
     }
 
     std::println("PORT: {}", port);

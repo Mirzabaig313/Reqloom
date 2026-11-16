@@ -16,6 +16,8 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <variant>
+#include <vector>
 
 namespace fs = std::filesystem;
 namespace ce = reqloom::engine;
@@ -236,6 +238,37 @@ TEST_F(InlineAuthFixture, oauth2_fetches_a_token_and_injects_bearer) {
     EXPECT_EQ(cap["headers"]["authorization"].get<std::string>(), "Bearer oauth2-tok");
 }
 
+TEST_F(InlineAuthFixture, an_inline_oauth2_token_exchange_is_named_as_such) {
+    auto project = makeProject(harness_->baseUrl());
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["oauth2"] =
+        makeOp("oauth2",
+               "/oauth2",
+               ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                              .oauth2TokenUrl = harness_->baseUrl() + "/token",
+                              .oauth2ClientId = "cid",
+                              .oauth2ClientSecret = "csecret"});
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    std::vector<ce::ExchangeKind> requests;
+    std::vector<ce::ExchangeKind> responses;
+    engine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&ev)) {
+            requests.push_back(prepared->exchange);
+        } else if (const auto* received = std::get_if<ce::ResponseReceived>(&ev)) {
+            responses.push_back(received->exchange);
+        }
+    });
+    ce::RunContext ctx;
+    auto result = engine.run(project, ce::OperationId{"echo.oauth2"}, ctx);
+    ASSERT_TRUE(result.has_value() && result->succeeded());
+
+    const std::vector<ce::ExchangeKind> expected{ce::ExchangeKind::InlineAuthToken,
+                                                 ce::ExchangeKind::Operation};
+    EXPECT_EQ(requests, expected);
+    EXPECT_EQ(responses, expected);
+}
+
 TEST_F(InlineAuthFixture, inherit_uses_the_project_default_auth) {
     auto project = makeProject(harness_->baseUrl());
     project.defaultAuth =
@@ -305,6 +338,31 @@ TEST_F(InlineAuthFixture, oauth2_token_is_cached_across_operations) {
     EXPECT_EQ(capA["headers"]["authorization"].get<std::string>(), "Bearer tok-1");
     EXPECT_EQ(capB["headers"]["authorization"].get<std::string>(), "Bearer tok-1")
         << "second op re-fetched a token instead of reusing the cached one";
+}
+
+TEST_F(InlineAuthFixture, oauth2_token_cache_is_cleared_by_reset_sessions) {
+    // A clean run (resetSessions) must drop the cached inline-OAuth2 token too,
+    // not only declared actors' sessions: the second op re-fetches tok-2.
+    auto project = makeProject(harness_->baseUrl());
+    const auto oauth2 = ce::InlineAuth{.type = ce::InlineAuthType::OAuth2,
+                                       .oauth2TokenUrl = harness_->baseUrl() + "/token-seq",
+                                       .oauth2ClientId = "cid",
+                                       .oauth2ClientSecret = "csecret"};
+    ce::Resource& echo = project.resources.at(ce::ResourceId{"echo"});
+    echo.operations["cachea"] = makeOp("cachea", "/cache-a", oauth2);
+    echo.operations["cacheb"] = makeOp("cacheb", "/cache-b", oauth2);
+    ce::RunOptions clean;
+    clean.resetSessions = true;
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::RunContext ctx;
+    ASSERT_TRUE(engine.run(project, ce::OperationId{"echo.cachea"}, ctx));
+    ASSERT_TRUE(engine.run(project, ce::OperationId{"echo.cacheb"}, ctx, clean));
+
+    auto capB = fetchLastRequest(harness_->baseUrl(), "/cache-b");
+    ASSERT_TRUE(capB["found"].get<bool>());
+    EXPECT_EQ(capB["headers"]["authorization"].get<std::string>(), "Bearer tok-2")
+        << "a clean run reused the cached inline-OAuth2 token";
 }
 
 TEST_F(InlineAuthFixture, oauth2_password_grant_with_basic_client_auth) {

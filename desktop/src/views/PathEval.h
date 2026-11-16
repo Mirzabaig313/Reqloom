@@ -1,6 +1,5 @@
-// PathEval — classify an extraction JSONPath against a response body for the
-// chain editor's inline validity indicator + value preview. Pure (no Qt) so it
-// is unit-testable; the Qt wrapper (AppController) only picks which body to use.
+// PathEval — classify an extraction JSONPath against a response body for the chain editor's
+// validity indicator and value preview.
 #pragma once
 
 #include <reqloom/engine/JsonValues.h>
@@ -31,10 +30,8 @@ struct PathEvalResult {
     if (path.empty() || body.empty()) {
         return {};
     }
-    //  header/status/cookie paths aren't in the JSON body, so we can't
-    // confirm them here — stay neutral rather than flag a false "no match".
-    // Upgrade path: validate these against the step's captured response
-    // headers/status when a run has produced them.
+    // header/status/cookie paths aren't in the JSON body, so stay neutral rather than flag a false
+    // "no match".
     if (path.starts_with("$.headers") || path.starts_with("$.cookies") || path == "$.status_code") {
         return {};
     }
@@ -46,8 +43,7 @@ struct PathEvalResult {
 }
 
 namespace detail {
-/// Recurse a JSON value, appending the `$.a.b[0]`-form path of every leaf
-/// (scalar) — the addressable targets for an extraction.
+/// Append the `$.a.b[0]`-form path of every leaf scalar under a JSON value.
 inline void collectLeafPaths(const QJsonValue& value, const QString& path, QStringList& out) {
     if (value.isObject()) {
         const QJsonObject obj = value.toObject();
@@ -75,8 +71,7 @@ inline void collectLeafPaths(const QJsonValue& value, const QString& path, QStri
     if (doc.isObject()) {
         const QJsonObject obj = doc.object();
         for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
-            // Bare body paths (no leading "$." — it's optional for body paths,
-            // so suggestions are shorter to type/read: `data.id`, not `$.data.id`).
+            // Bare body paths (the leading "$." is optional) keep suggestions short.
             detail::collectLeafPaths(it.value(), it.key(), all);
         }
     } else if (doc.isArray()) {

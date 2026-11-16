@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -92,6 +93,8 @@ TEST(ImportFromHttpFile, requests_become_operations_under_a_file_resource) {
 
     const auto* create = findOp(project, "orders.create_order");
     ASSERT_NE(create, nullptr);
+    ASSERT_TRUE(create->provenance.has_value());
+    EXPECT_EQ(create->provenance->source, ce::Provenance::Source::HttpFileImport);
     EXPECT_EQ(create->method, ce::HttpMethod::Post);
     EXPECT_EQ(create->pathTemplate, "/api/v1/orders");
     ASSERT_TRUE(create->bodyTemplate.has_value());
@@ -139,4 +142,31 @@ TEST(ImportFromHttpFile, rejects_traversal_outside_project_root) {
     fs::remove(outside, ec);
     ASSERT_FALSE(outcome.has_value());
     EXPECT_NE(outcome.error().detail.find("project root"), std::string::npos);
+}
+
+// REST Client request chaining (`{{login.response.body.$.token}}`) used to
+// abort the import with RefUndefined. It is imported as an empty
+// environment variable with a warning saying how Reqloom expresses it.
+TEST(ImportFromHttpFile, request_chaining_reference_is_imported_with_warning) {
+    ScratchDir scratch;
+    const auto file = scratch.write("chain.http",
+                                    "# @name login\n"
+                                    "POST https://api.example.com/login\n"
+                                    "\n"
+                                    "###\n"
+                                    "GET https://api.example.com/me\n"
+                                    "Authorization: Bearer {{login.response.body.$.token}}\n");
+    auto outcome = ce::importFromHttpFile(file, scratch.path());
+    ASSERT_TRUE(outcome.has_value()) << outcome.error().detail;
+    const ce::Operation* me = nullptr;
+    for (const auto& [name, op] :
+         outcome->project.resources.at(ce::ResourceId{"chain"}).operations) {
+        if (op.headers.contains("Authorization")) {
+            me = &op;
+        }
+    }
+    ASSERT_NE(me, nullptr);
+    EXPECT_EQ(me->headers.at("Authorization"), "Bearer {{env.login_response_body_token}}");
+    EXPECT_TRUE(outcome->project.environments.at("default").contains("login_response_body_token"));
+    EXPECT_NE(outcome->warnings.find("request chaining"), std::string::npos) << outcome->warnings;
 }

@@ -1,19 +1,18 @@
-// JUnitRenderer — see header.
-//
-// JUnit XML schema matched to the surface Jenkins / GitLab / Buildkite
-// consume. One <testsuite> per chain, one <testcase> per declared
-// operation. Poll-attempt rows are merged into the parent <testcase>'s
-// <system-out> rather than emitted as their own cases — otherwise a
-// passing flow with 30 polls would inflate the suite count by 30.
+// JUnitRenderer — see header. Poll-attempt and for_each iteration rows fold into the parent
+// <testcase>, so a flow with 30 polls does not inflate the suite count.
 
 #include "JUnitRenderer.h"
 
 #include "StepFormatting.h"
+#include "TextEncoding.h"
 
 #include <reqloom/engine/PublicApi.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
-#include <sstream>
+#include <optional>
+#include <ostream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,74 +22,247 @@ namespace reqloom::cli {
 namespace {
 
 namespace ce = reqloom::engine;
+using Status = ce::StepResult::Status;
 
-/// XML 1.0 attribute / text escape. Drops control characters that the
-/// XML 1.0 spec disallows entirely (e.g. raw 0x00–0x08); Jenkins' parser
-/// rejects whole reports if those slip through.
-std::string xmlEscape(std::string_view input) {
-    std::string out;
-    out.reserve(input.size());
-    for (const char ch : input) {
-        const auto byte = static_cast<unsigned char>(ch);
-        switch (ch) {
-            case '<':
-                out += "&lt;";
-                break;
-            case '>':
-                out += "&gt;";
-                break;
-            case '&':
-                out += "&amp;";
-                break;
-            case '"':
-                out += "&quot;";
-                break;
-            case '\'':
-                out += "&apos;";
-                break;
-            default:
-                if (byte < 0x20 && ch != '\n' && ch != '\r' && ch != '\t') {
-                    // Skip — XML 1.0 disallows these even when escaped.
-                    break;
-                }
-                out += ch;
-                break;
-        }
-    }
-    return out;
-}
+/// Longest `message` attribute; the full text goes in the element body.
+constexpr std::size_t kMessageBytes = 200;
 
-/// Group consecutive poll-attempt rows under their parent op row. The
-/// engine emits polls BEFORE the parent (see ExecutionEngine::run), so
-/// we buffer poll rows forward and flush them onto the next non-poll
-/// row. Trailing polls (no parent — shouldn't happen, defensive)
-/// attach to the last emitted group, or are dropped if none exists.
+/// A parent row and the poll / iteration rows the engine emits before it.
 struct GroupedStep {
     std::size_t parentIdx{};
-    std::vector<std::size_t> pollIdxs;
+    std::vector<std::size_t> childIdxs;
 };
 
 std::vector<GroupedStep> groupSteps(const std::vector<ce::StepResult>& steps) {
     std::vector<GroupedStep> groups;
-    std::vector<std::size_t> pendingPolls;
-
+    std::vector<std::size_t> pending;
     for (std::size_t i = 0; i < steps.size(); ++i) {
         if (steps[i].pollAttempt || steps[i].forEachIndex) {
-            pendingPolls.push_back(i);
+            pending.push_back(i);
         } else {
-            groups.push_back(GroupedStep{i, std::move(pendingPolls)});
-            pendingPolls.clear();
+            groups.push_back(GroupedStep{i, std::move(pending)});
+            pending.clear();
         }
     }
-
-    if (!pendingPolls.empty() && !groups.empty()) {
-        // Defensive: orphan polls past the last parent. Fold into the
-        // last group so they stay visible in the report.
-        for (auto idx : pendingPolls) {
-            groups.back().pollIdxs.push_back(idx);
-        }
+    // Orphan rows attach to the last group so they stay visible.
+    if (!groups.empty()) {
+        groups.back().childIdxs.insert(
+            groups.back().childIdxs.end(), pending.begin(), pending.end());
     }
     return groups;
+}
+
+/// "iter #2 poll #3", "iter #2", "poll #3", or "" for a parent row.
+[[nodiscard]] std::string rowLabel(const ce::StepResult& row) {
+    std::string label;
+    if (row.forEachIndex) {
+        label = "iter #" + std::to_string(*row.forEachIndex);
+    }
+    if (row.pollAttempt) {
+        label +=
+            (label.empty() ? "" : " ") + std::string{"poll #"} + std::to_string(*row.pollAttempt);
+    }
+    return label;
+}
+
+struct Problem {
+    std::string type;
+    std::string message;
+    std::string body;
+};
+
+/// Everything one <testcase> carries, decided before any of it is written so the suite counts
+/// match the cases.
+struct CaseModel {
+    const ce::StepResult* parent{nullptr};
+    std::vector<Problem> failures;
+    std::optional<Problem> error;
+    bool skipped{false};
+    std::string systemOut;
+};
+
+[[nodiscard]] bool failedOnlyOnAssertions(const ce::StepResult& row) {
+    return row.error == ce::ErrorCode::AssertionFailed &&
+           std::ranges::any_of(row.assertions, [](const auto& a) { return !a.passed; });
+}
+
+void addAssertionFailures(CaseModel& model, const ce::StepResult& row, const std::string& prefix) {
+    for (const auto& a : row.assertions) {
+        if (!a.passed) {
+            const auto& label = a.name.empty() ? a.expr : a.name;
+            model.failures.push_back(
+                Problem{std::string{ce::toCodeString(ce::ErrorCode::AssertionFailed)},
+                        prefix + firstLine(label, kMessageBytes),
+                        a.detail.empty() ? a.expr : a.detail + "\n" + a.expr});
+        }
+    }
+}
+
+[[nodiscard]] Problem stepFailure(const ce::StepResult& row, const std::string& prefix) {
+    const auto code = row.error.value_or(ce::ErrorCode::Internal);
+    const std::string_view text = row.detail.empty() ? ce::humanize(code) : row.detail;
+    return Problem{
+        std::string{ce::toCodeString(code)}, prefix + firstLine(text, kMessageBytes), row.detail};
+}
+
+/// One <failure> per failed assertion and per failed iteration not explained by its assertions;
+/// the step's own failure only when nothing more specific explains it.
+void addFailures(CaseModel& model, const std::vector<ce::StepResult>& steps, const GroupedStep& g) {
+    for (const auto idx : g.childIdxs) {
+        const auto& row = steps[idx];
+        if (row.pollAttempt) {
+            continue;
+        }
+        const std::string prefix = rowLabel(row) + ": ";
+        addAssertionFailures(model, row, prefix);
+        if (row.status == Status::Failed && !failedOnlyOnAssertions(row)) {
+            model.failures.push_back(stepFailure(row, prefix));
+        }
+    }
+    const bool iterationFailed = !model.failures.empty();
+    const auto& parent = *model.parent;
+    addAssertionFailures(model, parent, "");
+    if (parent.status == Status::Failed &&
+        (model.failures.empty() || (!iterationFailed && !failedOnlyOnAssertions(parent)))) {
+        model.failures.insert(model.failures.begin(), stepFailure(parent, ""));
+    }
+}
+
+void appendAssertionLines(std::string& out, const ce::StepResult& row, const std::string& label) {
+    for (const auto& a : row.assertions) {
+        out += label + (label.empty() ? "" : " ") + (a.passed ? "PASS" : "FAIL") +
+               " assert: " + a.name + "  (" + a.expr + ")\n";
+    }
+}
+
+[[nodiscard]] std::string systemOut(const std::vector<ce::StepResult>& steps,
+                                    const GroupedStep& g) {
+    std::string out;
+    for (const auto idx : g.childIdxs) {
+        const auto& row = steps[idx];
+        const auto label = rowLabel(row);
+        out += label + " " + std::string{statusGlyph(row.status)} + " (" +
+               std::to_string(row.elapsed.count()) + "ms)" + (row.detail.empty() ? "" : "  ") +
+               row.detail + "\n";
+        if (!row.pollAttempt) {
+            appendAssertionLines(out, row, label);
+        }
+    }
+    appendAssertionLines(out, steps[g.parentIdx], "");
+    return out;
+}
+
+[[nodiscard]] CaseModel buildCase(const std::vector<ce::StepResult>& steps, const GroupedStep& g) {
+    CaseModel model;
+    model.parent = &steps[g.parentIdx];
+    model.systemOut = systemOut(steps, g);
+    switch (model.parent->status) {
+        case Status::Blocked:
+            model.error = Problem{"BLOCKED", "upstream step failed; this step did not run", ""};
+            break;
+        case Status::Cancelled:
+            model.error = Problem{"CANCELLED", "run was cancelled", ""};
+            break;
+        case Status::Skipped:
+            model.skipped = true;
+            break;
+        default:
+            addFailures(model, steps, g);
+            break;
+    }
+    return model;
+}
+
+struct Counts {
+    std::size_t tests{0};
+    std::size_t failures{0};
+    std::size_t errors{0};
+    std::size_t skipped{0};
+};
+
+[[nodiscard]] Counts countCases(const std::vector<CaseModel>& cases) {
+    Counts c;
+    c.tests = cases.size();
+    for (const auto& model : cases) {
+        if (model.error) {
+            ++c.errors;
+        } else if (!model.failures.empty()) {
+            ++c.failures;
+        } else if (model.skipped) {
+            ++c.skipped;
+        }
+    }
+    return c;
+}
+
+void writeProblem(std::ostream& out, std::string_view element, const Problem& p) {
+    out << "      <" << element << " type=\"" << xmlAttribute(p.type) << "\" message=\""
+        << xmlAttribute(p.message) << "\"";
+    if (p.body.empty()) {
+        out << "/>\n";
+    } else {
+        out << ">" << xmlText(p.body) << "</" << element << ">\n";
+    }
+}
+
+struct SuiteHead {
+    std::string_view target;
+    std::string_view environment;
+    std::string_view outcome;
+    std::optional<ce::RunId> run;
+    Counts counts;
+    double seconds{0.0};
+};
+
+void writeCounts(std::ostream& out, const SuiteHead& h) {
+    out << " tests=\"" << h.counts.tests << "\" failures=\"" << h.counts.failures << "\" errors=\""
+        << h.counts.errors << "\" skipped=\"" << h.counts.skipped << "\" time=\"" << h.seconds
+        << "\"";
+}
+
+void writeHead(std::ostream& out, const SuiteHead& h) {
+    const std::string name = xmlAttribute(h.target);
+    out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    out << "<testsuites name=\"" << name << "\"";
+    writeCounts(out, h);
+    out << ">\n";
+    out << "  <testsuite name=\"reqloom." << name << "\"";
+    writeCounts(out, h);
+    out << " hostname=\"reqloom-cli\">\n";
+    out << "    <properties>\n";
+    out << R"(      <property name="reqloom.target" value=")" << name << "\"/>\n";
+    out << R"(      <property name="reqloom.environment" value=")" << xmlAttribute(h.environment)
+        << "\"/>\n";
+    out << R"(      <property name="reqloom.outcome" value=")" << h.outcome << "\"/>\n";
+    if (h.run) {
+        out << R"(      <property name="reqloom.run_id" value=")" << h.run->value << "\"/>\n";
+    }
+    out << "    </properties>\n";
+}
+
+void writeTail(std::ostream& out) {
+    out << "  </testsuite>\n";
+    out << "</testsuites>\n";
+}
+
+void writeCase(std::ostream& out, std::string_view classname, const CaseModel& model) {
+    const auto& parent = *model.parent;
+    const double seconds = static_cast<double>(parent.elapsed.count()) / 1000.0;
+    out << "    <testcase classname=\"reqloom." << xmlAttribute(classname) << "\" name=\""
+        << xmlAttribute(parent.op.value) << "\" time=\"" << seconds << "\">\n";
+    if (model.error) {
+        writeProblem(out, "error", *model.error);
+    }
+    for (const auto& failure : model.failures) {
+        writeProblem(out, "failure", failure);
+    }
+    if (model.skipped) {
+        out << "      <skipped message=\"step skipped (cached extraction)\"/>\n";
+    }
+    if (!model.systemOut.empty()) {
+        out << "      <system-out>" << xmlCdata(model.systemOut) << "</system-out>\n";
+    }
+    out << "    </testcase>\n";
 }
 
 }  // namespace
@@ -100,114 +272,39 @@ JUnitRenderer::JUnitRenderer(std::ostream& out) : out_(out) {}
 void JUnitRenderer::render(const ce::OperationId& target,
                            std::string_view environment,
                            const ce::RunResult& result) {
-    const auto groups = groupSteps(result.steps);
-
-    std::uint32_t failures = 0;
-    std::uint32_t errors = 0;
-    std::uint32_t skipped = 0;
+    std::vector<CaseModel> cases;
     std::int64_t totalMs = 0;
-    for (const auto& g : groups) {
-        const auto& parent = result.steps[g.parentIdx];
-        totalMs += parent.elapsed.count();
-        switch (parent.status) {
-            case ce::StepResult::Status::Failed:
-                ++failures;
-                break;
-            case ce::StepResult::Status::Cancelled:
-            case ce::StepResult::Status::Blocked:
-                ++errors;
-                break;
-            case ce::StepResult::Status::Skipped:
-                ++skipped;
-                break;
-            default:
-                break;
-        }
+    for (const auto& g : groupSteps(result.steps)) {
+        cases.push_back(buildCase(result.steps, g));
+        totalMs += result.steps[g.parentIdx].elapsed.count();
     }
-
-    const double seconds = static_cast<double>(totalMs) / 1000.0;
-    const std::string envName{environment.empty() ? std::string_view{"default"} : environment};
-    const std::string suiteName = "reqloom." + xmlEscape(target.value);
-
-    out_ << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    out_ << "<testsuites name=\"" << xmlEscape(target.value) << "\" tests=\"" << groups.size()
-         << "\""
-         << " failures=\"" << failures << "\""
-         << " errors=\"" << errors << "\""
-         << " skipped=\"" << skipped << "\""
-         << " time=\"" << seconds << "\">\n";
-    out_ << "  <testsuite name=\"" << suiteName << "\" tests=\"" << groups.size() << "\""
-         << " failures=\"" << failures << "\""
-         << " errors=\"" << errors << "\""
-         << " skipped=\"" << skipped << "\""
-         << " time=\"" << seconds << "\""
-         << " hostname=\"reqloom-cli\">\n";
-    out_ << "    <properties>\n";
-    out_ << R"(      <property name="reqloom.target" value=")" << xmlEscape(target.value)
-         << "\"/>\n";
-    out_ << R"(      <property name="reqloom.environment" value=")" << xmlEscape(envName)
-         << "\"/>\n";
-    out_ << R"(      <property name="reqloom.outcome" value=")" << runOutcomeName(result.outcome)
-         << "\"/>\n";
-    out_ << R"(      <property name="reqloom.run_id" value=")" << result.runId.value << "\"/>\n";
-    out_ << "    </properties>\n";
-
-    for (const auto& g : groups) {
-        const auto& parent = result.steps[g.parentIdx];
-        const double caseSeconds = static_cast<double>(parent.elapsed.count()) / 1000.0;
-        out_ << "    <testcase classname=\"" << suiteName << "\" name=\""
-             << xmlEscape(parent.op.value) << "\" time=\"" << caseSeconds << "\">\n";
-
-        switch (parent.status) {
-            case ce::StepResult::Status::Failed: {
-                const std::string code =
-                    parent.error ? std::string(ce::toCodeString(*parent.error)) : std::string{"E"};
-                out_ << "      <failure type=\"" << xmlEscape(code) << "\""
-                     << " message=\"" << xmlEscape(parent.detail) << "\"/>\n";
-                break;
-            }
-            case ce::StepResult::Status::Skipped:
-                out_ << "      <skipped message=\"step skipped (cached extraction)\"/>\n";
-                break;
-            case ce::StepResult::Status::Blocked:
-                out_ << "      <error type=\"BLOCKED\""
-                     << " message=\"upstream step failed; this step did not run\"/>\n";
-                break;
-            case ce::StepResult::Status::Cancelled:
-                out_ << "      <error type=\"CANCELLED\""
-                     << " message=\"run was cancelled\"/>\n";
-                break;
-            default:
-                break;
-        }
-
-        if (!g.pollIdxs.empty()) {
-            out_ << "      <system-out><![CDATA[";
-            for (auto idx : g.pollIdxs) {
-                const auto& poll = result.steps[idx];
-                const std::string tag =
-                    poll.forEachIndex ? "iter #" + std::to_string(*poll.forEachIndex)
-                                      : "poll #" + std::to_string(poll.pollAttempt.value_or(0));
-                out_ << tag << " " << statusGlyph(poll.status) << " (" << poll.elapsed.count()
-                     << "ms)" << (poll.detail.empty() ? "" : "  ") << poll.detail << "\n";
-            }
-            out_ << "]]></system-out>\n";
-        }
-
-        if (!parent.assertions.empty()) {
-            out_ << "      <system-out><![CDATA[";
-            for (const auto& a : parent.assertions) {
-                out_ << (a.passed ? "PASS" : "FAIL") << " assert: " << a.name << "  (" << a.expr
-                     << ")\n";
-            }
-            out_ << "]]></system-out>\n";
-        }
-
-        out_ << "    </testcase>\n";
+    writeHead(out_,
+              SuiteHead{target.value,
+                        environment,
+                        runOutcomeName(result.outcome),
+                        result.runId,
+                        countCases(cases),
+                        static_cast<double>(totalMs) / 1000.0});
+    for (const auto& model : cases) {
+        writeCase(out_, target.value, model);
     }
+    writeTail(out_);
+}
 
-    out_ << "  </testsuite>\n";
-    out_ << "</testsuites>\n";
+void JUnitRenderer::renderError(const ce::OperationId& target,
+                                std::string_view environment,
+                                std::optional<ce::RunId> run,
+                                std::string_view code,
+                                std::string_view detail) {
+    const std::string_view name = target.value.empty() ? std::string_view{"reqloom"} : target.value;
+    writeHead(out_, SuiteHead{name, environment, kErrorOutcomeName, run, Counts{1, 0, 1, 0}, 0.0});
+    out_ << "    <testcase classname=\"reqloom." << xmlAttribute(name) << "\" name=\""
+         << xmlAttribute(name) << "\" time=\"0\">\n";
+    writeProblem(out_,
+                 "error",
+                 Problem{std::string{code}, firstLine(detail, kMessageBytes), std::string{detail}});
+    out_ << "    </testcase>\n";
+    writeTail(out_);
 }
 
 }  // namespace reqloom::cli

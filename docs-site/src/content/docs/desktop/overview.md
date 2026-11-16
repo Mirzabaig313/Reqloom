@@ -68,6 +68,11 @@ beneath it, and any saved response examples beneath those.
 - **Right-click** for Edit, Rename, Delete, New Endpoint, New Module, New Actor
 - **Search** filters operations by name and method across every open project
 
+A project whose folder can't be found when the app starts (an unmounted drive, a
+moved folder) stays in the list, greyed, with the reason and **Retry** and
+**Remove**. It is also listed under **Unavailable** in the toolbar's project
+switcher.
+
 Two status dots are worth knowing:
 
 - Next to an **actor** — whether its session is live, expiring, or absent
@@ -98,8 +103,14 @@ don't trust the cache".
 | --- | --- |
 | New project | File → New Project, creates `reqloom.yaml` |
 | Open project | File → Open Project, pick the folder |
-| Import a spec | File → Import — OpenAPI, Postman, Insomnia, Thunder Client, Hoppscotch, REST Client, Bruno |
+| Import a spec | File → Import — OpenAPI / Swagger, Postman, Insomnia, Thunder Client, Hoppscotch, HTTPie, Apidog, REST Client, Bruno |
 | Switch project | Project switcher in the toolbar, with a Recent list |
+
+Import moves credentials it finds — literal `Authorization`, `Proxy-Authorization`
+and `X-API-Key` header values, and variables the source marks secret — into the
+project's secrets, as [`reqloom import`](/cli/import/#credentials-move-into-secrets)
+does; the notification says how many were moved and how many were left in plain
+text.
 
 Several projects can be open at once; the switcher moves between them.
 
@@ -130,12 +141,16 @@ and toolbar.
 
 ## Capture bodies
 
-A toolbar checkbox. When on, response bodies are kept in memory so you can browse
-the body tree, diff against a saved example, and save examples. When off, the raw
-view tells you the body wasn't captured.
+A toolbar checkbox, on when the app starts. When on, response bodies (up to
+5 MiB each) are kept so you can browse the body tree, diff against a saved
+example, and save examples. When off, the raw view tells you the body wasn't
+captured.
 
-Leave it on while developing. Turn it off when running something that returns very
-large payloads.
+A captured body is shown and saved in [run history](/desktop/running/#run-history)
+**exactly as received** — an access token in a login or API response is stored
+in clear text in the history file. Headers, URLs, failure messages and extracted
+values stay masked either way. Turn it off when the API returns real
+credentials, or very large payloads.
 
 ## Next
 

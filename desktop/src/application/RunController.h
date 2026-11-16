@@ -1,11 +1,7 @@
-// Drives engine runs off the GUI thread and re-emits streamed RunEvents as
-// Qt signals with native-typed payloads (QString/int/qint64) so the
-// cross-thread connections to the views queue automatically.
-//
-// Threading: engine::ExecutionEngine::run blocks (real HTTP, polling sleeps),
-// so it runs on a QtConcurrent worker. The engine's event callback fires on
-// that worker thread but only emits signals — it never calls back into the
-// engine — which is the marshalling discipline requires.
+// Drives engine runs off the GUI thread and re-emits streamed RunEvents as Qt signals with
+// native-typed payloads, so cross-thread connections queue. Threading: ExecutionEngine::run blocks,
+// so it runs on a QtConcurrent worker; the event callback fires on that worker and only emits
+// signals, never calling back into the engine.
 #pragma once
 
 #include "application/UrlTemplate.h"
@@ -25,6 +21,7 @@
 #include <vector>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <map>
 
@@ -32,10 +29,8 @@ namespace reqloom::desktop {
 
 class ProjectModel;
 
-/// One-shot request override for an Override-Mode run. When
-/// `active`, the controller deep-copies the project, patches the target
-/// operation with these values, and runs against the copy — the loaded project
-/// is never mutated, so the override applies to this run only.
+/// One-shot request override for an Override-Mode run: when `active`, the controller patches a deep
+/// copy of the project, so the loaded project is never mutated.
 struct RequestOverride {
     bool active{false};
 
@@ -89,8 +84,8 @@ struct RequestOverride {
             items.emplace_back(key, value);
         }
 
-        // ponytail: Keep shapes a map cannot preserve in the raw path until
-        // Operation supports ordered, multi-value query parameters.
+        // Keep shapes a map cannot preserve in the raw path until Operation supports ordered,
+        // multi-value query parameters.
         std::string previousKey;
         bool first{true};
         for (const auto& item : items) {
@@ -133,9 +128,8 @@ struct RequestOverride {
     std::optional<engine::InlineAuth> inlineAuth;
 };
 
-/// Apply a RequestOverride's fields onto an operation in place. Shared by the
-/// one-shot run path (patches a throwaway project copy) and the Save-to-Project
-/// path (patches the real operation before writing YAML).
+/// Apply a RequestOverride onto an operation in place; shared by the one-shot run path and
+/// Save-to-Project.
 void applyOverrideToOperation(engine::Operation& op, const RequestOverride& ov);
 
 /// Outcome of one run, handed from the worker back to the GUI thread.
@@ -161,55 +155,70 @@ public:
 
     [[nodiscard]] bool isRunning() const noexcept;
 
-    /// Point the controller at a different project (workspace switch). Each
-    /// project keeps its own RunContext (sessions + extraction cache), keyed by
-    /// project root, so switching collections preserves each one's logins.
-    /// Must not be called while a run is in flight (the caller blocks switches
-    /// during a run).
+    /// Point the controller at a different project (workspace switch). Must not be called while a
+    /// run is in flight.
     void setProject(const ProjectModel& project) noexcept;
 
-    /// Resets the run context's session + extraction caches. Refused while
-    /// a run is in flight.
+    /// Resets the active environment's run context (sessions, cookie jar, extraction).
+    /// Refused while a run is in flight.
     void resetCaches();
 
-    /// Opt into capturing full response bodies for the next run. Off by
-    /// default — the engine's redaction-first contract keeps bodies off the
-    /// event surface (and out of the history DB) unless the user asks. When
-    /// on, login/refresh bodies (tokens included) become visible too, so the
-    /// caller surfaces this as a deliberate user choice.
+    /// Capture full response bodies for the next run (off by default: the engine's redaction-first
+    /// contract keeps bodies out of events and history). Login/refresh bodies, tokens included,
+    /// become visible too, so surface it as a deliberate user choice.
     void setCaptureResponseBodies(bool capture) noexcept;
     [[nodiscard]] bool captureResponseBodies() const noexcept;
 
-    /// Pin concrete values for `{{resource.var}}` tokens (the value picker,
-    /// Option A). Each pair is ("resource.var", value). Before each run these
-    /// are seeded as the resource's most-recent instance, so the producing op
-    /// is extraction-cache-skipped and the chain uses the chosen value.
+    /// Pin concrete values for `{{resource.var}}` tokens as ("resource.var", value) pairs, seeded
+    /// before each run so the producing op is skipped and the chosen value used.
     void setVariableOverrides(std::vector<std::pair<std::string, std::string>> overrides);
 
-    /// Clear the run context's extraction cache only (sessions kept). Used when
-    /// a pin changes so a stale pinned value can't linger into the next run.
+    /// Clear the extraction cache only (sessions kept), so a changed pin can't leave a stale value.
     void clearExtractionCache();
 
-    /// Snapshot of an actor's accumulated cookie jar (name → value) for the
-    /// current run context, or empty when no run has populated a context yet.
-    /// Read-only view for a cookie inspector.
+    /// An actor's accumulated cookie jar (name → value) for the current run context; empty before
+    /// any run. While a run uses that context, this and the other read paths below answer from the
+    /// copy taken just before the run started, so the GUI thread never reads what the worker
+    /// writes.
     [[nodiscard]] std::map<std::string, std::string> cookies(const engine::ActorId& actor) const;
 
-    /// Read-only view of one actor's auth session in the active run context,
-    /// for the explorer's per-actor status indicator (FR-5.1). Reuses the
-    /// engine's state enum rather than mirroring it.
+    /// The same jar with each cookie's setting host, Domain, Path, Secure and expiry.
+    [[nodiscard]] std::vector<engine::JarCookie> jarCookies(const engine::ActorId& actor) const;
+
+    /// Read-only view of one actor's auth session for the explorer's status indicator; reuses the
+    /// engine's state enum.
     struct ActorSessionInfo {
         engine::ActorSession::State state{engine::ActorSession::State::None};
-        /// Whole seconds until the session lapses. 0 unless `state` is `Live`
-        /// with time left, so callers can render a TTL without doing clock
-        /// arithmetic of their own.
+        /// Whole seconds until the session lapses; 0 unless `state` is `Live` with time left.
         int secondsRemaining{0};
     };
 
-    /// The actor's session in the active project's run context. A default value
-    /// (state `None`) means no run has authenticated this actor yet, the
-    /// context was reset, or the project has no context at all.
+    /// The actor's session in the active run context; a default value (state `None`) means not
+    /// authenticated, reset, or no context.
     [[nodiscard]] ActorSessionInfo sessionInfo(const engine::ActorId& actor) const;
+
+    /// Select the environment whose run context the read and reset paths use; empty means
+    /// the project's default. A run also selects its environment.
+    void setEnvironment(const QString& environment);
+
+    /// Drop every run context of the project at `rootPath`. Refused for an in-flight run's project.
+    void forgetProject(const QString& rootPath);
+
+    /// Drop the run context of a deleted `environment` in the project at `rootPath`, so a later
+    /// environment of the same name starts clean. An in-flight run's context goes when the run
+    /// ends.
+    void forgetEnvironment(const QString& rootPath, const QString& environment);
+
+    /// Keep a renamed environment's run context (sessions, cookies, extracted values) under its
+    /// new name, replacing anything kept under that name. An in-flight run's context moves when
+    /// the run ends.
+    void renameEnvironment(const QString& rootPath, const QString& from, const QString& to);
+
+    /// The active run context, or nullptr when none exists yet. Not for the GUI thread while a run
+    /// uses that context.
+    [[nodiscard]] engine::RunContext* findActiveContext() const;
+    /// The active run context, created on first use.
+    engine::RunContext& contextForActive();
 
 public slots:
     /// Kick off a run ending at `target` against `environment` (empty → project
@@ -218,78 +227,112 @@ public slots:
     /// run is already in flight.
     void run(const QString& target, const QString& environment, bool clean, bool dryRun);
 
-    /// Run with a one-shot override applied to the target operation (§6.3).
-    /// When `override.active` is false this behaves exactly like `run`.
+    /// Run with a one-shot override applied; behaves exactly like `run` when `override.active` is
+    /// false.
     void runWithOverride(const QString& target,
                          const QString& environment,
                          bool clean,
                          bool dryRun,
                          const RequestOverride& requestOverride);
 
-    /// Cancel the in-flight run, if any.
+    /// Cancel the in-flight run, if any. A cancel issued before the engine has announced the run
+    /// id is held and applied as soon as it does.
     void cancelRun();
 
 signals:
     void runStarted(QString target, int chainSize, QString environment);
     void stepStarted(int index, QString op, int attempt);
     void stepSkipped(int index, QString op, QString reason);
-    void requestPrepared(
-        int index, QString method, QString url, QString maskedHeaders, int bodySize);
-    void responseReceived(
-        int index, int status, QString headers, int bodySize, qint64 elapsedMs, QString body);
+    /// `exchange` is the engine's `exchangeKindName` ("operation", "sign_in", …).
+    void requestPrepared(int index,
+                         QString method,
+                         QString url,
+                         QString maskedHeaders,
+                         int bodySize,
+                         QString exchange);
+    void responseReceived(int index,
+                          int status,
+                          QString headers,
+                          int bodySize,
+                          qint64 elapsedMs,
+                          QString body,
+                          QString exchange);
     void extractionCompleted(int index,
                              QString op,
                              QString variableName,
                              QString sourcePath,
                              QString outcome,
                              QString value);
-    void assertionCompleted(int index, QString op, QString name, QString expr, bool passed);
+    /// `detail` says why a failed assertion failed; empty when it passed.
+    void assertionCompleted(
+        int index, QString op, QString name, QString expr, bool passed, QString detail);
     void stepFailed(int index, QString op, QString code, QString detail, QVariantList diagnostics);
     void stepBlocked(int index, QString op, int blockedByIndex);
     void runEnded(QString outcome);
 
-    /// Emitted on the GUI thread once the worker finishes. Carries the full
-    /// chain summary for the timeline/response panels.
+    /// A run was not started; `message` says why (for example, its environment no longer exists).
+    void runRefused(QString message);
+
+    /// Emitted on the GUI thread once the worker finishes, carrying the chain summary.
     void runFinished(RunReport report);
 
     /// Convenience signals for enabling/disabling controls.
     void runningChanged(bool running);
 
 private:
-    void publishEvent(const engine::RunEvent& event);
+    // Shared with the engine callback, which the engine keeps after this controller is gone.
+    struct EventGate {
+        std::atomic_bool alive{true};
+        std::atomic<std::uint64_t> runId{0};
+        std::atomic_bool cancelPending{false};
+    };
 
-    /// The active project's RunContext, or nullptr when none has been created
-    /// yet (no run since this project became active). Read paths use this.
-    [[nodiscard]] engine::RunContext* findActiveContext() const;
-    /// The active project's RunContext, creating it on first use. Run paths
-    /// use this.
-    engine::RunContext& contextForActive();
+    // What the GUI may read about one actor while a run owns its context.
+    struct ActorView {
+        engine::ActorSession::State state{engine::ActorSession::State::None};
+        std::chrono::steady_clock::time_point expiresAt{};
+        std::map<std::string, std::string> cookies;
+        std::vector<engine::JarCookie> jar;
+    };
+
+    void publishEvent(const engine::RunEvent& event);
+    void requestCancel();
+    void snapshotForRun(const engine::RunContext& ctx);
+    // The pre-run copy of `actor` when a run is using the active context, else nullptr.
+    [[nodiscard]] const ActorView* runSnapshotFor(const engine::ActorId& actor) const;
+    [[nodiscard]] static ActorSessionInfo sessionInfoOf(
+        engine::ActorSession::State state, std::chrono::steady_clock::time_point expiresAt);
 
     engine::ExecutionEngine& engine_;
     const ProjectModel* project_;
 
-    // Per-project run contexts keyed by project root, so switching collections
-    // preserves each project's sessions + extraction cache. Node references are
-    // stable (no eviction), so a worker capturing `&ctx` stays valid across a
-    // switch (switches are blocked during a run anyway).
-    // contexts are never evicted — session-lifetime memory. If a
-    // workspace churns through many projects, evict on close instead.
-    std::map<std::string, std::unique_ptr<engine::RunContext>> contexts_;
+    // (project root, environment name) — the key of one run context.
+    using ContextKey = std::pair<std::string, std::string>;
+    [[nodiscard]] ContextKey activeKey() const;
+
+    // One run context per (project, environment). Node references are stable, so a worker
+    // holding `&ctx` stays valid across a switch and a rename. Evicted only by forgetProject and
+    // forgetEnvironment.
+    std::map<ContextKey, std::unique_ptr<engine::RunContext>> contexts_;
+    std::string environment_;
+    // Context of the in-flight run: forgetProject refuses its project, reads of it use
+    // runSnapshot_.
+    ContextKey runningKey_;
+    // Set when the in-flight run's environment was deleted; its context goes at run end.
+    bool dropRunningContext_{false};
+    // Set when the in-flight run's environment was renamed; its context moves at run end.
+    std::optional<std::string> renameRunningTo_;
+    void moveContext(const ContextKey& from, const ContextKey& to);
+    // Where the in-flight run's context will live once the run ends: its key, or the name it was
+    // renamed to during the run.
+    [[nodiscard]] ContextKey pendingRunningKey() const;
+    std::map<std::string, ActorView> runSnapshot_;
     QFutureWatcher<RunReport> watcher_;
     bool running_{false};
     bool captureResponseBodies_{false};
     // Pinned `{{resource.var}}` → value, seeded before each run (value picker).
     std::vector<std::pair<std::string, std::string>> variableOverrides_;
-    // Written on the worker thread (RunStarted handler), read on the GUI
-    // thread (cancelRun) — atomic to avoid a data race on the run id.
-    std::atomic<std::uint64_t> currentRunId_{0};
-
-    // Lifetime guard for the engine event callback. The engine retains the
-    // callback for its whole life with no unsubscribe, and (per App's member
-    // order) outlives this controller. The callback captures a copy of this
-    // shared flag and skips emitting once the destructor clears it, so an
-    // event fired after `~RunController` can never touch a freed `this`.
-    std::shared_ptr<std::atomic_bool> alive_{std::make_shared<std::atomic_bool>(true)};
+    std::shared_ptr<EventGate> gate_{std::make_shared<EventGate>()};
 };
 
 }  // namespace reqloom::desktop

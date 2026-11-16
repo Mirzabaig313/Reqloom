@@ -3,6 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cctype>
 #include <chrono>
 #include <string>
 #include <string_view>
@@ -32,6 +33,51 @@ std::string excerpt(const std::string& body) {
     return body.substr(0, kBodyExcerptBytes) + std::string{kBodyExcerptCap};
 }
 
+/// True for `https://…`, or `http://` to a loopback host (local model servers such as Ollama).
+bool endpointIsSafe(std::string_view endpoint) {
+    const auto lower = [](std::string_view text) {
+        std::string out{text};
+        for (auto& c : out) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return out;
+    };
+    const auto schemeEnd = endpoint.find("://");
+    if (schemeEnd == std::string_view::npos) {
+        return false;
+    }
+    const auto scheme = lower(endpoint.substr(0, schemeEnd));
+    if (scheme == "https") {
+        return true;
+    }
+    if (scheme != "http") {
+        return false;
+    }
+    auto authority = endpoint.substr(schemeEnd + 3);
+    authority = authority.substr(0, authority.find_first_of("/?#"));
+    if (authority.find('@') != std::string_view::npos) {
+        return false;
+    }
+    std::string_view host = authority;
+    if (host.starts_with('[')) {
+        host = host.substr(0, host.find(']') + 1);
+    } else {
+        host = host.substr(0, host.find(':'));
+    }
+    const auto h = lower(host);
+    return h == "localhost" || h == "127.0.0.1" || h == "[::1]";
+}
+
+std::string withoutKey(std::string detail, const std::string& apiKey) {
+    if (apiKey.empty()) {
+        return detail;
+    }
+    for (auto at = detail.find(apiKey); at != std::string::npos; at = detail.find(apiKey, at)) {
+        detail.replace(at, apiKey.size(), "[REDACTED]");
+    }
+    return detail;
+}
+
 std::string_view roleAsString(LlmMessage::Role role) noexcept {
     switch (role) {
         case LlmMessage::Role::System:
@@ -44,8 +90,7 @@ std::string_view roleAsString(LlmMessage::Role role) noexcept {
     return "user";
 }
 
-/// OpenAI Chat Completions: every message rides in `messages[]`, system
-/// prompt included.
+/// OpenAI Chat Completions: every message, system prompt included, rides in `messages[]`.
 std::expected<HttpRequest, ReqloomError> buildOpenAiRequest(const LlmRequest& req) {
     if (req.config.apiKey.empty()) {
         return std::unexpected(requestFailed("openai: API key is required"));
@@ -76,8 +121,7 @@ std::expected<HttpRequest, ReqloomError> buildOpenAiRequest(const LlmRequest& re
     return http;
 }
 
-/// Anthropic Messages API: `system` is a top-level field; `max_tokens` is
-/// required by the spec.
+/// Anthropic Messages API: `system` is a top-level field; `max_tokens` is required by the spec.
 std::expected<HttpRequest, ReqloomError> buildAnthropicRequest(const LlmRequest& req) {
     if (req.config.apiKey.empty()) {
         return std::unexpected(requestFailed("anthropic: API key is required"));
@@ -116,7 +160,6 @@ std::expected<HttpRequest, ReqloomError> buildAnthropicRequest(const LlmRequest&
     return http;
 }
 
-/// Ollama: local-only, no API key, JSON mode via `format: "json"`.
 std::expected<HttpRequest, ReqloomError> buildOllamaRequest(const LlmRequest& req) {
     json body;
     body["model"] = req.config.model;
@@ -232,6 +275,11 @@ std::expected<LlmResponse, ReqloomError> HttpLlmClient::complete(const LlmReques
     if (request.messages.empty()) {
         return std::unexpected(requestFailed("messages list is empty"));
     }
+    // The API key must not cross the network in clear text.
+    if (!endpointIsSafe(request.config.endpoint)) {
+        return std::unexpected(
+            requestFailed("provider endpoint must use https (plain http only for localhost)"));
+    }
 
     std::expected<HttpRequest, ReqloomError> built;
     switch (request.config.provider) {
@@ -248,15 +296,20 @@ std::expected<LlmResponse, ReqloomError> HttpLlmClient::complete(const LlmReques
     if (!built) {
         return std::unexpected(built.error());
     }
+    // A redirect would forward the API key header to whichever host it names.
+    built->followRedirects = false;
 
+    const auto& apiKey = request.config.apiKey;
     const auto sendStart = std::chrono::steady_clock::now();
     auto response = transport_->send(*built);
     if (!response) {
-        return std::unexpected(requestFailed("transport: " + response.error().detail));
+        return std::unexpected(
+            requestFailed(withoutKey("transport: " + response.error().detail, apiKey)));
     }
     if (response->status < 200 || response->status >= 300) {
-        return std::unexpected(requestFailed("provider HTTP " + std::to_string(response->status) +
-                                             " — " + excerpt(response->body)));
+        return std::unexpected(requestFailed(withoutKey(
+            "provider HTTP " + std::to_string(response->status) + " — " + excerpt(response->body),
+            apiKey)));
     }
 
     json doc;
@@ -268,11 +321,9 @@ std::expected<LlmResponse, ReqloomError> HttpLlmClient::complete(const LlmReques
     }
 
     std::expected<LlmResponse, ReqloomError> parsed;
-    // The provider parsers below call nlohmann::json get<T>(), which throws
-    // json::type_error / json::out_of_range when an untrusted provider
-    // response has the right keys but wrong value types. Contain those here
-    // so they surface as a normal ErrorCode::LlmResponseInvalid rather than
-    // escaping complete()'s std::expected contract.
+    // Provider parsers' get<T>() throws on wrong value types in untrusted responses; contain it
+    // here so it becomes ErrorCode::LlmResponseInvalid instead of escaping complete()'s
+    // std::expected contract.
     try {
         switch (request.config.provider) {
             case LlmProvider::OpenAI:

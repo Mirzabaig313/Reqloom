@@ -2,6 +2,7 @@
 #include "AppController.h"
 
 #include "ThemeController.h"
+#include "application/EditBody.h"
 #include "application/EnvironmentSettings.h"
 #include "application/OAuth2AuthCodeFlow.h"
 #include "application/ProjectModel.h"
@@ -9,12 +10,16 @@
 #include "views/Formatting.h"
 #include "views/HookEditorDialog.h"
 #include "views/PathEval.h"
+#include "widgets/BodyText.h"
 #include "widgets/GraphLayout.h"
 #include "widgets/LineDiff.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/FormBody.h>
+#include <reqloom/engine/ImportCredentials.h>
 #include <reqloom/engine/Predicate.h>
+#include <reqloom/engine/ProjectTrustStore.h>
+#include <reqloom/engine/SecretStore.h>
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -81,9 +86,10 @@ AppController::AppController(QObject* parent)
           std::make_unique<RunController>(bootstrapper_->engine(), *workspace_->active(), this)) {
     bindProject(workspace_->active());
 
-    // Deliver an off-thread OpenAPI import's result back on the GUI thread:
-    // load the written project and surface the summary / review notes here,
-    // where touching models and emitting UI signals is safe.
+    exampleStore_.setErrorHandler([this](const QString& message) { emit notify(message, true); });
+
+    // Deliver the off-thread import result on the GUI thread, where touching models and emitting
+    // signals is safe.
     connect(&importWatcher_, &QFutureWatcher<ImportOutcome>::finished, this, [this]() {
         const ImportOutcome out = importWatcher_.result();
         switch (out.status) {
@@ -93,190 +99,43 @@ AppController::AppController(QObject* parent)
             case ImportOutcome::Status::WriteFailed:
                 emit notify(tr("Could not write project: %1").arg(out.errorDetail), true);
                 return;
+            case ImportOutcome::Status::Refused:
+                emit notify(out.errorDetail, true);
+                return;
             case ImportOutcome::Status::NeedsOverwrite:
-                // The target project folder already exists — ask the UI to
-                // confirm, then it re-invokes importOpenApi(..., overwrite=true).
+                // Target folder exists: the UI confirms, then re-invokes importOpenApi(...,
+                // overwrite=true).
                 emit importNeedsOverwrite(QUrl::fromLocalFile(out.specPath),
                                           QUrl::fromLocalFile(out.baseDir));
                 return;
             case ImportOutcome::Status::Success:
                 break;
         }
-        openProject(QUrl::fromLocalFile(out.loadDir));
-        emit notify(
-            tr("Imported %1 resources, %2 operations.").arg(out.resources).arg(out.operations),
-            false);
-        if (!out.notes.isEmpty()) {
-            emit importReviewNotes(out.notes);
-        }
+        finishImport(out);
     });
 
-    // Capture response bodies by default so the timeline shows full request /
-    // response detail (including error bodies) without an opt-in toggle. The
-    // RunController defaults to off, so push our default through explicitly.
+    // Capture response bodies by default so the timeline shows full detail; RunController defaults
+    // to off.
     runController_->setCaptureResponseBodies(captureBodies_);
 
-    connect(runController_.get(), &RunController::runningChanged, this, [this](bool running) {
-        running_ = running;
-        emit runningChanged();
-    });
-    connect(runController_.get(),
-            &RunController::responseReceived,
-            this,
-            [this](int,
-                   int status,
-                   const QString& headers,
-                   int bodySize,
-                   qint64 elapsedMs,
-                   const QString& body) {
-                hasResponse_ = true;
-                shownExample_.clear();
-                respStatus_ = status;
-                respHeaders_ = headers;
-                respBodySize_ = bodySize;
-                respElapsedMs_ = static_cast<int>(elapsedMs);
-                respBody_ = body;
-                responseBody_.setBody(body);
-                emit responseChanged();
-            });
-    // Re-fetch auto-save: when the producer endpoint targeted by
-    // refreshCandidates returns, store its body as an example so the value
-    // picker's candidate list updates with the freshly fetched ids.
-    connect(runController_.get(),
-            &RunController::responseReceived,
-            this,
-            [this](int index, int status, const QString&, int, qint64, const QString& body) {
-                if (pendingCandidateOp_.isEmpty()) {
-                    return;
-                }
-                if (runStepOp_.value(index) != pendingCandidateOp_) {
-                    return;
-                }
-                if (status >= 200 && status < 300 && !body.isEmpty()) {
-                    SavedResponse example;
-                    example.name = QStringLiteral("Latest (auto)");
-                    example.status = status;
-                    example.body = body;
-                    exampleStore_.save(pendingCandidateOp_, example);
-                }
-                pendingCandidateOp_.clear();
-                emit variableOverridesChanged();
-            });
-    connect(runController_.get(), &RunController::runEnded, this, [this](const QString& outcome) {
-        runOutcome_ = outcome;
-        emit responseChanged();
-        // The run was just persisted; surface it in the history view.
-        refreshHistory();
-        // A run may have absorbed Set-Cookie headers into the actor jars.
-        emit cookiesChanged();
-        // A run is the only thing that authenticates an actor, so the explorer's
-        // session dots can only have changed here.
-        refreshActorSessions();
-    });
+    wireRunEvents();
 
     sessionTicker_.setInterval(kSessionTickMs);
     connect(&sessionTicker_, &QTimer::timeout, this, &AppController::refreshActorSessions);
 
-    // Bridge ALL streamed RunController signals into the timeline model so the
-    // panel mirrors the old Widgets TimelinePanel (steps, requests, responses,
-    // extractions, skips, failures). Receiver-bound, function-pointer form.
-    connect(
-        runController_.get(), &RunController::runStarted, &timeline_, &TimelineModel::onRunStarted);
-    connect(runController_.get(),
-            &RunController::stepStarted,
-            &timeline_,
-            &TimelineModel::onStepStarted);
-    connect(runController_.get(),
-            &RunController::stepSkipped,
-            &timeline_,
-            &TimelineModel::onStepSkipped);
-    connect(runController_.get(),
-            &RunController::requestPrepared,
-            &timeline_,
-            &TimelineModel::onRequestPrepared);
-    connect(runController_.get(),
-            &RunController::responseReceived,
-            &timeline_,
-            &TimelineModel::onResponseReceived);
-    connect(runController_.get(),
-            &RunController::extractionCompleted,
-            &timeline_,
-            &TimelineModel::onExtractionCompleted);
-    connect(runController_.get(),
-            &RunController::assertionCompleted,
-            &timeline_,
-            &TimelineModel::onAssertionCompleted);
-    connect(
-        runController_.get(), &RunController::stepFailed, &timeline_, &TimelineModel::onStepFailed);
-    connect(runController_.get(),
-            &RunController::stepBlocked,
-            &timeline_,
-            &TimelineModel::onStepBlocked);
-    connect(runController_.get(), &RunController::runEnded, &timeline_, &TimelineModel::onRunEnded);
-
-    // Live per-node status for the chain graph. Run events carry an operation
-    // by name (stepStarted / stepFailed) or only a step index (responseReceived);
-    // we map index → op from stepStarted so every event can colour its node.
-    connect(runController_.get(),
-            &RunController::runStarted,
-            this,
-            [this](const QString&, int, const QString&) {
-                runStepOp_.clear();
-                chainStatus_.clear();
-                emit chainStatusChanged();
-            });
-    connect(runController_.get(),
-            &RunController::stepStarted,
-            this,
-            [this](int index, const QString& op, int) {
-                runStepOp_.insert(index, op);
-                chainStatus_.insert(op, QStringLiteral("running"));
-                emit chainStatusChanged();
-            });
-    connect(runController_.get(),
-            &RunController::stepSkipped,
-            this,
-            [this](int index, const QString& op, const QString&) {
-                runStepOp_.insert(index, op);
-                chainStatus_.insert(op, QStringLiteral("skipped"));
-                emit chainStatusChanged();
-            });
-    connect(runController_.get(),
-            &RunController::responseReceived,
-            this,
-            [this](int index, int status, const QString&, int, qint64, const QString&) {
-                const QString op = runStepOp_.value(index);
-                if (!op.isEmpty()) {
-                    chainStatus_.insert(op,
-                                        status >= 500   ? QStringLiteral("error")
-                                        : status >= 300 ? QStringLiteral("warning")
-                                                        : QStringLiteral("success"));
-                    emit chainStatusChanged();
-                }
-            });
-    connect(
-        runController_.get(),
-        &RunController::stepFailed,
-        this,
-        [this](int index, const QString& op, const QString&, const QString&, const QVariantList&) {
-            runStepOp_.insert(index, op);
-            chainStatus_.insert(op, QStringLiteral("error"));
-            emit chainStatusChanged();
-        });
-    connect(runController_.get(),
-            &RunController::stepBlocked,
-            this,
-            [this](int index, const QString& op, int) {
-                runStepOp_.insert(index, op);
-                chainStatus_.insert(op, QStringLiteral("blocked"));
-                emit chainStatusChanged();
-            });
+    connect(this, &AppController::environmentChanged, this, [this]() {
+        runController_->setEnvironment(environment_);
+        refreshActorSessions();
+        emit cookiesChanged();
+    });
+    connect(runController_.get(), &RunController::runRefused, this, [this](const QString& message) {
+        emit notify(message, true);
+    });
 
     treeFilter_.setSourceModel(&tree_);
 
-    // Any change to an edit model re-evaluates the live tab counts + banner,
-    // and the dependency model also re-renders the chain preview. Receiver-
-    // bound, function-pointer form (auto-disconnect on destruction).
+    // Any edit-model change re-evaluates tab counts and the banner; the dependency model also
+    // re-renders the chain preview.
     const auto onEditModelChanged = [this]() {
         emit editChanged();
         emit chainChanged();
@@ -335,8 +194,7 @@ AppController::AppController(QObject* parent)
     connect(&editDependencies_, &QAbstractItemModel::modelReset, this, onDepsChanged);
     connect(&chainEditor_, &ChainEditorModel::editorChanged, this, onDepsChanged);
 
-    // Toggle the active tab's dirty dot as its edit mode opens/closes.
-    connect(this, &AppController::editingChanged, this, &AppController::updateActiveTabDirty);
+    wireTabTracking();
 
     restoreOpenProjects();
     refreshHistory();
@@ -406,8 +264,7 @@ const ProjectModel& AppController::activeProject() const noexcept {
 }
 
 void AppController::bindProject(ProjectModel* project) {
-    // UniqueConnection so re-binding the same project (e.g. via rebindActiveProject
-    // on every activation) never stacks duplicate connections.
+    // UniqueConnection so re-binding the same project never stacks connections.
     connect(project, &ProjectModel::loaded, this, &AppController::onLoaded, Qt::UniqueConnection);
     connect(project, &ProjectModel::saved, this, &AppController::onSaved, Qt::UniqueConnection);
     connect(project,
@@ -417,29 +274,18 @@ void AppController::bindProject(ProjectModel* project) {
             Qt::UniqueConnection);
 }
 
-bool AppController::canLeaveActiveProject() {
-    const int draftIndex = operationDraftIndex();
-    if (draftIndex < 0) {
-        return true;
-    }
-    activateTab(draftIndex);
-    emit notify(tr("Save or discard the new endpoint before changing projects."), true);
-    return false;
-}
-
 void AppController::openProjectPath(const QString& path) {
     if (path.isEmpty()) {
         return;
     }
-    // Canonicalize so dedup + persistence use a stable key that matches
-    // ProjectModel::rootPath() after the load.
+    // Canonicalize so dedup and persistence use the key ProjectModel::rootPath() reports.
     std::error_code ec;
     const std::filesystem::path canon =
         std::filesystem::weakly_canonical(std::filesystem::path{path.toStdString()}, ec);
     const QString canonical = ec ? path : QString::fromStdString(canon.string());
 
-    // Already open? Just activate it — no duplicate collections. Activation is
-    // a no-op for the current project, so an open draft does not block it.
+    // Already open: activate only (a no-op for the current project, so an open draft does not block
+    // it).
     if (const int existing = workspace_->indexOfRoot(canonical); existing >= 0) {
         activateProject(existing);
         return;
@@ -448,13 +294,12 @@ void AppController::openProjectPath(const QString& path) {
         emit notify(tr("Finish the current run before opening another project."), true);
         return;
     }
-    if (!canLeaveActiveProject()) {
+    if (!canLeaveActiveProject([this, canonical]() { openProjectPath(canonical); })) {
         return;
     }
 
-    // Reuse the current slot when it's an empty sentinel (first open, or after
-    // a failed load); otherwise add a new collection and activate it up-front
-    // so the synchronous `loaded` rebinds to the right project.
+    // Reuse the current slot when it is an empty sentinel; otherwise add and activate a collection
+    // first so the synchronous `loaded` rebinds to the right project.
     const int prevActive = workspace_->activeIndex();
     const bool reuse = !activeProject().hasProject();
     ProjectModel* target = nullptr;
@@ -467,11 +312,29 @@ void AppController::openProjectPath(const QString& path) {
     }
 
     // Synchronous: emits `loaded` (→ onLoaded rebinds) or `loadFailed` (→ toast).
+    QString failure;
+    const auto captureFailure = connect(
+        target, &ProjectModel::loadFailed, this, [&failure](const QString&, const QString& d) {
+            failure = d;
+        });
     target->loadFromDirectory(canonical);
+    disconnect(captureFailure);
 
-    if (!target->hasProject() && !reuse) {
-        // Load failed on a freshly added slot: drop it and rebind to the
-        // project that was active before, so a bad open doesn't strand the UI.
+    if (target->hasProject()) {
+        const bool forgotten = workspace_->forgetUnavailable(path);
+        if (workspace_->forgetUnavailable(canonical) || forgotten) {
+            persistOpenProjects();
+        }
+        return;
+    }
+    for (const QString& key : {path, canonical}) {
+        if (!failure.isEmpty() && workspace_->isUnavailable(key)) {
+            workspace_->markUnavailable(key, QString{}, failure);
+            emit openProjectsChanged();
+        }
+    }
+    if (!reuse) {
+        // Failed load on a fresh slot: drop it and rebind to the previously active project.
         workspace_->removeProject(workspace_->count() - 1);
         workspace_->setActiveIndex(prevActive);
         rebindActiveProject(/*repopulateTree=*/true);
@@ -490,13 +353,12 @@ void AppController::activateProject(int index) {
         emit notify(tr("Finish the current run before switching projects."), true);
         return;
     }
-    if (!canLeaveActiveProject()) {
+    if (!canLeaveActiveProject([this, index]() { activateProject(index); })) {
         return;
     }
     workspace_->setActiveIndex(index);
     persistActiveProject();
-    // The tree already lists every collection; just rebind the active views and
-    // show the newly-active project's first module.
+    // The tree already lists every collection; just rebind and show the first module.
     rebindActiveProject(/*repopulateTree=*/false);
     selectFirstModule();
 }
@@ -510,29 +372,27 @@ void AppController::closeProject(int index) {
         emit notify(tr("Finish the current run before closing this project."), true);
         return;
     }
-    if (wasActive && !canLeaveActiveProject()) {
+    if (wasActive && !canLeaveActiveProject([this, index]() { closeProject(index); })) {
         return;
+    }
+    if (const ProjectModel* closing = workspace_->at(index); closing != nullptr) {
+        runController_->forgetProject(closing->rootPath());
     }
     workspace_->removeProject(index);
     persistOpenProjects();
     persistActiveProject();
     if (wasActive) {
-        // Active project changed (to a neighbour or a fresh empty slot) — rebuild
-        // the tree (the closed subtree is gone) and rebind the UI to the new one.
         rebindActiveProject(/*repopulateTree=*/true);
         selectFirstModule();
     } else {
-        // A background collection closed: drop its subtree from the tree.
         populateWorkspaceTree();
         emit openProjectsChanged();
     }
 }
 
 void AppController::populateWorkspaceTree() {
-    // Feed every open (loaded) collection to the aggregated explorer tree, along
-    // with each collection's saved-example rows (read from its own store on
-    // disk), so examples show for ALL open projects — not just the active one.
-    // ProjectRootRole on every row lets a click resolve the owning project.
+    // Feed every open collection and its saved examples to the aggregated tree; ProjectRootRole
+    // lets a click resolve the owning project.
     std::vector<ProjectTreeModel::ProjectEntry> entries;
     QMap<QString, QList<ProjectTreeModel::ExampleRow>> examples;
     for (int i = 0; i < workspace_->count(); ++i) {
@@ -548,13 +408,9 @@ void AppController::populateWorkspaceTree() {
         entry.active = i == workspace_->activeIndex();
         entries.push_back(std::move(entry));
 
-        // Each collection persists its examples under its own root; read them
-        // with a throwaway store so every project's rows appear in the tree.
-        // synchronous per-project disk read on the GUI thread, run on
-        // load/save/example-mutation (not on plain switch). Fine at expected
-        // scale; move to QtConcurrent if workspaces grow to many large projects.
+        // Synchronous GUI-thread read of the examples database; fine at expected scale.
         SavedResponseStore store;
-        store.setProjectRoot(root);
+        store.setProjectRoot(root, QString::fromStdString(p->project().id));
         for (const QString& id : store.operationIds()) {
             QList<ProjectTreeModel::ExampleRow> rows;
             for (const SavedResponse& r : store.list(id)) {
@@ -564,14 +420,12 @@ void AppController::populateWorkspaceTree() {
         }
     }
     tree_.populate(entries, examples);
-    // populate() resets the tree, so re-apply the session snapshot the fresh
-    // actor rows should show (a project switch keeps its own context's logins).
+    // populate() resets the tree, so re-apply the session snapshot.
     refreshActorSessions();
 }
 
 void AppController::selectFirstModule() {
-    // If the workspace restored open tabs for this project, don't auto-open the
-    // first module on top of them — the restored active tab already shows.
+    // Restored tabs already show the active tab; don't auto-open the first module over them.
     if (tabs_.count() > 0) {
         return;
     }
@@ -582,24 +436,24 @@ void AppController::selectFirstModule() {
 }
 
 void AppController::rebindActiveProject(bool repopulateTree) {
-    // Ensure the active project's signals are connected. Cheap + idempotent
-    // (UniqueConnection), and the single choke point that guarantees even a
-    // freshly-minted sentinel (from closing the last project) is bound before
-    // the next open/create loads into it.
+    // Idempotent (UniqueConnection); guarantees even a fresh sentinel is bound before the next
+    // load.
     bindProject(workspace_->active());
 
-    // Point the run controller at the active project first — every run + cookie
-    // query resolves against it.
+    // Point the run controller at the active project first; every run and cookie query resolves
+    // against it.
     runController_->setProject(activeProject());
 
-    // Tabs belong to the active collection (v1); a project switch/close starts
-    // with a fresh, empty tab strip. The per-branch pane reset below clears the
-    // live hasOperation_/hasActor_ flags.
+    // Tabs belong to the active collection; a switch or close starts with an empty tab strip.
+    const bool droppedDraft = operationDraftIndex() >= 0;
     tabs_.clearAll();
     activeTabIndex_ = -1;
+    if (droppedDraft) {
+        clearNewOperationDraftIdentity();
+        emit newOperationDraftDiscarded();
+    }
     emit activeTabChanged();
 
-    // A read-only actor detail belongs to the previously-active collection.
     clearActorSelection();
 
     if (repopulateTree) {
@@ -607,7 +461,6 @@ void AppController::rebindActiveProject(bool repopulateTree) {
     }
 
     if (!activeProject().hasProject()) {
-        // The active slot has no project (e.g. the last collection was closed).
         // Show the empty state rather than dereferencing an unloaded project.
         projectName_.clear();
         resources_.reset();
@@ -624,49 +477,37 @@ void AppController::rebindActiveProject(bool repopulateTree) {
     projectName_ = activeProject().name();
     resources_.reload(activeProject().project());
     status_ = QStringLiteral("%1 modules").arg(resourceCount());
-    // Point the saved-example store at this project (per-project isolation) and
-    // re-apply the explorer's example child rows from disk.
-    exampleStore_.setProjectRoot(activeProject().rootPath());
-    // Open this project's own run-history database so runs are isolated between
-    // projects. Keyed by a hash of the project root under the app-data dir.
+    openExampleStore();
+    // Per-project run-history database, keyed by a hash of the project root.
     openProjectHistory(activeProject().rootPath());
     environments_ = activeProject().environmentNames();
-    if (environment_.isEmpty() || !environments_.contains(environment_)) {
-        // Restore the per-project saved environment first, then fall back to
-        // the project default.
+    {
+        // Each project restores its own selection; the previous project's says nothing about it.
         QSettings settings;
-        const QString saved = EnvironmentSettings::load(settings, activeProject().rootPath());
-        if (!saved.isEmpty() && environments_.contains(saved)) {
-            environment_ = saved;
-        } else {
-            environment_ = activeProject().defaultEnvironment();
-            if (environment_.isEmpty() && !environments_.isEmpty()) {
-                environment_ = environments_.front();
-            }
+        const QString chosen =
+            chooseEnvironment(environments_,
+                              EnvironmentSettings::load(settings, activeProject().rootPath()),
+                              activeProject().defaultEnvironment());
+        if (chosen != environment_) {
+            environment_ = chosen;
+            emit environmentChanged();
         }
-        emit environmentChanged();
     }
-    // Reset the open operation — the previously-open op belonged to the prior
-    // active project. Callers select what comes next (first module on a fresh
-    // load / switcher activation; a specific op on a tree click).
+    // The previously open op belonged to the prior project; callers select what comes next.
     selectedModule_.clear();
     operations_.reset();
     closeOperation();
-    // Only refresh the open-op example panel here. The aggregated tree (with
-    // every collection's examples) is rebuilt by populateWorkspaceTree() above
-    // when repopulateTree is set; a plain project switch must NOT reset the
-    // tree (it would collapse/re-expand the whole thing).
+    // The aggregated tree is rebuilt by populateWorkspaceTree() when repopulateTree is set;
+    // a plain switch must not reset it (it would collapse the whole tree).
     refreshOpenOpExamples();
-    // Re-open this project's saved editor tabs (per-project persistence). The
-    // tab strip was cleared above; restore what was open last time this
-    // collection was active (survives project switch-and-return + app restart).
+    // Restore this project's saved editor tabs (the strip was cleared above).
     restoreOpenTabs(activeProject().rootPath());
     emit projectChanged();
     emit selectionChanged();
     emit openProjectsChanged();
 }
 
-bool AppController::activateForRow(const QString& projectRoot) {
+bool AppController::activateForRow(const QString& projectRoot, std::function<void()> retry) {
     const int idx = workspace_->indexOfRoot(projectRoot);
     if (idx < 0) {
         return false;  // unknown collection
@@ -678,21 +519,26 @@ bool AppController::activateForRow(const QString& projectRoot) {
         emit notify(tr("Finish the current run before switching projects."), true);
         return false;  // can't switch mid-run
     }
-    if (!canLeaveActiveProject()) {
+    if (!retry) {
+        retry = [this, projectRoot]() {
+            (void)activateForRow(projectRoot);
+        };
+    }
+    if (!canLeaveActiveProject(retry)) {
         return false;
     }
     workspace_->setActiveIndex(idx);
     persistActiveProject();
-    // No tree repopulate (the tree already shows every collection; the active
-    // highlight follows AppController.projectRoot reactively) and no
-    // auto-select (the caller opens a specific operation).
+    // No tree repopulate and no auto-select: the caller opens a specific operation.
     rebindActiveProject(/*repopulateTree=*/false);
     return true;
 }
 
 void AppController::selectOperationInProject(const QString& projectRoot,
                                              const QString& operationId) {
-    if (!activateForRow(projectRoot)) {
+    if (!activateForRow(projectRoot, [this, projectRoot, operationId]() {
+            selectOperationInProject(projectRoot, operationId);
+        })) {
         return;
     }
     selectOperationById(operationId);
@@ -700,7 +546,9 @@ void AppController::selectOperationInProject(const QString& projectRoot,
 
 void AppController::activateOperationInProject(const QString& projectRoot,
                                                const QString& operationId) {
-    if (!activateForRow(projectRoot)) {
+    if (!activateForRow(projectRoot, [this, projectRoot, operationId]() {
+            activateOperationInProject(projectRoot, operationId);
+        })) {
         return;
     }
     activateOperationById(operationId);
@@ -729,11 +577,9 @@ QVariantList AppController::recentProjects() const {
     QSet<QString> seen;
     for (int i = 0; i < count; ++i) {
         settings.setArrayIndex(i);
-        // Normalize so legacy entries stored with/without a trailing slash
-        // collapse to one — otherwise the same project appears twice.
+        // Normalize trailing slashes so the same project does not appear twice.
         const QString path =
             canonicalProjectPath(settings.value(QStringLiteral("path")).toString());
-        // Skip empties, duplicates, and stale entries (project moved/deleted).
         if (path.isEmpty() || seen.contains(path) ||
             !QFileInfo::exists(path + QStringLiteral("/reqloom.yaml"))) {
             continue;
@@ -750,8 +596,7 @@ QVariantList AppController::recentProjects() const {
 }
 
 namespace {
-// Persist a {name, path} list to the workspace recent-projects array, clearing
-// any prior entries first so a shrunk list doesn't leave stale indices behind.
+// Persist the list, clearing prior entries first so a shrunk list leaves no stale indices.
 void writeRecentProjects(const QVariantList& entries) {
     QSettings settings;
     settings.remove(QStringLiteral("workspace/recentProjects"));
@@ -771,11 +616,9 @@ void AppController::recordRecentProject(const QString& name, const QString& path
     if (path.isEmpty()) {
         return;
     }
-    // capped at 15 entries — a flat rewrite is fine at this size; a
-    // larger list would want an LRU structure instead of a linear rebuild.
+    // Cap on recent entries; a flat rewrite is fine at this size.
     constexpr int kMaxRecent = 15;
-    // Normalize so a re-open under a differently-spelled path (trailing slash,
-    // `..`) doesn't create a second recent entry for the same project.
+    // Normalize so a differently-spelled path doesn't create a second recent entry.
     const QString canonical = canonicalProjectPath(path);
     QVariantMap current;
     current.insert(QStringLiteral("name"), name.isEmpty() ? QFileInfo(canonical).fileName() : name);
@@ -806,6 +649,36 @@ void AppController::removeRecentProject(const QString& path) {
     emit recentProjectsChanged();
 }
 
+QVariantList AppController::unavailableProjects() const {
+    QVariantList out;
+    for (const WorkspaceModel::UnavailableProject& entry : workspace_->unavailable()) {
+        out.append(QVariantMap{{QStringLiteral("path"), entry.path},
+                               {QStringLiteral("name"), entry.name},
+                               {QStringLiteral("reason"), entry.reason}});
+    }
+    return out;
+}
+
+void AppController::retryUnavailableProject(const QString& path) {
+    if (!workspace_->isUnavailable(path)) {
+        return;
+    }
+    if (!QFileInfo::exists(path + QStringLiteral("/reqloom.yaml"))) {
+        workspace_->markUnavailable(
+            path, QString{}, tr("Folder or reqloom.yaml not found: %1").arg(path));
+        emit openProjectsChanged();
+        emit notify(tr("Still unavailable: %1").arg(path), true);
+        return;
+    }
+    openProjectPath(path);
+}
+
+void AppController::removeUnavailableProject(const QString& path) {
+    if (workspace_->forgetUnavailable(path)) {
+        persistOpenProjects();
+    }
+}
+
 QVariantList AppController::openProjects() {
     QVariantList out;
     for (int i = 0; i < workspace_->count(); ++i) {
@@ -828,14 +701,10 @@ void AppController::persistOpenProjects() {
     settings.remove(QStringLiteral("workspace/openProjects"));
     settings.beginWriteArray(QStringLiteral("workspace/openProjects"));
     int written = 0;
-    for (int i = 0; i < workspace_->count(); ++i) {
-        const ProjectModel* p = workspace_->at(i);
-        if (p == nullptr || !p->hasProject()) {
-            continue;
-        }
+    for (const WorkspaceModel::SavedProject& saved : workspace_->savedProjects()) {
         settings.setArrayIndex(written++);
-        settings.setValue(QStringLiteral("name"), p->name());
-        settings.setValue(QStringLiteral("path"), p->rootPath());
+        settings.setValue(QStringLiteral("name"), saved.name);
+        settings.setValue(QStringLiteral("path"), saved.path);
     }
     settings.endArray();
     settings.sync();
@@ -849,8 +718,7 @@ void AppController::persistActiveProject() {
 }
 
 void AppController::restoreOpenProjects() {
-    // Read the saved open set, dropping stale entries (project moved/deleted).
-    QStringList paths;
+    QList<WorkspaceModel::SavedProject> saved;
     QString activePath;
     {
         QSettings settings;
@@ -858,27 +726,40 @@ void AppController::restoreOpenProjects() {
         for (int i = 0; i < count; ++i) {
             settings.setArrayIndex(i);
             const QString p = settings.value(QStringLiteral("path")).toString();
-            if (!p.isEmpty() && QFileInfo::exists(p + QStringLiteral("/reqloom.yaml"))) {
-                paths.append(p);
+            if (!p.isEmpty()) {
+                saved.append(
+                    {.path = p, .name = settings.value(QStringLiteral("name")).toString()});
             }
         }
         settings.endArray();
         activePath = settings.value(QStringLiteral("workspace/activeProject")).toString();
     }
 
-    if (paths.isEmpty()) {
-        // No saved workspace — fall back to the dev sample (if any) so a
-        // first run / developer checkout still opens something.
+    if (saved.isEmpty()) {
+        // No saved workspace: fall back to the dev sample so a first run still opens something.
         loadSampleIfPresent();
         return;
     }
 
-    // Eager-load each saved collection. openProjectPath handles reuse of the
-    // sentinel for the first, and appends the rest; a bad one is dropped
-    // without aborting the others.
-    for (const QString& p : paths) {
-        openProjectPath(p);
+    // A saved project that cannot be opened (unmounted drive, load error) stays listed as
+    // unavailable until the user removes it, so a restart never forgets it.
+    for (const WorkspaceModel::SavedProject& entry : saved) {
+        const bool exists = QFileInfo::exists(entry.path + QStringLiteral("/reqloom.yaml"));
+        workspace_->markUnavailable(
+            entry.path,
+            entry.name,
+            exists ? tr("Could not be opened.")
+                   : tr("Folder or reqloom.yaml not found: %1").arg(entry.path));
     }
+    for (const WorkspaceModel::SavedProject& entry : saved) {
+        if (QFileInfo::exists(entry.path + QStringLiteral("/reqloom.yaml"))) {
+            openProjectPath(entry.path);
+        }
+        if (workspace_->indexOfRoot(entry.path) >= 0) {
+            workspace_->forgetUnavailable(entry.path);
+        }
+    }
+    persistOpenProjects();
     if (const int idx = workspace_->indexOfRoot(activePath); idx >= 0) {
         activateProject(idx);
     }
@@ -894,111 +775,155 @@ void AppController::importOpenApi(const QUrl& specFile, const QUrl& targetDir, b
         emit notify(tr("Choose a spec or collection file to import."), true);
         return;
     }
-    // The destination is optional: when omitted (the default flow), the project
-    // is created next to the source file. A named sub-folder is always created
-    // under the base, so we never scatter reqloom.yaml into the base directory
-    // itself. `targetDir` is only supplied when re-invoked to overwrite.
+    // Destination is optional (default: next to the source file); a named sub-folder is always
+    // created so reqloom.yaml never lands in the base directory. `targetDir` is only supplied when
+    // overwriting.
     const QString dirPath =
         targetDir.isLocalFile() ? targetDir.toLocalFile() : targetDir.toString();
 
-    // Parse + verify + write off the GUI thread: a
-    // large spec can take noticeable time. These engine free functions touch
-    // no shared engine state, so running them concurrently with the GUI is
-    // safe. The worker captures only owned copies (no `this`); the result is
-    // delivered back to the GUI thread by `importWatcher_`'s finished handler,
-    // where the project load + toasts run.
-    auto future = QtConcurrent::run([specStd = specPath.toStdString(),
-                                     dirStd = dirPath.toStdString(),
-                                     overwrite]() -> ImportOutcome {
-        ImportOutcome out;
-        const std::filesystem::path spec{specStd};
-        out.specPath = QString::fromStdString(specStd);
+    ImportRequest request;
+    request.spec = std::filesystem::path{specPath.toStdString()};
+    if (!dirPath.isEmpty()) {
+        request.baseDir = std::filesystem::path{dirPath.toStdString()};
+    }
+    request.overwrite = overwrite;
+    request.blocked = importBlockedFolders();
+    importWatcher_.setFuture(QtConcurrent::run(
+        [request = std::move(request)]() { return runImportJobWithUserStores(request); }));
+}
 
-        // Base directory the project folder is created under: the caller's
-        // choice, else the source file's own directory.
-        const std::filesystem::path base =
-            dirStd.empty() ? spec.parent_path() : std::filesystem::path{dirStd};
-        out.baseDir = QString::fromStdString(base.string());
-
-        // Containment root: the spec's own directory, so an explicitly
-        // chosen file always resolves inside it while the engine still
-        // rejects `..` traversal. importAny sniffs the format and dispatches.
-        auto imported = engine::importAny(spec, spec.parent_path());
-        if (!imported) {
-            out.status = ImportOutcome::Status::ImportFailed;
-            // Prefer an actionable hint for recognizable files (Postman /
-            // Swagger 2.0); otherwise surface the engine detail.
-            const QString hint = importFailureHint(spec);
-            out.errorDetail =
-                hint.isEmpty() ? QString::fromStdString(imported.error().detail) : hint;
-            return out;
+std::vector<BlockedFolder> AppController::importBlockedFolders() const {
+    const bool running = runController_->isRunning();
+    bool activeUnsaved = operationDraftIndex() >= 0;
+    for (int i = 0; i < tabs_.count() && !activeUnsaved; ++i) {
+        activeUnsaved = tabs_.stateAt(i).dirty;
+    }
+    std::vector<BlockedFolder> blocked;
+    for (int i = 0; i < workspace_->count(); ++i) {
+        const ProjectModel* project = workspace_->at(i);
+        if (project == nullptr || !project->hasProject()) {
+            continue;
         }
-
-        // Everything lands in a named sub-folder derived from the project name,
-        // so importing never litters the chosen/base directory's root.
-        const std::filesystem::path projectDir = base / projectFolderSlug(imported->project.name);
-
-        std::error_code existsEc;
-        if (!overwrite && std::filesystem::exists(projectDir / "reqloom.yaml", existsEc)) {
-            out.status = ImportOutcome::Status::NeedsOverwrite;
-            return out;
+        // Reloading needs the project idle; a run holds every project in place.
+        QString reason;
+        if (running) {
+            reason = tr("a run is in progress");
+        } else if (i == workspace_->activeIndex() && activeUnsaved) {
+            reason = tr("has unsaved edits");
         }
-
-        // writeProject doesn't create the target directory, so ensure it exists.
-        std::error_code mkEc;
-        std::filesystem::create_directories(projectDir, mkEc);
-
-        auto written = engine::writeProject(projectDir, imported->project, overwrite);
-        if (!written) {
-            out.status = ImportOutcome::Status::WriteFailed;
-            out.errorDetail = QString::fromStdString(written.error().detail);
-            return out;
+        if (!reason.isEmpty()) {
+            blocked.push_back({std::filesystem::path{project->rootPath().toStdString()}, reason});
         }
-        for (const auto& [resId, resource] : imported->project.resources) {
-            out.operations += static_cast<int>(resource.operations.size());
+    }
+    return blocked;
+}
+
+void AppController::finishImport(const ImportOutcome& outcome) {
+    const QString root = canonicalProjectPath(outcome.loadDir);
+    const QString shown = QDir::toNativeSeparators(outcome.loadDir);
+    const int open = workspace_->indexOfRoot(root);
+    if (open != workspace_->activeIndex()) {
+        if (runController_->isRunning()) {
+            emit notify(tr("Imported into %1. Finish the current run, then open it.").arg(shown),
+                        true);
+            return;
         }
-        out.status = ImportOutcome::Status::Success;
-        out.resources = static_cast<int>(imported->project.resources.size());
-        out.notes = QString::fromStdString(imported->warnings);
-        out.loadDir = QString::fromStdString(projectDir.string());
-        return out;
-    });
-    importWatcher_.setFuture(future);
+        if (!canLeaveActiveProject([this, outcome]() { finishImport(outcome); })) {
+            return;
+        }
+    }
+    // A run or an edit may have started while the import ran.
+    for (const BlockedFolder& blocked : importBlockedFolders()) {
+        if (canonicalProjectPath(QString::fromStdString(blocked.root.string())) == root) {
+            emit notify(tr("Imported into %1. The open project there was not reloaded (%2); "
+                           "reopen it to see the import.")
+                            .arg(shown, blocked.reason),
+                        true);
+            return;
+        }
+    }
+
+    bool loaded = false;
+    if (open >= 0) {
+        activateProject(open);
+        if (workspace_->activeIndex() == open) {
+            ProjectModel& project = activeProject();
+            const auto before = project.projectPtr();
+            project.loadFromDirectory(project.rootPath());
+            loaded = project.projectPtr() != before;
+        }
+    } else {
+        openProjectPath(outcome.loadDir);
+        const int now = workspace_->indexOfRoot(root);
+        loaded = now >= 0 && now == workspace_->activeIndex() && activeProject().hasProject();
+    }
+    if (!loaded) {
+        emit notify(tr("Imported into %1, but the project could not be opened.").arg(shown), true);
+        return;
+    }
+
+    QString summary =
+        tr("Imported %1 resources, %2 operations.").arg(outcome.resources).arg(outcome.operations);
+    if (outcome.movedCredentials > 0) {
+        summary += tr(" %n credential(s) moved into secrets.", nullptr, outcome.movedCredentials);
+    }
+    if (outcome.keptCredentials > 0) {
+        summary += tr(" %n credential(s) left in plain text.", nullptr, outcome.keptCredentials);
+    }
+    emit notify(summary, false);
+    if (!outcome.notes.isEmpty()) {
+        emit importReviewNotes(outcome.notes);
+    }
 }
 
 void AppController::onLoaded() {
-    // A fresh load: record it in recents + the open set, then rebind the UI
-    // (rebuilding the aggregated tree) and open the project's first module.
+    connect(&activeProject(),
+            &ProjectModel::operationRenamed,
+            this,
+            &AppController::onOperationRenamed,
+            Qt::UniqueConnection);
+    connect(&activeProject(),
+            &ProjectModel::operationRemoved,
+            this,
+            &AppController::onOperationRemoved,
+            Qt::UniqueConnection);
     recordRecentProject(activeProject().name(), activeProject().rootPath());
     persistOpenProjects();
     persistActiveProject();
     rebindActiveProject(/*repopulateTree=*/true);
     selectFirstModule();
+    if (const QStringList warnings = loadWarnings(); !warnings.isEmpty()) {
+        emit notifyWarning(
+            tr("“%1” loaded with %n warning(s); the first: %2", nullptr, warnings.size())
+                .arg(activeProject().name(), warnings.front()));
+    }
 }
 
 void AppController::onSaved() {
-    // A mutation (operation/chain/actor/env save) re-publishes the project.
-    // Unlike a fresh load, keep the user where they are: refresh project-derived
-    // models but preserve the selected module + open operation so saving from
-    // the response/chain editor doesn't bounce them back to the first module.
+    // A mutation keeps the user where they are: refresh models but preserve the selected module and
+    // open operation.
     resources_.reload(activeProject().project());
     populateWorkspaceTree();
     status_ = QStringLiteral("%1 modules").arg(resourceCount());
-    exampleStore_.setProjectRoot(activeProject().rootPath());
+    openExampleStore();
 
     environments_ = activeProject().environmentNames();
+    ensureEnvironmentExists();
 
-    // Keep an open read-only actor detail in sync after an edit. If the actor
-    // was renamed/deleted, its old id no longer exists → clear the panel.
-    if (hasActor_) {
+    // Keep an open actor detail in sync; clear it if the actor was renamed or deleted. A
+    // never-saved draft has nothing saved to follow.
+    if (hasActor_ && !selectedActorId_.isEmpty()) {
         const bool stillExists = activeProject().hasProject() &&
                                  activeProject().project().actors.count(
                                      engine::ActorId{selectedActorId_.toStdString()}) > 0;
         if (stillExists) {
-            prepareEditActor(selectedActorId_);
-            selectedActorDescription_ = actorDescription(selectedActorId_);
-            selectedActorStrategy_ = actorAuthLabel(selectedActorId_);
-            emit actorSelectionChanged();
+            // An edit in progress outlives saves of anything else; saveActorEdits ends it first.
+            if (!actorEditing_) {
+                prepareEditActor(selectedActorId_);
+                selectedActorDescription_ = actorDescription(selectedActorId_);
+                selectedActorStrategy_ = actorAuthLabel(selectedActorId_);
+                emit actorSelectionChanged();
+            }
         } else if (tabs_.valid(activeTabIndex_) &&
                    tabs_.stateAt(activeTabIndex_).kind == TabState::Kind::Actor) {
             closeTabImmediately(activeTabIndex_);
@@ -1016,19 +941,15 @@ void AppController::onSaved() {
             operations_.reload(it->second);
         }
     }
-    // populateWorkspaceTree() above already rebuilt the tree (with examples);
-    // just refresh the open op's example panel here.
     refreshOpenOpExamples();
     emit projectChanged();
     emit selectionChanged();
 
-    // Refresh the open operation's read fields from the saved project, but only
-    // when not editing (re-selecting would discard an in-progress edit).
+    // Only when not editing: re-selecting would discard an in-progress edit.
     if (!creatingOperation_ && !editing_ && !openModule.isEmpty() && !openOp.isEmpty()) {
         const auto& resources = activeProject().project().resources;
         const auto it = resources.find(engine::ResourceId{openModule.toStdString()});
         if (it != resources.end() && it->second.operations.contains(openOp.toStdString())) {
-            // Reload the active tab's read fields in place (no new tab).
             loadOperationReadState(openModule, openOp);
             captureActiveTab();
             emit operationChanged();
@@ -1038,14 +959,13 @@ void AppController::onSaved() {
 }
 
 void AppController::selectActor(const QString& projectRoot, const QString& actorId) {
-    if (!activateForRow(projectRoot)) {
+    if (!activateForRow(projectRoot,
+                        [this, projectRoot, actorId]() { selectActor(projectRoot, actorId); })) {
         return;
     }
     if (!activeProject().hasProject() || actorId.isEmpty()) {
         return;
     }
-    // Open (or focus) a tab for this actor; the per-tab buffer preserves its
-    // in-progress edits alongside any open endpoint tabs.
     openActorTab(projectRoot, actorId, /*isNewDraft=*/false);
 }
 
@@ -1085,8 +1005,6 @@ void AppController::selectModule(const QString& moduleName) {
 }
 
 void AppController::selectOperation(const QString& moduleName, const QString& opName) {
-    // Open (or focus) a tab for this operation in the active collection. The
-    // per-tab buffer preserves each open endpoint's edit + response state.
     openOperationTab(activeProject().rootPath(), moduleName, opName);
 }
 
@@ -1131,11 +1049,11 @@ void AppController::closeOperation() {
 }
 
 void AppController::setEnvironment(const QString& env) {
-    if (env == environment_) {
+    // A picker still showing a deleted or renamed environment must not select it.
+    if (env == environment_ || (!env.isEmpty() && !environments_.contains(env))) {
         return;
     }
     environment_ = env;
-    // Persist the selection for this project so it's restored on next load.
     if (!activeProject().rootPath().isEmpty()) {
         QSettings settings;
         EnvironmentSettings::save(settings, activeProject().rootPath(), env);
@@ -1153,10 +1071,15 @@ void AppController::setCaptureBodies(bool capture) {
 }
 
 void AppController::runSelected(bool clean, bool dryRun) {
-    if (!hasOperation_ || running_) {
+    if (!hasOperation_) {
+        return;
+    }
+    if (running_) {
+        emit notify(tr("A run is already in progress. Wait for it to finish or cancel it."), true);
         return;
     }
     const QString target = selectedModule_ + '.' + opName_;
+    pendingCandidateOp_.clear();
     runController_->run(target, environment_, clean, dryRun);
 }
 
@@ -1203,8 +1126,7 @@ void AppController::setEditActor(const QString& actor) {
         return;
     }
     editActor_ = actor;
-    // Actor and inline auth are mutually exclusive — selecting an actor drops
-    // the inline type (fields kept, ignored while type is "none").
+    // Actor and inline auth are mutually exclusive: an actor drops the inline type.
     if (!editActor_.isEmpty()) {
         editAuthType_ = QStringLiteral("none");
     }
@@ -1262,6 +1184,11 @@ void AppController::setEditBodyType(const QString& type) {
     editBodyType_ = type;
     editBodyIsForm_ =
         (type == QStringLiteral("form-data") || type == QStringLiteral("x-www-form-urlencoded"));
+    if (type == QStringLiteral("graphql")) {
+        auto [query, variables] = splitGraphqlBody(editBody_);
+        editGraphqlQuery_ = std::move(query);
+        editGraphqlVariables_ = std::move(variables);
+    }
 
     QString desired;
     if (type == QStringLiteral("json") || type == QStringLiteral("graphql")) {
@@ -1277,6 +1204,14 @@ void AppController::setEditBodyType(const QString& type) {
     }
     if (!desired.isEmpty()) {
         setManagedContentType(desired);
+    } else if (type == QStringLiteral("none")) {
+        // editBody_ and editForm_ stay in memory so switching back restores them; buildOverride
+        // sends neither.
+        auto headers = editHeaders_.pairs();
+        auto kept = withoutManagedContentType(headers);
+        if (kept.size() != headers.size()) {
+            editHeaders_.setPairs(std::move(kept));
+        }
     }
     emit editChanged();
     emit chainChanged();
@@ -1322,7 +1257,6 @@ void AppController::setManagedContentType(const QString& desired) {
 }
 
 namespace {
-// Map between the InlineAuthType enum and the QML-facing type string.
 [[nodiscard]] QString inlineAuthTypeToQString(engine::InlineAuthType type) {
     switch (type) {
         case engine::InlineAuthType::Bearer:
@@ -1386,8 +1320,7 @@ void AppController::setEditAuthType(const QString& type) {
         return;
     }
     editAuthType_ = type;
-    // Mutually exclusive with actor — selecting a real inline type clears the
-    // actor so the two can never both be active.
+    // Mutually exclusive with actor: a real inline type clears the actor.
     if (editAuthType_ != QStringLiteral("none")) {
         editActor_.clear();
     }
@@ -1574,11 +1507,22 @@ void AppController::oauth2GetNewToken() {
     config.pkceMethod = editAuthOauth2PkceMethod_;
 
     // One flow at a time; a fresh click supersedes any in-flight attempt.
+    oauthTabUid_ = tabs_.valid(activeTabIndex_) ? tabs_.stateAt(activeTabIndex_).uid : 0;
     oauthFlow_ = std::make_unique<OAuth2AuthCodeFlow>();
     connect(oauthFlow_.get(), &OAuth2AuthCodeFlow::succeeded, this, [this](const QString& token) {
-        editAuthOauth2AccessToken_ = token;
-        emit editChanged();
-        emit notify(QStringLiteral("Access token acquired"), false);
+        const int index = tabs_.indexOfUid(oauthTabUid_);
+        if (index < 0) {
+            emit notify(tr("The OAuth2 token arrived after its tab was closed, so it was dropped."),
+                        true);
+            return;
+        }
+        if (index == activeTabIndex_) {
+            editAuthOauth2AccessToken_ = token;
+            emit editChanged();
+        } else {
+            tabs_.stateAt(index).editAuthOauth2AccessToken = token;
+        }
+        emit notify(tr("Access token acquired for “%1”").arg(tabs_.displayTitle(index)), false);
     });
     connect(oauthFlow_.get(), &OAuth2AuthCodeFlow::failed, this, [this](const QString& error) {
         emit notify(QStringLiteral("OAuth2 authorization failed: %1").arg(error), true);
@@ -1689,8 +1633,6 @@ void AppController::beginEdit() {
         return;
     }
 
-    // Seed every editable control from the operation so a fresh edit starts as
-    // a faithful copy the user then tweaks.
     editMethod_ = methodLabel(op->method);
     const auto persistedQuery{toEditPairs(op->queryParams)};
     {
@@ -1701,7 +1643,6 @@ void AppController::beginEdit() {
     }
     editActor_ = QString::fromStdString(op->actor.value);
 
-    // Inline (actor-less) auth: seed from the op, or reset to "none".
     if (op->inlineAuth) {
         const auto& a = *op->inlineAuth;
         editAuthType_ = inlineAuthTypeToQString(a.type);
@@ -1720,9 +1661,8 @@ void AppController::beginEdit() {
         editAuthOauthConsumerSecret_ = QString::fromStdString(a.oauthConsumerSecret);
         editAuthOauthToken_ = QString::fromStdString(a.oauthToken);
         editAuthOauthTokenSecret_ = QString::fromStdString(a.oauthTokenSecret);
-        // Clamp to the known options so the combo and the stored value never
-        // diverge (an unknown value from hand-edited YAML falls back to default,
-        // which is also how the engine interprets it).
+        // Clamp to known options; an unknown hand-edited value falls back to the default, as the
+        // engine does.
         editAuthOauth2GrantType_ = a.oauth2GrantType == "password"
                                        ? QStringLiteral("password")
                                        : QStringLiteral("client_credentials");
@@ -1787,9 +1727,7 @@ void AppController::beginEdit() {
         editAuthMtlsCaCertPath_.clear();
     }
 
-    // Actor and inline auth are mutually exclusive in the editor. If a
-    // hand-edited op carries both, inline auth wins (it's applied last at
-    // runtime), so drop the actor from the editor seed to match.
+    // Both set on a hand-edited op: inline auth wins at runtime, so drop the actor from the seed.
     if (editAuthType_ != QStringLiteral("none")) {
         editActor_.clear();
     }
@@ -1811,9 +1749,7 @@ void AppController::beginEdit() {
 
     editHeaders_.setPairs(toEditPairs(op->headers));
 
-    // Infer the body kind so the selector lands on the right tab. The
-    // Content-Type header disambiguates raw kinds (json/xml/text) and multipart
-    // vs urlencoded form bodies.
+    // Infer the body kind from Content-Type (raw kinds, multipart vs urlencoded).
     QString contentType;
     for (const auto& [k, v] : op->headers) {
         if (QString::fromStdString(k).compare(QStringLiteral("Content-Type"),
@@ -1828,9 +1764,8 @@ void AppController::beginEdit() {
         editBodyIsForm_ = true;
         editForm_.setPairs(toEditPairs(*op->bodyForm));
         editBody_.clear();
-        const bool anyFile = std::ranges::any_of(*op->bodyForm, [](const auto& kv) {
-            return QString::fromStdString(kv.second).startsWith(QLatin1Char('@'));
-        });
+        const bool anyFile = std::ranges::any_of(
+            *op->bodyForm, [](const auto& kv) { return engine::isFormFileTemplate(kv.second); });
         const bool multipart = anyFile || ctypeBase.compare(QStringLiteral("multipart/form-data"),
                                                             Qt::CaseInsensitive) == 0;
         editBodyType_ =
@@ -1879,8 +1814,6 @@ void AppController::beginEdit() {
 
     chainFieldsLoaded_ = true;
     editing_ = true;
-    // Seed the whole-chain editor (every step in the transitive chain) so the
-    // Chain tab can edit them all in one place.
     prepareChainEditor();
     emit editingChanged();
     emit editChanged();
@@ -1988,21 +1921,12 @@ RequestOverride AppController::buildOverride() const {
     ov.timeoutMs = editTimeout_;
     ov.forceReRun = editForce_;
 
-    // Inline auth: build the typed credential from the edit fields. "none"
-    // leaves it nullopt so applyOverrideToOperation clears any prior auth.
+    // "none" leaves nullopt so applyOverrideToOperation clears prior auth.
     ov.inlineAuth = buildInlineAuthFromEdit();
 
-    ov.bodyIsForm = editBodyIsForm_;
-    if (editBodyIsForm_) {
-        for (const auto& [key, value] : editForm_.pairs()) {
-            ov.formFields.insert_or_assign(key.toStdString(), value.toStdString());
-        }
-    } else {
-        ov.body = editBody_;
-    }
+    applyEditBody(ov, editBodyType_, editBody_, editForm_.pairs());
 
-    // Chain edits are opt-in: only stamped when the Chain tab was seeded for
-    // this op, so a request-only override never wipes its depends_on / extract.
+    // Chain edits are opt-in: a request-only override never wipes depends_on / extract.
     ov.chainEdited = chainFieldsLoaded_;
     ov.dependencies = editDependencies_.dependencies();
     for (const auto& [variable, sourcePath] : editExtractions_.pairs()) {
@@ -2029,9 +1953,8 @@ RequestOverride AppController::buildOverride() const {
         ov.assertions.push_back(std::move(assertion));
     }
 
-    // A transient operation has no persisted target to re-seed from. Its Chain
-    // tab is therefore the source of truth for depends_on and extract until the
-    // single endpoint Save publishes the complete operation.
+    // A transient operation has no persisted target, so its Chain tab is the source of truth
+    // for depends_on and extract until Save.
     if (creatingOperation_) {
         const QString targetId = currentOperationId();
         for (int i = 0; i < chainEditor_.count(); ++i) {
@@ -2058,10 +1981,15 @@ RequestOverride AppController::buildOverride() const {
 }
 
 void AppController::applyAndRun(bool clean, bool dryRun) {
-    if (creatingOperation_ || !hasOperation_ || running_) {
+    if (creatingOperation_ || !hasOperation_) {
+        return;
+    }
+    if (running_) {
+        emit notify(tr("A run is already in progress. Wait for it to finish or cancel it."), true);
         return;
     }
     const QString target = selectedModule_ + '.' + opName_;
+    pendingCandidateOp_.clear();
     runController_->runWithOverride(target, environment_, clean, dryRun, buildOverride());
 }
 
@@ -2081,17 +2009,13 @@ void AppController::saveOperation() {
         return;
     }
 
-    // Patch a copy of the real operation via the shared override path, then
-    // persist. saveOperation validates through the engine, so a chain that
-    // forms a cycle (or names an undefined op) is rejected and disk is left
-    // untouched.
+    // Patch a copy via the shared override path, then persist; saveOperation validates,
+    // so a cycle or undefined op is rejected with disk untouched.
     engine::Operation updated = *op;
     applyOverrideToOperation(updated, buildOverride());
 
     QString error;
     if (activeProject().saveOperation(id, updated, error)) {
-        // The tab is already open; reload its read fields from the just-saved
-        // project and re-snapshot the tab (don't spawn a duplicate tab).
         editing_ = false;
         loadOperationReadState(selectedModule_, opName_);
         captureActiveTab();
@@ -2121,8 +2045,6 @@ void AppController::openHookEditor() {
         return;
     }
 
-    // Refresh the hook sandbox type definitions so a TS-aware editor offers
-    // ctx.* autocomplete on any ./hooks/*.js this operation references.
     refreshHookTypings();
 
     const auto toQ = [](const std::optional<std::string>& s) {
@@ -2144,16 +2066,14 @@ void AppController::openHookEditor() {
         return;
     }
 
-    // Persist. A file-referenced hook is written back to its `.js` file (the
-    // writer keeps the reference); an inline hook is stored on the operation
-    // and saved as YAML. Empty inline content clears the hook.
+    // A file-referenced hook is written back to its `.js`; an inline hook is saved as YAML; empty
+    // inline content clears it.
     const QString root = activeProject().rootPath();
     const auto applyHook = [&](std::optional<std::string>& script,
                                const QString& edited,
                                const QString& refPath) -> bool {
         if (!refPath.isEmpty()) {
-            // Defence-in-depth: resolve the ref under the project root and
-            // reject any path that escapes it .
+            // Reject any ref that resolves outside the project root.
             namespace fs = std::filesystem;
             std::error_code ec;
             const fs::path rootDir = fs::weakly_canonical(fs::path(root.toStdString()), ec);
@@ -2198,9 +2118,7 @@ void AppController::openHookEditor() {
 
     QString error;
     if (activeProject().saveOperation(id, updated, error)) {
-        // saveOperation rebinds the project (its `saved` signal resets the
-        // selection to the endpoint list), so reopen the operation to keep the
-        // user where they were.
+        // saveOperation resets the selection, so reopen the operation.
         selectOperationById(opId);
         emit notify(QStringLiteral("Saved hooks for “%1”").arg(opId), false);
     } else {
@@ -2246,7 +2164,6 @@ void AppController::resetCaches() {
         return;
     }
     runController_->resetCaches();
-    // Every session just went away; clear the explorer dots to match.
     refreshActorSessions();
     emit notify(QStringLiteral("Session + extraction caches cleared"), false);
 }
@@ -2285,8 +2202,6 @@ void AppController::saveResponse(const QString& name) {
     if (exampleStore_.save(opId, response)) {
         refreshExamples();
         emit notify(QStringLiteral("Saved example \u201C%1\u201D").arg(trimmed), false);
-    } else {
-        emit notify(QStringLiteral("No project to save the example into"), true);
     }
 }
 
@@ -2311,8 +2226,18 @@ QString AppController::exampleBody(const QString& name) const {
 }
 
 QVariantList AppController::lineDiff(const QString& oldText, const QString& newText) const {
+    const widgets::diff::LineDiffResult diff = widgets::diff::boundedLineDiff(oldText, newText);
+    if (diff.tooLarge) {
+        return {QVariantMap{
+            {QStringLiteral("sign"), QString{}},
+            {QStringLiteral("text"),
+             tr("These bodies are too large to diff (more than %1 changed lines, or too many "
+                "differences).")
+                 .arg(widgets::diff::kMaxDiffLines)},
+            {QStringLiteral("tooLarge"), true}}};
+    }
     QVariantList rows;
-    for (const auto& line : widgets::diff::lineDiff(oldText, newText)) {
+    for (const auto& line : diff.lines) {
         using Kind = widgets::diff::DiffLine::Kind;
         QString sign = QStringLiteral(" ");
         if (line.kind == Kind::Added) {
@@ -2324,6 +2249,14 @@ QVariantList AppController::lineDiff(const QString& oldText, const QString& newT
             QVariantMap{{QStringLiteral("sign"), sign}, {QStringLiteral("text"), line.text}});
     }
     return rows;
+}
+
+QString AppController::prettyJson(const QString& text, bool unwrapEncoded) const {
+    return widgets::body::prettyJson(text, unwrapEncoded);
+}
+
+QString AppController::inertPreviewHtml(const QString& source, bool markdown) const {
+    return widgets::body::inertRichText(source, markdown);
 }
 
 void AppController::copyToClipboard(const QString& text, const QString& label) {
@@ -2338,11 +2271,45 @@ QString AppController::localFileFromUrl(const QUrl& url) const {
     return url.isLocalFile() ? url.toLocalFile() : url.toString();
 }
 
+bool AppController::isFormFileValue(const QString& value) const {
+    return engine::isFormFileTemplate(value.toStdString());
+}
+
+QString AppController::formValueText(const QString& value) const {
+    return QString::fromStdString(engine::formTemplateText(value.toStdString()));
+}
+
+QString AppController::formTextValue(const QString& text) const {
+    return QString::fromStdString(engine::formTextTemplate(text.toStdString()));
+}
+
+QVariantList AppController::readBodyFormRows() const {
+    QVariantList rows;
+    if (!activeProject().hasProject()) {
+        return rows;
+    }
+    const auto& resources = activeProject().project().resources;
+    const auto resIt = resources.find(engine::ResourceId{selectedModule_.toStdString()});
+    if (resIt == resources.end()) {
+        return rows;
+    }
+    const auto opIt = resIt->second.operations.find(opName_.toStdString());
+    if (opIt == resIt->second.operations.end() || !opIt->second.bodyForm) {
+        return rows;
+    }
+    for (const auto& [key, value] : *opIt->second.bodyForm) {
+        const bool isFile = engine::isFormFileTemplate(value);
+        rows.append(QVariantMap{{QStringLiteral("key"), QString::fromStdString(key)},
+                                {QStringLiteral("text"),
+                                 isFile ? QString::fromStdString(value.substr(1))
+                                        : QString::fromStdString(engine::formTemplateText(value))},
+                                {QStringLiteral("isFile"), isFile}});
+    }
+    return rows;
+}
+
 void AppController::refreshExamples() {
-    // An example was added/renamed/deleted: rebuild the tree (which re-reads
-    // every collection's examples) and refresh the open op's example list.
-    // Resets the tree model, so callers only use this on load / example
-    // mutation — never on a plain project switch (see rebindActiveProject).
+    // Rebuilds the tree (resets the model): only on load or example mutation, never a plain switch.
     populateWorkspaceTree();
     refreshOpenOpExamples();
 }
@@ -2353,6 +2320,42 @@ void AppController::refreshOpenOpExamples() {
         exampleList_.clear();
     } else {
         exampleList_.setExamples(exampleStore_.list(opId));
+    }
+}
+
+void AppController::openExampleStore() {
+    const ProjectModel& project = activeProject();
+    if (!project.hasProject()) {
+        exampleStore_.setProjectRoot({});
+        return;
+    }
+    const QString root = project.rootPath();
+    exampleStore_.setProjectRoot(root, QString::fromStdString(project.project().id));
+    const SavedResponseStore::LegacyImport legacy = exampleStore_.importLegacyFile();
+    const QString file = QDir::toNativeSeparators(legacy.filePath);
+    switch (legacy.result) {
+        case SavedResponseStore::LegacyImport::Result::Imported:
+            emit notify(tr("Saved examples now live outside the project folder (%n imported). %1 "
+                           "is no longer used and can be deleted.",
+                           nullptr,
+                           legacy.imported)
+                            .arg(file),
+                        false);
+            populateWorkspaceTree();
+            break;
+        case SavedResponseStore::LegacyImport::Result::Unreadable:
+            if (!legacyExamplesReported_.contains(root)) {
+                legacyExamplesReported_.insert(root);
+                emit notify(tr("%1 could not be read (%2), so its examples were not imported. The "
+                               "file was left as it is.")
+                                .arg(file, legacy.detail),
+                            true);
+            }
+            break;
+        case SavedResponseStore::LegacyImport::Result::None:
+        case SavedResponseStore::LegacyImport::Result::AlreadyImported:
+        case SavedResponseStore::LegacyImport::Result::Failed:
+            break;
     }
 }
 
@@ -2374,7 +2377,6 @@ void AppController::refreshActorSessions() {
     }
     tree_.setActorSessions(std::move(rows));
 
-    // Nothing authenticated means nothing to count down.
     if (anyLive) {
         if (!sessionTicker_.isActive()) {
             sessionTicker_.start();
@@ -2389,11 +2391,12 @@ void AppController::onLoadFailed(const QString& code, const QString& detail) {
     resources_.reset();
     operations_.reset();
     selectedModule_.clear();
-    // Keep any other open collections visible — only the failed slot is empty.
     populateWorkspaceTree();
     status_ = QStringLiteral("Load failed (%1): %2").arg(code, detail);
     emit projectChanged();
     emit selectionChanged();
+    // status_ is replaced as soon as another open project rebinds, so say it where it is seen.
+    emit notify(tr("Could not open the project: %1").arg(detail), true);
 }
 
 void AppController::loadSampleIfPresent() {
@@ -2478,8 +2481,7 @@ QString AppController::actorAuthLabel(const QString& actorName) const {
 }
 
 QVariantList AppController::autoGeneratedHeaders() const {
-    // The headers libcurl sends for us (see engine::HttpDefaults + CurlHttpClient).
-    // Host is derived from the URL at send time, so it has no fixed value here.
+    // Headers libcurl sends for us; Host is derived at send time.
     const auto sv = [](std::string_view s) {
         return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size()));
     };

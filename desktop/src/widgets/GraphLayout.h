@@ -1,10 +1,6 @@
-// GraphLayout — a small layered (Sugiyama-style) DAG layout for the execution
-// chain view. Pure logic, no Qt-widget dependency, so it's unit-tested in
-// isolation. Given a node count + directed edges (prerequisite → dependent),
-// it assigns each node to a layer (longest-path), orders nodes within layers to
-// reduce edge crossings (barycenter sweeps), and produces top-left coordinates
-// plus the overall canvas size. The QML ChainView renders nodes at these
-// positions and draws Bézier edges between them.
+// GraphLayout — a small layered (Sugiyama-style) DAG layout for the execution chain view:
+// longest-path layering, barycenter crossing reduction, top-left coordinates and canvas size. Pure
+// logic; the QML ChainView renders the result.
 #pragma once
 
 #include <cstddef>

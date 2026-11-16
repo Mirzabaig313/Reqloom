@@ -5,6 +5,7 @@
 #include "PredicateEvaluator.h"
 
 #include <reqloom/engine/JsonValues.h>
+#include <reqloom/engine/Predicate.h>
 
 #include <nlohmann/json.hpp>
 
@@ -12,7 +13,6 @@
 #include <cctype>
 #include <charconv>
 #include <cstdint>
-#include <regex>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -50,9 +50,14 @@ std::string truncateForTrace(std::string s) {
     std::string out;
     out.reserve(expr.size());
     char quote = 0;
+    bool escaped = false;
     for (const char c : expr) {
         if (quote != 0) {
-            if (c == quote) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == quote) {
                 quote = 0;
             }
             out.push_back(c);
@@ -68,239 +73,276 @@ std::string truncateForTrace(std::string s) {
     return out;
 }
 
-/// Walk a JSONPath against a parsed document. Supports field access
-/// (`a.b`), array indexing (`a[0]`, `a[0][1]`), and predicate filters
-/// (`a[?(@.field == 'x')]`, first match wins — `@` is the array element).
-/// Returns nullptr on any miss. Bracket-aware tokeniser so a `.` inside a
-/// filter (e.g. `@.status`) doesn't split the path.
-[[nodiscard]] const json* walkJson(const json& doc, std::string_view sourcePath) {
-    std::string path{sourcePath};
-    std::size_t i = 0;
-    const std::size_t n = path.size();
-    if (i < n && path[i] == '$') {
-        ++i;
-    }
-    if (i < n && path[i] == '.') {
-        ++i;
-    }
+struct PathSegment {
+    enum class Kind : std::uint8_t { Field, Index, Wildcard, Filter };
+    Kind kind{Kind::Field};
+    std::string field;
+    std::size_t index{};
+    ParsedPredicate filter;  ///< Only for Kind::Filter; `@` already mapped to `$`.
+};
 
+using PathSegments = std::vector<PathSegment>;
+
+/// Index of the `]` closing the `[` at `open`, skipping nested brackets and quoted strings so
+/// a filter like `[?(@.tags[0] == 'x')]` stays whole; npos when unbalanced.
+[[nodiscard]] std::size_t findClosingBracket(std::string_view path, std::size_t open) {
+    std::size_t depth = 0;
+    char quote = 0;
+    bool escaped = false;
+    for (std::size_t j = open; j < path.size(); ++j) {
+        const char c = path[j];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == quote) {
+                quote = 0;
+            }
+        } else if (c == '\'' || c == '"') {
+            quote = c;
+        } else if (c == '[' || c == '(') {
+            ++depth;
+        } else if (c == ']' || c == ')') {
+            if (depth == 0) {
+                return std::string_view::npos;
+            }
+            if (--depth == 0) {
+                return c == ']' ? j : std::string_view::npos;
+            }
+        }
+    }
+    return std::string_view::npos;
+}
+
+/// Classify the text between `[` and `]`: `*`, a non-negative index or a `?(...)` filter;
+/// anything else is an error.
+[[nodiscard]] std::expected<PathSegment, std::string> parseBracket(std::string_view inside) {
     static const PredicateEvaluator evaluator;
-    const json* current = &doc;
-    while (i < n) {
-        // Field name up to the next '.' or '['.
-        std::string name;
-        while (i < n && path[i] != '.' && path[i] != '[') {
-            name.push_back(path[i]);
+    PathSegment seg;
+    if (inside == "*") {
+        seg.kind = PathSegment::Kind::Wildcard;
+        return seg;
+    }
+    if (inside.starts_with("?(") && inside.ends_with(")")) {
+        auto parsed = evaluator.parse(filterAtToDollar(inside.substr(2, inside.size() - 3)));
+        if (!parsed) {
+            return std::unexpected("invalid filter [" + std::string{inside} +
+                                   "]: " + parsed.error().detail);
+        }
+        seg.kind = PathSegment::Kind::Filter;
+        seg.filter = std::move(*parsed);
+        return seg;
+    }
+    const auto* first = inside.data();
+    const auto* last = first + inside.size();
+    const auto fc = std::from_chars(first, last, seg.index);
+    if (inside.empty() || fc.ec != std::errc{} || fc.ptr != last) {
+        return std::unexpected("unsupported bracket expression [" + std::string{inside} +
+                               "]; expected an index, [*] or a [?(...)] filter");
+    }
+    seg.kind = PathSegment::Kind::Index;
+    return seg;
+}
+
+/// Parse the engine's JSONPath subset: optional `$`, then `.field`, `[N]`, `[*]` and
+/// `[?(...)]` segments. Unsupported syntax is an error, never a silent miss.
+[[nodiscard]] std::expected<PathSegments, std::string> parsePath(std::string_view path) {
+    PathSegments segments;
+    std::size_t i = (!path.empty() && path[0] == '$') ? 1 : 0;
+    const std::size_t n = path.size();
+    if (i == 1 && i + 1 == n && path[i] == '.') {
+        return segments;  // `$.` — the whole document
+    }
+    bool nameExpected = i < n && path[i] != '.' && path[i] != '[';
+    while (i < n || nameExpected) {
+        if (nameExpected) {
+            if (i < n && path[i] == '.') {
+                return std::unexpected("recursive descent '..' is not supported (position " +
+                                       std::to_string(i) + ")");
+            }
+            const auto stop = std::min(path.find_first_of(".[", i), n);
+            if (stop == i) {
+                return std::unexpected("empty field name at position " + std::to_string(i));
+            }
+            PathSegment seg;
+            seg.field = std::string{path.substr(i, stop - i)};
+            segments.push_back(std::move(seg));
+            i = stop;
+            nameExpected = false;
+        } else if (path[i] == '.') {
             ++i;
-        }
-        if (!name.empty()) {
-            if (!current->is_object()) {
-                return nullptr;
+            nameExpected = true;
+        } else {
+            const auto close = findClosingBracket(path, i);
+            if (close == std::string_view::npos) {
+                return std::unexpected("unclosed '[' at position " + std::to_string(i));
             }
-            const auto it = current->find(name);
-            if (it == current->end()) {
-                return nullptr;
+            auto seg = parseBracket(path.substr(i + 1, close - i - 1));
+            if (!seg) {
+                return std::unexpected(std::move(seg).error());
             }
-            current = &(*it);
+            segments.push_back(std::move(*seg));
+            i = close + 1;
         }
+    }
+    return segments;
+}
 
-        // Zero or more bracket segments: [N] index or [?(...)] filter.
-        while (i < n && path[i] == '[') {
-            // Find the matching ']' while skipping over quoted strings.
-            std::size_t j = i + 1;
-            char quote = 0;
-            while (j < n) {
-                const char c = path[j];
-                if (quote != 0) {
-                    if (c == quote) {
-                        quote = 0;
-                    }
-                } else if (c == '\'' || c == '"') {
-                    quote = c;
-                } else if (c == ']') {
-                    break;
+[[nodiscard]] bool filterMatches(const ParsedPredicate& filter, const json& element) {
+    static const PredicateEvaluator evaluator;
+    return evaluator.evaluate(filter, element.dump()) == PredicateValue::True;
+}
+
+/// Single-value walk: a filter selects its first match; nullptr on a miss; `[*]` is an error.
+[[nodiscard]] std::expected<const json*, std::string> walkSingle(const json& doc,
+                                                                 const PathSegments& segments) {
+    const json* current = &doc;
+    for (const auto& seg : segments) {
+        switch (seg.kind) {
+            case PathSegment::Kind::Field: {
+                if (!current->is_object()) {
+                    return nullptr;
                 }
-                ++j;
+                const auto it = current->find(seg.field);
+                if (it == current->end()) {
+                    return nullptr;
+                }
+                current = &(*it);
+                break;
             }
-            if (j >= n) {
-                return nullptr;  // unmatched '['
-            }
-            const std::string inside = path.substr(i + 1, j - (i + 1));
-
-            if (inside.starts_with("?(") && inside.ends_with(")")) {
+            case PathSegment::Kind::Index:
+                if (!current->is_array() || seg.index >= current->size()) {
+                    return nullptr;
+                }
+                current = &(*current)[seg.index];
+                break;
+            case PathSegment::Kind::Wildcard:
+                return std::unexpected(
+                    std::string{"[*] selects many values; it is only valid in a list extraction"});
+            case PathSegment::Kind::Filter: {
                 if (!current->is_array()) {
                     return nullptr;
                 }
-                const std::string expr =
-                    filterAtToDollar(std::string_view{inside}.substr(2, inside.size() - 3));
-                auto parsed = evaluator.parse(expr);
-                if (!parsed) {
-                    return nullptr;  // malformed filter
-                }
-                const json* match = nullptr;
-                for (const auto& element : *current) {
-                    if (evaluator.evaluate(*parsed, element.dump()) == PredicateValue::True) {
-                        match = &element;
-                        break;
-                    }
-                }
-                if (match == nullptr) {
+                const auto match = std::ranges::find_if(
+                    *current, [&](const json& el) { return filterMatches(seg.filter, el); });
+                if (match == current->end()) {
                     return nullptr;
                 }
-                current = match;
-            } else {
-                std::size_t index = 0;
-                const auto* first = inside.data();
-                const auto* last = first + inside.size();
-                const auto fc = std::from_chars(first, last, index);
-                if (fc.ec != std::errc{} || fc.ptr != last) {
-                    return nullptr;
-                }
-                if (!current->is_array() || index >= current->size()) {
-                    return nullptr;
-                }
-                current = &(*current)[index];
+                current = &(*match);
+                break;
             }
-            i = j + 1;
-        }
-
-        if (i < n && path[i] == '.') {
-            ++i;
         }
     }
     return current;
 }
 
-}  // namespace
-
-const json* walkJsonPath(const json& doc, std::string_view sourcePath) {
-    return walkJson(doc, sourcePath);
-}
-
-namespace {
-
-/// Multi-match walker: like `walkJson` but `[*]` expands to every array
-/// element and filters/indices apply across the whole current node set, so a
-/// path can resolve to many nodes. Returns pointers into `doc`.
-[[nodiscard]] std::vector<const json*> walkJsonMulti(const json& doc, std::string_view sourcePath) {
-    const std::string path{sourcePath};
-    std::size_t i = 0;
-    const std::size_t n = path.size();
-    if (i < n && path[i] == '$') {
-        ++i;
-    }
-    if (i < n && path[i] == '.') {
-        ++i;
-    }
-
-    static const PredicateEvaluator evaluator;
+/// Multi-match walk: `[*]` expands to every element and filters keep every match.
+[[nodiscard]] std::vector<const json*> walkMulti(const json& doc, const PathSegments& segments) {
     std::vector<const json*> current{&doc};
-    while (i < n && !current.empty()) {
-        std::string name;
-        while (i < n && path[i] != '.' && path[i] != '[') {
-            name.push_back(path[i]);
-            ++i;
-        }
-        if (!name.empty()) {
-            std::vector<const json*> next;
-            for (const auto* node : current) {
+    for (const auto& seg : segments) {
+        std::vector<const json*> next;
+        for (const auto* node : current) {
+            if (seg.kind == PathSegment::Kind::Field) {
                 if (node->is_object()) {
-                    const auto it = node->find(name);
-                    if (it != node->end()) {
+                    if (const auto it = node->find(seg.field); it != node->end()) {
                         next.push_back(&(*it));
                     }
                 }
+            } else if (seg.kind == PathSegment::Kind::Index) {
+                if (node->is_array() && seg.index < node->size()) {
+                    next.push_back(&(*node)[seg.index]);
+                }
+            } else if (node->is_array()) {
+                for (const auto& element : *node) {
+                    if (seg.kind == PathSegment::Kind::Wildcard ||
+                        filterMatches(seg.filter, element)) {
+                        next.push_back(&element);
+                    }
+                }
             }
-            current = std::move(next);
         }
-
-        while (i < n && path[i] == '[') {
-            std::size_t j = i + 1;
-            char quote = 0;
-            while (j < n) {
-                const char c = path[j];
-                if (quote != 0) {
-                    if (c == quote) {
-                        quote = 0;
-                    }
-                } else if (c == '\'' || c == '"') {
-                    quote = c;
-                } else if (c == ']') {
-                    break;
-                }
-                ++j;
-            }
-            if (j >= n) {
-                return {};
-            }
-            const std::string inside = path.substr(i + 1, j - (i + 1));
-            std::vector<const json*> next;
-            if (inside == "*") {
-                for (const auto* node : current) {
-                    if (node->is_array()) {
-                        for (const auto& element : *node) {
-                            next.push_back(&element);
-                        }
-                    }
-                }
-            } else if (inside.starts_with("?(") && inside.ends_with(")")) {
-                const std::string expr =
-                    filterAtToDollar(std::string_view{inside}.substr(2, inside.size() - 3));
-                if (auto parsed = evaluator.parse(expr)) {
-                    for (const auto* node : current) {
-                        if (!node->is_array()) {
-                            continue;
-                        }
-                        for (const auto& element : *node) {
-                            if (evaluator.evaluate(*parsed, element.dump()) ==
-                                PredicateValue::True) {
-                                next.push_back(&element);
-                            }
-                        }
-                    }
-                }
-            } else {
-                std::size_t index = 0;
-                const auto* first = inside.data();
-                const auto* last = first + inside.size();
-                const auto fc = std::from_chars(first, last, index);
-                if (fc.ec == std::errc{} && fc.ptr == last) {
-                    for (const auto* node : current) {
-                        if (node->is_array() && index < node->size()) {
-                            next.push_back(&(*node)[index]);
-                        }
-                    }
-                }
-            }
-            current = std::move(next);
-            i = j + 1;
-        }
-
-        if (i < n && path[i] == '.') {
-            ++i;
-        }
+        current = std::move(next);
     }
     return current;
 }
 
+[[nodiscard]] std::expected<const json*, std::string> walkJson(const json& doc,
+                                                               std::string_view sourcePath) {
+    const auto segments = parsePath(sourcePath);
+    if (!segments) {
+        return std::unexpected(segments.error());
+    }
+    return walkSingle(doc, *segments);
+}
+
+/// Parse a response body for extraction; nesting beyond kMaxJsonNestingDepth is rejected
+/// first. Errors report only a byte offset: nlohmann's message embeds an input excerpt that
+/// could leak a token.
+[[nodiscard]] std::expected<json, ReqloomError> parseResponseJson(const std::string& body) {
+    if (jsonNestingExceeds(body)) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::ResponseParse,
+            ErrorClass::Extraction,
+            "response JSON nests deeper than " + std::to_string(kMaxJsonNestingDepth) + " levels"});
+    }
+    try {
+        return json::parse(body);
+    } catch (const json::parse_error& e) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::ResponseParse,
+            ErrorClass::Extraction,
+            "response is not valid JSON (syntax error at byte " + std::to_string(e.byte) + ")"});
+    }
+}
+
 }  // namespace
+
+std::expected<void, ReqloomError> validateSingleValueJsonPath(std::string_view path) {
+    const auto reject = [&](const std::string& reason) {
+        return std::unexpected(
+            ReqloomError{ErrorCode::SchemaInvalid,
+                         ErrorClass::Schema,
+                         "unsupported JSONPath '" + std::string{path} + "': " + reason});
+    };
+    if (path.empty()) {
+        return reject("the path is empty");
+    }
+    const auto segments = parsePath(path);
+    if (!segments) {
+        return reject(segments.error());
+    }
+    if (std::ranges::any_of(*segments, [](const PathSegment& seg) {
+            return seg.kind == PathSegment::Kind::Wildcard;
+        })) {
+        return reject("[*] selects many values; select the array itself instead");
+    }
+    return {};
+}
+
+const json* walkJsonPath(const json& doc, std::string_view sourcePath) {
+    const auto hit = walkJson(doc, sourcePath);
+    return hit ? *hit : nullptr;
+}
 
 std::vector<std::string> evaluateJsonPathAll(const json& doc, std::string_view sourcePath) {
     std::vector<std::string> out;
-    for (const auto* node : walkJsonMulti(doc, sourcePath)) {
+    const auto segments = parsePath(sourcePath);
+    if (!segments) {
+        return out;
+    }
+    for (const auto* node : walkMulti(doc, *segments)) {
         out.push_back(node->is_string() ? node->get<std::string>() : node->dump());
     }
     return out;
 }
 
 std::vector<std::string> extractValues(const std::string& body, std::string_view sourcePath) {
-    json doc;
-    try {
-        doc = json::parse(body);
-    } catch (const json::parse_error&) {
+    const auto doc = parseResponseJson(body);
+    if (!doc) {
         return {};
     }
-    return evaluateJsonPathAll(doc, sourcePath);
+    return evaluateJsonPathAll(*doc, sourcePath);
 }
 
 std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
@@ -309,27 +351,37 @@ std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
         return std::map<std::string, std::string>{};
     }
 
-    json doc;
-    try {
-        doc = json::parse(body);
-    } catch (const json::parse_error& e) {
-        return std::unexpected(
-            ReqloomError{ErrorCode::ResponseParse,
-                         ErrorClass::Extraction,
-                         std::string("response is not valid JSON: ") + e.what()});
+    const auto doc = parseResponseJson(body);
+    if (!doc) {
+        return std::unexpected(doc.error());
     }
 
-    // Walk a single segment that may be "name", "name[N]", or "[N]".
-    // Returns nullptr on miss.
     std::map<std::string, std::string> values;
     for (const auto& ext : extractions) {
-        const json* current = walkJson(doc, ext.sourcePath);
+        const auto hit = walkJson(*doc, ext.sourcePath);
+        if (!hit) {
+            return std::unexpected(ReqloomError{ErrorCode::ExtractionFailed,
+                                                ErrorClass::Extraction,
+                                                "extract path '" + ext.sourcePath +
+                                                    "' is not a supported JSONPath (variable: " +
+                                                    ext.variableName + "): " + hit.error()});
+        }
+        const json* current = *hit;
         if (current == nullptr) {
             return std::unexpected(
                 ReqloomError{ErrorCode::ExtractionFailed,
                              ErrorClass::Extraction,
                              "extract path '" + ext.sourcePath +
                                  "' not found in response (variable: " + ext.variableName + ")"});
+        }
+        // JSON null is a missing value, not the string "null" (which would be sent as `Bearer
+        // null`).
+        if (current->is_null()) {
+            return std::unexpected(
+                ReqloomError{ErrorCode::ExtractionFailed,
+                             ErrorClass::Extraction,
+                             "extract path '" + ext.sourcePath +
+                                 "' is null in response (variable: " + ext.variableName + ")"});
         }
 
         std::string value = current->is_string() ? current->get<std::string>() : current->dump();
@@ -340,13 +392,8 @@ std::expected<std::map<std::string, std::string>, ReqloomError> extractFromJson(
 
 namespace {
 
-const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
-    return walkJson(doc, sourcePath);
-}
-
-/// Strip a leading `$.<prefix>.` from sourcePath if present, returning
-/// the remainder. Used by Header / Cookie sources where the schema
-/// convention is `$.headers.X` or `$.cookies.X`.
+/// Strip a leading `$.<prefix>.` from sourcePath (Header/Cookie sources use `$.headers.X` /
+/// `$.cookies.X`).
 [[nodiscard]] std::string stripPrefix(std::string_view sourcePath, std::string_view prefix) {
     if (sourcePath.starts_with(prefix)) {
         return std::string{sourcePath.substr(prefix.size())};
@@ -355,7 +402,6 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
 }
 
 /// Look up a header by name, case-insensitive per RFC 7230 §3.2.
-/// Returns nullopt when not present.
 [[nodiscard]] std::optional<std::string> findHeader(
     const std::vector<std::pair<std::string, std::string>>& headers, std::string_view name) {
     const auto target = toLowerCopy(name);
@@ -367,9 +413,8 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
     return std::nullopt;
 }
 
-/// Parse a `Set-Cookie` header value and return the named cookie's
-/// value, or nullopt when absent. Delegates to the shared cookies
-/// parser — same shape used by the executor's per-actor jar.
+/// Value of the named cookie in a `Set-Cookie` value via the shared cookies parser; nullopt when
+/// absent.
 [[nodiscard]] std::optional<std::string> parseSetCookieValue(std::string_view header,
                                                              std::string_view cookieName) {
     auto parsed = cookies::parseSetCookie(header);
@@ -382,13 +427,8 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
     return std::move(parsed->second);
 }
 
-/// Look up a cookie across all `Set-Cookie` headers present on the
-/// response. Returns the value of the LAST matching cookie when more
-/// than one collides — RFC 6265 §5.3 step 11 says a newer cookie
-/// replaces an older one in the user-agent's store, and that's the
-/// behavior browsers and curl ship. Pinning "last wins" here makes
-/// schemas portable: the same response that works in a browser
-/// resolves the same way through the engine.
+/// Look up a cookie across all `Set-Cookie` headers; the LAST match wins (RFC 6265 §5.3 step 11, as
+/// browsers and curl do) so schemas resolve the same way as in a browser.
 [[nodiscard]] std::optional<std::string> findCookie(
     const std::vector<std::pair<std::string, std::string>>& headers, std::string_view name) {
     std::optional<std::string> latest;
@@ -403,48 +443,17 @@ const json* walkPathOrNull(const json& doc, std::string_view sourcePath) {
     return latest;
 }
 
-/// Result of running a regex extraction. We need to distinguish three
-/// outcomes — match found, pattern was syntactically valid but didn't
-/// match anything, pattern itself was malformed — so the trace can
-/// surface "your pattern is broken" instead of conflating it with
-/// "your pattern is fine but the response didn't match".
-enum class RegexOutcome : std::uint8_t { Matched, NoMatch, InvalidPattern };
-
-struct RegexResult {
-    RegexOutcome outcome{RegexOutcome::NoMatch};
-    std::string value;  ///< Populated only when outcome == Matched.
-};
-
-/// Run a regex against the body. On a match, returns capture group 1
-/// when present, otherwise the whole match.
-///
-/// Returns `InvalidPattern` (not an exception) when std::regex rejects
-/// the pattern as malformed — extraction code maps that to its own
-/// trace outcome so the user sees a distinct row in the timeline.
-[[nodiscard]] RegexResult findRegex(std::string_view body, std::string_view pattern) {
-    try {
-        const std::regex re{std::string{pattern}};
-        std::match_results<std::string_view::const_iterator> match;
-        if (!std::regex_search(body.begin(), body.end(), match, re)) {
-            return RegexResult{RegexOutcome::NoMatch, {}};
-        }
-        if (match.size() >= 2 && match[1].matched) {
-            return RegexResult{RegexOutcome::Matched, match[1].str()};
-        }
-        return RegexResult{RegexOutcome::Matched, match[0].str()};
-    } catch (const std::regex_error&) {
-        return RegexResult{RegexOutcome::InvalidPattern, {}};
-    }
-}
-
-/// Walk a JSONPath against an already-parsed JSON document and append
-/// the trace. Shared by `extractFromJsonDetailed` and the new
-/// response-aware overload.
+/// Walk a JSONPath against a parsed document and append the trace.
 void resolveJsonPath(const json& doc,
                      const Extraction& ext,
                      ExtractionTrace& trace,
                      DetailedExtraction& out) {
-    const auto* node = walkPathOrNull(doc, ext.sourcePath);
+    const auto hit = walkJson(doc, ext.sourcePath);
+    if (!hit) {
+        trace.outcome = ExtractionTrace::Outcome::InvalidPattern;
+        return;
+    }
+    const auto* node = *hit;
     if (node == nullptr) {
         trace.outcome = ExtractionTrace::Outcome::Missing;
         return;
@@ -459,7 +468,6 @@ void resolveJsonPath(const json& doc,
     out.values[ext.variableName] = std::move(value);
 }
 
-/// Whether at least one extraction in the list needs the JSON body.
 [[nodiscard]] bool anyNeedsJsonParse(const std::vector<Extraction>& extractions) {
     return std::ranges::any_of(
         extractions, [](const auto& ext) { return ext.source == Extraction::Source::JsonPath; });
@@ -469,8 +477,8 @@ void resolveJsonPath(const json& doc,
 
 std::expected<DetailedExtraction, ReqloomError> extractFromJsonDetailed(
     const OperationId& opId, const std::string& body, const std::vector<Extraction>& extractions) {
-    // Body-only entry point: zero status code and no headers means
-    // Header / StatusCode / Cookie / Regex all surface as Missing.
+    // Body-only: with no status or headers, Header / StatusCode / Cookie / Regex surface as
+    // Missing.
     return extractFromResponseDetailed(opId, body, 0, {}, extractions);
 }
 
@@ -488,15 +496,12 @@ std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
     json doc;
     bool docParsed = false;
     if (anyNeedsJsonParse(extractions)) {
-        try {
-            doc = json::parse(body);
-            docParsed = true;
-        } catch (const json::parse_error& e) {
-            return std::unexpected(
-                ReqloomError{ErrorCode::ResponseParse,
-                             ErrorClass::Extraction,
-                             std::string("response is not valid JSON: ") + e.what()});
+        auto parsed = parseResponseJson(body);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
         }
+        doc = std::move(*parsed);
+        docParsed = true;
     }
 
     out.traces.reserve(extractions.size());
@@ -510,8 +515,7 @@ std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
         switch (ext.source) {
             case Extraction::Source::JsonPath: {
                 if (!docParsed) {
-                    // Defensive — we said anyNeedsJsonParse was false yet
-                    // a JsonPath slipped through. Mark as Missing rather
+                    // Defensive: a JsonPath slipped past anyNeedsJsonParse; mark Missing rather
                     // than UB.
                     trace.outcome = ExtractionTrace::Outcome::Missing;
                     break;
@@ -533,7 +537,6 @@ std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
             }
             case Extraction::Source::StatusCode: {
                 if (statusCode == 0) {
-                    // No status was passed in (body-only call site).
                     trace.outcome = ExtractionTrace::Outcome::Missing;
                     break;
                 }
@@ -556,32 +559,29 @@ std::expected<DetailedExtraction, ReqloomError> extractFromResponseDetailed(
                 break;
             }
             case Extraction::Source::Regex: {
-                const auto rx = findRegex(body, ext.sourcePath);
+                const auto rx = guardedRegexSearch(body, ext.sourcePath);
                 switch (rx.outcome) {
-                    case RegexOutcome::Matched:
+                    case RegexSearchResult::Outcome::Matched:
                         trace.value = truncateForTrace(rx.value);
                         trace.outcome = ExtractionTrace::Outcome::Resolved;
                         out.values[ext.variableName] = rx.value;
                         break;
-                    case RegexOutcome::NoMatch:
-                        // Pattern compiled fine; the body just didn't
-                        // match. Same outcome as a JsonPath that walks
-                        // the document successfully but finds no node.
+                    case RegexSearchResult::Outcome::NoMatch:
+                        // Pattern compiled but did not match: same as a JsonPath that finds no
+                        // node.
                         trace.outcome = ExtractionTrace::Outcome::Missing;
                         break;
-                    case RegexOutcome::InvalidPattern:
-                        // Pattern itself was malformed — distinct from
-                        // Missing so users can fix the schema instead
-                        // of staring at a body wondering why their
-                        // capture group didn't fire.
+                    case RegexSearchResult::Outcome::Refused:
+                        // Malformed or refused pattern, or body over the subject cap: distinct from
+                        // Missing so users can fix the schema.
                         trace.outcome = ExtractionTrace::Outcome::InvalidPattern;
                         break;
                 }
                 break;
             }
             case Extraction::Source::XPath:
-                // XML parsing is post-MVP — flag for the user instead of
-                // silently failing. The trace value stays empty.
+                // XML parsing is post-MVP; flag it rather than failing silently. The trace value
+                // stays empty.
                 trace.outcome = ExtractionTrace::Outcome::Unsupported;
                 break;
         }

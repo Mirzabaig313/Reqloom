@@ -15,7 +15,13 @@ Four ways to run, and a timeline built for working out why a step failed.
 | Command palette → Run | Same |
 
 While a run is in flight, **Send** reads *Running…* and the Timeline header offers
-**Cancel**.
+**Cancel**. Cancel takes effect at once while a step is waiting between retries,
+between poll attempts, or for the keychain, and within about a second while a
+request is in flight. The step is reported as cancelled, not as a network error.
+
+A run belongs to the tab that started it. You can switch tabs while it runs; its
+response and timeline are in its own tab when you come back. Closing that tab
+cancels the run.
 
 ### Dry run
 
@@ -37,7 +43,12 @@ Two related but distinct controls:
 | **Reset caches** | Timeline header | Clear the caches *without* running |
 
 Reach for these when a run succeeds but you suspect it's reusing a stale token or
-a record from a previous run.
+a record from a previous run. Both clear cached OAuth 2 tokens for inline auth
+too.
+
+Sessions, cookies, and cached extracted values are kept **per environment**, so
+switching the environment selector never reuses another environment's login or
+ids, and these controls only clear the environment you're on.
 
 ## Seeing the chain before you run
 
@@ -59,7 +70,25 @@ shows its path, actor, extractions, and dependencies, with **Open endpoint** and
 ## The timeline
 
 Every step of the last run, expandable. Per step you get the request, the response,
-what was extracted, and on failure the error and its `E_*` code.
+what was extracted, and on failure the error and its `E_*` code. When a status
+doesn't match `expect_status`, the message quotes the API's response (up to
+4 KiB, marked as truncated beyond that) — `HTTP 422 (expected 201) —
+{"error":"email taken"}` — with secret values and token-like fields masked as
+`<redacted>`. [`failure_message.show`](/schema/secrets-and-transport/#failure-messages)
+narrows it to the fields you choose.
+
+The response body itself, with **Capture bodies** on, is shown exactly as
+received, tokens included; see [Capture bodies](/desktop/overview/#capture-bodies).
+
+A failed assertion says what was compared when you expand its row — `$.status
+was "pending", expected == "paid"` — with secrets masked.
+
+A step that has to sign in first shows that exchange as its own rows, labelled
+**Sign-in**, **Refresh** or **Token** request and response, so you can tell it
+from the operation's own request. The response panel shows only the target
+operation's own response (or its poll attempts): if the target signs in and then
+fails before it is sent, the panel stays empty and the run reads Failed, rather
+than showing the sign-in response.
 
 Two navigation aids that make a long chain tractable:
 
@@ -105,6 +134,18 @@ can reference.
 to line-diff the current response against that example — which is how you catch an
 API changing shape rather than merely breaking.
 
+Examples are kept on your machine, not in the project: one database,
+`examples.db`, in the app's data folder beside the run history, readable only by
+you and keyed by the project's `id:`. They hold full response bodies as
+received, so they are never written into the project folder where they could be
+committed. Moving the project folder keeps its examples. Each example's body can
+be up to 5 MiB.
+
+Earlier versions wrote examples to `.reqloom-responses.json` in the project
+folder. When you open such a project its examples are copied into the database
+once and the app tells you the file can be deleted; the file itself is left as
+it is.
+
 Both the tree and Diff need **Capture bodies** on.
 
 ## Run history
@@ -118,7 +159,8 @@ visible.
 per-step request, response, and extraction detail as when it ran. You can debug a
 failure from yesterday without reproducing it.
 
-**Clear** wipes history for the project.
+**Clear** wipes history for the project. Run numbers keep counting up across
+restarts and after a clear, so a number always means one run.
 
 ## Latency
 

@@ -40,8 +40,16 @@ public:
     /// Idempotent across repeated opens of the same path.
     virtual std::expected<void, ReqloomError> open(const std::filesystem::path& dbPath) = 0;
 
+    /// Reserve a run id never used by any run in this database, across processes and restarts.
+    /// Errors when the store is not open; the engine then falls back to a process-local id.
+    [[nodiscard]] virtual std::expected<RunId, ReqloomError> allocateRunId() {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "history: run id allocation unsupported"});
+    }
+
     /// Persist one event, linking it to its run (created on demand from
-    /// the RunStarted event).
+    /// the RunStarted event). A RunStarted whose id already belongs to a started run is rejected,
+    /// along with every later event for it, so runs never merge.
     virtual std::expected<void, ReqloomError> append(const RunEvent& event) = 0;
 
     /// Replay every event for one run, in seq order.

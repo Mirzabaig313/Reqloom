@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 4.0)
 
 project(reqloom
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "Workflow-aware API testing tool with auto-resolved dependency chains"
     LANGUAGES CXX
 )
@@ -112,6 +112,7 @@ endif()
 if(REQLOOM_BUILD_TESTS)
     enable_testing()
     include(CTest)
+    include(ReqloomTestIsolation)
     # Enumerate tests at ctest run time, not during the build. The default
     # POST_BUILD mode executes every test binary as a build step; our
     # ASan-instrumented, Qt/keychain-touching binaries can block past the

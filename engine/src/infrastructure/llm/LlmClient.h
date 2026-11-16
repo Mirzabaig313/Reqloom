@@ -1,8 +1,6 @@
 // LlmClient — provider-agnostic interface for the AI importer.
-//
-// The user supplies their own API key (no proxy through
-// Reqloom servers). The LLM call returns the assistant message verbatim;
-// JSON-shape validation is the importer's job, not the client's.
+// The user supplies their own API key. The call returns the assistant message verbatim; JSON-shape
+// validation is the importer's job.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>
@@ -23,9 +21,8 @@ enum class LlmProvider : std::uint8_t {
     Ollama,     ///< POST <endpoint>/api/chat (local; no API key)
 };
 
-/// Static configuration for one provider. Keys live in the OS keychain
-/// via `SecretStore` and are loaded into `apiKey` at call time; we never
-/// persist the key on `LlmConfig`.
+/// Static configuration for one provider. Keys live in the OS keychain and are loaded into `apiKey`
+/// at call time; never persisted on `LlmConfig`.
 struct LlmConfig {
     LlmProvider provider{LlmProvider::OpenAI};
     std::string endpoint;          ///< e.g. "https://api.openai.com" — no trailing slash.
@@ -67,10 +64,8 @@ public:
     LlmClient& operator=(LlmClient&&) = delete;
     virtual ~LlmClient() = default;
 
-    /// Synchronous. Returns `LlmRequestFailed` for transport / 4xx / 5xx
-    /// failures (with the response body excerpt in `detail` for
-    /// debugging); `LlmResponseInvalid` when the body decodes but is
-    /// missing the assistant message.
+    /// Synchronous. `LlmRequestFailed` for transport / 4xx / 5xx failures (body excerpt in
+    /// `detail`); `LlmResponseInvalid` when the body lacks the assistant message.
     virtual std::expected<LlmResponse, ReqloomError> complete(const LlmRequest& request) = 0;
 };
 

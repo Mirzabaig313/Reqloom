@@ -21,6 +21,7 @@ public:
     std::expected<void, ReqloomError> write(const std::string& name,
                                             const std::string& value) override;
     std::expected<void, ReqloomError> remove(const std::string& name) override;
+    [[nodiscard]] bool available() const noexcept override { return backendAvailable(); }
 };
 
 }  // namespace reqloom::engine

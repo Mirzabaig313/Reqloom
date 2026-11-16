@@ -6,7 +6,9 @@
 #include <reqloom/engine/Operation.h>
 #include <reqloom/engine/Transport.h>
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <expected>
 #include <map>
 #include <optional>
@@ -28,13 +30,20 @@ struct MultipartPart {
     [[nodiscard]] bool isFile() const noexcept { return filePath.has_value(); }
 };
 
-/// Per-send transport configuration. The executor resolves these from
-/// the active environment (`environments.<name>.transport:`) and stamps
-/// them onto every outbound request. Same shape as the public
-/// `reqloom::engine::TransportConfig` — re-aliased here so callers
-/// inside the infrastructure layer don't have to reach into the public
-/// include path.
+/// Per-send transport configuration, stamped by the executor from the active environment. Aliases
+/// the public `reqloom::engine::TransportConfig`.
 using TransportConfig = ::reqloom::engine::TransportConfig;
+
+/// Lets a transfer in flight see that its run was cancelled. Reads one atomic, takes no lock.
+struct CancelCheck {
+    const std::atomic<std::uint64_t>* cancelledRunId{nullptr};
+    std::uint64_t runId{0};
+
+    [[nodiscard]] bool requested() const noexcept {
+        return cancelledRunId != nullptr && runId != 0 &&
+               cancelledRunId->load(std::memory_order_acquire) == runId;
+    }
+};
 
 struct HttpRequest {
     HttpMethod method{HttpMethod::Get};
@@ -42,18 +51,21 @@ struct HttpRequest {
     std::map<std::string, std::string> headers;
     std::optional<std::string> body;
 
-    /// When non-empty, the request is sent as `multipart/form-data` and
-    /// `body` is ignored. The Content-Type header is set automatically
-    /// (with the boundary libcurl picks); any caller-set Content-Type
-    /// is overwritten.
+    /// When non-empty the request is sent as `multipart/form-data` and `body` is ignored; the
+    /// Content-Type is set automatically and any caller-set one is overwritten.
     std::vector<MultipartPart> multipart;
 
     std::chrono::milliseconds timeout{30'000};
 
-    /// Per-send transport overrides. Defaults are safe — TLS verified,
-    /// no proxy, 5s connect timeout — so existing callers that don't
-    /// populate this field keep their prior behavior verbatim.
+    /// Per-send transport overrides; defaults are safe (TLS verified, no proxy, 5s connect
+    /// timeout).
     TransportConfig transport;
+
+    /// When false a 3xx response is returned as is instead of being followed.
+    bool followRedirects{true};
+
+    /// When it reports a cancel, the transfer is aborted and `send` returns `ErrorCode::Cancelled`.
+    CancelCheck cancel;
 };
 
 struct HttpResponse {
@@ -72,9 +84,9 @@ public:
     HttpClient& operator=(HttpClient&&) = delete;
     virtual ~HttpClient() = default;
 
-    /// Synchronous. Network failures are surfaced as `ReqloomError`
-    /// (NetworkTimeout / NetworkDns / NetworkTls); HTTP status codes are
-    /// not — those are the caller's concern.
+    /// Synchronous. Network failures are `ReqloomError` (NetworkTimeout / NetworkDns / NetworkTls);
+    /// a transfer stopped by `request.cancel` is `Cancelled`. HTTP status codes are the caller's
+    /// concern.
     virtual std::expected<HttpResponse, ReqloomError> send(const HttpRequest& request) = 0;
 };
 

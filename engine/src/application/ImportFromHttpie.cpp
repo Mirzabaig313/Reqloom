@@ -1,12 +1,10 @@
 // ImportFromHttpie — HTTPie client export (JSON) → Project parser.
-// Sibling of ImportFromPostman. Export shape (per HTTPie's export schema):
-//   { "meta": {"format":"httpie","contentType":<...>}, "entry": <entry> }
-// where entry is a Workspace / Collection / Request / Environment.
-//
-// ponytail: path/id/url helpers mirror the other importers rather than share a
-// header. Upgrade path: extract a shared ImportSupport.h once worth it.
+// Export shape: { "meta": {...}, "entry": <Workspace|Collection|Request|Environment> }.
 
 #include "ImportFromHttpie.h"
+#include "ImportFromFileRefs.h"
+#include "ImportFromJsonHelpers.h"
+#include "ImportSupport.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -30,6 +28,7 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 using json = nlohmann::json;
 
 constexpr std::uintmax_t kMaxExportBytes = std::uintmax_t{16} * 1024 * 1024;
@@ -138,7 +137,9 @@ HttpMethod parseMethod(std::string_view methodRaw) {
     return HttpMethod::Get;
 }
 
-std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced) {
+/// Rewrite HTTPie `{{var}}` references to `{{env.<key>}}`; a dotted name is
+/// sanitised to an environment key.
+std::string rewriteTokens(std::string_view in, is::VarRefs& referenced) {
     std::string out;
     out.reserve(in.size());
     std::size_t i = 0;
@@ -163,11 +164,8 @@ std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced
         }
         if (inner.empty()) {
             out.append("{{}}");
-        } else if (inner.find('.') != std::string_view::npos) {
-            out.append("{{").append(inner).append("}}");
         } else {
-            referenced.emplace(inner);
-            out.append("{{env.").append(inner).append("}}");
+            out.append(is::envRef(inner, referenced));
         }
         i = close + 2;
     }
@@ -177,6 +175,7 @@ std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced
 struct SplitUrl {
     std::string base;
     std::string path;
+    std::string baseVar;  ///< environment key of a leading `{{var}}` base, if any
 };
 
 SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::string>& vars) {
@@ -194,7 +193,8 @@ SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::stri
             while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
                 name.remove_suffix(1);
             }
-            if (const auto it = vars.find(std::string{name}); it != vars.end()) {
+            out.baseVar = is::envKey(name);
+            if (const auto it = vars.find(out.baseVar); it != vars.end()) {
                 out.base = it->second;
             }
             std::string_view rest = noQuery.substr(close + 2);
@@ -280,32 +280,52 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
 
     Outcome outcome;
     std::vector<std::string> warnings;
-    outcome.project.defaultEnvironment = "default";
-    auto& env = outcome.project.environments["default"];
+    auto& envs = outcome.project.environments;
 
-    std::set<std::string> referencedVars;
+    is::VarRefs referencedVars;
     std::set<std::string> seenOpIds;
     std::string projectBase;
+    std::string projectBaseVar;
     bool multipleBasesWarned = false;
     const auto importedAt = nowIso8601Utc();
     auto rewrite = [&](std::string_view s) {
         return rewriteTokens(s, referencedVars);
     };
 
-    // Seed environment variables from an Environment entry or a workspace's
-    // environments (the default one wins on key conflicts).
+    // Each HTTPie environment becomes an environment; `isDefault` (else the first) is the default.
     auto absorbEnvironment = [&](const json& e) {
+        is::VarMap vars;
+        std::vector<std::string> secretKeys;
         if (e.contains("variables") && e["variables"].is_array()) {
             for (const auto& v : e["variables"]) {
                 const auto name = jsonStr(v, "name");
                 if (!name.empty()) {
-                    env[name] = rewrite(jsonStr(v, "value"));
+                    vars[is::envKey(name)] = rewrite(jsonStr(v, "value"));
+                    if (import_json::boolOr(v, "isSecret", false)) {
+                        secretKeys.push_back(is::envKey(name));
+                    }
                 }
             }
         }
+        const auto name = is::environmentName(jsonStr(e, "name"), envs);
+        envs[name] = std::move(vars);
+        for (auto& key : secretKeys) {
+            outcome.secretVariables.push_back({name, std::move(key)});
+        }
+        if (outcome.project.defaultEnvironment.empty() ||
+            import_json::boolOr(e, "isDefault", false)) {
+            outcome.project.defaultEnvironment = name;
+        }
+    };
+    const is::VarMap* env = nullptr;
+    const auto ensureDefaultEnvironment = [&] {
+        if (envs.empty()) {
+            outcome.project.defaultEnvironment = "default";
+            envs["default"];
+        }
+        env = &envs.at(outcome.project.defaultEnvironment);
     };
 
-    // Build one operation from an HTTPie Request object.
     auto buildRequest = [&](const std::string& resourceId, const json& req) {
         auto& resource = outcome.project.resources[ResourceId{resourceId}];
         if (resource.id.value.empty()) {
@@ -328,10 +348,11 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         const auto methodRaw = jsonStr(req, "method");
         op.method = parseMethod(methodRaw.empty() ? "get" : methodRaw);
 
-        const auto split = splitRawUrl(jsonStr(req, "url"), env);
+        const auto split = splitRawUrl(jsonStr(req, "url"), *env);
         if (!split.base.empty()) {
             if (projectBase.empty()) {
                 projectBase = split.base;
+                projectBaseVar = split.baseVar;
             } else if (projectBase != split.base && !multipleBasesWarned) {
                 warnings.push_back(std::format(
                     "requests target more than one host; the project baseUrl was set to `{}` — "
@@ -342,12 +363,11 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         }
         op.pathTemplate = rewrite(split.path);
 
-        // Headers + query params are List = [{name, value, enabled}].
         auto absorbList = [&](std::string_view key, std::map<std::string, std::string>& into) {
             const auto it = req.find(key);
             if (it != req.end() && it->is_array()) {
                 for (const auto& item : *it) {
-                    if (!item.is_object() || !item.value("enabled", true)) {
+                    if (!item.is_object() || !import_json::boolOr(item, "enabled", true)) {
                         continue;
                     }
                     const auto name = jsonStr(item, "name");
@@ -360,7 +380,6 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         absorbList("headers", op.headers);
         absorbList("queryParams", op.queryParams);
 
-        // Body.
         if (req.contains("body") && req["body"].is_object()) {
             const json& body = req["body"];
             const auto type = jsonStr(body, "type");
@@ -379,7 +398,7 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
                        body["form"].contains("fields") && body["form"]["fields"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["form"]["fields"]) {
-                    if (!f.is_object() || !f.value("enabled", true)) {
+                    if (!f.is_object() || !import_json::boolOr(f, "enabled", true)) {
                         continue;
                     }
                     const auto name = jsonStr(f, "name");
@@ -390,13 +409,18 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
                     if (fieldType == "file" || fieldType == "filetext") {
                         const auto fileName =
                             f.contains("file") ? jsonStr(f["file"], "name") : std::string{};
-                        form[name] = fileName.empty() ? "@" : "@" + rewrite(fileName);
+                        form[name] = import_files::fileFieldValue(
+                            fileName, op.id.value, name, warnings, rewrite);
                     } else {
-                        form[name] = rewrite(jsonStr(f, "value"));
+                        form[name] = import_files::textFieldValue(
+                            jsonStr(f, "value"), op.id.value, name, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {
                     op.bodyForm = std::move(form);
+                    if (import_json::boolOr(body["form"], "isMultipart", false)) {
+                        is::keepMultipart(op);
+                    }
                 }
             } else if (type == "file") {
                 warnings.push_back(std::format(
@@ -406,29 +430,28 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         }
 
         Provenance prov;
-        prov.source = Provenance::Source::HandWritten;  // no HTTPie-specific enum value
+        prov.source = Provenance::Source::HttpieImport;
         prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
         prov.importedAt = importedAt;
         prov.evidence["imported_from"] = "httpie";
         if (!reqName.empty()) {
             prov.evidence["httpie_name"] = reqName;
         }
-        const auto authType = req.contains("auth") ? jsonStr(req["auth"], "type") : std::string{};
-        if (!authType.empty() && authType != "none" && authType != "inherited") {
-            warnings.push_back(std::format(
-                "operation {}: request-level auth ({}) was not imported — create an actor and "
-                "attach it",
-                op.id.value,
-                authType));
-        }
+        is::warnDroppedAuth(warnings,
+                            "operation " + op.id.value,
+                            req.contains("auth") ? jsonStr(req["auth"], "type") : std::string{});
         op.provenance = std::move(prov);
 
         resource.operations.emplace(unique, std::move(op));
     };
 
-    // A collection becomes a resource named after it; its requests are ops.
     auto absorbCollection = [&](const json& col) {
         const std::string resourceId = sanitizeId(jsonStr(col, "name"), "requests");
+        if (col.contains("auth")) {
+            is::warnDroppedAuth(warnings,
+                                std::format("collection `{}`", jsonStr(col, "name")),
+                                jsonStr(col["auth"], "type"));
+        }
         if (col.contains("requests") && col["requests"].is_array()) {
             for (const auto& req : col["requests"]) {
                 if (req.is_object()) {
@@ -443,18 +466,13 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
         outcome.project.name =
             jsonStr(entry, "name").empty() ? "Imported Workspace" : jsonStr(entry, "name");
         if (entry.contains("environments") && entry["environments"].is_array()) {
-            // Default environment first so its keys win; then the rest fill gaps.
             for (const auto& e : entry["environments"]) {
-                if (e.is_object() && e.value("isDefault", false)) {
-                    absorbEnvironment(e);
-                }
-            }
-            for (const auto& e : entry["environments"]) {
-                if (e.is_object() && !e.value("isDefault", false)) {
+                if (e.is_object()) {
                     absorbEnvironment(e);
                 }
             }
         }
+        ensureDefaultEnvironment();
         if (entry.contains("collections") && entry["collections"].is_array()) {
             for (const auto& col : entry["collections"]) {
                 if (col.is_object()) {
@@ -472,15 +490,17 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
     } else if (contentType == "collection" || entry.contains("requests")) {
         outcome.project.name =
             jsonStr(entry, "name").empty() ? "Imported Collection" : jsonStr(entry, "name");
+        ensureDefaultEnvironment();
         absorbCollection(entry);
     } else if (contentType == "environment" || entry.contains("variables")) {
         outcome.project.name =
             jsonStr(entry, "name").empty() ? "Imported Environment" : jsonStr(entry, "name");
         absorbEnvironment(entry);
+        ensureDefaultEnvironment();
     } else {
-        // A bare Request entry.
         outcome.project.name =
             jsonStr(entry, "name").empty() ? "Imported Request" : jsonStr(entry, "name");
+        ensureDefaultEnvironment();
         buildRequest("requests", entry);
     }
 
@@ -489,15 +509,15 @@ std::expected<ImportFromHttpie::Outcome, ReqloomError> ImportFromHttpie::run(
     }
 
     if (!projectBase.empty()) {
-        env["baseUrl"] = projectBase;
-    } else if (!env.contains("baseUrl")) {
+        is::applyBaseUrl(envs, projectBase, projectBaseVar);
+    } else if (!env->contains("baseUrl")) {
         warnings.push_back(
             "no host could be derived from the requests — set `baseUrl` in the environment");
     }
 
-    for (const auto& ref : referencedVars) {
-        if (!env.contains(ref)) {
-            env[ref] = "";
+    is::warnRenamedVars(referencedVars, warnings);
+    for (const auto& ref : referencedVars.referenced) {
+        if (is::seedMissing(envs, ref)) {
             warnings.push_back(std::format(
                 "variable `{{{{{}}}}}` is referenced but was not defined — set it in the "
                 "environment",

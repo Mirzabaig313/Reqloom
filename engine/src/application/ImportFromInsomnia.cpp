@@ -1,14 +1,11 @@
 // ImportFromInsomnia — Insomnia v4 (JSON) → Project parser.
-// Sibling of ImportFromPostman. Insomnia exports a flat `resources` array whose
-// nodes (`workspace`/`request_group`/`request`/`environment`) reference their
-// parent by `parentId`; this walks that graph into reqloom resources/operations.
-//
-// the path/id/url helpers mirror ImportFromPostman rather than share a
-// common header — keeps this parser self-contained (the existing importers do
-// the same). Upgrade path: extract a shared ImportSupport.h once a third parser
-// needs the identical helpers.
+// Insomnia exports a flat `resources` array whose nodes reference their parent by `parentId`;
+// this walks that graph into reqloom resources/operations.
 
 #include "ImportFromInsomnia.h"
+#include "ImportFromFileRefs.h"
+#include "ImportFromJsonHelpers.h"
+#include "ImportSupport.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -33,6 +30,7 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 using json = nlohmann::json;
 
 constexpr std::uintmax_t kMaxExportBytes = std::uintmax_t{16} * 1024 * 1024;
@@ -157,10 +155,10 @@ std::string_view normalizeVarName(std::string_view inner) {
 }
 
 /// Rewrite Insomnia `{{ _.var }}` / `{{var}}` references to reqloom's
-/// `{{env.var}}` scope. Already-scoped names (containing '.') pass through.
-/// Nunjucks tags `{% ... %}` are recorded in `nunjucks` and left verbatim.
+/// `{{env.<key>}}` scope; a nested name (`{{ _.api.url }}`) flattens to `api_url`. Nunjucks
+/// tags `{% ... %}` are recorded in `nunjucks` and left verbatim.
 std::string rewriteTokens(std::string_view in,
-                          std::set<std::string>& referenced,
+                          is::VarRefs& referenced,
                           std::set<std::string>& nunjucks) {
     std::string out;
     out.reserve(in.size());
@@ -194,11 +192,8 @@ std::string rewriteTokens(std::string_view in,
         const std::string_view name = normalizeVarName(in.substr(open + 2, close - (open + 2)));
         if (name.empty()) {
             out.append("{{}}");
-        } else if (name.find('.') != std::string_view::npos) {
-            out.append("{{").append(name).append("}}");
         } else {
-            referenced.emplace(name);
-            out.append("{{env.").append(name).append("}}");
+            out.append(is::envRef(name, referenced));
         }
         i = close + 2;
     }
@@ -208,6 +203,7 @@ std::string rewriteTokens(std::string_view in,
 struct SplitUrl {
     std::string base;
     std::string path;
+    std::string baseVar;  ///< environment key of a leading `{{var}}` base, if any
 };
 
 /// Split a raw URL into base (scheme+authority, or a resolved leading variable)
@@ -220,8 +216,8 @@ SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::stri
     if (noQuery.starts_with("{{")) {
         const auto close = noQuery.find("}}");
         if (close != std::string_view::npos) {
-            const std::string varName{normalizeVarName(noQuery.substr(2, close - 2))};
-            if (const auto it = vars.find(varName); it != vars.end()) {
+            out.baseVar = is::envKey(normalizeVarName(noQuery.substr(2, close - 2)));
+            if (const auto it = vars.find(out.baseVar); it != vars.end()) {
                 out.base = it->second;
             }
             std::string_view rest = noQuery.substr(close + 2);
@@ -256,6 +252,15 @@ std::string jsonStr(const json& node, std::string_view key) {
         }
     }
     return {};
+}
+
+/// `authentication.type` of a request or group; empty (no auth) when absent, empty or disabled.
+std::string insomniaAuthType(const json& node) {
+    const auto it = node.find("authentication");
+    if (it == node.end() || !it->is_object() || import_json::boolOr(*it, "disabled", false)) {
+        return {};
+    }
+    return jsonStr(*it, "type");
 }
 
 }  // namespace
@@ -311,8 +316,8 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
 
     const json& resources = doc["resources"];
 
-    // Index nodes by _id and note the workspace(s). Insomnia references parents
-    // by parentId, so we need random access to climb the group chain.
+    // Index nodes by _id: parents are referenced by parentId, so the group chain needs random
+    // access.
     std::unordered_map<std::string, const json*> byId;
     std::set<std::string> workspaceIds;
     for (const auto& node : resources) {
@@ -338,34 +343,64 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
     }();
     outcome.project.name = workspaceName.empty() ? "Imported Collection" : workspaceName;
     outcome.project.defaultEnvironment = "default";
-    auto& env = outcome.project.environments["default"];
+    auto& envs = outcome.project.environments;
+    auto& env = envs["default"];
 
-    std::set<std::string> referencedVars;
+    is::VarRefs referencedVars;
     std::set<std::string> nunjucksTags;
     auto rewrite = [&](std::string_view s) {
         return rewriteTokens(s, referencedVars, nunjucksTags);
     };
 
-    // Environment `data` blocks seed the default environment. Later (more
-    // specific / sub-)environments overwrite earlier keys — good enough for a
-    // single flattened env.  one merged env; per-env sub-scopes would
-    // need Insomnia's environment tree preserved.
-    for (const auto& node : resources) {
-        if (node.is_object() && jsonStr(node, "_type") == "environment" && node.contains("data") &&
-            node["data"].is_object()) {
-            for (const auto& [key, value] : node["data"].items()) {
-                if (value.is_string()) {
-                    env[key] = rewrite(value.get<std::string>());
-                } else if (!value.is_null()) {
-                    env[key] = value.dump();
-                }
+    // Insomnia's base environment becomes `default`; each sub-environment holds the base values
+    // with its overrides applied. Nested `data` objects are flattened (`api.url` → `api_url`).
+    auto flatten = [&](const json& data,
+                       const std::string& prefix,
+                       is::VarMap& out,
+                       int depth,
+                       auto&& self) -> void {
+        for (const auto& [key, value] : data.items()) {
+            const auto name = prefix.empty() ? key : prefix + "." + key;
+            if (value.is_object() && depth < 16) {
+                self(value, name, out, depth + 1, self);
+            } else if (value.is_string()) {
+                out[is::envKey(name)] = rewrite(value.get<std::string>());
+            } else if (!value.is_null()) {
+                out[is::envKey(name)] = value.dump();
             }
         }
+    };
+    std::vector<std::pair<std::string, is::VarMap>> subEnvironments;
+    std::vector<std::string> overriddenBaseKeys;
+    for (const auto& node : resources) {
+        if (!node.is_object() || jsonStr(node, "_type") != "environment" ||
+            !node.contains("data") || !node["data"].is_object()) {
+            continue;
+        }
+        is::VarMap vars;
+        flatten(node["data"], std::string{}, vars, 0, flatten);
+        const auto parent = byId.find(jsonStr(node, "parentId"));
+        if (parent != byId.end() && jsonStr(*parent->second, "_type") == "environment") {
+            subEnvironments.emplace_back(jsonStr(node, "name"), std::move(vars));
+        } else {
+            is::mergeVars(env, vars, overriddenBaseKeys);
+        }
+    }
+    if (!overriddenBaseKeys.empty()) {
+        warnings.push_back(std::format(
+            "the export has more than one base environment; they were merged into `default` "
+            "in file order and later values replaced {}",
+            is::joinKeys(overriddenBaseKeys)));
+    }
+    for (auto& [name, vars] : subEnvironments) {
+        auto merged = env;
+        std::vector<std::string> overrides;
+        is::mergeVars(merged, vars, overrides);
+        envs[is::environmentName(name, envs)] = std::move(merged);
     }
 
-    // Resolve a request's owning resource id: climb parentId until the child of
-    // a workspace. The top-most request_group in that chain is the resource;
-    // requests directly under the workspace fall back to a default resource.
+    // Resolve a request's resource id: the top-most request_group below the workspace; requests
+    // directly under the workspace fall back to a default resource.
     const std::string defaultResource = sanitizeId(workspaceName, "requests");
     auto resourceForRequest = [&](const json& request) -> std::string {
         std::string topGroupName;
@@ -391,7 +426,16 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
     const auto importedAt = nowIso8601Utc();
     std::set<std::string> seenOpIds;
     std::string projectBase;
+    std::string projectBaseVar;
     bool multipleBasesWarned = false;
+
+    for (const auto& group : resources) {
+        if (group.is_object() && jsonStr(group, "_type") == "request_group") {
+            is::warnDroppedAuth(warnings,
+                                std::format("folder `{}`", jsonStr(group, "name")),
+                                insomniaAuthType(group));
+        }
+    }
 
     for (const auto& item : resources) {
         if (!item.is_object() || jsonStr(item, "_type") != "request") {
@@ -423,6 +467,7 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
         if (!split.base.empty()) {
             if (projectBase.empty()) {
                 projectBase = split.base;
+                projectBaseVar = split.baseVar;
             } else if (projectBase != split.base && !multipleBasesWarned) {
                 warnings.push_back(std::format(
                     "requests target more than one host; the project baseUrl was set to `{}` — "
@@ -433,10 +478,9 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
         }
         op.pathTemplate = rewrite(split.path);
 
-        // Query params.
         if (item.contains("parameters") && item["parameters"].is_array()) {
             for (const auto& q : item["parameters"]) {
-                if (!q.is_object() || q.value("disabled", false)) {
+                if (!q.is_object() || import_json::boolOr(q, "disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(q, "name");
@@ -446,10 +490,9 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
             }
         }
 
-        // Headers.
         if (item.contains("headers") && item["headers"].is_array()) {
             for (const auto& h : item["headers"]) {
-                if (!h.is_object() || h.value("disabled", false)) {
+                if (!h.is_object() || import_json::boolOr(h, "disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(h, "name");
@@ -459,7 +502,6 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
             }
         }
 
-        // Body.
         if (item.contains("body") && item["body"].is_object()) {
             const json& body = item["body"];
             const auto mime = jsonStr(body, "mimeType");
@@ -471,7 +513,7 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
                        body.contains("params") && body["params"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["params"]) {
-                    if (!f.is_object() || f.value("disabled", false)) {
+                    if (!f.is_object() || import_json::boolOr(f, "disabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(f, "name");
@@ -479,17 +521,21 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
                         continue;
                     }
                     if (jsonStr(f, "type") == "file") {
-                        // Insomnia stores the picked file under `fileName`. Map
-                        // to reqloom's `@path` multipart convention (empty → a
-                        // `@` placeholder the editor shows as "Choose a file…").
+                        // Insomnia stores the picked file under `fileName`; map to the `@path`
+                        // convention (empty → bare `@` placeholder).
                         const auto fileName = jsonStr(f, "fileName");
-                        form[key] = fileName.empty() ? "@" : "@" + rewrite(fileName);
+                        form[key] = import_files::fileFieldValue(
+                            fileName, op.id.value, key, warnings, rewrite);
                     } else {
-                        form[key] = rewrite(jsonStr(f, "value"));
+                        form[key] = import_files::textFieldValue(
+                            jsonStr(f, "value"), op.id.value, key, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {
                     op.bodyForm = std::move(form);
+                    if (mime == "multipart/form-data") {
+                        is::keepMultipart(op);
+                    }
                 }
             }
         }
@@ -501,12 +547,7 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
         if (!reqName.empty()) {
             prov.evidence["insomnia_name"] = reqName;
         }
-        if (item.contains("authentication") && item["authentication"].is_object() &&
-            !item["authentication"].empty()) {
-            warnings.push_back(std::format(
-                "operation {}: request-level auth was not imported — create an actor and attach it",
-                op.id.value));
-        }
+        is::warnDroppedAuth(warnings, "operation " + op.id.value, insomniaAuthType(item));
         op.provenance = std::move(prov);
 
         resource.operations.emplace(unique, std::move(op));
@@ -517,15 +558,15 @@ std::expected<ImportFromInsomnia::Outcome, ReqloomError> ImportFromInsomnia::run
     }
 
     if (!projectBase.empty()) {
-        env["baseUrl"] = projectBase;
+        is::applyBaseUrl(envs, projectBase, projectBaseVar);
     } else if (!env.contains("baseUrl")) {
         warnings.push_back(
             "no host could be derived from the requests — set `baseUrl` in the environment");
     }
 
-    for (const auto& ref : referencedVars) {
-        if (!env.contains(ref)) {
-            env[ref] = "";
+    is::warnRenamedVars(referencedVars, warnings);
+    for (const auto& ref : referencedVars.referenced) {
+        if (is::seedMissing(envs, ref)) {
             warnings.push_back(std::format(
                 "variable `{{{{{}}}}}` is referenced but was not defined — set it in the "
                 "environment",

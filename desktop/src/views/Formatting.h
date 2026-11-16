@@ -1,5 +1,5 @@
-// Display-string helpers that map engine value types to UI text.
-// Keeps enum→string switches in one place so panels stay consistent.
+// Display-string helpers mapping engine value types to UI text, keeping enum→string switches in one
+// place.
 #pragma once
 
 #include "../theming/Theme.h"
@@ -19,16 +19,12 @@ namespace reqloom::desktop::format {
 /// Uppercase HTTP verb, e.g. "POST".
 [[nodiscard]] QString method(engine::HttpMethod method);
 
-/// Status token a method verb is tinted with : GET/HEAD/OPTIONS
-/// read as safe (success), POST as creation (running/cyan), DELETE as
-/// destructive (error), PUT/PATCH as mutation (warning). Shared by the explorer
-/// chips and the request address-bar pill so the vocabulary stays consistent.
+/// Status token a method verb is tinted with: GET/HEAD/OPTIONS success, POST running, DELETE error,
+/// PUT/PATCH warning.
 [[nodiscard]] theming::StatusToken methodStatusToken(const QString& method);
 
-/// HTTP method colour for a verb  — a dedicated mnemonic hue
-/// per method, distinct from the status palette. GET blue, POST green, PUT
-/// orange, PATCH yellow, DELETE red; HEAD/OPTIONS/unknown neutral. Shared by
-/// the explorer chips, the address-bar pill, and the execution-chain view.
+/// HTTP method colour for a verb: GET blue, POST green, PUT orange, PATCH yellow, DELETE red;
+/// others neutral.
 [[nodiscard]] theming::MethodColor methodColor(const QString& method);
 
 /// Short status glyph for a step ("OK", "FAIL", "SKIP", …).
@@ -49,17 +45,12 @@ namespace reqloom::desktop::format {
 /// Label for a skip reason ("session valid", "extraction cached").
 [[nodiscard]] QString skipReason(engine::SkipReason reason);
 
-/// Narrow an engine index to the timeline model's `int` contract.
-///
-/// Engine indexes are `std::size_t`; the model and QML speak `int`. Clamping
-/// (rather than casting) keeps a hostile or corrupt history index from wrapping
-/// to a negative row that would alias a real step.
+/// Narrow an engine index to the timeline's `int` contract. Clamps rather than casts, so a corrupt
+/// history index can't wrap to a negative row aliasing a real step.
 [[nodiscard]] int boundedIndex(std::size_t index) noexcept;
 
-/// Convert unresolved-variable evidence to ordered, value-free QML maps.
-///
-/// Producer indexes become one-based UI step numbers. The result contains
-/// source names and fields only; no resolved request or secret values.
+/// Convert unresolved-variable evidence to ordered, value-free QML maps (source names and fields
+/// only, never resolved or secret values). Producer indexes become one-based step numbers.
 [[nodiscard]] QVariantList unresolvedDiagnostics(
     std::span<const engine::UnresolvedVariableDiagnostic> diagnostics);
 

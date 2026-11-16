@@ -1,10 +1,6 @@
-// ResponseBodyModel — a C++-parsed, virtualized view of a JSON response body
-// for the Body (Tree) view. Replaces the per-response JavaScript tree build
-// (which re-parsed and flattened the whole payload on every response and
-// stuttered on large bodies). The body is parsed once with QJsonDocument, the
-// tree is flattened into a pre-order node vector in C++, and only the rows
-// whose ancestors are all expanded are exposed to QML — so the ListView stays
-// virtualized and the GUI thread never walks the JSON in script.
+// ResponseBodyModel — C++-parsed, virtualized view of a JSON response body for the Body (Tree)
+// view. The body is parsed once into a pre-order node vector; only rows whose ancestors are
+// expanded reach QML. Scalars keep the text of the response (no round trip through double).
 #pragma once
 
 #include <QtQml/qqmlregistration.h>
@@ -13,8 +9,6 @@
 
 #include <cstdint>
 #include <vector>
-
-class QJsonValue;
 
 namespace reqloom::desktop::qml {
 
@@ -37,7 +31,9 @@ public:
         IsLeafRole,       ///< bool: true for scalars/null
         HasChildrenRole,  ///< bool: true for non-empty containers
         CollapsedRole,    ///< bool: this container is collapsed
-        PathRole,         ///< QString: JSONPath (e.g. $.data.items[0].id)
+        PathRole,  ///< QString: JSONPath (e.g. $.data.items[0].id); empty when not addressable
+        AddressableRole,  ///< bool: the engine's JSONPath subset reaches exactly this node
+        PathIssueRole,    ///< QString: why the node is not addressable (empty when it is)
     };
 
     explicit ResponseBodyModel(QObject* parent = nullptr) : QAbstractListModel(parent) {}
@@ -49,12 +45,12 @@ public:
     [[nodiscard]] bool isJson() const noexcept { return isJson_; }
     [[nodiscard]] int nodeCount() const noexcept { return static_cast<int>(nodes_.size()); }
 
-    /// Parse `body` and rebuild the tree. Cheap to call on every response; the
-    /// parse + flatten happen once here in C++ rather than in QML per binding.
+    /// Parse `body` and rebuild the tree; cheap to call on every response.
     void setBody(const QString& body);
     void reset();
 
-    /// Expand/collapse the container at the given visible row. No-op for leaves.
+    /// Expand/collapse the container at the given visible row, inserting or removing only its
+    /// visible descendants. No-op for leaves.
     Q_INVOKABLE void toggle(int visibleRow);
     Q_INVOKABLE void expandAll();
     Q_INVOKABLE void collapseAll();
@@ -69,14 +65,18 @@ private:
         QString value;     ///< display value (capped for leaves)
         QString rawValue;  ///< full leaf value (for copy)
         QString path;
+        QString pathIssue;  ///< non-empty when `path` would not address this node
         bool isLeaf{true};
         bool hasChildren{false};
         bool collapsed{false};
         int subtreeEnd{0};  ///< index one past this node's last descendant
     };
 
-    void walk(const QJsonValue& value, const QString& field, int depth, const QString& path);
+    friend class ResponseBodyBuilder;
+
     void rebuildVisible();
+    /// Indices of the rows a just-expanded node at `node` shows, in display order.
+    [[nodiscard]] std::vector<int> visibleDescendants(int node) const;
 
     std::vector<Node> nodes_;   ///< pre-order flattening of the whole tree
     std::vector<int> visible_;  ///< indices into nodes_ currently shown

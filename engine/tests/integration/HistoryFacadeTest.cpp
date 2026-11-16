@@ -168,6 +168,54 @@ TEST_F(HistoryFacadeFixture, history_events_replays_the_run_timeline) {
     EXPECT_TRUE(std::holds_alternative<ce::RunEnded>(events->back()));
 }
 
+TEST_F(HistoryFacadeFixture, run_ids_stay_unique_across_engine_restarts_on_one_database) {
+    // D-01: a fresh engine (an app restart, or a second process) on the same
+    // history database must start a NEW run, not merge into run 1.
+    ScratchProject project(kProjectYaml);
+    auto loaded = ce::parseProject(project.yaml());
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
+    loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
+
+    TempDb db;
+    ce::RunId firstId{};
+    {
+        ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+        ASSERT_TRUE(engine.openHistory(db.path()).has_value());
+        ce::RunContext ctx;
+        auto run = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+        ASSERT_TRUE(run.has_value()) << run.error().detail;
+        firstId = run->runId;
+    }
+
+    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ASSERT_TRUE(engine.openHistory(db.path()).has_value());
+    ce::RunContext ctx;
+    auto run = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+    ASSERT_TRUE(run.has_value()) << run.error().detail;
+    const ce::RunId secondId = run->runId;
+    EXPECT_NE(firstId.value, secondId.value);
+
+    auto runs = engine.listRuns(10);
+    ASSERT_TRUE(runs.has_value()) << runs.error().detail;
+    ASSERT_EQ(runs->size(), 2u);
+
+    for (const auto id : {firstId, secondId}) {
+        auto events = engine.historyEvents(id);
+        ASSERT_TRUE(events.has_value()) << events.error().detail;
+        std::size_t starts{};
+        std::size_t ends{};
+        for (const auto& ev : *events) {
+            starts += std::holds_alternative<ce::RunStarted>(ev) ? 1U : 0U;
+            ends += std::holds_alternative<ce::RunEnded>(ev) ? 1U : 0U;
+        }
+        EXPECT_EQ(starts, 1u) << "run " << id.value << " has events from another run";
+        EXPECT_EQ(ends, 1u) << "run " << id.value << " has events from another run";
+        ASSERT_FALSE(events->empty());
+        EXPECT_TRUE(std::holds_alternative<ce::RunStarted>(events->front()));
+        EXPECT_TRUE(std::holds_alternative<ce::RunEnded>(events->back()));
+    }
+}
+
 TEST_F(HistoryFacadeFixture, list_runs_without_open_reports_internal_error) {
     // No openHistory() call — the store is inert, so the read facade must
     // surface a clean error rather than crash or silently return nothing.

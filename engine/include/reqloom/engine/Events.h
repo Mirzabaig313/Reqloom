@@ -25,9 +25,9 @@ using TimePoint = std::chrono::system_clock::time_point;
 
 enum class SkipReason : std::uint8_t { SessionValid, ExtractionCached };
 
-/// Replaces redacted header and extraction values in events. Stable
-/// across releases so renderers, persistence, and tests can match on it.
-inline constexpr std::string_view kRedactedHeaderValue = "***REDACTED***";
+/// Replaces every redacted value in events, details and history; stable so renderers can match on
+/// it.
+inline constexpr std::string_view kRedactedHeaderValue = "<redacted>";
 
 struct RunStarted {
     RunId runId;
@@ -53,6 +53,49 @@ struct StepSkipped {
     TimePoint at;
 };
 
+/// What a request / response pair was for. Auth exchanges carry the step index of the operation
+/// that needed the session, so only `Operation` and `PollAttempt` are that operation's own.
+enum class ExchangeKind : std::uint8_t {
+    Operation,        ///< The operation's own request (each retry included).
+    SignIn,           ///< One request of an actor's sign-in flow (login steps, token endpoint).
+    SessionRefresh,   ///< An actor's `session.refresh:` request.
+    InlineAuthToken,  ///< The token request of an operation's inline OAuth2 auth.
+    PollAttempt,      ///< One `poll_until` status request.
+};
+
+/// Stable name of `kind`, used in run history and by the UIs: "operation", "sign_in",
+/// "session_refresh", "inline_auth_token", "poll_attempt".
+[[nodiscard]] constexpr std::string_view exchangeKindName(ExchangeKind kind) noexcept {
+    switch (kind) {
+        case ExchangeKind::Operation:
+            return "operation";
+        case ExchangeKind::SignIn:
+            return "sign_in";
+        case ExchangeKind::SessionRefresh:
+            return "session_refresh";
+        case ExchangeKind::InlineAuthToken:
+            return "inline_auth_token";
+        case ExchangeKind::PollAttempt:
+            return "poll_attempt";
+    }
+    return "operation";
+}
+
+/// Inverse of `exchangeKindName`; nullopt for a name this build does not know.
+[[nodiscard]] constexpr std::optional<ExchangeKind> exchangeKindFromName(
+    std::string_view name) noexcept {
+    for (const auto kind : {ExchangeKind::Operation,
+                            ExchangeKind::SignIn,
+                            ExchangeKind::SessionRefresh,
+                            ExchangeKind::InlineAuthToken,
+                            ExchangeKind::PollAttempt}) {
+        if (exchangeKindName(kind) == name) {
+            return kind;
+        }
+    }
+    return std::nullopt;
+}
+
 struct RequestPrepared {
     RunId runId;
     std::size_t stepIndex{};
@@ -61,6 +104,7 @@ struct RequestPrepared {
     std::vector<std::pair<std::string, std::string>> maskedHeaders;
     std::size_t bodySize{};
     TimePoint at;
+    ExchangeKind exchange{ExchangeKind::Operation};
 };
 
 struct ResponseReceived {
@@ -72,15 +116,13 @@ struct ResponseReceived {
     std::chrono::milliseconds elapsed{};
     TimePoint at;
 
-    /// Raw response body, populated only when the run opted in via
-    /// `RunOptions::captureResponseBodies`. Empty by default — the
-    /// engine's redaction-first contract keeps bodies off the event
-    /// surface unless a caller explicitly asks for them. When opted in,
-    /// every response is captured, including auth/login/refresh bodies
-    /// (which carry tokens), so a developer can fully debug each call.
-    /// Capped at 5 MiB. Persisted to the history store when present, so
-    /// past responses replay in full (Postman-style history).
+    /// Response body as received, populated only when the run opted in via
+    /// `RunOptions::captureResponseBodies`. Not masked: it is shown to the person and stored in
+    /// run history as it was, tokens included. Agent-facing surfaces (CLI, AI tools) must
+    /// print only `maskCapturedBody(*body, ctx)`. Capped at 5 MiB.
     std::optional<std::string> body{};
+
+    ExchangeKind exchange{ExchangeKind::Operation};
 };
 
 struct ExtractionApplied {
@@ -91,10 +133,7 @@ struct ExtractionApplied {
     TimePoint at;
 };
 
-/// Per-extraction outcome — one event per extraction declared on an op.
-/// Mirrors `ExtractionTrace` on `RunContext`. Lets the desktop timeline
-/// surface resolved values, nulls, and missing fields per step instead
-/// of the coarse-grained `ExtractionApplied` summary.
+/// Per-extraction outcome, one event per extraction declared on an op; mirrors `ExtractionTrace`.
 struct ExtractionCompleted {
     enum class Outcome : std::uint8_t { Resolved, Null, Missing, InvalidPattern, Unsupported };
 
@@ -143,11 +182,9 @@ enum class UnresolvedVariableCause : std::uint8_t {
     ExtractionUnsupported,
 };
 
-/// Safe, value-free evidence for one unresolved request variable.
-///
-/// Display strings are bounded and escaped before reaching this event. `token`
-/// excludes template braces. Source fields identify where a user can navigate;
-/// producer fields are present only when the current run proves causality.
+/// Value-free evidence for one unresolved request variable. `token` excludes template braces;
+/// source fields say where a user can navigate; producer fields appear only when the run proves
+/// causality.
 struct UnresolvedVariableDiagnostic {
     std::string token;
     VariableUseKind useKind{VariableUseKind::Unknown};
@@ -181,8 +218,7 @@ struct StepBlocked {
     TimePoint at;
 };
 
-/// One declared assertion evaluated against the final response. Streamed per
-/// assertion (like ExtractionCompleted) so the timeline shows pass/fail rows.
+/// One declared assertion evaluated against the final response, streamed per assertion.
 struct AssertionCompleted {
     RunId runId;
     std::size_t stepIndex{};
@@ -191,6 +227,9 @@ struct AssertionCompleted {
     std::string expr;
     bool passed{false};
     TimePoint at;
+
+    /// Why it failed (see `AssertionResult::detail`); empty when it passed.
+    std::string detail{};
 };
 
 struct StepCancelled {

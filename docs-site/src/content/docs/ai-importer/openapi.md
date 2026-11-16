@@ -83,8 +83,9 @@ inject:
     Authorization: "Bearer {{user.token}}"
 ```
 
-Then delete the per-operation `Authorization` header the importer generated and add
-`actor: user`. One edit per operation, and the token is never pasted anywhere.
+Then add `actor: user` to the operations that need it. The importer doesn't
+convert `securitySchemes`; it leaves one review note per `security` requirement
+it skipped, which is a handy list of the operations to update.
 
 ## Wiring dependencies
 

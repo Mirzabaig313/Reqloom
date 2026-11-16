@@ -5,8 +5,10 @@
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/ExecutionEngine.h>
 
+#include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <map>
 
 namespace reqloom::engine {
 
@@ -22,17 +24,28 @@ public:
     SchemaWriter& operator=(SchemaWriter&&) = delete;
     virtual ~SchemaWriter() = default;
 
-    /// Write `project` into `targetDir`. Creates the directory if needed,
-    /// refuses to overwrite existing files unless `overwrite` is set.
+    /// Write `project` into `targetDir`, creating it if needed; refuses to overwrite existing files
+    /// unless `overwrite`. With `overwrite` and `pruneStale`, `*.yaml` files in actors/, resources/
+    /// and environments/ that are not part of `project` are deleted.
+    ///
+    /// Unsafe actor/resource/environment ids (empty, leading dot, `/`, `\`, `:`, NUL) are rejected
+    /// and nothing is written.
+    ///
+    /// `loadedFiles` (canonical path to hash at load), when given, limits pruning to those files
+    /// and fails the write before commit if a target is on disk but not in it or a file in it
+    /// changed since load. On success it is replaced by the files now on disk.
     ///
     /// Layout produced:
     ///   targetDir/reqloom.yaml
     ///   targetDir/actors/<id>.yaml
     ///   targetDir/resources/<id>.yaml
     ///   targetDir/environments/<n>.yaml
-    virtual SchemaWriteResult write(const std::filesystem::path& targetDir,
-                                    const Project& project,
-                                    bool overwrite = false) = 0;
+    virtual SchemaWriteResult write(
+        const std::filesystem::path& targetDir,
+        const Project& project,
+        bool overwrite = false,
+        bool pruneStale = true,
+        std::map<std::filesystem::path, std::size_t>* loadedFiles = nullptr) = 0;
 };
 
 }  // namespace reqloom::engine

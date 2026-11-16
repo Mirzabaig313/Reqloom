@@ -10,8 +10,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cctype>
+#include <chrono>
 #include <expected>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1837,4 +1840,259 @@ TEST(AuthStrategy, mtls_missing_cert_path_surfaces_session_refresh_failed) {
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ce::ErrorCode::SessionRefreshFailed);
     EXPECT_NE(result.error().detail.find("cert_path"), std::string::npos);
+}
+
+// ─── Signer conformance: RFC 5849 base URI, S3 canonical URI, multipart ─────
+
+namespace {
+
+ce::ActorSession makeOAuth1Session() {
+    ce::ActorSession session;
+    session.variables["consumer_key"] = "9djdj82h48djs9d2";
+    session.variables["consumer_secret"] = "j49sk3j29djd";
+    return session;
+}
+
+std::string oauth1AuthorizationFor(const std::string& url) {
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = url;
+    ce::OAuth1TestOverrides overrides;
+    overrides.nonce = "7d8f3e4a";
+    overrides.timestampSeconds = "137131201";
+    EXPECT_TRUE(ce::signOAuth1Request(req, makeOAuth1Session(), overrides));
+    return req.headers["Authorization"];
+}
+
+ce::ActorSession makeS3Session(std::string service = "s3") {
+    ce::ActorSession session;
+    session.variables["access_key"] = "AKIAIOSFODNN7EXAMPLE";
+    session.variables["secret_key"] = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    session.variables["region"] = "us-east-1";
+    session.variables["service"] = std::move(service);
+    return session;
+}
+
+std::string canonicalUriOf(const std::string& canonicalRequest) {
+    const auto first = canonicalRequest.find('\n');
+    const auto second = canonicalRequest.find('\n', first + 1);
+    return canonicalRequest.substr(first + 1, second - first - 1);
+}
+
+}  // namespace
+
+TEST(OAuth1Signer, base_uri_lowercases_scheme_and_host_and_drops_default_port) {
+    // RFC 5849 §3.4.1.2: "http://EXAMPLE.COM:80/r%20v/X?id=123" has the base string URI
+    // "http://example.com/r%20v/X".
+    EXPECT_EQ(oauth1AuthorizationFor("HTTP://EXAMPLE.COM:80/r%20v/X?id=123"),
+              oauth1AuthorizationFor("http://example.com/r%20v/X?id=123"));
+    EXPECT_EQ(oauth1AuthorizationFor("https://Api.Example.com:443/v1/list"),
+              oauth1AuthorizationFor("https://api.example.com/v1/list"));
+}
+
+TEST(OAuth1Signer, base_uri_keeps_non_default_port_and_path_case) {
+    // RFC 5849 §3.4.1.2: "https://www.example.net:8080/?q=1" keeps its port.
+    EXPECT_NE(oauth1AuthorizationFor("https://www.example.net:8080/?q=1"),
+              oauth1AuthorizationFor("https://www.example.net/?q=1"));
+    EXPECT_NE(oauth1AuthorizationFor("http://example.com:443/a"),
+              oauth1AuthorizationFor("http://example.com/a"));
+    EXPECT_NE(oauth1AuthorizationFor("http://example.com/Path"),
+              oauth1AuthorizationFor("http://example.com/path"));
+}
+
+TEST(OAuth1Signer, random_nonce_is_64_hex_characters) {
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = "https://api.example.test/v1/things";
+    ASSERT_TRUE(ce::signOAuth1Request(req, makeOAuth1Session()));
+    const auto& auth = req.headers.at("Authorization");
+    const auto start = auth.find("oauth_nonce=\"") + 13;
+    const auto nonce = auth.substr(start, auth.find('"', start) - start);
+    EXPECT_EQ(nonce.size(), 64U);
+    EXPECT_TRUE(std::ranges::all_of(nonce, [](char c) { return std::isxdigit(c) != 0; }));
+}
+
+TEST(SigV4Signer, matches_aws_s3_get_object_example) {
+    // "Example: GET Object" from the Amazon S3 API Reference, "Signature Calculations for the
+    // Authorization Header: Transferring Payload in a Single Chunk".
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = "https://examplebucket.s3.amazonaws.com/test.txt";
+    req.headers["Range"] = "bytes=0-9";
+    ce::SigV4TestOverrides overrides;
+    overrides.amzDate = "20130524T000000Z";
+
+    ASSERT_TRUE(ce::signSigV4Request(req, makeS3Session(), overrides));
+    const auto& auth = req.headers.at("Authorization");
+    EXPECT_NE(auth.find("SignedHeaders=host;range;x-amz-content-sha256;x-amz-date"),
+              std::string::npos)
+        << auth;
+    EXPECT_NE(
+        auth.find("Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"),
+        std::string::npos)
+        << auth;
+}
+
+TEST(SigV4Signer, s3_canonical_uri_is_the_path_encoded_once) {
+    // AWS SigV4 "Create a canonical request": each path segment is URI-encoded twice, except for
+    // Amazon S3, which is encoded once. The URL already carries the once-encoded path.
+    std::string canonical;
+    ce::SigV4TestOverrides overrides;
+    overrides.amzDate = "20130524T000000Z";
+    overrides.canonicalRequestOut = &canonical;
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = "https://examplebucket.s3.amazonaws.com/photos/my%20file.txt";
+    ASSERT_TRUE(ce::signSigV4Request(req, makeS3Session(), overrides));
+    EXPECT_EQ(canonicalUriOf(canonical), "/photos/my%20file.txt");
+
+    // A literal space or a `+` on the wire normalises to the same AWS encoding.
+    ce::HttpRequest raw;
+    raw.method = ce::HttpMethod::Get;
+    raw.url = "https://examplebucket.s3.amazonaws.com/photos/my file+1.txt";
+    ASSERT_TRUE(ce::signSigV4Request(raw, makeS3Session(), overrides));
+    EXPECT_EQ(canonicalUriOf(canonical), "/photos/my%20file%2B1.txt");
+}
+
+TEST(SigV4Signer, non_s3_canonical_uri_is_encoded_twice) {
+    std::string canonical;
+    ce::SigV4TestOverrides overrides;
+    overrides.amzDate = "20150830T123600Z";
+    overrides.canonicalRequestOut = &canonical;
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Get;
+    req.url = "https://example.amazonaws.com/my%20file";
+    ASSERT_TRUE(ce::signSigV4Request(req, makeS3Session("execute-api"), overrides));
+    EXPECT_EQ(canonicalUriOf(canonical), "/my%2520file");
+}
+
+TEST(SigV4Signer, s3_multipart_body_is_signed_as_unsigned_payload) {
+    // The multipart body is serialised by the HTTP client after signing, so its hash is not
+    // known here; S3 accepts the literal UNSIGNED-PAYLOAD.
+    std::string canonical;
+    ce::SigV4TestOverrides overrides;
+    overrides.amzDate = "20130524T000000Z";
+    overrides.canonicalRequestOut = &canonical;
+
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Post;
+    req.url = "https://examplebucket.s3.amazonaws.com/upload";
+    req.multipart.push_back(ce::MultipartPart{"file", "bytes", "/tmp/a.bin", "a.bin", {}});
+    ASSERT_TRUE(ce::signSigV4Request(req, makeS3Session(), overrides));
+    EXPECT_EQ(req.headers.at("x-amz-content-sha256"), "UNSIGNED-PAYLOAD");
+    EXPECT_TRUE(canonical.ends_with("\nUNSIGNED-PAYLOAD")) << canonical;
+}
+
+TEST(SigV4Signer, non_s3_multipart_body_is_refused_rather_than_signed_with_a_wrong_hash) {
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Post;
+    req.url = "https://example.amazonaws.com/upload";
+    req.headers["X-Custom"] = "preserved";
+    req.multipart.push_back(ce::MultipartPart{"field", "value", {}, {}, {}});
+    EXPECT_FALSE(ce::signSigV4Request(req, makeS3Session("execute-api")));
+    ASSERT_EQ(req.headers.size(), 1U);
+    EXPECT_EQ(req.headers.at("X-Custom"), "preserved");
+}
+
+TEST(SigV4Signer, refusal_reason_names_the_service_for_a_non_s3_multipart_body) {
+    ce::HttpRequest req;
+    req.method = ce::HttpMethod::Post;
+    req.url = "https://example.amazonaws.com/upload";
+    req.multipart.push_back(ce::MultipartPart{"field", "value", {}, {}, {}});
+    EXPECT_EQ(ce::sigV4Refusal(req, makeS3Session("execute-api")),
+              "AWS SigV4 cannot sign a multipart upload for service 'execute-api'; only s3 is "
+              "supported");
+    EXPECT_FALSE(ce::sigV4Refusal(req, makeS3Session()).has_value()) << "s3 is signed";
+    req.multipart.clear();
+    EXPECT_FALSE(ce::sigV4Refusal(req, makeS3Session("execute-api")).has_value());
+}
+
+// ─── Token lifetime, failure causes, response text in errors ────────────────
+
+TEST(AuthStrategy, oauth2_session_lifetime_honours_expires_in_minus_margin) {
+    auto actor = makeOAuth2ClientCredsActor("https://idp.test/token", "c", "s");
+    actor.sessionTtl = std::chrono::minutes{15};
+    EXPECT_EQ(ce::sessionLifetime(actor, {{"expires_in", "300"}}), std::chrono::seconds{270});
+    // Never longer than the configured session TTL.
+    EXPECT_EQ(ce::sessionLifetime(actor, {{"expires_in", "86400"}}), std::chrono::minutes{15});
+    // A lifetime inside the margin is used as is.
+    EXPECT_EQ(ce::sessionLifetime(actor, {{"expires_in", "20"}}), std::chrono::seconds{20});
+    // Missing or unusable values keep the TTL.
+    EXPECT_EQ(ce::sessionLifetime(actor, {}), std::chrono::minutes{15});
+    EXPECT_EQ(ce::sessionLifetime(actor, {{"expires_in", "soon"}}), std::chrono::minutes{15});
+    EXPECT_EQ(ce::sessionLifetime(actor, {{"expires_in", "0"}}), std::chrono::minutes{15});
+    EXPECT_EQ(ce::sessionLifetime(actor, {{"expires_in", "-5"}}), std::chrono::minutes{15});
+
+    actor.strategy = ce::AuthStrategy::OAuth2Password;
+    EXPECT_EQ(ce::sessionLifetime(actor, {{"expires_in", "300"}}), std::chrono::seconds{270});
+    // Other strategies keep their TTL whatever their variables are called.
+    actor.strategy = ce::AuthStrategy::Chain;
+    EXPECT_EQ(ce::sessionLifetime(actor, {{"expires_in", "300"}}), std::chrono::minutes{15});
+}
+
+TEST(AuthStrategy, oauth2_invalid_json_error_does_not_quote_the_response) {
+    FakeHttpClient http;
+    http.enqueue(200, R"({"access_token":"tok-leaked-ZZ9QX)");
+
+    ce::VariableResolver resolver;
+    auto actor = makeOAuth2ClientCredsActor("https://idp.test/token", "client-x", "secret-x");
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().detail.find("not valid JSON"), std::string::npos)
+        << result.error().detail;
+    EXPECT_EQ(result.error().detail.find("tok-leaked-ZZ9QX"), std::string::npos)
+        << result.error().detail;
+}
+
+TEST(AuthStrategy, chain_network_failure_names_the_transport_error) {
+    FakeHttpClient http;  // empty queue: send() fails with "fake: queue exhausted"
+    ce::VariableResolver resolver;
+    auto actor = makeSimpleActor();
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().detail.find("queue exhausted"), std::string::npos)
+        << result.error().detail;
+}
+
+TEST(AuthStrategy, chain_status_mismatch_quotes_a_redacted_excerpt) {
+    FakeHttpClient http;
+    http.enqueue(401, R"({"error":"wrong password","access_token":"tok-should-not-show"})");
+    ce::VariableResolver resolver;
+    auto actor = makeSimpleActor();
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().detail.find("HTTP 401"), std::string::npos);
+    EXPECT_NE(result.error().detail.find("wrong password"), std::string::npos)
+        << result.error().detail;
+    EXPECT_EQ(result.error().detail.find("tok-should-not-show"), std::string::npos)
+        << result.error().detail;
+}
+
+TEST(AuthStrategy, logout_cookie_on_an_auth_response_removes_the_jar_entry) {
+    FakeHttpClient http;
+    http.enqueue(200,
+                 R"({"data":{"accessToken":"tok-abc"}})",
+                 {{"Set-Cookie", "sid=; Max-Age=0"}, {"Set-Cookie", "csrf=c-123456"}});
+    ce::VariableResolver resolver;
+    auto actor = makeSimpleActor();
+    auto auther = ce::selectAuthenticator(actor, ce::AuthDependencies{&http, &resolver});
+    ce::RunContext ctx;
+    ctx.setCookie(actor.id, "sid", "old-session-1");
+    auto result = auther->authenticate(actor, ctx, makeRctx());
+
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto jar = ctx.cookies(actor.id);
+    EXPECT_FALSE(jar.contains("sid"));
+    EXPECT_EQ(jar.at("csrf"), "c-123456");
 }

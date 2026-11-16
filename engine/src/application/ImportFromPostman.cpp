@@ -2,6 +2,9 @@
 // Engine importer, sibling of ImportFromOpenApi.
 
 #include "ImportFromPostman.h"
+#include "ImportFromFileRefs.h"
+#include "ImportFromJsonHelpers.h"
+#include "ImportSupport.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -25,23 +28,22 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 using json = nlohmann::json;
 
-/// Upper bound on the collection file we'll read (16 MiB). A Postman export is
-/// text; anything larger is almost certainly not a hand-authored collection and
-/// we refuse it rather than buffer an unbounded file from an untrusted path.
+/// Upper bound on the collection file we'll read (16 MiB); refuses unbounded files from an
+/// untrusted path.
 constexpr std::uintmax_t kMaxCollectionBytes = std::uintmax_t{16} * 1024 * 1024;
 
-/// Bounds folder nesting so a pathological (or malicious) collection can't blow
-/// the stack. Postman UIs rarely nest beyond a handful of levels.
+/// Bounds folder nesting so a malicious collection can't blow the stack.
 constexpr int kMaxItemDepth = 64;
 
 ReqloomError invalid(std::string detail) {
     return ReqloomError{ErrorCode::SchemaInvalid, ErrorClass::Schema, std::move(detail)};
 }
 
-// Containment check mirrors ImportFromOpenApi: the resolved path must live under
-// projectRoot with a separator boundary so `/proj` doesn't admit `/proj-evil`.
+// Containment: resolved path must live under projectRoot with a separator boundary (`/proj` must
+// not admit `/proj-evil`).
 [[nodiscard]] std::expected<fs::path, ReqloomError> canonicalPath(const fs::path& file,
                                                                   const fs::path& projectRoot) {
     std::error_code ec;
@@ -96,10 +98,8 @@ std::string toLowerAscii(std::string_view s) {
     return out;
 }
 
-/// Reduce an arbitrary Postman name to a reqloom-safe id: lowercase, every run
-/// of non-alphanumeric characters becomes a single '_', with leading/trailing
-/// underscores trimmed. Never contains '.', '/', or '\'. Falls back to
-/// `fallback` when the input reduces to nothing.
+/// Reduce a Postman name to a reqloom-safe id: lowercase, non-alphanumeric runs become one '_',
+/// ends trimmed; never contains '.', '/' or '\'. `fallback` when nothing remains.
 std::string sanitizeId(std::string_view name, std::string_view fallback) {
     std::string out;
     out.reserve(name.size());
@@ -146,12 +146,10 @@ HttpMethod parseMethod(std::string_view methodRaw) {
     return HttpMethod::Get;
 }
 
-/// Rewrite bare Postman `{{var}}` references to reqloom's `{{env.var}}` scope so
-/// they resolve against the imported environment. References that are already
-/// scoped (contain a '.') or are Postman dynamic variables (`{{$guid}}`) are
-/// left untouched. Every rewritten variable name is recorded in `referenced`.
+/// Rewrite Postman `{{var}}` to reqloom's `{{env.<key>}}` scope; a dotted name is one
+/// variable, sanitised to an environment key. Dynamic variables (`{{$guid}}`) are untouched.
 std::string rewriteTokens(std::string_view in,
-                          std::set<std::string>& referenced,
+                          is::VarRefs& referenced,
                           std::set<std::string>& dynamic) {
     std::string out;
     out.reserve(in.size());
@@ -169,7 +167,6 @@ std::string rewriteTokens(std::string_view in,
             break;
         }
         std::string_view inner = in.substr(open + 2, close - (open + 2));
-        // Trim ASCII whitespace around the name.
         while (!inner.empty() && (inner.front() == ' ' || inner.front() == '\t')) {
             inner.remove_prefix(1);
         }
@@ -181,29 +178,24 @@ std::string rewriteTokens(std::string_view in,
         } else if (inner.front() == '$') {
             dynamic.emplace(inner);
             out.append("{{").append(inner).append("}}");
-        } else if (inner.find('.') != std::string_view::npos) {
-            out.append("{{").append(inner).append("}}");
         } else {
-            referenced.emplace(inner);
-            out.append("{{env.").append(inner).append("}}");
+            out.append(is::envRef(inner, referenced));
         }
         i = close + 2;
     }
     return out;
 }
 
-/// A Postman URL split into a base (scheme+authority, or a resolved base
-/// variable) and the path portion. Query handling is done separately from the
-/// url object's `query` array when present.
+/// A Postman URL split into base (scheme+authority or a resolved base variable) and path; query is
+/// handled separately.
 struct SplitUrl {
     std::string base;  ///< e.g. "https://api.example.com" — may be empty.
     std::string path;  ///< always begins with '/'.
 };
 
-/// Split a raw URL string into base + path, resolving a leading `{{var}}` from
-/// the collection variables when possible.
+/// Split a raw URL into base + path, resolving a leading `{{var}}` from the collection variables
+/// when possible.
 SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::string>& vars) {
-    // Drop query + fragment; the path is everything before them.
     auto end = raw.find_first_of("?#");
     std::string_view noQuery = raw.substr(0, end == std::string_view::npos ? raw.size() : end);
 
@@ -211,8 +203,14 @@ SplitUrl splitRawUrl(std::string_view raw, const std::map<std::string, std::stri
     if (noQuery.starts_with("{{")) {
         const auto close = noQuery.find("}}");
         if (close != std::string_view::npos) {
-            const std::string varName{noQuery.substr(2, close - 2)};
-            if (const auto it = vars.find(varName); it != vars.end()) {
+            std::string_view name = noQuery.substr(2, close - 2);
+            while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) {
+                name.remove_prefix(1);
+            }
+            while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
+                name.remove_suffix(1);
+            }
+            if (const auto it = vars.find(is::envKey(name)); it != vars.end()) {
                 out.base = it->second;
             }
             std::string_view rest = noQuery.substr(close + 2);
@@ -249,9 +247,8 @@ std::string jsonStr(const json& node, std::string_view key) {
     return {};
 }
 
-/// Collect the source path(s) of a Postman `formdata` file field. `src` may be
-/// a single string or an array of strings (multiple files under one key); empty
-/// entries and a null/absent `src` yield none.
+/// Source path(s) of a Postman `formdata` file field: `src` is a string or an array; empty or
+/// absent yields none.
 std::vector<std::string> postmanFileSrcs(const json& field) {
     std::vector<std::string> out;
     const auto it = field.find("src");
@@ -311,7 +308,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
         return std::unexpected(
             invalid("postman import: not a Postman collection (missing info/item)"));
     }
-    // v2.1 schema URL check — accept v2.0 and v2.1, reject clearly-other shapes.
+    // Accept v2.0 and v2.1; reject other shapes.
     const auto schema = jsonStr(doc["info"], "schema");
     if (!schema.empty() && schema.find("v2.1") == std::string::npos &&
         schema.find("v2.0") == std::string::npos) {
@@ -328,13 +325,14 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
     outcome.project.defaultEnvironment = "default";
     auto& env = outcome.project.environments["default"];
 
-    // Collection-level variables seed the environment. These are the values
-    // {{env.var}} references resolve against.
     if (doc.contains("variable") && doc["variable"].is_array()) {
         for (const auto& v : doc["variable"]) {
             const auto key = jsonStr(v, "key");
             if (!key.empty()) {
-                env[key] = jsonStr(v, "value");
+                env[is::envKey(key)] = jsonStr(v, "value");
+                if (jsonStr(v, "type") == "secret") {
+                    outcome.secretVariables.push_back({"default", is::envKey(key)});
+                }
             }
         }
     }
@@ -342,16 +340,14 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
     const auto importedAt = nowIso8601Utc();
     const std::string defaultResource = sanitizeId(collectionName, "requests");
 
-    std::set<std::string> referencedVars;
+    is::VarRefs referencedVars;
     std::set<std::string> dynamicVars;
     std::set<std::string> seenOpIds;
     std::string projectBase;  // first non-empty base wins (see ceiling below)
     bool multipleBasesWarned = false;
 
-    // Recursive walk over the item tree. Top-level folders define resources;
-    // deeper folders fold their requests into the ancestor resource (op-name
-    // disambiguation keeps ids unique). Root-level requests land in a resource
-    // named after the collection.
+    // Top-level folders define resources; deeper folders fold into the ancestor resource;
+    // root-level requests land in a resource named after the collection.
     auto rewrite = [&](std::string_view s) {
         return rewriteTokens(s, referencedVars, dynamicVars);
     };
@@ -379,7 +375,6 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
         op.resource = ResourceId{resourceId};
         op.method = parseMethod(request.is_object() ? jsonStr(request, "method") : "get");
 
-        // ── URL → base + path (+ query) ─────────────────────────────────────
         std::string rawUrl;
         const json* urlNode = nullptr;
         if (request.is_object() && request.contains("url")) {
@@ -413,12 +408,21 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                 multipleBasesWarned = true;
             }
         }
-        op.pathTemplate = rewrite(split.path);
+        const auto pathParams = is::convertPathParams(rewrite(split.path), resourceId);
+        op.pathTemplate = pathParams.path;
+        is::VarMap pathValues;
+        if (urlNode != nullptr && urlNode->contains("variable") &&
+            (*urlNode)["variable"].is_array()) {
+            for (const auto& v : (*urlNode)["variable"]) {
+                if (const auto key = jsonStr(v, "key"); !key.empty()) {
+                    pathValues[is::identifier(key, "param")] = jsonStr(v, "value");
+                }
+            }
+        }
 
-        // Query params: prefer the url object's structured array.
         if (urlNode != nullptr && urlNode->contains("query") && (*urlNode)["query"].is_array()) {
             for (const auto& q : (*urlNode)["query"]) {
-                if (!q.is_object() || q.value("disabled", false)) {
+                if (!q.is_object() || import_json::boolOr(q, "disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(q, "key");
@@ -428,10 +432,9 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
             }
         }
 
-        // Headers.
         if (request.is_object() && request.contains("header") && request["header"].is_array()) {
             for (const auto& h : request["header"]) {
-                if (!h.is_object() || h.value("disabled", false)) {
+                if (!h.is_object() || import_json::boolOr(h, "disabled", false)) {
                     continue;
                 }
                 const auto key = jsonStr(h, "key");
@@ -441,7 +444,6 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
             }
         }
 
-        // Body.
         if (request.is_object() && request.contains("body") && request["body"].is_object()) {
             const json& body = request["body"];
             const auto mode = jsonStr(body, "mode");
@@ -451,12 +453,13 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                        body["urlencoded"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["urlencoded"]) {
-                    if (!f.is_object() || f.value("disabled", false)) {
+                    if (!f.is_object() || import_json::boolOr(f, "disabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(f, "key");
                     if (!key.empty()) {
-                        form[key] = rewrite(jsonStr(f, "value"));
+                        form[key] = import_files::textFieldValue(
+                            jsonStr(f, "value"), op.id.value, key, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {
@@ -466,7 +469,7 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                        body["formdata"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["formdata"]) {
-                    if (!f.is_object() || f.value("disabled", false)) {
+                    if (!f.is_object() || import_json::boolOr(f, "disabled", false)) {
                         continue;
                     }
                     const auto key = jsonStr(f, "key");
@@ -474,17 +477,14 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                         continue;
                     }
                     if (jsonStr(f, "type") == "file") {
-                        // Map to reqloom's `@path` file-field convention so the
-                        // request is sent as multipart/form-data with the file
-                        // attached (MultipartBuilder resolves the leading `@`).
-                        // Postman exports file fields with no path, so a bare
-                        // `@` placeholder is the normal case — the editor shows
-                        // the row as "Choose a file…", so no warning is needed.
+                        // Map to the `@path` multipart convention; Postman exports file fields with
+                        // no path, so a bare `@` placeholder is normal and needs no warning.
                         const auto srcs = postmanFileSrcs(f);
                         if (srcs.empty()) {
                             form[key] = "@";
                         } else {
-                            form[key] = "@" + rewrite(srcs.front());
+                            form[key] = import_files::fileFieldValue(
+                                srcs.front(), op.id.value, key, warnings, rewrite);
                             if (srcs.size() > 1) {
                                 warnings.push_back(std::format(
                                     "operation {}: file field `{}` had {} files; only the first "
@@ -495,11 +495,13 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                             }
                         }
                     } else {
-                        form[key] = rewrite(jsonStr(f, "value"));
+                        form[key] = import_files::textFieldValue(
+                            jsonStr(f, "value"), op.id.value, key, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {
                     op.bodyForm = std::move(form);
+                    is::keepMultipart(op);
                 }
             } else if (mode == "graphql" && body.contains("graphql") &&
                        body["graphql"].is_object()) {
@@ -520,19 +522,17 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
         if (!reqName.empty()) {
             prov.evidence["postman_name"] = reqName;
         }
-        if (request.is_object() && request.contains("auth")) {
+        is::notePathParams(pathParams, op.id.value, resourceId, pathValues, prov, warnings);
+        if (request.is_object() && request.contains("auth") &&
+            is::warnDroppedAuth(
+                warnings, "operation " + op.id.value, jsonStr(request["auth"], "type"))) {
             prov.evidence["auth"] = "request declared Postman auth — configure an actor to wire it";
-            warnings.push_back(std::format(
-                "operation {}: request-level auth was not imported — create an actor and attach "
-                "it",
-                op.id.value));
         }
         op.provenance = std::move(prov);
 
         resource.operations.emplace(unique, std::move(op));
     };
 
-    // Iterative-safe recursion via an explicit lambda with depth guard.
     auto walk =
         [&](const json& items, const std::string& resourceId, int depth, auto&& self) -> void {
         if (depth > kMaxItemDepth) {
@@ -546,8 +546,11 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
                 continue;
             }
             if (item.contains("item") && item["item"].is_array()) {
-                // Folder. A top-level folder (resourceId empty) becomes its own
-                // resource; nested folders fold into the ancestor resource.
+                if (item.contains("auth")) {
+                    is::warnDroppedAuth(warnings,
+                                        std::format("folder `{}`", jsonStr(item, "name")),
+                                        jsonStr(item["auth"], "type"));
+                }
                 const std::string childResource =
                     resourceId.empty() ? sanitizeId(jsonStr(item, "name"), defaultResource)
                                        : resourceId;
@@ -557,6 +560,11 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
             }
         }
     };
+    if (doc.contains("auth")) {
+        is::warnDroppedAuth(warnings,
+                            std::format("collection `{}`", outcome.project.name),
+                            jsonStr(doc["auth"], "type"));
+    }
     walk(doc["item"], std::string{}, 0, walk);
 
     if (outcome.project.resources.empty()) {
@@ -564,10 +572,8 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
             invalid("postman import: collection yielded zero importable requests"));
     }
 
-    // Set the environment baseUrl from the first request's host. A single
-    // project-level baseUrl is a known simplification — collections that hit
-    // multiple hosts get one baseUrl plus a warning (emitted above).
-    // single baseUrl per project; multi-host would need per-op URLs.
+    // A single project-level baseUrl from the first request's host; collections hitting multiple
+    // hosts get a warning (emitted above).
     if (!projectBase.empty()) {
         env["baseUrl"] = projectBase;
     } else if (!env.contains("baseUrl")) {
@@ -577,7 +583,8 @@ std::expected<ImportFromPostman::Outcome, ReqloomError> ImportFromPostman::run(
 
     // Surface variables that requests reference but the collection never
     // defined, so they load and can be filled in the environment editor.
-    for (const auto& ref : referencedVars) {
+    is::warnRenamedVars(referencedVars, warnings);
+    for (const auto& ref : referencedVars.referenced) {
         if (!env.contains(ref)) {
             env[ref] = "";
             warnings.push_back(std::format(

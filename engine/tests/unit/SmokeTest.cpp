@@ -62,6 +62,14 @@ TEST(EngineSmoke, RetryabilityMatchesSpec) {
     EXPECT_FALSE(ce::isRetryable(ce::ErrorCode::HookFailure));
 }
 
+TEST(EngineSmoke, NetworkConnectCodeIsARetryableNetworkError) {
+    EXPECT_EQ(ce::toCodeString(ce::ErrorCode::NetworkConnect), "E_NETWORK_CONNECT");
+    EXPECT_EQ(ce::fromCodeString("E_NETWORK_CONNECT"), ce::ErrorCode::NetworkConnect);
+    EXPECT_EQ(ce::classify(ce::ErrorCode::NetworkConnect), ce::ErrorClass::Network);
+    EXPECT_TRUE(ce::isRetryable(ce::ErrorCode::NetworkConnect));
+    EXPECT_EQ(ce::humanize(ce::ErrorCode::NetworkConnect), "Could not connect to host");
+}
+
 TEST(EngineSmoke, RunContextSessionLifecycle) {
     ce::RunContext ctx;
     const ce::ActorId vendor{"vendor"};

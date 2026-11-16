@@ -1,5 +1,5 @@
-// AppController — actor, environment, history, and resource/operation CRUD.
-// Split from AppController.cpp; see AppController.h.
+// AppController — actor, environment, history, and resource/operation CRUD (split from
+// AppController.cpp).
 #include "AppController.h"
 
 #include "ThemeController.h"
@@ -113,22 +113,6 @@ namespace {
     return engine::HttpMethod::Post;
 }
 
-[[nodiscard]] std::vector<engine::Extraction> extractionsFromPairs(
-    const std::vector<std::pair<QString, QString>>& pairs) {
-    std::vector<engine::Extraction> out;
-    for (const auto& [key, value] : pairs) {
-        if (key.isEmpty()) {
-            continue;
-        }
-        engine::Extraction ext;
-        ext.variableName = key.toStdString();
-        ext.sourcePath = value.toStdString();
-        ext.source = engine::Extraction::Source::JsonPath;
-        out.push_back(std::move(ext));
-    }
-    return out;
-}
-
 }  // namespace
 
 QStringList AppController::actorStrategies() const {
@@ -156,9 +140,8 @@ QVariantMap AppController::actorConfigMap() const {
 void AppController::setActorConfigValue(const QString& key, const QString& value) {
     auto pairs = actorConfig_.pairs();
 
-    // Contract: an empty value clears the key. Drop it if present; if it was
-    // absent, nothing changed. (Otherwise a cleared field would persist as an
-    // empty config entry via saveActorInline instead of being removed.)
+    // An empty value clears the key; otherwise a cleared field would persist as an empty config
+    // entry.
     if (value.isEmpty()) {
         if (std::erase_if(pairs, [&key](const auto& kv) { return kv.first == key; }) == 0) {
             return;
@@ -207,7 +190,6 @@ void AppController::prepareNewActor() {
     actorConfig_.clearRows();
     actorAuthExtract_.clearRows();
     actorRefreshExtract_.clearRows();
-    // One blank login step so the N-step editor always has a row to edit.
     actorAuthSteps_.rebuild({AuthStepListModel::StepSeed{
         QStringLiteral("login"), QStringLiteral("POST"), {}, {}, {}, {}}});
     emit actorEditChanged();
@@ -236,7 +218,6 @@ void AppController::prepareEditActor(const QString& actorId) {
             for (const auto& [key, value] : actor.authConfig) {
                 config.emplace_back(QString::fromStdString(key), QString::fromStdString(value));
             }
-            // Full N-step chain for the step-list editor.
             for (const auto& step : actor.authSteps) {
                 AuthStepListModel::StepSeed seed;
                 seed.id = QString::fromStdString(step.id);
@@ -281,8 +262,7 @@ void AppController::prepareEditActor(const QString& actorId) {
     actorConfig_.setPairs(std::move(config));
     actorAuthExtract_.setPairs(std::move(authEx));
     actorRefreshExtract_.setPairs(std::move(refreshEx));
-    // Guarantee the step editor always has a row (a step-based actor with no
-    // steps yet, or a non-step strategy the user may switch to step-based).
+    // Guarantee the step editor always has a row.
     if (stepSeeds.empty()) {
         stepSeeds.push_back(AuthStepListModel::StepSeed{
             QStringLiteral("login"), QStringLiteral("POST"), {}, {}, {}, {}});
@@ -296,22 +276,13 @@ void AppController::newActor() {
         emit notify(QStringLiteral("Open a project before creating an actor."), true);
         return;
     }
-    // Open a fresh actor draft as its own tab (blank id → the inline panel
-    // opens straight in edit mode).
     openActorTab(activeProject().rootPath(), QString{}, /*isNewDraft=*/true);
 }
 
 void AppController::requestActorEdit(const QString& projectRoot, const QString& actorId) {
     selectActor(projectRoot, actorId);
-    if (hasActor_) {
-        emit actorEditRequested();
-    }
-}
-
-void AppController::cancelActorDraft() {
-    // Cancelling a never-saved draft closes its tab.
-    if (tabModel()->valid(activeTabIndex())) {
-        closeTab(activeTabIndex());
+    if (hasActor_ && selectedActorId_ == actorId) {
+        beginActorEdit();
     }
 }
 
@@ -323,7 +294,7 @@ bool AppController::saveActorInline(const QString& originalId,
                                     const QString& refreshMethod,
                                     const QString& refreshPath,
                                     const QString& refreshBody) {
-    // Start from the existing actor (preserving inject headers + session TTL).
+    // Start from the existing actor to preserve inject headers and session TTL.
     engine::Actor actor;
     if (!originalId.isEmpty() && activeProject().hasProject()) {
         const auto& actors = activeProject().project().actors;
@@ -348,28 +319,28 @@ bool AppController::saveActorInline(const QString& originalId,
     const bool stepBased =
         (strategy == engine::AuthStrategy::Simple || strategy == engine::AuthStrategy::Chain);
     if (stepBased) {
-        // Rebuild the whole login chain from the step-list editor.
-        actor.authSteps.clear();
+        std::vector<AuthStepEdit> edits;
         for (int i = 0; i < actorAuthSteps_.count(); ++i) {
-            engine::AuthStep step;
-            step.id = actorAuthSteps_.idAt(i).trimmed().toStdString();
-            if (step.id.empty()) {
-                step.id = (i == 0) ? std::string{"login"} : "step" + std::to_string(i + 1);
+            AuthStepEdit edit;
+            edit.id = actorAuthSteps_.idAt(i).trimmed().toStdString();
+            if (edit.id.empty()) {
+                edit.id = (i == 0) ? std::string{"login"} : "step" + std::to_string(i + 1);
             }
-            step.method = httpMethodFromLabel(actorAuthSteps_.methodAt(i));
-            step.pathTemplate = actorAuthSteps_.pathAt(i).trimmed().toStdString();
+            edit.method = httpMethodFromLabel(actorAuthSteps_.methodAt(i));
+            edit.pathTemplate = actorAuthSteps_.pathAt(i).trimmed().toStdString();
             const QString body = actorAuthSteps_.bodyAt(i).trimmed();
-            step.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
+            edit.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
                                                : std::optional<std::string>{body.toStdString()};
             bool okExpect = false;
             const int expect = actorAuthSteps_.expectAt(i).trimmed().toInt(&okExpect);
-            step.expectStatus = okExpect ? std::optional<int>{expect} : std::optional<int>{};
-            const auto* extractModel = actorAuthSteps_.extractModelAt(i);
-            if (extractModel != nullptr) {
-                step.extractions = extractionsFromPairs(extractModel->pairs());
+            edit.expectStatus = okExpect ? std::optional<int>{expect} : std::optional<int>{};
+            if (const auto* extractModel = actorAuthSteps_.extractModelAt(i);
+                extractModel != nullptr) {
+                edit.extractions = extractModel->pairs();
             }
-            actor.authSteps.push_back(std::move(step));
+            edits.push_back(std::move(edit));
         }
+        actor.authSteps = mergeAuthSteps(actor.authSteps, edits);
     } else {
         actor.authSteps.clear();
     }
@@ -384,26 +355,22 @@ bool AppController::saveActorInline(const QString& originalId,
         const QString body = refreshBody.trimmed();
         refresh.bodyTemplate = body.isEmpty() ? std::optional<std::string>{}
                                               : std::optional<std::string>{body.toStdString()};
-        refresh.extractions = extractionsFromPairs(actorRefreshExtract_.pairs());
+        refresh.extractions = mergeExtractions(refresh.extractions, actorRefreshExtract_.pairs());
         actor.refresh = std::move(refresh);
     } else {
         actor.refresh.reset();
     }
 
     QString error;
-    // Point the read-only selection at the (about-to-exist) actor so onSaved —
-    // which runs synchronously inside saveActor on success — re-seeds it (covers
-    // create with an empty originalId, and rename). Restore on failure so a
-    // rejected save leaves the draft identity intact (an empty name still reads
-    // as a "New actor" draft in the panel).
+    // Point the selection at the about-to-exist actor so onSaved (synchronous inside saveActor)
+    // re-seeds it; restore on failure so a rejected save keeps the draft identity.
     const QString savedName = name.trimmed();
     const QString prevId = selectedActorId_;
     const QString prevName = selectedActorName_;
     selectedActorId_ = savedName;
     selectedActorName_ = savedName;
     if (activeProject().saveActor(originalId, actor, error)) {
-        // Point the active actor tab at the saved id (a draft's blank id
-        // becomes the real name) so switching away/back finds it.
+        // A draft's blank id becomes the real name, so point the actor tab at it.
         if (tabModel()->valid(activeTabIndex()) &&
             tabModel()->stateAt(activeTabIndex()).kind == TabState::Kind::Actor) {
             TabState& tab = tabModel()->stateAt(activeTabIndex());
@@ -434,6 +401,7 @@ void AppController::deleteActor(const QString& actorId) {
 void AppController::prepareNewEnvironment() {
     envVars_.clearRows();
     editEnvBaseUrl_.clear();
+    envBaseline_ = {};
     emit editEnvBaseUrlChanged();
 }
 
@@ -462,6 +430,7 @@ void AppController::prepareEditEnvironment(const QString& name) {
             }
         }
     }
+    envBaseline_ = {name, editEnvBaseUrl_, pairs};
     envVars_.setPairs(std::move(pairs));
     emit editEnvBaseUrlChanged();
 }
@@ -469,7 +438,6 @@ void AppController::prepareEditEnvironment(const QString& name) {
 bool AppController::saveEnvironmentEdits(const QString& originalName, const QString& name) {
     std::map<std::string, std::string> variables;
     for (const auto& [key, value] : envVars_.pairs()) {
-        // Skip a stray baseUrl row — the dedicated field is authoritative.
         if (!key.isEmpty() && key != QStringLiteral("baseUrl")) {
             variables.insert_or_assign(key.toStdString(), value.toStdString());
         }
@@ -478,9 +446,19 @@ bool AppController::saveEnvironmentEdits(const QString& originalName, const QStr
     if (!baseUrl.isEmpty()) {
         variables.insert_or_assign(std::string{"baseUrl"}, baseUrl.toStdString());
     }
+    // Saving never switches environments; onSaved follows a rename of the active one.
+    if (!originalName.trimmed().isEmpty() && originalName.trimmed() == environment_) {
+        environmentRenameTarget_ = name.trimmed();
+    }
     QString error;
-    if (activeProject().saveEnvironment(originalName, name, variables, error)) {
-        setEnvironment(name.trimmed());
+    const bool ok = activeProject().saveEnvironment(originalName, name, variables, error);
+    environmentRenameTarget_.clear();
+    if (ok) {
+        if (!originalName.trimmed().isEmpty() && originalName.trimmed() != name.trimmed()) {
+            runController_->renameEnvironment(
+                activeProject().rootPath(), originalName.trimmed(), name.trimmed());
+        }
+        envBaseline_ = {name.trimmed(), editEnvBaseUrl_, envVars_.pairs()};
         emit notify(QStringLiteral("Saved environment “%1”").arg(name.trimmed()), false);
         return true;
     }
@@ -489,9 +467,14 @@ bool AppController::saveEnvironmentEdits(const QString& originalName, const QStr
 }
 
 void AppController::deleteEnvironment(const QString& name) {
+    const bool wasActive = name.trimmed() == environment_;
     QString error;
     if (activeProject().deleteEnvironment(name, error)) {
-        emit notify(QStringLiteral("Deleted environment “%1”").arg(name), false);
+        runController_->forgetEnvironment(activeProject().rootPath(), name.trimmed());
+        emit notify(wasActive ? QStringLiteral("Deleted environment “%1”; now using “%2”")
+                                    .arg(name.trimmed(), environment_)
+                              : QStringLiteral("Deleted environment “%1”").arg(name.trimmed()),
+                    false);
     } else {
         emit notify(error, true);
     }
@@ -505,8 +488,8 @@ void AppController::openProjectHistory(const QString& projectRoot) {
     if (base.isEmpty() || projectRoot.isEmpty()) {
         return;
     }
-    // Hash the canonical project path so each project maps to a stable,
-    // filesystem-safe database name without leaking the path or colliding.
+    // Hash the canonical path for a stable, filesystem-safe database name that doesn't leak the
+    // path.
     const QString canonical = QFileInfo(projectRoot).canonicalFilePath();
     const QString key = canonical.isEmpty() ? projectRoot : canonical;
     const QString digest = QString::fromLatin1(
@@ -528,8 +511,7 @@ void AppController::refreshHistory() {
     }
     auto runs = bootstrapper_->engine().listRuns(100);
     if (!runs) {
-        // History is best-effort UI; an unopened/unavailable store just
-        // shows an empty list rather than surfacing an error to the user.
+        // History is best-effort UI: an unavailable store shows an empty list.
         history_.reset();
         return;
     }
@@ -538,6 +520,10 @@ void AppController::refreshHistory() {
 
 void AppController::clearHistory() {
     if (!bootstrapper_) {
+        return;
+    }
+    if (runController_->isRunning()) {
+        emit notify(tr("Run history can't be cleared while a run is in progress."), true);
         return;
     }
     auto cleared = bootstrapper_->engine().clearHistory();
@@ -558,9 +544,11 @@ void AppController::replayRun(qulonglong runId) {
         emit notify(QString::fromStdString(events.error().detail), true);
         return;
     }
+    if (!focusReplayTab(*events)) {
+        return;
+    }
 
-    // Rebuild the live timeline from the persisted events, reusing the same
-    // formatting the live run path applies so a replayed run reads identically.
+    // Reuse the live run path's formatting so a replayed run reads identically.
     timeline_.reset();
     const auto joinHeaders = [](const std::vector<std::pair<std::string, std::string>>& headers) {
         QString out;
@@ -602,11 +590,13 @@ void AppController::replayRun(qulonglong runId) {
                                             QString::fromStdString(e.op.value),
                                             format::skipReason(e.reason));
                 } else if constexpr (std::is_same_v<T, engine::RequestPrepared>) {
-                    timeline_.onRequestPrepared(format::boundedIndex(e.stepIndex),
-                                                format::method(e.method),
-                                                QString::fromStdString(e.url),
-                                                joinHeaders(e.maskedHeaders),
-                                                static_cast<int>(e.bodySize));
+                    timeline_.onRequestPrepared(
+                        format::boundedIndex(e.stepIndex),
+                        format::method(e.method),
+                        QString::fromStdString(e.url),
+                        joinHeaders(e.maskedHeaders),
+                        static_cast<int>(e.bodySize),
+                        QString::fromLatin1(engine::exchangeKindName(e.exchange).data()));
                 } else if constexpr (std::is_same_v<T, engine::ResponseReceived>) {
                     timeline_.onResponseReceived(
                         format::boundedIndex(e.stepIndex),
@@ -614,7 +604,8 @@ void AppController::replayRun(qulonglong runId) {
                         joinHeaders(e.headers),
                         static_cast<int>(e.bodySize),
                         static_cast<qint64>(e.elapsed.count()),
-                        e.body ? QString::fromStdString(*e.body) : QString{});
+                        e.body ? QString::fromStdString(*e.body) : QString{},
+                        QString::fromLatin1(engine::exchangeKindName(e.exchange).data()));
                 } else if constexpr (std::is_same_v<T, engine::ExtractionCompleted>) {
                     timeline_.onExtractionCompleted(format::boundedIndex(e.stepIndex),
                                                     QString::fromStdString(e.op.value),
@@ -627,7 +618,8 @@ void AppController::replayRun(qulonglong runId) {
                                                    QString::fromStdString(e.op.value),
                                                    QString::fromStdString(e.name),
                                                    QString::fromStdString(e.expr),
-                                                   e.passed);
+                                                   e.passed,
+                                                   QString::fromStdString(e.detail));
                 } else if constexpr (std::is_same_v<T, engine::StepFailed>) {
                     timeline_.onStepFailed(format::boundedIndex(e.stepIndex),
                                            QString::fromStdString(e.op.value),
@@ -646,6 +638,37 @@ void AppController::replayRun(qulonglong runId) {
     }
 
     emit runReplayed();
+}
+
+bool AppController::focusReplayTab(const std::vector<engine::RunEvent>& events) {
+    QString target;
+    for (const auto& event : events) {
+        if (const auto* started = std::get_if<engine::RunStarted>(&event); started != nullptr) {
+            target = QString::fromStdString(started->target.value);
+            break;
+        }
+    }
+    if (target.isEmpty()) {
+        emit notify(tr("This run recorded no steps to replay."), true);
+        return false;
+    }
+    const qsizetype dot = target.indexOf(QLatin1Char('.'));
+    if (dot <= 0 || !activeProject().hasProject() ||
+        activeProject().findOperation(engine::OperationId{target.toStdString()}) == nullptr) {
+        emit notify(
+            tr("“%1” is no longer in this project, so its run can't be replayed.").arg(target),
+            true);
+        return false;
+    }
+    const RunTabRouter::TabKey key{static_cast<int>(TabState::Kind::Operation), target};
+    if (runRouter_.originIs(key)) {
+        emit notify(tr("“%1” has a run in progress. Replay after it finishes.").arg(target), true);
+        return false;
+    }
+    if (activeTabKey() != key) {
+        openOperationTab(activeProject().rootPath(), target.left(dot), target.mid(dot + 1));
+    }
+    return activeTabKey() == key;
 }
 
 QStringList AppController::operationIds() const {
@@ -672,8 +695,7 @@ void AppController::selectOperationById(const QString& operationId) {
     }
     const QString module = operationId.left(dot);
     const QString opName = operationId.mid(dot + 1);
-    // openOperationTab (via selectOperation) sets the module context itself;
-    // no separate selectModule (which would blank the active tab).
+    // openOperationTab sets the module context itself; selectModule would blank the active tab.
     selectOperation(module, opName);
 }
 
@@ -692,8 +714,11 @@ void AppController::activateOperationById(const QString& operationId) {
 }
 
 bool AppController::isValidName(const QString& name) const {
-    const QString trimmed = name.trimmed();
-    return !trimmed.isEmpty() && !hasIdBreakingChars(trimmed);
+    return isValidEntityName(name.trimmed().toStdString());
+}
+
+QStringList AppController::dependentsOf(const QString& kind, const QString& id) const {
+    return activeProject().dependentsOf(kind, id);
 }
 
 void AppController::createResource(const QString& name, const QString& description) {
@@ -715,7 +740,7 @@ void AppController::createProject(const QUrl& directory, const QString& name) {
         emit notify(tr("Finish the current run before creating another project."), true);
         return;
     }
-    if (!canLeaveActiveProject()) {
+    if (!canLeaveActiveProject([this, directory, name]() { createProject(directory, name); })) {
         return;
     }
     QString error;
@@ -758,8 +783,7 @@ void AppController::prepareNewEndpoint(const QString& preselectedResource) {
     }
     newOperationName_.clear();
 
-    // A default TabState is the canonical empty edit buffer. Reusing its
-    // restore path resets every request/auth/body/option/assertion field.
+    // A default TabState is the canonical empty edit buffer; its restore path resets every field.
     restoreOperationEditFrom(TabState{});
     editMethod_ = QStringLiteral("GET");
     editing_ = true;
@@ -848,7 +872,6 @@ void AppController::saveNewOperation() {
     const int draftIndex = operationDraftIndex();
     if (draftIndex < 0) {
         clearNewOperationDraftIdentity();
-        keepEditingNewOperation();
         openOperationTab(activeProject().rootPath(), targetModule, createdName);
         emit notify(QStringLiteral("Created endpoint “%1”").arg(createdId), false);
         return;
@@ -864,8 +887,8 @@ void AppController::saveNewOperation() {
     tab.chainFieldsLoaded = false;
     tab.chainSnapshotValid = false;
     tab.dirty = false;
+    tab.editBaseline.reset();
     clearNewOperationDraftIdentity();
-    keepEditingNewOperation();
     if (draftIsActive) {
         restoreActiveTab();
     }
@@ -894,8 +917,14 @@ void AppController::renameOperation(const QString& operationId, const QString& n
 
 void AppController::deleteOperation(const QString& operationId) {
     QString error;
-    if (activeProject().deleteOperation(engine::OperationId{operationId.toStdString()}, error)) {
-        emit notify(QStringLiteral("Deleted endpoint"), false);
+    QStringList dropped;
+    if (activeProject().deleteOperation(
+            engine::OperationId{operationId.toStdString()}, error, &dropped)) {
+        emit notify(dropped.isEmpty()
+                        ? QStringLiteral("Deleted endpoint")
+                        : QStringLiteral("Deleted endpoint; removed it from depends_on in %1")
+                              .arg(dropped.join(QStringLiteral(", "))),
+                    false);
     } else {
         emit notify(error, true);
     }
@@ -913,15 +942,48 @@ void AppController::renameResource(const QString& resourceId, const QString& new
 
 void AppController::deleteResource(const QString& resourceId) {
     QString error;
-    if (activeProject().deleteResource(engine::ResourceId{resourceId.toStdString()}, error)) {
-        emit notify(QStringLiteral("Deleted module"), false);
+    QStringList dropped;
+    if (activeProject().deleteResource(
+            engine::ResourceId{resourceId.toStdString()}, error, &dropped)) {
+        emit notify(
+            dropped.isEmpty()
+                ? QStringLiteral("Deleted module")
+                : QStringLiteral("Deleted module; removed its endpoints from depends_on in %1")
+                      .arg(dropped.join(QStringLiteral(", "))),
+            false);
     } else {
         emit notify(error, true);
     }
 }
 
+void AppController::onOperationRenamed(const QString& oldId, const QString& newId) {
+    exampleStore_.renameOperation(oldId, newId);
+    emit operationRenamed(oldId, newId);
+}
+
+void AppController::onOperationRemoved(const QString& operationId) {
+    emit operationRemoved(operationId);
+}
+
+void AppController::ensureEnvironmentExists() {
+    if (environments_.contains(environment_)) {
+        return;
+    }
+    setEnvironment(chooseEnvironment(
+        environments_, environmentRenameTarget_, activeProject().defaultEnvironment()));
+}
+
+QStringList AppController::loadWarnings() const {
+    QStringList out;
+    if (activeProject().hasProject()) {
+        for (const auto& warning : activeProject().project().loadWarnings) {
+            out << QString::fromStdString(warning);
+        }
+    }
+    return out;
+}
+
 void AppController::selectExample(const QString& operationId, const QString& exampleName) {
-    // Open the operation, then show the stored example response in the panel.
     selectOperationById(operationId);
     const QList<SavedResponse> saved = exampleStore_.list(operationId);
     for (const SavedResponse& r : saved) {
@@ -947,7 +1009,6 @@ void AppController::renameExample(const QString& operationId,
                                   const QString& oldName,
                                   const QString& newName) {
     if (exampleStore_.rename(operationId, oldName, newName.trimmed())) {
-        // If the renamed example is the one on screen, keep the label in sync.
         if (shownExample_ == oldName) {
             shownExample_ = newName.trimmed();
             emit responseChanged();
@@ -955,6 +1016,8 @@ void AppController::renameExample(const QString& operationId,
         refreshExamples();
         emit notify(QStringLiteral("Renamed example to \u201C%1\u201D").arg(newName.trimmed()),
                     false);
+    } else if (const QString failure = exampleStore_.lastError(); !failure.isEmpty()) {
+        emit notify(QStringLiteral("Couldn't rename example: %1").arg(failure), true);
     } else {
         emit notify(QStringLiteral("Couldn't rename example (empty or duplicate name)"), true);
     }
@@ -973,6 +1036,10 @@ void AppController::duplicateExample(const QString& operationId, const QString& 
 void AppController::deleteExample(const QString& operationId, const QString& exampleName) {
     exampleStore_.remove(operationId, exampleName);
     refreshExamples();
+    if (const QString failure = exampleStore_.lastError(); !failure.isEmpty()) {
+        emit notify(QStringLiteral("Couldn't delete example: %1").arg(failure), true);
+        return;
+    }
     emit notify(QStringLiteral("Deleted example \u201C%1\u201D").arg(exampleName), false);
 }
 

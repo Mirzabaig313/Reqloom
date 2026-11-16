@@ -19,16 +19,11 @@ public:
     };
 
     /// Parse a `.http` / `.rest` file into a Project.
-    ///
-    /// Requests are separated by `###` lines; each block is `METHOD URL`
-    /// followed by `Header: Value` lines, a blank line, then a raw body.
-    /// `@name = value` definitions seed the `default` environment, and `{{var}}`
-    /// references are rewritten to `{{env.var}}`. All requests land in one
-    /// resource named after the file. A request URL's scheme+host becomes the
-    /// environment `baseUrl`.
-    ///
-    /// Path containment: the file must resolve to a regular file under
-    /// `projectRoot`. Returns `SchemaInvalid` on unusable input.
+    /// Requests are separated by `###`; each is `METHOD URL`, `Header: Value` lines, a blank line,
+    /// a raw body.
+    /// `@name = value` definitions seed the `default` environment; `{{var}}` becomes `{{env.var}}`.
+    /// All requests land in one resource named after the file. Path containment: the file must
+    /// resolve under `projectRoot`. Returns `SchemaInvalid` on unusable input.
     [[nodiscard]] std::expected<Outcome, ReqloomError> run(
         const std::filesystem::path& file, const std::filesystem::path& projectRoot) const;
 };

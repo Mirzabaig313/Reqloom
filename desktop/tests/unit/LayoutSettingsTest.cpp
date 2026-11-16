@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <QtCore/QFile>
 #include <QtCore/QSettings>
 #include <QtCore/QString>
 #include <QtCore/QTemporaryDir>
@@ -128,7 +129,7 @@ TEST(LayoutSettingsController, rejects_wrong_shape_nonpositive_and_corrupt_split
     EXPECT_TRUE(controller.loadSplitter(QStringLiteral("negative")).isEmpty());
     EXPECT_TRUE(controller.loadSplitter(QStringLiteral("corrupt")).isEmpty());
     EXPECT_TRUE(controller.loadSplitter(QStringLiteral("bool")).isEmpty());
-    EXPECT_TRUE(controller.loadSplitter(QStringLiteral("numeric-string")).isEmpty());
+    EXPECT_EQ(controller.loadSplitter(QStringLiteral("numeric-string")), QVariantList({100, 200}));
     EXPECT_TRUE(controller.loadSplitter(QStringLiteral("floating")).isEmpty());
 
     ASSERT_TRUE(controller.saveSplitter(QStringLiteral("valid"), 120, 240));
@@ -216,8 +217,57 @@ TEST(LayoutSettingsController, defaults_invalid_values_and_unsupported_schema) {
         settings.setValue(QStringLiteral("layout/explorerCollapsed"), true);
         qml::LayoutSettingsController controller{settings};
 
-        EXPECT_FALSE(controller.explorerCollapsed());
+        EXPECT_TRUE(controller.explorerCollapsed());
     }
+}
+
+// QSettings caches a file per path within a process; reading a copy sees only what is on disk.
+TEST(LayoutSettingsController, restores_state_from_ini_written_by_a_previous_session) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString path{tempIni(dir, QStringLiteral("restart"))};
+    {
+        QSettings settings(path, QSettings::IniFormat);
+        qml::LayoutSettingsController controller{settings};
+        controller.setExplorerCollapsed(true);
+        controller.setResponseCollapsed(true);
+        controller.setResponseOrientation(QStringLiteral("vertical"));
+        ASSERT_TRUE(controller.saveSplitter(QStringLiteral("main"), 220, 440));
+        settings.sync();
+    }
+    const QString copy{tempIni(dir, QStringLiteral("restart-copy"))};
+    ASSERT_TRUE(QFile::copy(path, copy));
+
+    QSettings settings(copy, QSettings::IniFormat);
+    qml::LayoutSettingsController controller{settings};
+    EXPECT_TRUE(controller.explorerCollapsed());
+    EXPECT_TRUE(controller.responseCollapsed());
+    EXPECT_EQ(controller.responseOrientation(), QStringLiteral("vertical"));
+    EXPECT_EQ(controller.loadSplitter(QStringLiteral("main")), QVariantList({220, 440}));
+
+    controller.setExplorerCollapsed(false);
+    EXPECT_EQ(controller.loadSplitter(QStringLiteral("main")), QVariantList({220, 440}));
+    EXPECT_TRUE(controller.responseCollapsed());
+}
+
+TEST(LayoutSettingsController, reads_ini_string_forms_strictly) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString path{tempIni(dir, QStringLiteral("strings"))};
+    QFile file(path);
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.write(
+        "[layout]\nschemaVersion=1\nexplorerCollapsed=yes\nresponseCollapsed=1\n"
+        "[splitterSizes]\nmain=100, 200\nfloat=100.5, 200\nword=abc, 200\n");
+    file.close();
+
+    QSettings settings(path, QSettings::IniFormat);
+    qml::LayoutSettingsController controller{settings};
+    EXPECT_FALSE(controller.explorerCollapsed());
+    EXPECT_FALSE(controller.responseCollapsed());
+    EXPECT_EQ(controller.loadSplitter(QStringLiteral("main")), QVariantList({100, 200}));
+    EXPECT_TRUE(controller.loadSplitter(QStringLiteral("float")).isEmpty());
+    EXPECT_TRUE(controller.loadSplitter(QStringLiteral("word")).isEmpty());
 }
 
 }  // namespace reqloom::desktop::tests

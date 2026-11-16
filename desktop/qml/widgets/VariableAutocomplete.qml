@@ -1,9 +1,10 @@
 // VariableAutocomplete — a `{{` completion popup for a TextField/TextArea.
-// When the caret sits inside an unclosed `{{ … }}`, it lists the variables the
-// engine says are referenceable here (AppController.variableSuggestions) and,
-// on pick, inserts `{{token}}` at the caret. The host wires its key events in
-// via `Keys.forwardTo: [<id>.keyTarget]`; keys are only consumed while the
-// popup is open, so normal typing is unaffected.
+// When the user types inside an open `{{ … }}`, it lists the variables the
+// engine says are referenceable here (AppController.variableSuggestions),
+// prefix matches first. A click, or Enter on a row chosen with the arrow keys,
+// writes `{{token}}` over the placeholder. The host wires its key events in via
+// `Keys.forwardTo: [<id>.keyTarget]`; keys are only consumed while the popup is
+// open, so normal typing is unaffected.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -28,7 +29,10 @@ Item {
     property var _all: []
     property var _filtered: []
     property int _start: -1
-    property int _index: 0
+    // -1 until the arrow keys move the highlight; Enter accepts only then.
+    property int _index: -1
+    // Set by a typed key; moving the caret into a placeholder alone shows nothing.
+    property bool _armed: false
 
     // The active `{{…` region under the caret, or null. `start` is the index of
     // the `{{`, `query` is the (trimmed) text typed after it.
@@ -65,30 +69,40 @@ Item {
     }
 
     function refresh() {
-        const active = _active();
+        const active = root._armed ? _active() : null;
         if (!active) {
-            popup.close();
-            root._all = [];
+            root._close();
             return;
         }
         if (root._all.length === 0) {
             root._all = AppController.variableSuggestions(root.operationId);
         }
         const q = active.query.toLowerCase();
-        const out = [];
+        const prefix = [];
+        const inner = [];
+        let exact = false;
         for (let i = 0; i < root._all.length; ++i) {
             const s = root._all[i];
-            if (q.length === 0 || s.token.toLowerCase().indexOf(q) >= 0) {
-                out.push(s);
+            const t = s.token.toLowerCase();
+            const at = t.indexOf(q);
+            if (t === q) {
+                exact = true;
+            }
+            if (at === 0) {
+                prefix.push(s);
+            } else if (at > 0) {
+                inner.push(s);
             }
         }
+        const out = prefix.concat(inner);
         root._filtered = out;
         root._start = active.start;
-        if (out.length === 0) {
+        root._index = -1;
+        if (out.length === 0 || exact) {
             popup.close();
+            root._armed = false;
             return;
         }
-        root._index = 0;
         const r = field.cursorRectangle;
         popup.x = r.x;
         popup.y = r.y + r.height + 2;
@@ -97,14 +111,30 @@ Item {
         }
     }
 
+    function _close() {
+        popup.close();
+        root._armed = false;
+        root._all = [];
+    }
+
+    // End of the placeholder being completed: through its `}}` when one closes
+    // it on the same token, else the caret.
+    function _end(pos) {
+        const text = field.text;
+        const close = text.indexOf("}}", pos);
+        if (close >= 0 && /^[^{}\n]*$/.test(text.substring(pos, close))) {
+            return close + 2;
+        }
+        return pos;
+    }
+
     function apply(token) {
-        const pos = field.cursorPosition;
+        const end = root._end(field.cursorPosition);
         const insertText = "{{" + token + "}}";
-        field.remove(root._start, pos);
+        field.remove(root._start, end);
         field.insert(root._start, insertText);
         field.cursorPosition = root._start + insertText.length;
-        popup.close();
-        root._all = [];
+        root._close();
     }
 
     onOperationIdChanged: root._all = []
@@ -119,7 +149,7 @@ Item {
         }
         function onActiveFocusChanged() {
             if (!root.field.activeFocus) {
-                popup.close();
+                root._close();
             }
         }
     }
@@ -128,6 +158,9 @@ Item {
         id: keyItem
         Keys.onPressed: function (event) {
             if (!popup.visible) {
+                if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete || /[^\x00-\x1f\x7f]/.test(event.text)) {
+                    root._armed = true;
+                }
                 event.accepted = false;
                 return;
             }
@@ -137,15 +170,17 @@ Item {
             } else if (event.key === Qt.Key_Up) {
                 root._index = Math.max(root._index - 1, 0);
                 event.accepted = true;
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Tab) {
-                if (root._filtered.length > 0) {
-                    root.apply(root._filtered[root._index].token);
-                }
+            } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && root._index >= 0) {
+                root.apply(root._filtered[root._index].token);
                 event.accepted = true;
             } else if (event.key === Qt.Key_Escape) {
-                popup.close();
+                root._close();
                 event.accepted = true;
             } else {
+                // Tab and an un-navigated Enter keep their normal meaning.
+                if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    root._close();
+                }
                 event.accepted = false;
             }
         }

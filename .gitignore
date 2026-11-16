@@ -79,3 +79,10 @@ validation/discourse/findings.md
 # Anchored to repo root so only the top-level reqloom/ sample/working project
 # is ignored; test fixtures under engine/tests/fixtures/ are tracked normally.
 /reqloom/
+
+# ─── Reqloom runtime artefacts inside project directories ─────────────────────
+# The desktop app's "Capture bodies" option writes recorded response bodies
+# next to the schema. Those bodies can contain tokens and PII from a real API,
+# so they must never be committed.
+.reqloom-responses.json
+landing/node_modules

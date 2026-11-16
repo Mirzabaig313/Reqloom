@@ -1,6 +1,5 @@
-// SecretsController — QML-facing bridge over SecretManager. Exposes the list
-// of required {{secret.NAME}} entries + their keychain state, and lets QML
-// set / clear individual secrets. Never returns stored values to QML.
+// SecretsController — QML bridge over SecretManager: lists required {{secret.NAME}} entries with
+// their keychain state and sets/clears secrets. Never returns stored values.
 #pragma once
 
 #include "application/SecretManager.h"
@@ -50,6 +49,13 @@ class SecretsController : public QObject {
 
     Q_PROPERTY(SecretListModel* secrets READ secrets CONSTANT)
     Q_PROPERTY(bool backendAvailable READ backendAvailable CONSTANT)
+    /// The folder this machine records for the open project's id when the
+    /// project now lives elsewhere (moved or copied). Empty = no conflict.
+    Q_PROPERTY(QString folderConflict READ folderConflict NOTIFY folderConflictChanged)
+    /// The folder the open project is loaded from. Empty when none is loaded.
+    Q_PROPERTY(QString currentFolder READ currentFolder NOTIFY currentFolderChanged)
+    /// Why the last store/clear/confirmMove failed; empty after a success.
+    Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
 
 public:
     explicit SecretsController(QObject* parent = nullptr);
@@ -62,30 +68,46 @@ public:
 
     static SecretsController* create(QQmlEngine*, QJSEngine*) {
         static SecretsController instance;
-        // CppOwnership: don't let the QML engine delete this static singleton
-        // at teardown (would be a free of non-heap memory).
+        // CppOwnership: the QML engine must not delete this static singleton at teardown.
         QQmlEngine::setObjectOwnership(&instance, QQmlEngine::CppOwnership);
         return &instance;
     }
 
     [[nodiscard]] SecretListModel* secrets() { return &list_; }
     [[nodiscard]] bool backendAvailable() const noexcept { return manager_.backendAvailable(); }
+    [[nodiscard]] QString folderConflict() const { return folderConflict_; }
+    [[nodiscard]] QString currentFolder() const { return currentFolder_; }
+    [[nodiscard]] QString lastError() const { return lastError_; }
 
     /// Refresh the list against `project`. Call when a project loads or the
     /// dialog opens.
     Q_INVOKABLE void refresh();
-    /// Store/update a secret value. Emits notify on result.
+    /// Store/update a secret value. Emits notify on success; a failure sets lastError.
     Q_INVOKABLE bool store(const QString& name, const QString& value);
-    /// Clear a secret. Emits notify on result.
+    /// Clear a secret. Emits notify on success; a failure sets lastError.
     Q_INVOKABLE bool clear(const QString& name);
+    /// The user confirms the open project was moved here: bind its id to
+    /// this folder so its secrets work here. `shownOwner` is the recorded folder
+    /// the user was shown; the move is refused if the record changed. Emits
+    /// notify on success; a failure sets lastError and refreshes folderConflict.
+    Q_INVOKABLE bool confirmMove(const QString& shownOwner);
 
 signals:
     void notify(QString message, bool isError);
+    void folderConflictChanged();
+    void currentFolderChanged();
+    void lastErrorChanged();
 
 private:
     SecretManager manager_;
     SecretListModel list_;
     const ProjectModel* project_{nullptr};
+    QString folderConflict_;
+    QString currentFolder_;
+    QString lastError_;
+
+    void reloadList();
+    void setLastError(const QString& error);
 };
 
 }  // namespace reqloom::desktop::qml

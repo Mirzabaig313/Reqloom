@@ -179,7 +179,7 @@ reqloom lint --project Reqloom/samples/marketplace
 LINT OK — 3 actors, 5 resources, 27 operations. No errors.
 ```
 
-If you see that line, you're set. The [5-minute tour](/start/tour/) runs the
+If you see the `LINT OK` line, you're set. The [5-minute tour](/start/tour/) runs the
 sample end to end next.
 
 ## What you get
@@ -211,33 +211,36 @@ build (Apple Intel is covered by the universal `.dmg`; ARM Linux is not).
 | --- | --- | --- |
 | CMake | **4.0+** | Most package managers still ship 3.x — see [troubleshooting](#cmake-command-not-found) |
 | C++ compiler | Apple Clang 16+, Clang 18+, GCC 14+, MSVC 19.40+ | C++23 is required |
-| Qt | **6.8 LTS** | Installed by `tools/setup-qt.sh`, not by your package manager |
-| vcpkg | manifest mode | Every dependency except Qt |
+| Qt | **6.8 LTS** | Homebrew `qt@6` on macOS; `tools/setup-qt.sh` (Linux) or `tools\setup-qt.cmd` (Windows) elsewhere |
+| vcpkg | manifest mode | Every dependency except Qt. `VCPKG_ROOT` must be set |
 | Ninja | any recent | Generator used by all presets |
+| clang-format | **18** | Only for contributing: the pre-push hook checks formatting. `pipx install clang-format==18.1.8` |
 
-<Aside type="tip" title="Qt comes from aqtinstall, not vcpkg">
-`tools/setup-qt.sh` fetches pre-built Qt 6.8.3 from the official Qt mirror via
-[aqtinstall](https://github.com/miurahr/aqtinstall). Building Qt from source
-through vcpkg added 45–90 minutes to a cold CI run, so the project doesn't do
-it — and neither should you locally.
+<Aside type="tip" title="Qt doesn't come from vcpkg">
+Building Qt from source through vcpkg added 45–90 minutes to a cold CI run, so
+the project doesn't do it. The `macos-*` presets look for Homebrew Qt at
+`/opt/homebrew/opt/qt@6`. On Linux and Windows, `tools/setup-qt.sh` and
+`tools\setup-qt.cmd` fetch pre-built Qt 6.8.3 from the official Qt mirror via
+[aqtinstall](https://github.com/miurahr/aqtinstall).
 </Aside>
+
+The presets read the vcpkg toolchain from `VCPKG_ROOT`. If it isn't set,
+configure fails with *"Could not find toolchain file"*.
 
 <Tabs>
     <TabItem label="macOS">
         ```bash
-        # 1. Toolchain
-        brew install cmake ninja autoconf autoconf-archive automake libtool pkg-config
+        # 1. Toolchain and Qt
+        brew install cmake ninja autoconf autoconf-archive automake libtool pkg-config qt@6
 
         # 2. vcpkg (one-time)
         git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
         ~/vcpkg/bootstrap-vcpkg.sh
         echo 'export VCPKG_ROOT="$HOME/vcpkg"' >> ~/.zshrc && exec zsh
 
-        # 3. Reqloom + Qt
+        # 3. Reqloom
         git clone https://github.com/Mirzabaig313/Reqloom
         cd Reqloom
-        ./tools/setup-qt.sh
-        export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"
 
         # 4. Build
         cmake --preset macos-debug
@@ -246,6 +249,11 @@ it — and neither should you locally.
         # 5. Run
         ./build/macos-debug/cli/reqloom --help
         ```
+
+        CMake 4.0+ is still required — see
+        [troubleshooting](#cmake-command-not-found) if yours is older. To use an
+        aqtinstall Qt instead of Homebrew's, pass
+        `-DCMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"` when configuring.
     </TabItem>
 
     <TabItem label="Linux">
@@ -305,8 +313,8 @@ it — and neither should you locally.
 </Tabs>
 
 Release presets (`macos-release`, `linux-release`, `windows-release`) build
-optimised binaries without sanitizers. The debug presets enable ASan and UBSan,
-which makes them slower but far better for development.
+optimised binaries. Of the debug presets, only `linux-debug` enables ASan and
+UBSan; `macos-debug` and `windows-debug` build without sanitizers.
 
 Run the test suite to confirm a healthy build:
 
@@ -325,15 +333,17 @@ current build from [cmake.org](https://cmake.org/download/) or with
 
 ### CMake can't find Qt
 
-The presets don't guess at Qt's location. Set `CMAKE_PREFIX_PATH` to the
-directory `tools/setup-qt.sh` printed:
+On macOS the presets look for Homebrew's Qt at `/opt/homebrew/opt/qt@6` — run
+`brew install qt@6`, or pass `-DCMAKE_PREFIX_PATH=<your Qt>` when configuring.
+On Linux and Windows the presets don't guess; set `CMAKE_PREFIX_PATH` to the
+directory the setup script printed:
 
 ```bash
-export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"      # or .../gcc_64 on Linux
+export CMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/gcc_64"     # Linux
 ```
 
-If you skipped `setup-qt.sh` and installed Qt some other way, it must be 6.8 or
-newer — 6.7 and earlier are missing APIs the desktop app relies on.
+If you installed Qt some other way, it must be 6.8 or newer — 6.7 and earlier
+are missing APIs the desktop app relies on.
 
 ### The build fails inside vcpkg
 
@@ -377,4 +387,33 @@ cmake --build --preset macos-debug
 ```
 
 vcpkg picks up dependency changes from `vcpkg.json` automatically. If `git pull`
-brought in a Qt version bump, re-run `./tools/setup-qt.sh` first.
+brought in a Qt version bump, update Qt first (`brew upgrade qt@6`, or re-run
+`./tools/setup-qt.sh`).
+
+## Upgrading from v0.1.0-alpha.1
+
+v0.1.0-alpha.2 changes behaviour that alpha.1 projects may rely on. Run
+`reqloom lint` on each project after upgrading — most of these show up there —
+and work through the list:
+
+| What changed | What to do |
+| --- | --- |
+| **Durations.** A bare number is now whole seconds. `ttl: 3600` was read as 360 seconds and is now an hour; `connect_timeout: 30` was 3 seconds and is now 30. Operation `timeout` and `retry.backoff` are still milliseconds. | Check every bare-number `ttl`, `connect_timeout`, and `poll_until` interval/timeout/backoff. Prefer an explicit unit (`15m`, `500ms`). |
+| **Retries.** `retry.max` is now the total number of sends — `3` used to mean four sends. POST and PATCH are re-sent only when the request never reached the server. | Add 1 to `retry.max` if you want the old count. Add `retry.non_idempotent: true` to a POST or PATCH that is safe to repeat. |
+| **Secrets need a project id**, and are stored per project. Secrets saved with alpha.1 are not found. | Add `id:` to `reqloom.yaml` (opening the project in the desktop app does it for you), then enter each secret again in **Manage Secrets**. A copied project needs its own id. See [secrets](/schema/secrets-and-transport/#a-project-that-uses-secrets-needs-an-id). |
+| **`{{$.env.NAME}}`** resolves only for names listed under `allowed_env:`. | Add each process variable the project reads to `allowed_env:` in `reqloom.yaml`. Lint names the missing ones. |
+| **File uploads.** A relative `@path` resolves against the project folder, not the folder Reqloom was started from. A form value is a file only when written with one leading `@`; a variable can no longer turn a field into a file. | Move fixtures next to the project, or use absolute paths. Write `@@text` for text that starts with `@`. Put the `@` in the YAML, not in a variable's value. |
+| **JSON bodies.** A value substituted inside a JSON string is now escaped. | Remove hand-written escaping from variable values — it would be escaped twice. See [JSON bodies](/reference/variables/#json-bodies). |
+| **Stricter loading.** A project no longer loads with an unknown actor (on an operation or poll), an unknown `for_each` resource, a malformed assertion or poll condition, an unknown `$.faker` name, an unknown reference inside a function call, a regex with a repeat inside a repeat, or an ambiguous producer. | Fix what `reqloom lint` reports. For an ambiguous producer, add the intended operation to `depends_on`. |
+| **JSONPath.** `$..name` (recursive descent) is now an error; it used to be read as `$.name`. | Write the full path, or a `[?(...)]` filter. |
+| **Unsafe ids.** An actor, resource, or environment id that is empty, starts with `.`, or contains `/`, `\`, or `:` fails the load (alpha.1 refused it only when saving). | Rename it. |
+| **Imports.** Bruno and HTTPie environments keep their own names instead of being merged into `default`. Path parameters such as `/users/:id` become references that need a value. | Re-check `--env` names and CI scripts after re-importing, and wire each path parameter to an upstream extraction. |
+| **Wrong values fail the load.** A wrong type, an unknown enum value, a malformed duration, and an id defined twice used to fall back to a default (`method: PSOT` ran as `GET`, `strategy: oauth2` became `simple`, `ttl: 15 minutes` became 15m, `timeout: 30s` became 30000) or let one definition win. Each is now an error with the file, line and accepted values: `./reqloom.yaml:11:17: unknown method 'PSOT'; accepted values: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`. `assert` as a map and `for_each` without `over` are errors too; a single `depends_on` id counts as one item instead of being ignored. | Run `reqloom lint` and fix each error in turn — the load stops at the first. |
+| **Unknown keys warn.** A misspelled key is still ignored, but `reqloom lint` now prints a `WARNING:` line for it, and for an `imports` pattern that matches nothing. | Read the warnings; each one is a setting that has no effect. |
+| **Templates in assertions.** `{{…}}` in `assert`, `success_when` and `fail_when` is now substituted, as a single value, where it used to be compared as literal text. A resource named there is now a dependency, so its producer joins the chain, and an unknown scope fails the load. | Check assertions that contain `{{`; a chain may now run more steps than before. |
+| **`null` extractions.** When the latest response returns `null` for an extracted field, or leaves it out, a later reference is unresolved instead of using a value from an earlier run. Running an operation again replaces the items it produced before instead of adding to them. | Make sure the producer returns the field, or assert on it with `$.data.id != null`. |
+| **Hooks see less.** `ctx.secret` holds only the secrets the operation, its actor, the environment values it references, or the hook script itself name; `ctx.actors` holds only the operation's own actor. Anything else reads as `undefined`. | Reference a secret a hook needs from its operation, or write `ctx.secret.NAME` literally in the script. |
+| **Cookies are scoped.** A cookie is sent only to the host that set it (or its `Domain`), on a matching `Path`, over https when `Secure`, until it expires; a logout cookie is removed on any response. alpha.1 sent every cookie in an actor's jar to every host. | Check flows that relied on a cookie from one host reaching another. |
+| **OAuth 2 sessions end with the token.** An `oauth2_client_credentials` or `oauth2_password` session ends 30 seconds before `expires_in`, or at `ttl` if that is sooner. | Nothing, unless a short-lived token now causes more logins than your token endpoint allows. |
+| **Imports move credentials.** `reqloom import` and the desktop's File → Import store literal `Authorization`, `Proxy-Authorization` and `X-API-Key` header values, and variables the source marks secret, in the project's secrets and write `{{secret.NAME}}` instead. | Re-imported projects need the keychain on the machine that runs them; enter the secrets in Manage Secrets elsewhere. Pass `--no-secrets` to keep the old behaviour. |
+| **Failure messages quote more, masked.** A status mismatch quotes up to 4 KiB of the response instead of 200 bytes, with secrets and token-like fields masked. | Use `reqloom run --failure-body-size` or `failure_message.show` if CI logs get noisy. |

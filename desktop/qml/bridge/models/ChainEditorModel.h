@@ -1,8 +1,5 @@
-// ChainEditorModel — backs the whole-chain editor in the Chain tab. Each row is
-// one operation in the target's transitive dependency chain, owning its own
-// editable depends_on (DependencyEditModel) and extract (EditableKeyValueModel)
-// so every step can be wired from one place without hand-editing YAML. C++ owns
-// the per-row models; QML binds DependencyEditor/ExtractionEditor to them.
+// ChainEditorModel — backs the Chain tab's whole-chain editor. Each row is one operation in the
+// target's chain with its own depends_on and extract models (C++ owned).
 #pragma once
 
 #include "DependencyEditModel.h"
@@ -57,8 +54,8 @@ public:
     /// Replace all rows with fresh per-operation editors seeded from `seeds`.
     void rebuild(const std::vector<OpSeed>& seeds);
 
-    /// Capture the current rows (including live depends_on / extract / for-each
-    /// edits) as seeds, so a caller can park the chain and rebuild() it later.
+    /// Capture the current rows (including live edits) as seeds, so the chain can be parked and
+    /// rebuilt.
     [[nodiscard]] std::vector<OpSeed> snapshotSeeds() const;
 
     // Read-back accessors for the save path.

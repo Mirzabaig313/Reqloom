@@ -2,10 +2,10 @@
 // read-only view by default; the "Edit" button flips the same panel into an
 // inline editable form (no modal) with Save/Cancel. Step-based strategies edit
 // a full N-step login chain (AppController.actorAuthSteps): Add/Remove/reorder
-// steps, each with its own method/path/body/expect + extractions. Seeded by
-// selectActor→prepareEditActor; Save persists via saveActorInline. New-actor
-// creation reuses this same panel: AppController.newActor() shows it with an
-// empty selection, which opens straight in edit mode (no separate dialog).
+// steps, each with its own method/path/body/expect + extractions. Edit mode and
+// the edit copies live in AppController (actorEditing, actorEdit*), so they are
+// kept per tab and the unsaved-changes prompt sees them. New-actor creation
+// reuses this same panel: AppController.newActor() opens it in edit mode.
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
@@ -17,7 +17,7 @@ ScrollView {
     clip: true
     contentWidth: availableWidth
 
-    property bool editing: false
+    readonly property bool editing: AppController.actorEditing
     property bool editConfirmationActive: false
     property bool applyingEditAction: false
     property string pendingEditAction: ""
@@ -26,15 +26,15 @@ ScrollView {
     property bool pendingActorCreating: false
     property Item editConfirmationInvoker: null
 
-    // Editable working copies for the scalar fields (seeded on beginEdit). The
-    // login steps live in AppController.actorAuthSteps and the refresh/config
-    // key-value tables are the shared AppController models, edited directly.
-    property string fName: ""
-    property string fDesc: ""
-    property bool fRefreshEnabled: false
-    property string fRefreshMethod: "POST"
-    property string fRefreshPath: ""
-    property string fRefreshBody: ""
+    // Edit copies of the scalar fields. The login steps live in
+    // AppController.actorAuthSteps and the refresh/config key-value tables are
+    // the shared AppController models, edited directly.
+    readonly property string fName: AppController.actorEditName
+    readonly property string fDesc: AppController.actorEditDescription
+    readonly property bool fRefreshEnabled: AppController.actorEditRefreshEnabled
+    readonly property string fRefreshMethod: AppController.actorEditRefreshMethod
+    readonly property string fRefreshPath: AppController.actorEditRefreshPath
+    readonly property string fRefreshBody: AppController.actorEditRefreshBody
 
     // HTTP verbs for the method pickers. Shared so the combos can resolve their
     // current index with a plain indexOf (ComboBox.find() returns -1 while the
@@ -44,32 +44,18 @@ ScrollView {
 
     // Step-based strategies carry "login" in their label. In edit mode the live
     // combo selection drives it; in read mode the selected actor's strategy.
-    readonly property bool stepBased: editing ? (strategyCombo.currentText.indexOf("login") >= 0) : (AppController.selectedActorStrategy.indexOf("login") >= 0)
-    readonly property string strategy: editing ? strategyCombo.currentText : AppController.selectedActorStrategy
+    readonly property string strategy: editing ? AppController.actorEditStrategy : AppController.selectedActorStrategy
+    readonly property bool stepBased: strategy.indexOf("login") >= 0
     readonly property bool nameValid: AppController.isValidName(fName)
     // PKCS#12 vs PEM for the mTLS strategy's conditional fields.
     readonly property bool mtlsIsP12: AppController.actorConfig["format"] === "p12"
 
-    // Switching to a different actor (or a post-save re-seed) discards any
-    // in-progress inline edit — the panel always reflects the current actor.
-    //: no "unsaved changes" prompt; a mis-click loses edits. Upgrade
-    // path: guard with a confirm dialog if users report lost work.
     Connections {
         target: AppController
         function onActorSelectionChanged() {
             if (root.editConfirmationActive && !root.applyingEditAction && AppController.selectedActorName !== root.pendingActorId) {
                 actorEditConfirmationDialog.reject();
             }
-            // A brand-new actor (no name yet) opens straight in edit mode; any
-            // existing selection returns to the read view.
-            if (AppController.hasActor && AppController.selectedActorName.length === 0) {
-                root.beginEdit();
-            } else {
-                root.editing = false;
-            }
-        }
-        function onActorEditRequested() {
-            root.beginEdit();
         }
     }
 
@@ -82,20 +68,6 @@ ScrollView {
         } else {
             actorEditButton.forceActiveFocus();
         }
-    }
-
-    function beginEdit() {
-        fName = AppController.selectedActorName;
-        fDesc = AppController.selectedActorDescription;
-        fRefreshEnabled = AppController.actorHasRefresh;
-        fRefreshMethod = AppController.actorRefreshMethod;
-        fRefreshPath = AppController.actorRefreshPath;
-        fRefreshBody = AppController.actorRefreshBody;
-        const idx = strategyCombo.find(AppController.selectedActorStrategy);
-        if (idx >= 0) {
-            strategyCombo.currentIndex = idx;
-        }
-        editing = true;
     }
 
     function requestEditAction(action, invoker) {
@@ -125,24 +97,11 @@ ScrollView {
     }
 
     function cancelEdit() {
-        // A never-saved draft has no persisted actor to fall back to — close
-        // the panel entirely instead of leaving a blank read view.
-        if (AppController.selectedActorName.length === 0) {
-            AppController.cancelActorDraft();
-            return;
-        }
-        // Discard edits to the shared step/config/refresh models by re-seeding
-        // from the persisted actor (name == id for the selected actor).
-        AppController.prepareEditActor(AppController.selectedActorName);
-        editing = false;
+        AppController.discardActorEdits();
     }
 
     function saveEdits() {
-        // originalId stays the pre-edit name (== id in this project) so a rename
-        // still targets the right actor; only close edit mode when accepted.
-        if (AppController.saveActorInline(AppController.selectedActorName, fName.trim(), strategyCombo.currentText, fDesc.trim(), fRefreshEnabled, fRefreshMethod, fRefreshPath, fRefreshBody)) {
-            editing = false;
-        }
+        AppController.saveActorEdits();
     }
 
     ColumnLayout {
@@ -181,7 +140,7 @@ ScrollView {
                     Layout.fillWidth: true
                     text: root.fName
                     placeholderText: qsTr("vendor")
-                    onTextEdited: root.fName = text
+                    onTextEdited: AppController.actorEditName = text
                 }
                 Label {
                     visible: !root.editing && AppController.selectedActorStrategy.length > 0
@@ -196,7 +155,7 @@ ScrollView {
                 visible: !root.editing
                 text: qsTr("Edit")
                 primary: true
-                onClicked: root.beginEdit()
+                onClicked: AppController.beginActorEdit()
             }
             GlassButton {
                 id: actorCancelButton
@@ -236,7 +195,7 @@ ScrollView {
                 Layout.fillWidth: true
                 text: root.fDesc
                 placeholderText: qsTr("Marketplace seller account (optional)")
-                onTextEdited: root.fDesc = text
+                onTextEdited: AppController.actorEditDescription = text
             }
         }
 
@@ -252,6 +211,8 @@ ScrollView {
                 id: strategyCombo
                 Layout.fillWidth: true
                 model: AppController.actorStrategies
+                currentIndex: Math.max(0, AppController.actorStrategies.indexOf(AppController.actorEditStrategy))
+                onActivated: AppController.actorEditStrategy = currentText
             }
         }
 
@@ -659,7 +620,7 @@ ScrollView {
                 visible: root.editing
                 text: qsTr("Session refresh endpoint")
                 checked: root.fRefreshEnabled
-                onToggled: root.fRefreshEnabled = checked
+                onToggled: AppController.actorEditRefreshEnabled = checked
                 contentItem: Text {
                     leftPadding: refreshCheck.indicator.width + DesignTokens.spaceSm
                     text: refreshCheck.text
@@ -688,7 +649,7 @@ ScrollView {
                         Layout.preferredWidth: 110
                         model: root.methodOptions
                         currentIndex: Math.max(0, root.methodOptions.indexOf(root.fRefreshMethod))
-                        onActivated: root.fRefreshMethod = currentText
+                        onActivated: AppController.actorEditRefreshMethod = currentText
                     }
                     Label {
                         visible: !root.editing
@@ -704,7 +665,7 @@ ScrollView {
                         Layout.fillWidth: true
                         text: root.fRefreshPath
                         placeholderText: qsTr("/api/v1/auth/refresh")
-                        onTextEdited: root.fRefreshPath = text
+                        onTextEdited: AppController.actorEditRefreshPath = text
                     }
                 }
                 BodyBox {
@@ -712,7 +673,7 @@ ScrollView {
                     readOnly: !root.editing
                     text: root.editing ? root.fRefreshBody : AppController.actorRefreshBody
                     onTextEdited: if (text !== root.fRefreshBody) {
-                        root.fRefreshBody = text;
+                        AppController.actorEditRefreshBody = text;
                     }
                 }
                 FieldLabel {

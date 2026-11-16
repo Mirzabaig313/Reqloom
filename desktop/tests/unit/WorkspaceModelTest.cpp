@@ -7,7 +7,9 @@
 
 #include <gtest/gtest.h>
 
+#include <QtCore/QFile>
 #include <QtCore/QObject>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QTemporaryDir>
 
 namespace reqloom::desktop::tests {
@@ -119,6 +121,74 @@ TEST(WorkspaceModel, removing_last_project_leaves_a_fresh_sentinel) {
     EXPECT_EQ(ws.activeIndex(), 0);
     ASSERT_NE(ws.active(), nullptr);
     EXPECT_FALSE(ws.active()->hasProject());  // fresh, unloaded
+}
+
+TEST(WorkspaceModel, an_unavailable_project_stays_in_the_saved_list_until_forgotten) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    WorkspaceModel ws;
+    QString error;
+    ASSERT_TRUE(ws.active()->createProject(dir.path(), "Open", error)) << error.toStdString();
+    const QString openRoot = ws.active()->rootPath();
+
+    ws.markUnavailable(QStringLiteral("/Volumes/Gone/api"),
+                       QStringLiteral("Gone"),
+                       QStringLiteral("Folder not found"));
+
+    auto saved = ws.savedProjects();
+    ASSERT_EQ(saved.size(), 2);
+    EXPECT_EQ(saved.at(0).path, openRoot);
+    EXPECT_EQ(saved.at(1).path, QStringLiteral("/Volumes/Gone/api"));
+    EXPECT_EQ(saved.at(1).name, QStringLiteral("Gone"));
+    EXPECT_TRUE(ws.isUnavailable(QStringLiteral("/Volumes/Gone/api")));
+
+    EXPECT_TRUE(ws.forgetUnavailable(QStringLiteral("/Volumes/Gone/api")));
+    EXPECT_FALSE(ws.forgetUnavailable(QStringLiteral("/Volumes/Gone/api")));
+    saved = ws.savedProjects();
+    ASSERT_EQ(saved.size(), 1);
+    EXPECT_EQ(saved.at(0).path, openRoot);
+}
+
+TEST(WorkspaceModel, marking_an_unavailable_project_again_updates_its_reason) {
+    WorkspaceModel ws;
+    ws.markUnavailable(QStringLiteral("/p"), QStringLiteral("P"), QStringLiteral("first"));
+    ws.markUnavailable(QStringLiteral("/p"), QString{}, QStringLiteral("second"));
+
+    ASSERT_EQ(ws.unavailable().size(), 1);
+    EXPECT_EQ(ws.unavailable().at(0).reason, QStringLiteral("second"));
+    EXPECT_EQ(ws.unavailable().at(0).name, QStringLiteral("P"));
+}
+
+TEST(WorkspaceModel, an_unavailable_project_that_is_open_is_saved_once) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    WorkspaceModel ws;
+    QString error;
+    ASSERT_TRUE(ws.active()->createProject(dir.path(), "Back", error)) << error.toStdString();
+    ws.markUnavailable(ws.active()->rootPath(), QStringLiteral("Back"), QStringLiteral("old"));
+
+    EXPECT_EQ(ws.savedProjects().size(), 1);
+}
+
+TEST(WorkspaceModel, a_schema_error_reports_the_file_line_and_column) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    QFile yaml(dir.filePath(QStringLiteral("reqloom.yaml")));
+    ASSERT_TRUE(yaml.open(QIODevice::WriteOnly));
+    yaml.write("name: Broken\nresources: [unclosed\n");
+    yaml.close();
+
+    WorkspaceModel ws;
+    QString detail;
+    QObject::connect(ws.active(),
+                     &ProjectModel::loadFailed,
+                     ws.active(),
+                     [&detail](const QString&, const QString& d) { detail = d; });
+    ws.active()->loadFromDirectory(dir.path());
+
+    EXPECT_FALSE(ws.active()->hasProject());
+    EXPECT_TRUE(detail.contains(QRegularExpression(QStringLiteral(R"(reqloom\.yaml:\d+:\d+)"))))
+        << detail.toStdString();
 }
 
 }  // namespace reqloom::desktop::tests

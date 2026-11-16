@@ -1,6 +1,4 @@
-// HistoryModel — see header. Maps engine RunHistoryEntry rows to QML roles,
-// deriving a status-vocabulary token and a parsed duration from the run's
-// ISO-8601 timestamps.
+// HistoryModel — see header. Maps RunHistoryEntry rows to QML roles.
 #include "HistoryModel.h"
 
 #include <QtCore/QVariantList>
@@ -9,9 +7,8 @@ namespace reqloom::desktop::qml {
 
 namespace {
 
-// Maps a run outcome to the status vocabulary the badges/colours use. An
-// empty outcome means the run never recorded RunEnded (crash or still
-// in-flight at read time), shown as "running".
+// Run outcome → badge status token; an empty outcome means RunEnded was never recorded, shown as
+// "running".
 [[nodiscard]] QString tokenForOutcome(const QString& outcome) {
     if (outcome == QStringLiteral("Succeeded")) {
         return QStringLiteral("success");

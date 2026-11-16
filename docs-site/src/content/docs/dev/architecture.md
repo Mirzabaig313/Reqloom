@@ -139,12 +139,20 @@ Two inputs come from outside and are treated as hostile:
 
 | Surface | Where | Guards |
 | --- | --- | --- |
-| Schema files | `YamlSchemaParser` | 8 MiB file cap, 64-deep nesting cap |
-| Imported specs | `ImportFromOpenApi` | Path canonicalisation, containment root |
+| Schema files | `YamlSchemaParser` | 8 MiB file cap, 64-deep nesting cap, capped alias expansion, unsafe ids rejected |
+| Imported specs | `importAny` and the per-format importers | Path canonicalisation, containment root; upload paths reduced to a file name |
 
 Related guards elsewhere: hook scripts must be relative, inside the project root,
-and under 1 MiB; uploads cap at 50 MiB; secrets are read individually rather than
-dumped.
+and under 1 MiB, and run with a 1-second budget and 64 MiB of memory; uploads cap
+at 50 MiB per file and 256 MiB per request; requests use `http`/`https` only, with
+a response cap (64 MiB unless `transport.max_response_size` sets it) and 10
+redirects; regexes are screened for nested repeats and run on at most 1 MiB;
+secrets are read individually rather than dumped, keyed by project id, and
+refused to a folder that doesn't own the id; a hook sees only the secrets and
+actor session its operation uses (`HookScope`); `{{…}}` in a predicate is
+substituted as one value (`PredicateTemplates`); secret values are masked by
+value in everything the engine emits except a captured response body, which
+reaches the person and run history as received.
 
 ## Stack
 

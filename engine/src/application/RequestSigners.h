@@ -1,8 +1,5 @@
-// RequestSigners — per-request signing for strategies whose auth header
-// depends on the request itself (URL, method, params).
-//
-// Strategies that pre-compute static auth values (Basic, API key, OAuth2
-// Bearer) do NOT use this path — they populate `ActorSession::injectHeaders`
+// RequestSigners — per-request signing for strategies whose auth header depends on the request
+// (URL, method, params). Strategies with static auth values use `ActorSession::injectHeaders`
 // instead.
 #pragma once
 
@@ -22,51 +19,41 @@ struct OAuth1TestOverrides {
     std::optional<std::string> timestampSeconds;
 };
 
-/// Test-only seam for AWS SigV4 — pin the request-time stamp so test
-/// vectors are reproducible. Format must be ISO 8601 basic
-/// (`YYYYMMDDTHHMMSSZ`); the date scope (`YYYYMMDD`) is derived from it.
+/// Test-only seam for AWS SigV4: pins the request-time stamp (ISO 8601 basic `YYYYMMDDTHHMMSSZ`);
+/// the date scope is derived from it.
 struct SigV4TestOverrides {
     std::optional<std::string> amzDate;  ///< e.g. "20150830T123600Z"
+    /// When set, receives the canonical request that was signed.
+    std::string* canonicalRequestOut{nullptr};
 };
 
-/// Sign `req` in-place using OAuth 1.0a HMAC-SHA1 (RFC 5849 §3.4).
-/// Reads consumer_key / consumer_secret / token / token_secret / realm
-/// (optional) from `session.variables`, builds the base string per the
-/// spec, computes the signature, and writes the resulting
-/// `Authorization: OAuth ...` header onto `req`.
-///
-/// `req.url` may carry a query string; query parameters are folded into
-/// the signature base. If the body is `application/x-www-form-urlencoded`,
-/// those parameters are folded in too (RFC 5849 §3.4.1.3.1).
-///
-/// Returns false on signing failure (missing required variable, malformed
-/// URL) and leaves `req` unmodified.
+/// Sign `req` in-place with OAuth 1.0a HMAC-SHA1 (RFC 5849 §3.4), reading consumer_key /
+/// consumer_secret / token / token_secret / realm (optional) from `session.variables` and writing
+/// `Authorization: OAuth ...`. Query parameters, and `application/x-www-form-urlencoded` body
+/// parameters (§3.4.1.3.1), are folded into the base string. Returns false on failure (missing
+/// variable, malformed URL), leaving `req` unmodified.
 bool signOAuth1Request(HttpRequest& req,
                        const ActorSession& session,
                        const OAuth1TestOverrides& overrides = {});
 
-/// Sign `req` in-place using AWS Signature Version 4 (the
-/// `AWS4-HMAC-SHA256` flavour used by every modern AWS service).
-///
-/// Reads `access_key`, `secret_key`, `region`, `service` (required) and
-/// `session_token` (optional, for STS temporary credentials) from
-/// `session.variables`. Builds the canonical request and string-to-sign
-/// per https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html
-/// then writes:
-///   - `x-amz-date`
-///   - `x-amz-content-sha256` (always set; required for S3, harmless elsewhere)
-///   - `x-amz-security-token` (when `session_token` present)
-///   - `Authorization: AWS4-HMAC-SHA256 Credential=..., SignedHeaders=..., Signature=...`
-///
-/// `req.url` may carry a query string. The body (if present) is hashed
-/// with SHA-256 and folded into the canonical request; an empty body
-/// hashes to the well-known empty-string SHA-256.
-///
-/// Atomic on failure: when this returns false, `req` is left exactly as
-/// the caller passed it. Failure causes are missing required variable,
-/// malformed URL, or OpenSSL hash failure.
+/// Sign `req` in-place with AWS Signature Version 4 (`AWS4-HMAC-SHA256`).
+/// Reads `access_key`, `secret_key`, `region`, `service` and optional `session_token` (STS) from
+/// `session.variables`; canonical request per
+/// https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html. Writes
+/// `x-amz-date`, `x-amz-content-sha256` (always; required for S3), `x-amz-security-token` (when
+/// `session_token` is present) and `Authorization`. The body is SHA-256 hashed into the canonical
+/// request; a multipart body is `UNSIGNED-PAYLOAD` for `s3` and refused otherwise. The canonical
+/// URI is the path encoded once for `s3`, twice for other services. Atomic on failure: returns
+/// false with `req` untouched (missing variable, malformed URL, multipart body for a service other
+/// than `s3`, OpenSSL hash failure).
 bool signSigV4Request(HttpRequest& req,
                       const ActorSession& session,
                       const SigV4TestOverrides& overrides = {});
+
+/// The reason `signSigV4Request` refuses `req` for its shape rather than for missing
+/// credentials or a malformed URL: a multipart body for a service other than `s3`. nullopt
+/// when there is none.
+[[nodiscard]] std::optional<std::string> sigV4Refusal(const HttpRequest& req,
+                                                      const ActorSession& session);
 
 }  // namespace reqloom::engine

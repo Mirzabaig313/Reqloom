@@ -4,7 +4,7 @@
 # 30-endpoint sample described in PRD Appendix A during Phase 0.
 version: 1
 name: MarketplaceAPI
-description: B2C marketplace backend (sample)
+id: b24c09e7-400e-461e-be0f-ab5f28c1c347
 default_environment: local
 
 imports:

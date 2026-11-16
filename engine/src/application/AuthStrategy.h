@@ -2,11 +2,15 @@
 
 #pragma once
 
+#include "../infrastructure/http/HttpClient.h"
+
 #include <reqloom/engine/Actor.h>
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/Events.h>
+#include <reqloom/engine/ExecutionEngine.h>
 #include <reqloom/engine/RunContext.h>
 
+#include <chrono>
 #include <expected>
 #include <functional>
 #include <map>
@@ -15,17 +19,13 @@
 
 namespace reqloom::engine {
 
-class HttpClient;        // forward — defined in infrastructure
 class VariableResolver;  // forward — defined in domain
 struct ResolveContext;   // forward — defined in domain (VariableResolver.h)
 
-/// Sink for observability events emitted from inside the auth flow. The
-/// executor binds a closure into its emit loop; an empty sink drops the
-/// event (tests that don't care leave it default-constructed).
+/// Sink for observability events emitted from inside the auth flow; an empty sink drops them.
 using EventSink = std::function<void(const RunEvent&)>;
 
-/// Common dependencies every authenticator needs. Non-owning — must not
-/// outlive the engine that created it.
+/// Common dependencies every authenticator needs. Non-owning; must not outlive the engine.
 struct AuthDependencies {
     HttpClient* http{nullptr};
     VariableResolver* varResolver{nullptr};
@@ -33,12 +33,18 @@ struct AuthDependencies {
     RunId runId{};             ///< Parent step's id, stamped on auth events
     std::size_t stepIndex{0};  ///< so the timeline groups them under that op.
 
-    /// When true, the raw auth/login/refresh response body is attached to
-    /// the emitted `ResponseReceived` event. Mirrors
-    /// `RunOptions::captureResponseBodies`. Off by default so auth bodies
-    /// (which carry tokens) stay off the event surface unless the caller
-    /// explicitly opts in.
+    /// Attach the raw auth response body to `ResponseReceived`. Off by default because auth bodies
+    /// carry tokens.
     bool captureResponseBodies{false};
+
+    /// Mirrors `RunOptions::failureExcerptBytes` for login / token endpoint errors.
+    std::size_t failureExcerptBytes{kDefaultFailureExcerptBytes};
+
+    /// Stamped on the flow's events; `runRefresh` always reports `SessionRefresh`.
+    ExchangeKind exchange{ExchangeKind::SignIn};
+
+    /// Stamped on the flow's requests so a cancelled run stops a sign-in in flight.
+    CancelCheck cancel{};
 };
 
 class Authenticator {
@@ -50,13 +56,8 @@ public:
     Authenticator& operator=(Authenticator&&) = delete;
     virtual ~Authenticator() = default;
 
-    /// Run the authenticator's flow. Returns the resulting session
-    /// (variables populated) or a `ReqloomError`.
-    ///
-    /// Authenticators must NOT consult or mutate the `RunContext`'s
-    /// session cache — that's the engine's job. They MAY mutate the
-    /// per-actor cookie jar via `ctx.setCookie(...)` to absorb
-    /// `Set-Cookie` headers that arrive on the auth response.
+    /// Run the flow and return the resulting session. Must NOT touch the RunContext session cache
+    /// (the engine's job); MAY set cookies via `ctx.setCookie(...)`.
     [[nodiscard]] virtual std::expected<ActorSession, ReqloomError> authenticate(
         const Actor& actor, RunContext& ctx, const ResolveContext& rctx) = 0;
 };
@@ -64,25 +65,24 @@ public:
 /// Pick a concrete authenticator for `actor`. Returns null only when the
 /// actor declares an unsupported `AuthStrategy` enum value — the engine
 /// surfaces that as `SessionRefreshFailed`.
-///
-/// Takes `deps` by value so the caller's `std::move` actually sinks the
-/// EventSink std::function into the chosen authenticator instead of
-/// copying it.
+/// Takes `deps` by value so the caller's `std::move` sinks the EventSink instead of copying it.
 [[nodiscard]] std::unique_ptr<Authenticator> selectAuthenticator(const Actor& actor,
                                                                  AuthDependencies deps);
 
-/// Run the actor's `refresh:` block (a single HTTP step with templates,
-/// expected status, and extractions) and return the new variable map
-/// to merge into the existing session.
-///
-/// Returns `std::nullopt` (via the unexpected error path) when the actor
-/// has no refresh block declared. Returns `SessionRefreshFailed` for any
-/// network / status / extraction failure — the caller should treat this
-/// as "fall back to full re-auth".
-///
-/// Templates in the refresh block resolve against the EXISTING session
-/// (e.g. `{{user.refresh_token}}`), so the caller must keep the session
-/// in the RunContext's cache while calling.
+/// Subtracted from a token's `expires_in` so a token is never presented just before it expires.
+inline constexpr std::chrono::seconds kTokenExpiryMargin{30};
+
+/// How long a session obtained or refreshed for `actor` stays live. `actor.sessionTtl`, except
+/// that for an OAuth2 actor whose `variables` carry a positive integer `expires_in` it is
+/// `min(expires_in - kTokenExpiryMargin, sessionTtl)` (`expires_in` itself when it is within the
+/// margin).
+[[nodiscard]] std::chrono::seconds sessionLifetime(
+    const Actor& actor, const std::map<std::string, std::string>& variables);
+
+/// Run the actor's `refresh:` block and return the variable map to merge into the session.
+/// Returns `SessionRefreshFailed` on a missing refresh block or any network/status/extraction
+/// failure; the caller falls back to full re-auth. Templates resolve against the EXISTING
+/// session, so the caller must keep it in the RunContext's cache.
 [[nodiscard]] std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
     const Actor& actor, RunContext& ctx, const ResolveContext& rctx, const AuthDependencies& deps);
 

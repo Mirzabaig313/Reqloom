@@ -212,11 +212,10 @@ ColumnLayout {
                                     // Path autocomplete from the step's response.
                                     PathAutocomplete {
                                         field: pathField
-                                        enabled: !AppController.creatingOperation || step.isTarget
+                                        enabled: !pathField.readOnly
                                         operationId: step.operationId
                                         onPicked: function (p) {
                                             step.extractModel.setValue(exRow.index, p);
-                                            pathField.text = p;
                                             exRow.pathEval = AppController.evaluateExtractionPath(step.operationId, p);
                                         }
                                     }

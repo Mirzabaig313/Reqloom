@@ -34,7 +34,7 @@ what tells the engine `order.create` has to run first — see
 
 Note the reference is `{{order.order_id}}`, not `{{order.create.order_id}}`. There
 is no per-operation form. Everything an operation extracts is stored on its
-**resource**, and a resource accumulates values as its operations run:
+**resource**, and a resource collects values from all of its operations:
 
 ```yaml
   # order.create extracted order_id
@@ -110,7 +110,8 @@ variables:
 ```
 
 Reference it like any other environment variable — `{{env.vendor_password}}` — or
-directly as `{{secret.VENDOR_PASSWORD}}`. See
+directly as `{{secret.VENDOR_PASSWORD}}`. A project that uses secrets needs an
+`id:` in `reqloom.yaml`, because secrets are stored per project. See
 [secrets](/schema/secrets-and-transport/#secrets).
 
 ### Builtins
@@ -124,8 +125,8 @@ directly as `{{secret.VENDOR_PASSWORD}}`. See
 ```
 
 `{{$.uuid}}` and `{{$.now}}` are the only generators, plus `$.faker.email` and
-`$.faker.phone`. There is no `$.random` or `$.timestamp`. Full list in the
-[variable reference](/reference/variables/#builtins).
+`$.faker.phone`; any other faker name fails the load. There is no `$.random` or
+`$.timestamp`. Full list in the [variable reference](/reference/variables/#builtins).
 
 ## Unique values, two different needs
 
@@ -146,8 +147,7 @@ a coupon code you'll verify later, a tenant you're targeting.
 ## Instances and indexing
 
 Each time an operation extracts values it creates an **instance** of its resource.
-Run `order.create` three times and there are three orders. A plain reference means
-the most recent:
+A plain reference means the most recent, and an index picks one:
 
 ```yaml
     path: /api/v1/orders/{{order.order_id}}          # newest
@@ -164,6 +164,12 @@ Extracting with `[*]` makes many instances at once, which is what
       product_id: $.data[*].id       # one instance per element
 ```
 
+Running an operation again replaces the instances it produced before — in the
+desktop app, where values are kept between runs, a second run of
+`product.list` does not double the list. And when the latest response returned
+`null` for a field, or left it out, a reference to it is unresolved rather than
+picking up a value from an earlier run.
+
 :::tip[Let the app write these for you]
 In the [desktop app](/desktop/overview/), typing `{{` suggests only the variables
 actually in scope at that point, and hovering a row in a response body gives you
@@ -179,20 +185,30 @@ The literal text is left in place, not blanked:
   FAIL   order.get (12ms) err=E_VAR_UNRESOLVED
 ```
 
-You'll see braces in the request URL. The usual causes:
+The operation fails before its request is sent, and the timeline shows the braces
+where the value should be. The usual causes:
 
 1. **A typo in the extracted name.** This passes lint — validation checks the
    scope exists, not the field. `{{order.oder_id}}` is a run-time failure.
 2. **`{{env.X}}` where you meant `{{$.env.X}}`**, or the reverse. The first reads
-   your schema's environment, the second reads the process environment.
-3. **A missing secret.** No keychain entry means the variable is unresolved, and
-   you typically get a 401 rather than a clear error.
+   your schema's environment, the second reads the process environment — and
+   only for names listed under `allowed_env:`.
+3. **A missing secret.** No keychain entry means the variable is unresolved. In
+   an operation that is `E_VAR_UNRESOLVED`; in a login body it usually shows up
+   as a 401.
+4. **The producer returned `null`.** The failure names it: "The last
+   user.create response returned null for 'user_id'."
 
 ## Where references work
 
 Anywhere a template is accepted: `path`, `headers`, `query_params`, `body`,
-`body_form`, `assert` predicates, `poll_until` paths and predicates, actor `auth`
-config, `inject.headers`, and session `refresh` blocks.
+`body_form`, `poll_until` paths, actor `auth` config, `inject.headers`, session
+`refresh` blocks, and `assert` and `poll_until` conditions. In a condition the
+value is substituted as one operand that can't change the expression; see
+[templates in predicates](/schema/advanced-operations/#templates-in-predicates).
+
+In a JSON body, a value substituted inside a string is JSON-escaped for you; see
+[JSON bodies](/reference/variables/#json-bodies).
 
 Values in a `path` are percent-encoded automatically, and existing `%HH` escapes
 are preserved rather than double-encoded.

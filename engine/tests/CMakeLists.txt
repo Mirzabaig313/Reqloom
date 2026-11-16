@@ -31,6 +31,7 @@ add_executable(reqloom-engine-unit-tests
     unit/ImportFromBrunoTest.cpp
     unit/ImportFromHttpieTest.cpp
     unit/ImportFromApidogTest.cpp
+    unit/ImportCredentialsTest.cpp
     unit/JsonExtractionTest.cpp
     unit/HttpLlmClientTest.cpp
     unit/TopologyTest.cpp
@@ -39,12 +40,22 @@ add_executable(reqloom-engine-unit-tests
     unit/CookiesTest.cpp
     unit/MultipartBuilderTest.cpp
     unit/QuickJsHookRunnerTest.cpp
+    unit/HookScopeTest.cpp
+    unit/PredicateTemplatesTest.cpp
     unit/SchemaParserMultiFileTest.cpp
     unit/HeaderMaskingTest.cpp
+    unit/SecretRedactionTest.cpp
     unit/SqliteHistoryStoreTest.cpp
+    unit/SqliteHistoryStoreConcurrencyTest.cpp
     unit/SchemaValidationTest.cpp
+    unit/SchemaStrictnessTest.cpp
+    unit/SchemaWriterSafetyTest.cpp
     unit/SecretEnvTagTest.cpp
     unit/ValidateProjectTest.cpp
+    unit/JsonBodyTemplateTest.cpp
+    unit/ProjectTrustStoreTest.cpp
+    unit/ProjectIdInsertTest.cpp
+    unit/KeychainSecretStoreTest.cpp
 )
 target_include_directories(reqloom-engine-unit-tests
     PRIVATE
@@ -59,6 +70,7 @@ target_link_libraries(reqloom-engine-unit-tests
 )
 reqloom_set_warnings(reqloom-engine-unit-tests)
 reqloom_apply_sanitizers(reqloom-engine-unit-tests)
+reqloom_isolate_test_config(reqloom-engine-unit-tests)
 
 gtest_discover_tests(reqloom-engine-unit-tests
     PROPERTIES LABELS "engine_unit"
@@ -88,6 +100,10 @@ add_executable(reqloom-engine-integration-tests
     integration/CookieJarTest.cpp
     integration/TransportConfigTest.cpp
     integration/SecretLoadingTest.cpp
+    integration/JsonBodyEscapingTest.cpp
+    integration/ValueRedactionTest.cpp
+    integration/EngineStateTest.cpp
+    integration/AuthSessionTest.cpp
 )
 target_link_libraries(reqloom-engine-integration-tests
     PRIVATE
@@ -110,6 +126,7 @@ target_compile_definitions(reqloom-engine-integration-tests
 )
 reqloom_set_warnings(reqloom-engine-integration-tests)
 reqloom_apply_sanitizers(reqloom-engine-integration-tests)
+reqloom_isolate_test_config(reqloom-engine-integration-tests)
 
 gtest_discover_tests(reqloom-engine-integration-tests
     PROPERTIES LABELS "engine_integration"

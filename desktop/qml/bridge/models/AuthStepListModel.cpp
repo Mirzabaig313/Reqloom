@@ -1,5 +1,4 @@
-// AuthStepListModel — see header. Owns the per-step extraction editors for the
-// actor's N-step login chain.
+// AuthStepListModel — see header.
 #include "AuthStepListModel.h"
 
 #include <utility>
@@ -57,10 +56,10 @@ void AuthStepListModel::rebuild(const std::vector<StepSeed>& seeds) {
         row.path = seed.path;
         row.body = seed.body;
         row.expect = seed.expect;
-        // Parented to this model (C++ ownership) so QML never deletes it when a
-        // delegate is destroyed.
+        // Parented to this model so QML never deletes it with a delegate.
         row.extracts = std::make_unique<EditableKeyValueModel>(this);
         row.extracts->setPairs(seed.extractions);
+        watchExtracts(*row.extracts);
         rows_.push_back(std::move(row));
     }
     endResetModel();
@@ -73,6 +72,7 @@ void AuthStepListModel::setMethod(int row, const QString& method) {
     rows_[static_cast<std::size_t>(row)].method = method;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {MethodRole});
+    emit stepsEdited();
 }
 
 void AuthStepListModel::setPath(int row, const QString& path) {
@@ -82,6 +82,7 @@ void AuthStepListModel::setPath(int row, const QString& path) {
     rows_[static_cast<std::size_t>(row)].path = path;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {PathRole});
+    emit stepsEdited();
 }
 
 void AuthStepListModel::setBody(int row, const QString& body) {
@@ -91,6 +92,7 @@ void AuthStepListModel::setBody(int row, const QString& body) {
     rows_[static_cast<std::size_t>(row)].body = body;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {BodyRole});
+    emit stepsEdited();
 }
 
 void AuthStepListModel::setExpect(int row, const QString& expect) {
@@ -100,6 +102,7 @@ void AuthStepListModel::setExpect(int row, const QString& expect) {
     rows_[static_cast<std::size_t>(row)].expect = expect;
     const QModelIndex idx = index(row);
     emit dataChanged(idx, idx, {ExpectRole});
+    emit stepsEdited();
 }
 
 int AuthStepListModel::addStep() {
@@ -108,37 +111,48 @@ int AuthStepListModel::addStep() {
     Row row;
     row.method = QStringLiteral("POST");
     row.extracts = std::make_unique<EditableKeyValueModel>(this);
+    watchExtracts(*row.extracts);
     rows_.push_back(std::move(row));
     endInsertRows();
+    emit stepsEdited();
     return at;
 }
 
 void AuthStepListModel::removeStep(int row) {
-    // A step-based actor must retain at least one login request.
     if (!valid(row) || rows_.size() <= 1) {
         return;
     }
     beginRemoveRows({}, row, row);
     rows_.erase(rows_.begin() + row);
     endRemoveRows();
+    emit stepsEdited();
 }
 
 void AuthStepListModel::moveStep(int row, int delta) {
     const int target = row + delta;
-    // Adjacent single-row moves only (delta ±1 from the up/down buttons).
-    // beginMoveRows physically relocates the delegate so a step whose text
-    // fields the user already edited keeps its (binding-broken) widget state on
-    // reorder — a plain swap + dataChanged cannot push values back into a
-    // focused TextField/ComboBox.
+    // Adjacent single-row moves only (delta ±1). beginMoveRows relocates the delegate so edited
+    // fields keep their widget state; a swap + dataChanged can't push values into a focused
+    // TextField.
     if ((delta != 1 && delta != -1) || !valid(row) || !valid(target)) {
         return;
     }
-    // Qt expresses the destination as the index the row lands *before*; moving
-    // down by one therefore needs target + 1.
+    // Qt expresses the destination as the index the row lands before, so moving down needs target
+    // + 1.
     const int destination = delta > 0 ? target + 1 : target;
     beginMoveRows({}, row, row, {}, destination);
     std::swap(rows_[static_cast<std::size_t>(row)], rows_[static_cast<std::size_t>(target)]);
     endMoveRows();
+    emit stepsEdited();
+}
+
+void AuthStepListModel::watchExtracts(EditableKeyValueModel& extracts) {
+    const auto edited = [this]() {
+        emit stepsEdited();
+    };
+    connect(&extracts, &QAbstractItemModel::dataChanged, this, edited);
+    connect(&extracts, &QAbstractItemModel::rowsInserted, this, edited);
+    connect(&extracts, &QAbstractItemModel::rowsRemoved, this, edited);
+    connect(&extracts, &QAbstractItemModel::modelReset, this, edited);
 }
 
 QString AuthStepListModel::methodAt(int row) const {

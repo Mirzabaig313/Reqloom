@@ -6,17 +6,13 @@
 
 #include <ostream>
 #include <string>
+#include <string_view>
 
 namespace reqloom::cli {
 
-/// Renders a run as plain text. Emits live progress on each `RunEvent`
-/// (suppressed when constructed with `quiet=true`) and a chain summary
-/// table on `render()`. Failures (`StepFailed`) always go to `errOut`
-/// even in quiet mode so CI logs surface the cause.
-///
-/// Live progress goes to `progressOut`; the post-run chain summary goes
-/// to `summaryOut`. The two are separate so `--output some.txt` can
-/// redirect the summary while live progress keeps streaming to stdout.
+/// Renders a run as plain text: live progress per `RunEvent` (suppressed when `quiet`) and a chain
+/// summary on `render()`. Failures always go to `errOut`. Progress and summary use separate streams
+/// so `--output` can redirect the summary.
 class TextRenderer {
 public:
     TextRenderer(std::ostream& summaryOut,
@@ -38,6 +34,9 @@ public:
                 const engine::RunResult& result);
 
 private:
+    void printChildRow(const engine::StepResult& row);
+    void printAssertions(const engine::StepResult& row, std::string_view attribution);
+
     std::ostream& summary_;
     std::ostream& progress_;
     std::ostream& err_;

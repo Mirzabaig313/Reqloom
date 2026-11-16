@@ -1,7 +1,5 @@
-// Engine-internal alias for the now-public SecretStore interface. Kept so
-// existing infrastructure/application includes ("infrastructure/secrets/
-// SecretStore.h") resolve unchanged; the definition lives in the public
-// header so embedders (desktop secret manager) can manage credentials.
+// Engine-internal alias for the public SecretStore interface, so existing infrastructure includes
+// resolve.
 #pragma once
 
 #include <reqloom/engine/SecretStore.h>

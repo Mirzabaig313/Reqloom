@@ -1,17 +1,11 @@
-// JUnit XML renderer for `reqloom run --format junit`.
-//
-// Output mirrors the surface JUnit consumers (Jenkins, GitLab, Buildkite)
-// expect: one `<testsuites>` wrapping one `<testsuite>` per chain, with
-// one `<testcase>` per step. Failed steps emit `<failure>`, skipped or
-// cached steps emit `<skipped>`, blocked / cancelled steps emit
-// `<error>`. Poll-attempt rows are folded into their parent testcase as
-// `<system-out>` so the suite count matches the number of declared
-// operations rather than physical step rows.
+// JUnit XML renderer for `reqloom run --format junit`: one `<testsuite>` per chain, one
+// `<testcase>` per step; poll-attempt rows fold into their parent's `<system-out>`.
 
 #pragma once
 
 #include <reqloom/engine/PublicApi.h>
 
+#include <optional>
 #include <ostream>
 #include <string_view>
 
@@ -24,6 +18,14 @@ public:
     void render(const engine::OperationId& target,
                 std::string_view environment,
                 const engine::RunResult& result);
+
+    /// A run that ended before its first step: one `<testcase>` carrying an `<error>` with the
+    /// code as `type`, the detail's first line as `message` and the whole detail as its body.
+    void renderError(const engine::OperationId& target,
+                     std::string_view environment,
+                     std::optional<engine::RunId> run,
+                     std::string_view code,
+                     std::string_view detail);
 
 private:
     std::ostream& out_;

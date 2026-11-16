@@ -1,6 +1,5 @@
-// FuzzyMatch — see header. Greedy subsequence match with a contiguity/word-
-// boundary bonus. Good enough for a few hundred operations; not a full
-// Smith-Waterman.
+// FuzzyMatch — see header. Greedy subsequence match with a contiguity/word-boundary bonus; fine for
+// a few hundred operations.
 #include "FuzzyMatch.h"
 
 namespace reqloom::desktop::widgets::fuzzy {
@@ -68,9 +67,7 @@ int score(const QString& query, const QString& candidate) {
         return -1;  // not a full subsequence match
     }
 
-    // Prefer matches that start nearer the front of the candidate.
     total -= firstMatch * kLeadingGapPenalty;
-    // Mild preference for shorter candidates on equal hits.
     total -= static_cast<int>(candidate.size()) / 8;
     return total;
 }

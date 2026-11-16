@@ -41,7 +41,8 @@ samples/marketplace/
 ```yaml title="reqloom.yaml"
 version: 1
 name: MarketplaceAPI
-description: B2C marketplace backend (sample)
+id: b24c09e7-400e-461e-be0f-ab5f28c1c347
+description: B2C marketplace backend (sample)   # not read; lint warns
 default_environment: local
 imports:
   - environments/*.yaml
@@ -111,7 +112,8 @@ variables:
 ```
 
 Emails are committed; passwords are `!secret`, so they come from your OS keychain
-and never touch the repo. Note `test_phone` is **quoted** — unquoted it would be
+and never touch the repo. They're stored under the project's `id:` from
+`reqloom.yaml`. Note `test_phone` is **quoted** — unquoted it would be
 mangled into a number.
 
 ## Resources and the chain
@@ -185,8 +187,9 @@ backend, so `reqloom run` will fail on connection unless you point it somewhere
 real. That's expected — `lint` is the offline check.
 
 :::caution[Running against nothing is slow]
-Each step retries 3 times, and each attempt waits out the 5s connect timeout, so
-a 7-step chain against a dead host takes minutes. Shorten it while experimenting:
+A step can be sent up to 3 times, and each attempt against a host that doesn't
+answer waits out the 5s connect timeout, so a dead host is slow to fail. Shorten
+it while experimenting:
 
 ```yaml title="environments/local.yaml"
 transport:

@@ -4,15 +4,10 @@
 //   runs(run_id, target_op, env_name, started_at, ended_at, outcome, chain_size)
 //   run_events(id, run_id, seq, event_type, step_index, op_id, payload, at)
 //
-// Events are stored as JSON in `payload`. The `runs` table denormalises
-// enough to render the history sidebar without parsing payloads; the
-// JSON keeps the full variant for replay, so schema upgrades stay
-// payload-format changes rather than ALTER TABLEs.
+// Events are stored as JSON in `payload`; `runs` denormalises what the history sidebar needs.
 //
-// WAL mode + 5s busy timeout: the engine appends from the run thread
-// while the desktop reads on a separate connection without blocking.
-// Instances are not thread-safe — one store per ExecutionEngine, caller
-// serialises
+// WAL mode + 5s busy timeout: the engine appends from the run thread while the desktop reads on a
+// separate connection. Instances are not thread-safe; the caller serialises.
 
 #include "SqliteHistoryStore.h"
 
@@ -34,6 +29,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -49,16 +45,13 @@ namespace {
 using nlohmann::json;
 namespace fs = std::filesystem;
 
-// Compile guard for the visitor below — adding a RunEvent variant
-// without a serialization arm fails the build instead of writing an
-// empty event_type.
+// Compile guard: a RunEvent variant without a serialization arm fails the build.
 template <typename>
 inline constexpr bool kAlwaysFalse = false;
 
 constexpr int kBusyTimeoutMs = 5000;
 
 [[nodiscard]] std::string isoUtc(TimePoint tp) {
-    // Second precision is plenty for the timeline.
     using namespace std::chrono;
     const auto t = system_clock::to_time_t(tp);
     std::tm tm{};
@@ -69,9 +62,8 @@ constexpr int kBusyTimeoutMs = 5000;
 #endif
     char buf[32];
     if (std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm) == 0) {
-        // strftime returns 0 if the result (incl. NUL) exceeds the buffer.
-        // The fixed format above always fits in 21 bytes, so this is a
-        // defensive guard rather than a reachable path.
+        // strftime returns 0 if the result overflows the buffer; the fixed format always fits, so
+        // this is defensive.
         return {};
     }
     return std::string{buf};
@@ -269,8 +261,6 @@ constexpr EnumWireMap<UnresolvedVariableCause, 9> kUnresolvedVariableCauses{{
     return out;
 }
 
-// ─── Header (de)serialization helpers ────────────────────────────────────────
-
 [[nodiscard]] json headersToJson(const std::vector<std::pair<std::string, std::string>>& hs) {
     json out = json::array();
     for (const auto& [k, v] : hs) {
@@ -290,8 +280,6 @@ constexpr EnumWireMap<UnresolvedVariableCause, 9> kUnresolvedVariableCauses{{
     return out;
 }
 
-// ─── RAII wrappers ───────────────────────────────────────────────────────────
-
 struct StmtDeleter {
     void operator()(sqlite3_stmt* s) const noexcept {
         if (s != nullptr) {
@@ -310,10 +298,9 @@ struct DbDeleter {
 };
 using DbPtr = std::unique_ptr<sqlite3, DbDeleter>;
 
-// Scopes a write to a single transaction. Begins IMMEDIATE on construction;
-// rolls back on destruction unless commit() succeeded. IMMEDIATE acquires
-// the write lock up front so a busy database fails fast at begin() rather
-// than mid-statement. All sqlite3_exec calls here are on trusted, fixed SQL.
+// Scopes a write to one transaction: BEGIN IMMEDIATE takes the write lock up front so a busy
+// database fails at begin(); rolls back unless commit() succeeded. All SQL here is trusted and
+// fixed.
 class SqliteTransaction {
 public:
     explicit SqliteTransaction(sqlite3* db) noexcept
@@ -352,10 +339,8 @@ private:
                         std::string{what} + ": " + (msg != nullptr ? msg : "?")};
 }
 
-// ─── Event → JSON (per variant) ──────────────────────────────────────────────
-//
-// runId / stepIndex / event_type / op_id / at go in their own columns so
-// the index can find rows without parsing JSON; the rest goes in `payload`.
+// runId / stepIndex / event_type / op_id / at get their own columns for indexing; the rest is
+// `payload`.
 
 struct EventEnvelope {
     std::uint64_t runId{0};
@@ -365,6 +350,21 @@ struct EventEnvelope {
     std::string eventType;
     json payload;
 };
+
+// Only a non-default kind is stored, so rows from builds before the field read the same.
+void putExchange(json& payload, ExchangeKind kind) {
+    if (kind != ExchangeKind::Operation) {
+        payload["exchange"] = std::string{exchangeKindName(kind)};
+    }
+}
+
+[[nodiscard]] ExchangeKind exchangeOf(const json& p) {
+    const auto it = p.find("exchange");
+    if (it == p.end() || !it->is_string()) {
+        return ExchangeKind::Operation;
+    }
+    return exchangeKindFromName(it->get<std::string>()).value_or(ExchangeKind::Operation);
+}
 
 [[nodiscard]] EventEnvelope envelopeOf(const RunEvent& ev) {
     EventEnvelope e;
@@ -397,6 +397,7 @@ struct EventEnvelope {
                              {"url", v.url},
                              {"headers", headersToJson(v.maskedHeaders)},
                              {"bodySize", v.bodySize}};
+                putExchange(e.payload, v.exchange);
             } else if constexpr (std::is_same_v<T, ResponseReceived>) {
                 e.eventType = "ResponseReceived";
                 e.stepIndex = v.stepIndex;
@@ -404,13 +405,10 @@ struct EventEnvelope {
                              {"headers", headersToJson(v.headers)},
                              {"bodySize", v.bodySize},
                              {"elapsedMs", v.elapsed.count()}};
-                // `body` is present only when the run opted into capture
-                // (RunOptions::captureResponseBodies). Persist it so the
-                // desktop can replay past responses in full
-                // Base64-encoded: captured bodies are arbitrary bytes
-                // (images, gzip, protobuf), and nlohmann's strict UTF-8
-                // dump() throws type_error.316 on a raw non-UTF-8 string.
-                // The `bodyEnc` marker lets replay decode unambiguously.
+                putExchange(e.payload, v.exchange);
+                // `body` exists only when the run captured bodies. Stored base64 (`bodyEnc` marker)
+                // because bodies are arbitrary bytes and nlohmann's strict dump() throws on
+                // non-UTF-8.
                 if (v.body) {
                     e.payload["body"] = codecs::base64Encode(*v.body);
                     e.payload["bodyEnc"] = "base64";
@@ -452,6 +450,9 @@ struct EventEnvelope {
                 e.opId = v.op.value;
                 e.payload = {
                     {"op", v.op.value}, {"name", v.name}, {"expr", v.expr}, {"passed", v.passed}};
+                if (!v.detail.empty()) {
+                    e.payload["detail"] = v.detail;
+                }
             } else if constexpr (std::is_same_v<T, StepFailed>) {
                 e.eventType = "StepFailed";
                 e.stepIndex = v.stepIndex;
@@ -488,8 +489,6 @@ struct EventEnvelope {
         ev);
     return e;
 }
-
-// ─── JSON → Event (per variant) ──────────────────────────────────────────────
 
 [[nodiscard]] std::optional<RunEvent> eventFromRow(const std::string& eventType,
                                                    std::uint64_t runIdRaw,
@@ -534,6 +533,7 @@ struct EventEnvelope {
         ev.url = p.value("url", std::string{});
         ev.maskedHeaders = headersFromJson(p.value("headers", json::array()));
         ev.bodySize = p.value("bodySize", std::size_t{0});
+        ev.exchange = exchangeOf(p);
         ev.at = at;
         return ev;
     }
@@ -545,13 +545,10 @@ struct EventEnvelope {
         ev.headers = headersFromJson(p.value("headers", json::array()));
         ev.bodySize = p.value("bodySize", std::size_t{0});
         ev.elapsed = std::chrono::milliseconds{p.value("elapsedMs", std::int64_t{0})};
-        // Restored only for capture-era rows. Pre-capture rows (and
-        // non-capturing runs) have no "body" key, leaving the optional
-        // empty — the replayed event then matches what was emitted live.
-        // Bodies are stored base64 (`bodyEnc: "base64"`) to survive
-        // arbitrary bytes; a missing/other marker is treated as a raw
-        // string for forward-compatibility. A malformed base64 payload
-        // decodes to nullopt and is dropped rather than aborting replay.
+        ev.exchange = exchangeOf(p);
+        // Restored only for capture-era rows; a missing "body" leaves the optional empty, matching
+        // the live event. A missing or unknown `bodyEnc` is read as a raw string; malformed base64
+        // is dropped, not fatal.
         if (p.contains("body") && p["body"].is_string()) {
             const auto raw = p["body"].get<std::string>();
             if (p.value("bodyEnc", std::string{}) == "base64") {
@@ -609,12 +606,12 @@ struct EventEnvelope {
         ev.name = p.value("name", std::string{});
         ev.expr = p.value("expr", std::string{});
         ev.passed = p.value("passed", false);
+        ev.detail = p.value("detail", std::string{});
         ev.at = at;
         return ev;
     }
     if (eventType == "StepFailed") {
-        // Unknown codes (written by a newer build) fall back to
-        // SchemaInvalid so the row still shows up.
+        // Unknown codes (from a newer build) fall back to SchemaInvalid so the row still shows up.
         StepFailed ev;
         ev.runId = runId;
         ev.stepIndex = stepIndex.value_or(0);
@@ -676,18 +673,21 @@ struct EventEnvelope {
 
 }  // namespace
 
-// ─── Impl ────────────────────────────────────────────────────────────────────
-
 struct SqliteHistoryStore::Impl {
+    // The engine worker appends while the GUI thread lists, reads and clears; one lock per public
+    // call serialises the connection and its shared prepared statements.
+    mutable std::mutex mutex;
     DbPtr db;
 
-    // Prepared once on open, reused per append — skips SQLite's per-call
-    // statement-cache lookup.
     StmtPtr insertEventStmt;
     StmtPtr insertRunStmt;
     StmtPtr updateRunStartedStmt;
     StmtPtr updateRunEndedStmt;
     StmtPtr nextSeqStmt;
+
+    // Runs whose RunStarted was refused (id already in use); their later events are refused
+    // too, so they cannot append onto the other run's timeline.
+    std::set<std::uint64_t> rejectedRuns;
 
     [[nodiscard]] std::expected<void, ReqloomError> exec(std::string_view sql) const {
         char* err = nullptr;
@@ -752,23 +752,23 @@ struct SqliteHistoryStore::Impl {
                 ON run_events(run_id, seq);
             CREATE INDEX IF NOT EXISTS idx_runs_started_at
                 ON runs(started_at DESC);
+            CREATE TABLE IF NOT EXISTS run_id_allocator (
+                id      INTEGER PRIMARY KEY CHECK (id = 1),
+                last_id INTEGER NOT NULL
+            );
         )SQL";
         if (auto r = exec(createSchema); !r) {
             return r;
         }
 
-        // Migration for databases created before elapsed_ms existed: add the
-        // column so accurate run durations (from RunEnded) can be stored.
-        // ALTER fails harmlessly with "duplicate column name" on DBs that
-        // already have it (including freshly-created ones above), so the
-        // error is intentionally ignored.
+        // Migration for databases predating elapsed_ms; ALTER fails harmlessly with "duplicate
+        // column name" on newer ones, so the error is ignored.
         {
             auto migrated = exec("ALTER TABLE runs ADD COLUMN elapsed_ms INTEGER;");
             (void)migrated;
         }
 
-        // v1 is the only version today; future migrations check this
-        // row before applying ALTERs and bump it.
+        // v1 is the only version; future migrations check this row and bump it.
         if (auto r = exec("INSERT OR IGNORE INTO schema_version(version) VALUES (1);"); !r) {
             return r;
         }
@@ -795,9 +795,11 @@ struct SqliteHistoryStore::Impl {
         }
         insertRunStmt = std::move(*p2);
 
+        // `started_at IS NULL` limits this to a placeholder row: a started run is never overwritten
+        // by another run's RunStarted with the same id.
         auto p3 = prepare(
             "UPDATE runs SET target_op = ?, env_name = ?, "
-            "started_at = ?, chain_size = ? WHERE run_id = ?;");
+            "started_at = ?, chain_size = ? WHERE run_id = ? AND started_at IS NULL;");
         if (!p3) {
             return std::unexpected(p3.error());
         }
@@ -819,6 +821,16 @@ struct SqliteHistoryStore::Impl {
         return {};
     }
 
+    void close() {
+        insertEventStmt.reset();
+        insertRunStmt.reset();
+        updateRunStartedStmt.reset();
+        updateRunEndedStmt.reset();
+        nextSeqStmt.reset();
+        rejectedRuns.clear();
+        db.reset();
+    }
+
     [[nodiscard]] std::int64_t nextSeq(std::uint64_t runId) const {
         sqlite3_reset(nextSeqStmt.get());
         sqlite3_bind_int64(nextSeqStmt.get(), 1, static_cast<sqlite3_int64>(runId));
@@ -829,18 +841,14 @@ struct SqliteHistoryStore::Impl {
     }
 };
 
-// ─── Public API ──────────────────────────────────────────────────────────────
-
 SqliteHistoryStore::SqliteHistoryStore() : impl_(std::make_unique<Impl>()) {}
 SqliteHistoryStore::~SqliteHistoryStore() = default;
 
 std::expected<void, ReqloomError> SqliteHistoryStore::open(const fs::path& dbPath) {
-    // Re-openable: drop any previous connection + prepared statements first so
-    // switching projects (a new DB path) doesn't leak the old handle or leave
-    // statements bound to a closed database.
-    close();
+    const std::lock_guard lock(impl_->mutex);
+    // Re-openable: drop any previous connection and statements so switching projects leaks nothing.
+    impl_->close();
 
-    // Make sure the parent dir exists; sqlite3_open won't create it.
     if (dbPath.has_parent_path()) {
         std::error_code ec;
         fs::create_directories(dbPath.parent_path(), ec);
@@ -875,7 +883,42 @@ std::expected<void, ReqloomError> SqliteHistoryStore::open(const fs::path& dbPat
     return {};
 }
 
+std::expected<RunId, ReqloomError> SqliteHistoryStore::allocateRunId() {
+    const std::lock_guard lock(impl_->mutex);
+    if (!impl_->db) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: allocateRunId before open"});
+    }
+    // BEGIN IMMEDIATE takes the write lock, serialising concurrent allocators. The counter never
+    // moves backwards (even after clear()) and starts above any run id already present.
+    SqliteTransaction txn{impl_->db.get()};
+    if (!txn.began()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: begin allocate txn"));
+    }
+    if (auto r = impl_->exec(
+            "INSERT OR IGNORE INTO run_id_allocator(id, last_id) VALUES (1, 0);"
+            "UPDATE run_id_allocator SET last_id = "
+            "  MAX(last_id, (SELECT COALESCE(MAX(run_id), 0) FROM runs)) + 1 WHERE id = 1;");
+        !r) {
+        return std::unexpected(r.error());
+    }
+    auto select = impl_->prepare("SELECT last_id FROM run_id_allocator WHERE id = 1;");
+    if (!select) {
+        return std::unexpected(select.error());
+    }
+    if (sqlite3_step(select->get()) != SQLITE_ROW) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: read allocated run id"));
+    }
+    const auto allocated = static_cast<std::uint64_t>(sqlite3_column_int64(select->get(), 0));
+    select->reset();
+    if (!txn.commit()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: commit allocate txn"));
+    }
+    return RunId{allocated};
+}
+
 std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& event) {
+    const std::lock_guard lock(impl_->mutex);
     if (!impl_->db) {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: append before open"});
@@ -891,19 +934,22 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
                                             ErrorClass::Schema,
                                             "history: event payload is not serializable"});
     }
+    if (impl_->rejectedRuns.contains(env.runId)) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal,
+            ErrorClass::Run,
+            "history: run id " + std::to_string(env.runId) + " was refused at RunStarted"});
+    }
 
-    // All three statements below (run row + optional run-ended update +
-    // event insert) commit as one unit. Without this each sqlite3_step ran
-    // in its own implicit transaction — 3 fsyncs per event and a window
-    // where the event row could land without its parent run row.
+    // The run row, optional run-ended update and event insert commit as one unit, so an event never
+    // lands without its parent run row.
     SqliteTransaction txn{impl_->db.get()};
     if (!txn.began()) {
         return std::unexpected(sqliteError(impl_->db.get(), "history: begin append txn"));
     }
 
-    // RunStarted creates the runs row; RunEnded stamps the terminal
-    // state; any other event backfills a placeholder row so the FK
-    // holds even if events arrive out of order.
+    // RunStarted creates the runs row, RunEnded stamps the terminal state, any other event
+    // backfills a placeholder row so the FK holds when events arrive out of order.
     if (env.eventType == "RunStarted") {
         sqlite3_reset(impl_->insertRunStmt.get());
         sqlite3_bind_int64(impl_->insertRunStmt.get(), 1, static_cast<sqlite3_int64>(env.runId));
@@ -917,8 +963,9 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
         if (sqlite3_step(impl_->insertRunStmt.get()) != SQLITE_DONE) {
             return std::unexpected(sqliteError(impl_->db.get(), "history: insert run"));
         }
-        // INSERT OR IGNORE won't touch an existing row, so UPDATE the
-        // descriptive columns from the canonical RunStarted payload.
+        const bool insertedFreshRun = sqlite3_changes(impl_->db.get()) > 0;
+        // INSERT OR IGNORE leaves an existing row, so UPDATE it from the canonical RunStarted
+        // payload.
         sqlite3_reset(impl_->updateRunStartedStmt.get());
         sqlite3_bind_text(
             impl_->updateRunStartedStmt.get(), 1, target.c_str(), -1, SQLITE_TRANSIENT);
@@ -933,9 +980,14 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
         if (sqlite3_step(impl_->updateRunStartedStmt.get()) != SQLITE_DONE) {
             return std::unexpected(sqliteError(impl_->db.get(), "history: update run start"));
         }
+        if (!insertedFreshRun && sqlite3_changes(impl_->db.get()) == 0) {
+            impl_->rejectedRuns.insert(env.runId);
+            return std::unexpected(ReqloomError{ErrorCode::Internal,
+                                                ErrorClass::Run,
+                                                "history: run id " + std::to_string(env.runId) +
+                                                    " already belongs to another run"});
+        }
     } else {
-        // Backfill a parent row so the event insert's FK holds when
-        // events arrive out of order (test fixtures do this).
         sqlite3_reset(impl_->insertRunStmt.get());
         sqlite3_bind_int64(impl_->insertRunStmt.get(), 1, static_cast<sqlite3_int64>(env.runId));
         sqlite3_bind_null(impl_->insertRunStmt.get(), 2);
@@ -993,6 +1045,7 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
 }
 
 std::expected<std::vector<RunEvent>, ReqloomError> SqliteHistoryStore::eventsFor(RunId run) const {
+    const std::lock_guard lock(impl_->mutex);
     if (!impl_->db) {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: eventsFor before open"});
@@ -1039,6 +1092,7 @@ std::expected<std::vector<RunEvent>, ReqloomError> SqliteHistoryStore::eventsFor
 
 std::expected<std::vector<RunHistoryRow>, ReqloomError> SqliteHistoryStore::listRuns(
     std::size_t limit) const {
+    const std::lock_guard lock(impl_->mutex);
     if (!impl_->db) {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: listRuns before open"});
@@ -1079,12 +1133,11 @@ std::expected<std::vector<RunHistoryRow>, ReqloomError> SqliteHistoryStore::list
 }
 
 std::expected<void, ReqloomError> SqliteHistoryStore::clear() {
+    const std::lock_guard lock(impl_->mutex);
     if (!impl_->db) {
         return std::unexpected(ReqloomError{
             ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: clear before open"});
     }
-    // Both deletes commit as one unit so a failure can't leave orphaned
-    // events behind a deleted run (or vice-versa).
     SqliteTransaction txn{impl_->db.get()};
     if (!txn.began()) {
         return std::unexpected(sqliteError(impl_->db.get(), "history: begin clear txn"));
@@ -1102,12 +1155,8 @@ std::expected<void, ReqloomError> SqliteHistoryStore::clear() {
 }
 
 void SqliteHistoryStore::close() {
-    impl_->insertEventStmt.reset();
-    impl_->insertRunStmt.reset();
-    impl_->updateRunStartedStmt.reset();
-    impl_->updateRunEndedStmt.reset();
-    impl_->nextSeqStmt.reset();
-    impl_->db.reset();
+    const std::lock_guard lock(impl_->mutex);
+    impl_->close();
 }
 
 }  // namespace reqloom::engine

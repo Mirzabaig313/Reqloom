@@ -23,10 +23,16 @@ enum class ErrorCode : std::uint8_t {
     // Network
     NetworkTimeout,
     NetworkDns,
+    /// The TCP connection (or proxy tunnel) could not be established, so no request bytes
+    /// reached the server. Retryable for any method.
+    NetworkConnect,
     NetworkTls,
-    /// Local file referenced by an `@/path` value in `body_form` could
-    /// not be read (missing, not a regular file, or exceeded the size
-    /// cap). Surfaced from the executor before any HTTP call is made.
+    /// Refused by a transport safety rule (non-http(s) scheme, body over
+    /// `TransportConfig::maxResponseBytes`, too many redirects); `detail` says which. Not
+    /// retryable.
+    NetworkPolicy,
+    /// A local file referenced by an `@/path` value in `body_form` could not be read (missing, not
+    /// regular, or over the size cap). Raised before any HTTP call.
     UploadFileUnreadable,
 
     // HTTP
@@ -38,10 +44,8 @@ enum class ErrorCode : std::uint8_t {
     SessionRefreshFailed,
 
     // Secrets
-    /// A `{{secret.X}}` reference could not be loaded from the secret
-    /// store backend (keychain error, not a missing key). A missing key
-    /// is not an error here — it simply leaves the reference unresolved,
-    /// which surfaces later as `VarUnresolved` at request-build time.
+    /// A `{{secret.X}}` could not be loaded from the backend (keychain error, not a missing key; a
+    /// missing key just leaves the reference unresolved).
     SecretAccessFailed,
 
     // Hooks
@@ -68,9 +72,14 @@ enum class ErrorCode : std::uint8_t {
     // Run
     Cancelled,
 
-    /// An engine-internal precondition was violated (e.g. a read API was
-    /// called on an engine built without the backing store). Not expected
-    /// in production wiring; surfaced rather than crashing.
+    // Project files
+    /// The target folder already holds a reqloom.yaml and overwriting was not allowed.
+    ProjectExists,
+    /// Project files could not be written (folder creation, temp file or rename failed).
+    WriteFailed,
+
+    /// An engine-internal precondition was violated (e.g. a read API on an engine without a history
+    /// store).
     Internal,
 };
 
@@ -87,19 +96,14 @@ enum class ErrorClass : std::uint8_t {
     Run,
 };
 
-/// Stable, human-readable code string (e.g. "E_CYCLE"). Safe in logs and
-/// asserted on by integration tests.
+/// Stable code string (e.g. "E_CYCLE"), safe in logs.
 [[nodiscard]] std::string_view toCodeString(ErrorCode code) noexcept;
 
-/// A short, action-oriented phrase for an error code (e.g. "Authentication
-/// failed"). The canonical source of friendly messages for UI/CLI surfaces —
-/// promote new copy here rather than maintaining per-surface maps.
+/// A short, action-oriented phrase for an error code (e.g. "Authentication failed"); the canonical
+/// source of friendly messages for UI/CLI.
 [[nodiscard]] std::string_view humanize(ErrorCode code) noexcept;
 
-/// Inverse of `toCodeString`. Returns the matching code, or nullopt for
-/// an unrecognised string (e.g. a code persisted by a newer build).
-/// Callers decide the fallback — the history store maps nullopt to
-/// `SchemaInvalid` so an unknown persisted code still surfaces.
+/// Inverse of `toCodeString`; nullopt for an unrecognised string (e.g. a code from a newer build).
 [[nodiscard]] std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept;
 
 /// Whether a step that fails with this code should be retried per the
@@ -108,10 +112,8 @@ enum class ErrorClass : std::uint8_t {
 
 [[nodiscard]] ErrorClass classify(ErrorCode code) noexcept;
 
-/// Application-layer error type. Infrastructure and application layers
-/// return `std::expected<T, ReqloomError>` rather than throwing.
-/// `ErrorCode` is the stable identifier; `detail` carries human-readable
-/// context (file:line, response excerpt, etc.).
+/// Application-layer error type; infrastructure and application layers return `std::expected<T,
+/// ReqloomError>` rather than throwing. `detail` carries human-readable context.
 struct ReqloomError {
     ErrorCode code{ErrorCode::SchemaInvalid};
     ErrorClass cls{ErrorClass::Schema};

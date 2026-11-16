@@ -1,10 +1,11 @@
 // ImportFromApidog — Apidog native export (JSON) → Project parser.
 // Sibling of ImportFromPostman.
-//
-// path/id/token helpers mirror the other importers rather than share
-// a header. Upgrade path: extract a shared ImportSupport.h once worth it.
+// Helpers mirror the other importers rather than share a header.
 
 #include "ImportFromApidog.h"
+#include "ImportFromFileRefs.h"
+#include "ImportFromJsonHelpers.h"
+#include "ImportSupport.h"
 
 #include "../domain/DependencyResolver.h"
 
@@ -28,6 +29,7 @@ namespace reqloom::engine {
 namespace {
 
 namespace fs = std::filesystem;
+namespace is = import_support;
 using json = nlohmann::json;
 
 constexpr std::uintmax_t kMaxExportBytes = std::uintmax_t{32} * 1024 * 1024;
@@ -137,7 +139,7 @@ HttpMethod parseMethod(std::string_view methodRaw) {
     return HttpMethod::Get;
 }
 
-std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced) {
+std::string rewriteTokens(std::string_view in, is::VarRefs& referenced) {
     std::string out;
     out.reserve(in.size());
     std::size_t i = 0;
@@ -162,11 +164,8 @@ std::string rewriteTokens(std::string_view in, std::set<std::string>& referenced
         }
         if (inner.empty()) {
             out.append("{{}}");
-        } else if (inner.find('.') != std::string_view::npos) {
-            out.append("{{").append(inner).append("}}");
         } else {
-            referenced.emplace(inner);
-            out.append("{{env.").append(inner).append("}}");
+            out.append(is::envRef(inner, referenced));
         }
         i = close + 2;
     }
@@ -180,6 +179,12 @@ std::string jsonStr(const json& node, std::string_view key) {
         }
     }
     return {};
+}
+
+/// `node.auth.type`; empty when absent (Apidog writes `"auth": {}` for both no auth and inherit).
+std::string authType(const json& node) {
+    const auto it = node.find("auth");
+    return it != node.end() ? jsonStr(*it, "type") : std::string{};
 }
 
 bool isFormContentType(std::string_view ct) {
@@ -239,7 +244,7 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
     auto& env = outcome.project.environments["default"];
 
     const std::string defaultResource = sanitizeId(projectName, "requests");
-    std::set<std::string> referencedVars;
+    is::VarRefs referencedVars;
     std::set<std::string> seenOpIds;
     const auto importedAt = nowIso8601Utc();
     auto rewrite = [&](std::string_view s) {
@@ -271,16 +276,17 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
         op.resource = ResourceId{resourceId};
         const auto methodRaw = jsonStr(api, "method");
         op.method = parseMethod(methodRaw.empty() ? "get" : methodRaw);
-        op.pathTemplate = rewrite(jsonStr(api, "path"));
+        const auto pathParams = is::convertPathParams(rewrite(jsonStr(api, "path")), resourceId);
+        op.pathTemplate = pathParams.path;
+        is::VarMap pathValues;
 
-        // Parameters: header + query lists of {name, example, enable}.
         if (api.contains("parameters") && api["parameters"].is_object()) {
             const json& params = api["parameters"];
             auto absorb = [&](std::string_view key, std::map<std::string, std::string>& into) {
                 const auto it = params.find(key);
                 if (it != params.end() && it->is_array()) {
                     for (const auto& p : *it) {
-                        if (!p.is_object() || !p.value("enable", true)) {
+                        if (!p.is_object() || !import_json::boolOr(p, "enable", true)) {
                             continue;
                         }
                         const auto name = jsonStr(p, "name");
@@ -292,6 +298,13 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
             };
             absorb("header", op.headers);
             absorb("query", op.queryParams);
+            if (const auto it = params.find("path"); it != params.end() && it->is_array()) {
+                for (const auto& p : *it) {
+                    if (const auto name = jsonStr(p, "name"); !name.empty()) {
+                        pathValues[is::identifier(name, "param")] = jsonStr(p, "example");
+                    }
+                }
+            }
         }
 
         // Request body: prefer a concrete example; else a form parameter list.
@@ -307,7 +320,7 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
                 body["parameters"].is_array()) {
                 std::map<std::string, std::string> form;
                 for (const auto& f : body["parameters"]) {
-                    if (!f.is_object() || !f.value("enable", true)) {
+                    if (!f.is_object() || !import_json::boolOr(f, "enable", true)) {
                         continue;
                     }
                     const auto name = jsonStr(f, "name");
@@ -317,18 +330,21 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
                     if (jsonStr(f, "type") == "file") {
                         form[name] = "@";
                     } else {
-                        form[name] = rewrite(jsonStr(f, "example"));
+                        form[name] = import_files::textFieldValue(
+                            jsonStr(f, "example"), op.id.value, name, warnings, rewrite);
                     }
                 }
                 if (!form.empty()) {
                     op.bodyForm = std::move(form);
+                    if (type.find("x-www-form-urlencoded") == std::string::npos) {
+                        is::keepMultipart(op);
+                    }
                 }
             } else if (!exampleValue.empty()) {
                 op.bodyTemplate = rewrite(exampleValue);
             }
         }
 
-        // Expected status from the first declared response code.
         if (api.contains("responses") && api["responses"].is_array() && !api["responses"].empty()) {
             const auto& first = api["responses"].front();
             if (first.is_object() && first.contains("code") && first["code"].is_number_integer()) {
@@ -337,21 +353,22 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
         }
 
         Provenance prov;
-        prov.source = Provenance::Source::HandWritten;  // no Apidog-specific enum value
+        prov.source = Provenance::Source::ApidogImport;
         prov.verifiedAgainst = Provenance::VerifiedAgainst::None;
         prov.importedAt = importedAt;
         prov.evidence["imported_from"] = "apidog";
         if (!reqName.empty()) {
             prov.evidence["apidog_name"] = reqName;
         }
+        is::notePathParams(pathParams, op.id.value, resourceId, pathValues, prov, warnings);
+        is::warnDroppedAuth(warnings, "operation " + op.id.value, authType(api));
         op.provenance = std::move(prov);
 
         resource.operations.emplace(unique, std::move(op));
     };
 
-    // Walk a folder's `items`: sub-folders (which carry `items`) or endpoints
-    // (which carry `api`). A top-level folder becomes a resource; deeper folders
-    // fold into their top-level ancestor.
+    // Folders carry `items`, endpoints carry `api`; deeper folders fold into their top-level
+    // ancestor.
     auto walk =
         [&](const json& folder, const std::string& resourceId, int depth, auto&& self) -> void {
         if (depth > kMaxItemDepth) {
@@ -368,6 +385,8 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
                 continue;
             }
             if (item.contains("items") && item["items"].is_array()) {
+                is::warnDroppedAuth(
+                    warnings, std::format("folder `{}`", jsonStr(item, "name")), authType(item));
                 const std::string childResource =
                     resourceId.empty() ? sanitizeId(jsonStr(item, "name"), defaultResource)
                                        : resourceId;
@@ -378,9 +397,13 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
         }
     };
 
-    // Apidog wraps everything in a single synthetic top folder (usually "Root").
-    // Unwrap it so its child folders become resources; a multi-folder top level
-    // means each entry is itself a resource.
+    // Apidog wraps everything in one synthetic top folder (usually "Root"); unwrap it so its child
+    // folders become resources.
+    if (doc.contains("projectSetting")) {
+        is::warnDroppedAuth(warnings,
+                            std::format("project `{}`", outcome.project.name),
+                            authType(doc["projectSetting"]));
+    }
     const json& collection = doc["apiCollection"];
     if (collection.size() == 1) {
         walk(collection.front(), std::string{}, 0, walk);
@@ -396,14 +419,14 @@ std::expected<ImportFromApidog::Outcome, ReqloomError> ImportFromApidog::run(
         return std::unexpected(invalid("apidog import: export yielded zero importable endpoints"));
     }
 
-    // Apidog native exports carry no server URL (it lives in environments that
-    // aren't part of this file), so baseUrl can't be derived.
+    // Native exports carry no server URL (it lives in environments outside this file).
     if (!env.contains("baseUrl")) {
         warnings.push_back(
             "Apidog exports carry no server URL — set `baseUrl` in the environment before running");
     }
 
-    for (const auto& ref : referencedVars) {
+    is::warnRenamedVars(referencedVars, warnings);
+    for (const auto& ref : referencedVars.referenced) {
         if (!env.contains(ref)) {
             env[ref] = "";
             warnings.push_back(std::format(

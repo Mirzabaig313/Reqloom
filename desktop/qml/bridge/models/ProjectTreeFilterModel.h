@@ -1,8 +1,5 @@
-// ProjectTreeFilterModel — the explorer's live filter
-// Wraps ProjectTreeModel and keeps an operation row when the query
-// fuzzy-matches its id OR its method verb, plus every ancestor of a match
-// (recursive filtering). Reuses the pure FuzzyMatch matcher so the explorer
-// and the command palette rank consistently. Empty query shows everything.
+// ProjectTreeFilterModel — the explorer's live filter over ProjectTreeModel: keeps operation rows
+// whose id or verb fuzzy-matches (via FuzzyMatch) plus their ancestors.
 #pragma once
 
 #include <QtCore/QSortFilterProxyModel>
@@ -21,11 +18,9 @@ public:
     [[nodiscard]] QString filterText() const { return filterText_; }
     void setFilterText(const QString& text);
 
-    /// Stable identity string for a tree node (proxy index), used by the
-    /// explorer to persist which rows are expanded across model rebuilds and
-    /// app restarts. Composed of the node's kind + owning project + ids + name,
-    /// joined by the unit-separator (0x1F). Empty for an invalid index.
-    /// Must stay byte-for-byte in sync with ExplorerPanel's keyForDelegate().
+    /// Stable identity string for a tree node (kind + owning project + ids + name, joined by 0x1F),
+    /// used to persist expanded rows. Empty for an invalid index. Must match ExplorerPanel's
+    /// keyForDelegate() byte for byte.
     [[nodiscard]] Q_INVOKABLE QString nodeKey(const QModelIndex& index) const;
 
 signals:

@@ -1,5 +1,4 @@
-// Color — see header. OKLCH → linear sRGB → gamma sRGB, per the standard
-// Oklab matrices (Björn Ottosson).  notes Qt receives sRGB hex.
+// Color — see header. OKLCH → linear sRGB → gamma sRGB, per Ottosson's Oklab matrices.
 #include "Color.h"
 
 #include <algorithm>
@@ -26,12 +25,10 @@ namespace {
 }  // namespace
 
 QColor oklch(double lightness, double chroma, double hueDegrees) {
-    // OKLCH → OKLab (polar to cartesian on the a/b plane).
     const double hueRadians = hueDegrees * (std::numbers::pi / 180.0);
     const double aLab = chroma * std::cos(hueRadians);
     const double bLab = chroma * std::sin(hueRadians);
 
-    // OKLab → LMS (cubed). Matrix from Ottosson's reference implementation.
     const double lTerm = lightness + (0.396'337'777'4 * aLab) + (0.215'803'757'3 * bLab);
     const double mTerm = lightness - (0.105'561'345'8 * aLab) - (0.063'854'172'8 * bLab);
     const double sTerm = lightness - (0.089'484'177'5 * aLab) - (1.291'485'548'0 * bLab);
@@ -40,7 +37,6 @@ QColor oklch(double lightness, double chroma, double hueDegrees) {
     const double mCubed = mTerm * mTerm * mTerm;
     const double sCubed = sTerm * sTerm * sTerm;
 
-    // LMS → linear sRGB.
     const double rLinear =
         (4.076'741'662'1 * lCubed) - (3.307'711'591'3 * mCubed) + (0.230'969'929'2 * sCubed);
     const double gLinear =
@@ -89,26 +85,24 @@ QColor oklchForContrast(double chroma,
                         double startLightness) {
     startLightness = std::clamp(startLightness, 0.0, 1.0);
 
-    // Already accessible at the designed lightness → keep the design.
     if (contrastRatio(oklch(startLightness, chroma, hueDegrees), background) >= targetRatio) {
         return oklch(startLightness, chroma, hueDegrees);
     }
 
-    // On a light background contrast grows as the foreground darkens; on a dark
-    // background as it lightens. Move toward the extreme that increases it.
+    // Contrast grows as the foreground darkens on a light background and lightens on a dark one;
+    // move toward that extreme.
     const bool darken = relativeLuminance(background) >= 0.5;
     const double extreme = darken ? 0.0 : 1.0;
     const double designEdge = darken ? 1.0 : 0.0;
 
-    // Relax chroma only if even the extreme lightness can't reach the target at
-    // the full designed chroma (keeps colours as vivid as accessibility allows).
+    // Relax chroma only if even the extreme lightness can't reach the target at full chroma.
     for (int step = 0; step <= 10; ++step) {
         const double c = chroma * (1.0 - (static_cast<double>(step) * 0.1));
         if (contrastRatio(oklch(extreme, c, hueDegrees), background) < targetRatio) {
             continue;  // unreachable at this chroma — desaturate and retry
         }
-        // Binary-search the lightness boundary closest to the designed value:
-        // `meet` always satisfies the target, `fail` does not.
+        // Binary-search the lightness boundary nearest the design: `meet` satisfies the target,
+        // `fail` does not.
         double meet = extreme;
         double fail = designEdge;
         for (int i = 0; i < 40; ++i) {
@@ -122,7 +116,6 @@ QColor oklchForContrast(double chroma,
         return oklch(meet, c, hueDegrees);
     }
 
-    // Fallback: pure black/white guarantees any reasonable ratio.
     return oklch(extreme, 0.0, hueDegrees);
 }
 

@@ -29,14 +29,18 @@ Raised at load time, before any request. `reqloom lint` catches all of these.
 | Code | Cause | Fix |
 | --- | --- | --- |
 | `E_YAML_PARSE` | Malformed YAML, or a file over the 8 MiB cap | Check indentation; the message names the file and line |
-| `E_SCHEMA_INVALID` | Structurally valid YAML the engine can't accept — commonly a bad hook path | Read the detail; it names the offending field |
+| `E_SCHEMA_INVALID` | Structurally valid YAML the engine can't accept — a wrong type (`timeout: 30s`), an unknown enum value (`method: DELTE`, an unknown `auth.strategy`), a malformed duration or size, `assert` as a map, `for_each` without `over`, an actor, resource or environment defined twice or with an unsafe id, a bad hook path, a malformed assertion or poll condition, a refused regex, an unsupported `failure_message.show` path, an invalid `id:`, or a secret-using project with no `id:` (at run time) | Read the detail; it starts with `file:line:col` and, for an enum, lists the accepted values |
 | `E_SCHEMA_VERSION` | `version:` is missing or outside 1–3 | Set a supported `version:` |
-| `E_REF_UNDEFINED` | A `{{X.y}}` scope, or a `depends_on` target, doesn't exist | Fix the name — the message names the symbol |
+| `E_REF_UNDEFINED` | A `{{X.y}}` scope (in a request, an assertion or a poll condition), a `depends_on` target, an operation's or poll's `actor`, or a `for_each` resource doesn't exist; an unknown `$.faker` name; a `$.env` name not in `allowed_env`, in an operation, an environment value or an actor; or an ambiguous producer | Fix the name — the message names the symbol and the file and line |
 | `E_CYCLE` | Circular dependency | Break the loop; the message prints the path |
 
 ```ansi
+LINT FAIL [E_SCHEMA_INVALID]: ./reqloom.yaml:11:17: unknown method 'PSOT'; accepted values: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS
 LINT FAIL [E_CYCLE]: Circular dependency detected: order.one → order.two
 ```
+
+Unknown keys are not errors: they are warnings that `reqloom lint` prints and
+passes. See [lint warnings](/cli/lint/#warnings).
 
 ## Resolution
 
@@ -44,22 +48,33 @@ Raised while building a request.
 
 | Code | Cause | Fix |
 | --- | --- | --- |
-| `E_VAR_UNRESOLVED` | A reference couldn't be substituted | Most often a typo'd extraction name, or a missing env var |
-| `E_UPLOAD_FILE_UNREADABLE` | A `body_form` `@path` is missing, not a regular file, or over 50 MiB | Check the path is relative to where you run the command |
+| `E_VAR_UNRESOLVED` | A reference in a request, assertion or poll condition couldn't be substituted | Most often a typo'd extraction name, a missing env var, or a producer that returned `null` — the detail's `Cause:` line says which |
+| `E_UPLOAD_FILE_UNREADABLE` | A `body_form` `@path` is empty, missing, not a regular file, over 50 MiB, or pushes the request's files past 256 MiB | A relative path resolves against the project folder (the one holding `reqloom.yaml`), not where you run the command |
 | `E_INDEXED_REF_OUT_OF_RANGE` | **Reserved — never raised.** An out-of-range `{{res[N].x}}` surfaces as `E_VAR_UNRESOLVED` | — |
 
 `E_VAR_UNRESOLVED` is the one you'll meet most. Remember that
 [lint validates the scope, not the field](/cli/lint/#what-it-does-not-check) —
 `{{order.typo}}` passes lint whenever a resource named `order` exists, then
-fails here.
+fails here. The detail names the variable, where it was used, and the cause:
+
+```ansi
+Variable: {{user.user_id}}
+Location: URL path
+Cause: The last user.nulls response returned null for 'user_id'.
+```
 
 ## Network
 
 | Code | Cause | Retried |
 | --- | --- | --- |
-| `E_NETWORK_TIMEOUT` | Connect or read timeout | yes |
-| `E_NETWORK_DNS` | Hostname didn't resolve | yes |
-| `E_NETWORK_TLS` | TLS handshake failed | no |
+| `E_NETWORK_DNS` | Hostname didn't resolve; the request never left your machine | yes, any method |
+| `E_NETWORK_CONNECT` | The connection (or proxy tunnel) couldn't be established; no request bytes reached the server | yes, any method |
+| `E_NETWORK_TIMEOUT` | A connect or read timeout, or any other transport failure after which the request may have reached the server | yes, except POST/PATCH without `retry.non_idempotent` |
+| `E_NETWORK_TLS` | TLS handshake or certificate verification failed | no |
+| `E_NETWORK_POLICY` | Refused by a transport rule: a scheme other than `http`/`https`, a response body over the limit (64 MiB unless `transport.max_response_size` says otherwise), or more than 10 redirects. The detail says which | no |
+
+A DNS or connect failure after a redirect hop is reported as `E_NETWORK_TIMEOUT`,
+because an earlier hop may already have delivered the request.
 
 `E_NETWORK_TLS` against an internal host usually means a private CA — point
 `transport.ca_bundle` at it rather than disabling verification. See
@@ -69,31 +84,39 @@ fails here.
 
 | Code | Cause | Retried |
 | --- | --- | --- |
-| `E_HTTP_5XX` | Server error | yes |
-| `E_HTTP_4XX` | Client error | no |
-| `E_STATUS_MISMATCH` | Status didn't match `expect_status` | no |
+| `E_HTTP_5XX` | A 5xx status not listed in `expect_status` | yes, except POST/PATCH without `retry.non_idempotent` |
+| `E_HTTP_4XX` | Any other status not listed in `expect_status` — a 4xx, but also a 2xx or 3xx you didn't expect | no |
+| `E_STATUS_MISMATCH` | **Reserved — never raised.** A status mismatch surfaces as `E_HTTP_4XX` or `E_HTTP_5XX` | — |
 
-`E_STATUS_MISMATCH` with a `202` is the classic polling mistake: an async
-endpoint needs `expect_status: [202, 200]`, not `expect_status: 200`. See
+Both HTTP codes need an `expect_status` to compare against. Without one, every
+status counts as success — a `500` included — and nothing is retried. The detail
+quotes the response, with secrets masked and up to 4 KiB by default; see
+[failure messages](/schema/secrets-and-transport/#failure-messages).
+
+`E_HTTP_4XX` on a `202` is the classic polling mistake: an async endpoint needs
+`expect_status: [202, 200]`, not `expect_status: 200`. See
 [polling](/schema/advanced-operations/#polling).
 
 ## Auth
 
 | Code | Cause | Fix |
 | --- | --- | --- |
-| `E_SESSION_REFRESH_FAILED` | An actor's login or token refresh failed | Check credentials and the auth path; also raised when the server is unreachable during login |
-| `E_SECRET_ACCESS_FAILED` | The OS keychain couldn't be read | Unlock the keychain or grant access |
+| `E_SESSION_REFRESH_FAILED` | An actor's login or token refresh failed, or a request couldn't be signed (such as a SigV4 multipart upload to a service other than S3) | For a login, the detail starts `actor '<id>' could not sign in:` and gives the cause; also raised when the server is unreachable during login |
+| `E_SECRET_ACCESS_FAILED` | The OS keychain couldn't be read, the project's `id:` belongs to a different folder on this machine, or a secret couldn't be saved or removed (including in a build with no keychain backend) | Unlock the keychain or grant access; for a folder conflict, see [each project id belongs to one folder](/schema/secrets-and-transport/#each-project-id-belongs-to-one-folder) |
 
 A *missing* keychain entry is **not** `E_SECRET_ACCESS_FAILED` — the variable is
-left unresolved and you typically get a 401. Only a backend failure raises this.
+left unresolved, so an operation fails with `E_VAR_UNRESOLVED` and a login usually
+gets a 401. Only a backend failure or a folder conflict raises this on a run. In
+a build with no keychain backend every secret is missing, and the
+`E_VAR_UNRESOLVED` detail says `no OS keychain is available on this machine`.
 
 ## Extraction & assertions
 
 | Code | Cause | Fix |
 | --- | --- | --- |
-| `E_RESPONSE_PARSE` | Response declared JSON but didn't parse | Check the real `Content-Type`; an HTML error page is the usual culprit |
-| `E_EXTRACTION_FAILED` | A JSONPath / XPath / regex matched nothing | Verify the shape against a real response |
-| `E_ASSERTION_FAILED` | An `assert:` predicate was false | The API changed, or the predicate is wrong |
+| `E_RESPONSE_PARSE` | Response declared JSON but didn't parse, or nests deeper than 256 levels | Check the real `Content-Type`; an HTML error page is the usual culprit |
+| `E_EXTRACTION_FAILED` | A JSONPath or regex matched nothing, or the JSONPath uses syntax the engine doesn't support (such as `$..name`) | Verify the shape against a real response; see [supported JSONPath](/schema/advanced-operations/#jsonpath-in-extractions) |
+| `E_ASSERTION_FAILED` | An `assert:` predicate was false; the output [says what was compared](/cli/run/#a-failed-assertion-says-why) | The API changed, or the predicate is wrong. An unresolved `{{…}}` in an assertion is `E_VAR_UNRESOLVED` instead |
 
 ## Polling
 
@@ -110,8 +133,8 @@ double it.
 
 | Code | Cause |
 | --- | --- |
-| `E_HOOK_FAILURE` | A `pre_request` / `post_response` script threw |
-| `E_HOOK_TIMEOUT` | A hook didn't finish in time |
+| `E_HOOK_FAILURE` | A `pre_request` / `post_response` script threw, returned a rejected promise, or ran out of its 64 MiB memory |
+| `E_HOOK_TIMEOUT` | A hook didn't finish within 1 second |
 
 ## AI importer
 
@@ -127,18 +150,44 @@ normal run.
 
 | Code | Cause |
 | --- | --- |
-| `E_CANCELLED` | You cancelled the run |
+| `E_CANCELLED` | You cancelled the run. A request in flight is stopped within about a second and is not retried |
 | `E_INTERNAL` | An engine invariant broke — please [report it](https://github.com/Mirzabaig313/Reqloom/issues) |
-| `E_UNKNOWN` | Unclassified |
+| `E_UNKNOWN` | Fallback string for a code this build doesn't know; not expected in normal output |
+
+## Import
+
+| Code | Cause |
+| --- | --- |
+| `E_PROJECT_EXISTS` | The import target already has a `reqloom.yaml` and overwriting wasn't asked for |
+| `E_WRITE_FAILED` | The imported project couldn't be written to disk |
+
+## Command line
+
+Raised by the `reqloom` command itself, before the engine runs. They appear as
+`error.code` in [JSON output](/cli/run/#json) and in the JUnit `<error>`.
+
+| Code | Cause | Exit code |
+| --- | --- | --- |
+| `E_CLI_USAGE` | Unknown option, or a missing or invalid value | `2` |
+| `E_CLI_PROJECT_NOT_FOUND` | No `reqloom.yaml` at the project path | `2` |
+| `E_CLI_UNKNOWN_OPERATION` | The operation isn't in the project; the message lists the ones that are | `2` |
+| `E_CLI_UNKNOWN_ENVIRONMENT` | `--env` names an environment the project doesn't define | `2` |
+| `E_CLI_INTERNAL` | An unexpected error in the command | `3` |
 
 ## Which are retried
 
-Only three: `E_NETWORK_TIMEOUT`, `E_NETWORK_DNS`, and `E_HTTP_5XX`. Everything
-else fails immediately, because retrying a 401 or a failed assertion just wastes
-the budget.
+Four codes can be retried: `E_NETWORK_DNS`, `E_NETWORK_CONNECT`,
+`E_NETWORK_TIMEOUT`, and `E_HTTP_5XX` (a 5xx you didn't list in
+`expect_status`). Everything else fails immediately, because retrying a 401 or a
+failed assertion just wastes the budget.
 
-Retries default to 3 attempts with 500 ms backoff, doubling per attempt. Tune it
-per operation:
+The method matters. GET, HEAD, OPTIONS, PUT, and DELETE are retried on all four.
+POST and PATCH are retried only on `E_NETWORK_DNS` and `E_NETWORK_CONNECT` —
+failures where the request never reached the server — unless the operation sets
+`retry.non_idempotent: true`.
+
+`retry.max` is the total number of sends, 3 by default, with a 500 ms backoff
+doubling per attempt. Tune it per operation:
 
 ```yaml
     retry:
@@ -146,7 +195,7 @@ per operation:
       backoff: 1000
 ```
 
-See [timeouts and retries](/schema/secrets-and-transport/#timeouts-and-retries-per-operation).
+See [what is retried](/schema/secrets-and-transport/#what-is-retried).
 
 :::tip[`E_VAR_UNRESOLVED` is much faster to fix in the app]
 The [desktop timeline](/desktop/running/#unresolved-variable-diagnostics) names the

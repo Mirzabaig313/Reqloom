@@ -1,9 +1,8 @@
-// AppController file-local helpers, shared across the AppController*.cpp units.
-// These were file-scope helpers in AppController.cpp; extracted so the class's
-// method definitions can be split across translation units without duplicating
-// them. Inline (not anonymous) so unused helpers in a given unit don't warn.
+// AppController file-local helpers shared across the AppController*.cpp units; inline so unused
+// ones don't warn.
 #pragma once
 
+#include "application/ProjectEdits.h"
 #include "application/UrlTemplate.h"
 
 #include <reqloom/engine/Factories.h>
@@ -30,8 +29,7 @@
 
 namespace reqloom::desktop::qml {
 
-/// Locate the bundled sample project so first run is useful without a dialog.
-/// Walks up from the executable directory (mirrors the Widgets App).
+/// Locate the bundled sample project by walking up from the executable directory.
 [[nodiscard]] inline QString locateSampleProject() {
     QDir dir(QCoreApplication::applicationDirPath());
     for (int hops = 0; hops < 8; ++hops) {
@@ -46,41 +44,8 @@ namespace reqloom::desktop::qml {
     return {};
 }
 
-/// When an OpenAPI import fails, sniff the file head for the common
-/// non-OpenAPI shapes (Postman collection, Swagger 2.0) so the toast can
-/// say something actionable instead of the engine's terse "found ''".
-/// Returns an empty string when nothing recognizable is found, so the
-/// caller falls back to the engine's own error detail.
-[[nodiscard]] inline QString importFailureHint(const std::filesystem::path& spec) {
-    std::ifstream in{spec, std::ios::binary};
-    if (!in) {
-        return {};
-    }
-    std::string head(8192, '\0');
-    in.read(head.data(), static_cast<std::streamsize>(head.size()));
-    head.resize(static_cast<std::size_t>(in.gcount()));
-
-    if (head.find("schema.getpostman.com") != std::string::npos ||
-        head.find("_postman_id") != std::string::npos) {
-        // Postman is supported — but if the importer still failed, the export
-        // is likely malformed or an unsupported schema version.
-        return QStringLiteral(
-            "This Postman collection couldn't be imported. Re-export it as Collection v2.1 "
-            "and try again.");
-    }
-    if (head.find("\"swagger\"") != std::string::npos ||
-        head.find("swagger:") != std::string::npos) {
-        return QStringLiteral(
-            "This Swagger 2.0 document couldn't be imported. Check that it's valid and has a "
-            "non-empty `paths` section.");
-    }
-    return {};
-}
-
-/// Normalize a project directory path to a stable comparison key: strips a
-/// trailing separator and resolves `.`/`..`/symlinks, so two spellings of the
-/// same project (`/x/proj` and `/x/proj/`) collapse to one. `weakly_canonical`
-/// keeps paths that no longer exist working.
+/// Normalize a project path to a stable comparison key (strips a trailing separator, resolves
+/// `.`/`..`/symlinks). `weakly_canonical` keeps nonexistent paths working.
 [[nodiscard]] inline QString canonicalProjectPath(const QString& path) {
     if (path.isEmpty()) {
         return path;
@@ -89,29 +54,6 @@ namespace reqloom::desktop::qml {
     const auto canon =
         std::filesystem::weakly_canonical(std::filesystem::path{path.toStdString()}, ec);
     return ec ? path : QString::fromStdString(canon.string());
-}
-
-/// Turn a project name into a filesystem-safe folder name: lowercase, runs of
-/// non-alphanumeric characters collapse to a single '-', trimmed. Falls back to
-/// "imported-project" when nothing usable remains.
-[[nodiscard]] inline std::string projectFolderSlug(std::string_view name) {
-    std::string out;
-    out.reserve(name.size());
-    bool pendingDash = false;
-    for (const char c : name) {
-        const bool alnum =
-            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
-        if (alnum) {
-            if (pendingDash && !out.empty()) {
-                out.push_back('-');
-            }
-            pendingDash = false;
-            out.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c));
-        } else {
-            pendingDash = true;
-        }
-    }
-    return out.empty() ? std::string{"imported-project"} : out;
 }
 
 [[nodiscard]] inline QString decodeQueryComponent(const QString& component) {
@@ -455,30 +397,11 @@ inline void appendRawQuerySegment(QString& query, bool& hasOutputSegment, const 
     return engine::HttpMethod::Get;
 }
 
-/// Derive the extraction source from the path prefix, mirroring the engine's
-/// YamlSchemaParser (and the old ExtractionTableEditor) so the in-memory
-/// Extraction matches what a reload would produce.
 [[nodiscard]] inline engine::Extraction::Source sourceForPath(const std::string& path) {
-    if (path.starts_with("$.headers.")) {
-        return engine::Extraction::Source::Header;
-    }
-    if (path.starts_with("$.cookies.")) {
-        return engine::Extraction::Source::Cookie;
-    }
-    if (path == "$.status_code") {
-        return engine::Extraction::Source::StatusCode;
-    }
-    return engine::Extraction::Source::JsonPath;
+    return impliedExtractionSource(path);
 }
 
-/// Mirror of ProjectModel's id-breaking guard for live dialog validation.
-[[nodiscard]] inline bool hasIdBreakingChars(const QString& name) {
-    return name.contains(QLatin1Char('.')) || name.contains(QLatin1Char('/')) ||
-           name.contains(QLatin1Char('\\'));
-}
-
-/// Convert an ordered string map into QString pairs for an EditableKeyValueModel
-/// (insertion/sort order preserved). Used to seed the edit controls from an op.
+/// Convert an ordered string map to QString pairs for an EditableKeyValueModel.
 [[nodiscard]] inline std::vector<std::pair<QString, QString>> toEditPairs(
     const std::map<std::string, std::string>& pairs) {
     std::vector<std::pair<QString, QString>> out;

@@ -10,10 +10,8 @@ namespace reqloom::desktop::layout {
 
 namespace {
 
-// Longest-path layering via Kahn's topological order: O(V+E), no recursion.
-// layer[v] = max over incoming edges (u→v) of layer[u] + 1. Nodes left on a
-// cycle never reach in-degree 0, so they keep their initial layer 0 — a benign
-// fallback that still draws something rather than looping forever.
+// Longest-path layering via Kahn's order, O(V+E), no recursion. Nodes left on a cycle never reach
+// in-degree 0 and keep layer 0, so a cycle still draws.
 [[nodiscard]] std::vector<int> assignLayers(int n,
                                             const std::vector<std::vector<int>>& out,
                                             std::vector<int> indegree) {
@@ -38,9 +36,8 @@ namespace {
     return layer;
 }
 
-// One ordering sweep over `target` using neighbours in the `fixed` layer: each
-// node's barycenter is the mean order-position of its neighbours; nodes are
-// then re-sorted by that barycenter. Nodes with no neighbour keep their slot.
+// One sweep over `target` using neighbours in the `fixed` layer: re-sort nodes by the mean
+// order-position of their neighbours; nodes without neighbours keep their slot.
 void barycenterSweep(std::vector<int>& target,
                      const std::vector<int>& order,
                      const std::vector<std::vector<int>>& neighbours) {
@@ -93,13 +90,11 @@ LayoutResult layeredLayout(int nodeCount,
         layerCount = std::max(layerCount, l + 1);
     }
 
-    // Group node indices by layer, seeded in index order.
     std::vector<std::vector<int>> byLayer(static_cast<std::size_t>(layerCount));
     for (int v = 0; v < nodeCount; ++v) {
         byLayer[static_cast<std::size_t>(layer[static_cast<std::size_t>(v)])].push_back(v);
     }
 
-    // order[v] = current position of v within its layer.
     std::vector<int> order(n, 0);
     const auto reindex = [&]() {
         for (const auto& nodes : byLayer) {
@@ -110,9 +105,8 @@ LayoutResult layeredLayout(int nodeCount,
     };
     reindex();
 
-    // Crossing reduction: alternate downward (order by parents) and upward
-    // (order by children) barycenter sweeps. A handful of passes converges for
-    // the small graphs a dependency chain produces.
+    // Crossing reduction: alternate downward and upward barycenter sweeps; a few passes converge
+    // for small dependency graphs.
     constexpr int kSweeps = 6;
     for (int sweep = 0; sweep < kSweeps; ++sweep) {
         const bool downward = (sweep % 2) == 0;
@@ -129,7 +123,6 @@ LayoutResult layeredLayout(int nodeCount,
         }
     }
 
-    // Coordinate assignment: each layer is centred within the widest layer.
     double canvasWidth = 0.0;
     for (const auto& nodes : byLayer) {
         const double w = nodes.empty() ? 0.0
@@ -161,10 +154,9 @@ LayoutResult layeredLayout(int nodeCount,
                                          (static_cast<double>(layerCount - 1) * options.vGap)
                                    : 0.0;
 
-    // Edge-straightening pass: pull each node toward the mean x of its
-    // neighbours (parents + children), then resolve same-layer overlaps
-    // left-to-right. A per-iteration snapshot (Jacobi update) keeps symmetric
-    // structures settling symmetrically rather than drifting with order.
+    // Edge straightening: pull each node toward the mean x of its neighbours, then resolve
+    // same-layer overlaps. A per-iteration snapshot (Jacobi) keeps symmetric structures settling
+    // symmetrically.
     if (layerCount > 1) {
         constexpr int kAlignIterations = 6;
         for (int iter = 0; iter < kAlignIterations; ++iter) {
@@ -200,7 +192,6 @@ LayoutResult layeredLayout(int nodeCount,
                 }
             }
         }
-        // Normalise to a non-negative origin; recompute the canvas width.
         double minX = result.nodes[0].x;
         double maxX = result.nodes[0].x + options.nodeWidth;
         for (const auto& node : result.nodes) {

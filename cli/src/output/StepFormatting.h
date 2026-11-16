@@ -1,7 +1,5 @@
-// Small, side-effect-free helpers shared by every CLI renderer.
-// Keeps the per-step glyph and error-code spelling consistent between
-// the live event stream, the post-run summary, and the JUnit / JSON
-// emitters.
+// Side-effect-free helpers shared by every CLI renderer, keeping glyphs and error-code spelling
+// consistent.
 
 #pragma once
 
@@ -39,6 +37,9 @@ namespace reqloom::cli {
     }
     return std::string(engine::toCodeString(*step.error));
 }
+
+/// `outcome` of a machine-readable document for a run that ended before its first step.
+inline constexpr std::string_view kErrorOutcomeName = "ERROR";
 
 [[nodiscard]] constexpr std::string_view runOutcomeName(engine::RunOutcome outcome) noexcept {
     switch (outcome) {

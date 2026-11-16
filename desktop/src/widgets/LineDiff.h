@@ -1,6 +1,5 @@
-// Line-level diff for the response Diff tab (FR-7.5). A standard LCS diff over
-// lines, producing an ordered list of unchanged / added / removed lines.
-// Pure functions, no Qt widgets — unit-tested.
+// Line-level diff for the response Diff tab: an ordered list of unchanged / added / removed
+// lines. Pure functions.
 #pragma once
 
 #include <QtCore/QString>
@@ -22,9 +21,22 @@ struct DiffLine {
     QString text;
 };
 
-/// Diff `oldText` → `newText` line by line. Lines are split on '\n'. The
-/// result is ordered for display: removals appear before the additions that
-/// replace them, context lines in place.
+/// Most lines either side may keep after the shared prefix and suffix are trimmed.
+inline constexpr int kMaxDiffLines = 20000;
+
+struct LineDiffResult {
+    std::vector<DiffLine> lines;
+    /// The inputs exceeded kMaxDiffLines or the work budget; `lines` is empty.
+    bool tooLarge{false};
+};
+
+/// Minimal line diff of `oldText` → `newText` (split on newline); removals precede the additions
+/// that replace them. Memory is linear in the input; time is O((N+M)·D) and is capped, so very
+/// different large inputs give `tooLarge` instead of a diff.
+[[nodiscard]] LineDiffResult boundedLineDiff(const QString& oldText, const QString& newText);
+
+/// As boundedLineDiff, but inputs that are too large come back as every old line removed and
+/// every new line added.
 [[nodiscard]] std::vector<DiffLine> lineDiff(const QString& oldText, const QString& newText);
 
 }  // namespace reqloom::desktop::widgets::diff

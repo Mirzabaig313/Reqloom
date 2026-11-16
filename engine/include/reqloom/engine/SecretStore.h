@@ -1,11 +1,6 @@
-// Public interface for OS-keychain secret storage. Embedders (desktop secret
-// manager, CLI) construct a concrete store via `makeKeychainSecretStore()`
-// and use this surface to read / write / remove credentials. The engine
-// reads the same store at run time to resolve `{{secret.NAME}}` references.
-//
-// The concrete QtKeychain-backed implementation stays engine-internal; only
-// this abstract surface and the factory are public, so the desktop never
-// links QtKeychain directly.
+// Public interface for OS-keychain secret storage, used by embedders (secret manager, CLI) and read
+// by the engine to resolve `{{secret.NAME}}`. The QtKeychain implementation stays internal so the
+// desktop never links it.
 #pragma once
 
 #include <reqloom/engine/ErrorCodes.h>
@@ -25,9 +20,8 @@ public:
     SecretStore& operator=(SecretStore&&) = delete;
     virtual ~SecretStore() = default;
 
-    /// Read a named secret. Returns an empty optional if the key is not
-    /// present in the keychain; returns `ReqloomError` (code
-    /// `SecretAccessFailed`) on backend failure.
+    /// Read a named secret: an empty optional if absent, `ReqloomError` (`SecretAccessFailed`) on
+    /// backend failure.
     [[nodiscard]] virtual std::expected<std::optional<std::string>, ReqloomError> read(
         const std::string& name) = 0;
 
@@ -37,6 +31,10 @@ public:
 
     /// Remove a secret. Succeeds (no-op) if the key is already absent.
     [[nodiscard]] virtual std::expected<void, ReqloomError> remove(const std::string& name) = 0;
+
+    /// False when no backend exists on this machine, so `read` can only ever report a secret
+    /// as absent. The engine then says why a `{{secret.NAME}}` has no value.
+    [[nodiscard]] virtual bool available() const noexcept { return true; }
 };
 
 }  // namespace reqloom::engine

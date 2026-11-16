@@ -16,6 +16,7 @@ public:
     ~SqliteHistoryStore() override;
 
     std::expected<void, ReqloomError> open(const std::filesystem::path& dbPath) override;
+    [[nodiscard]] std::expected<RunId, ReqloomError> allocateRunId() override;
     std::expected<void, ReqloomError> append(const RunEvent& event) override;
     [[nodiscard]] std::expected<std::vector<RunEvent>, ReqloomError> eventsFor(
         RunId run) const override;
