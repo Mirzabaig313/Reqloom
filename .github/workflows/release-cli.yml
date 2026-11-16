@@ -1,0 +1,170 @@
+name: Release — CLI
+
+# Builds the CLI on Linux, Windows and macOS, packages it with its libraries
+# beside the binary, and attaches the archives and their checksums to the GitHub
+# release for the tag. release-desktop.yml attaches the desktop app to the same
+# release.
+#   test* tag → trial run, published as a hidden draft
+#   v* tag    → the real release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "test*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.1.2)"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  # The CLI and the desktop app share one version, and it equals the tag.
+  prepare:
+    name: Check the tag matches the version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.rel.outputs.tag }}
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      # A manual run builds the tag it names, not the branch it was started from.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve release tag
+        id: rel
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_TAG}" ]]; then tag="${INPUT_TAG}"; else tag="${GITHUB_REF#refs/tags/}"; fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Check the tag matches the version
+        id: version
+        shell: bash
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # On its own line: inside echo "$(…)" a failed check would be ignored.
+          version="$(tools/ci/check-version.sh "$TAG" .)"
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: linux
+    needs: prepare
+    uses: ./.github/workflows/cli-linux-portable.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      version: ${{ needs.prepare.outputs.version }}
+      ref: ${{ github.event.inputs.tag || github.ref }}
+
+  build:
+    name: ${{ matrix.name }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: ./.github/actions/setup-build
+        with:
+          desktop: "false"
+          cache-key: cli-${{ matrix.name }}-${{ matrix.name }}-release
+
+      - name: Configure
+        shell: bash
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset ${{ matrix.name }}-release \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}" \
+            -DREQLOOM_BUILD_DESKTOP=OFF \
+            -DREQLOOM_BUILD_TESTS=OFF ${REQLOOM_CMAKE_ARGS}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.name }}-release
+
+      - name: Package and run (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          tools/package/package-cli.sh build/macos-release "$TAG" dist
+          tools/package/smoke-cli.sh dist/*.tar.gz . "$VERSION"
+
+      - name: Package and run (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: ./tools/package/package-cli.ps1 -BuildDir build/windows-release -Tag $env:TAG -OutDir dist -ExpectedVersion $env:VERSION
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: cli-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to the release
+    needs: [prepare, linux, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # release-desktop.yml publishes to the same release; they take turns.
+    concurrency:
+      group: release-publish-${{ github.ref_name }}
+      cancel-in-progress: false
+    steps:
+      - name: Download the archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          path: artifacts
+          pattern: cli-*
+          merge-multiple: true
+
+      - name: Write the checksum file
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd artifacts
+          ls -l
+          sha256sum "reqloom-${TAG}-macos-arm64.tar.gz" "reqloom-${TAG}-linux-x86_64.tar.gz" \
+            "reqloom-${TAG}-windows-x64.zip" > "reqloom-${TAG}-checksums.txt"
+          cat "reqloom-${TAG}-checksums.txt"
+
+      - name: Publish to the GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          # install.sh installs the release GitHub marks latest, which a pre-release never is.
+          prerelease: ${{ startsWith(needs.prepare.outputs.tag, 'test') }}
+          draft: ${{ startsWith(needs.prepare.outputs.tag, 'test') }}
+          fail_on_unmatched_files: true
+          files: artifacts/*

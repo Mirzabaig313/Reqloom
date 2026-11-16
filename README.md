@@ -7,8 +7,10 @@
 
 **A workflow-aware API testing tool that auto-resolves request dependency chains.**
 
-[![Release (cross-platform)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/release.yml/badge.svg)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/release.yml)
-[![Build & Test (Linux + Windows + macOS)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/build.yml)
+[![CI: engine and CLI](https://github.com/Mirzabaig313/Reqloom/actions/workflows/ci-cli.yml/badge.svg?branch=main)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/ci-cli.yml)
+[![CI: engine and desktop app](https://github.com/Mirzabaig313/Reqloom/actions/workflows/ci-desktop.yml/badge.svg?branch=main)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/ci-desktop.yml)
+[![Release: CLI](https://github.com/Mirzabaig313/Reqloom/actions/workflows/release-cli.yml/badge.svg)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/release-cli.yml)
+[![Release: desktop app](https://github.com/Mirzabaig313/Reqloom/actions/workflows/release-desktop.yml/badge.svg)](https://github.com/Mirzabaig313/Reqloom/actions/workflows/release-desktop.yml)
 [![Docs](https://img.shields.io/badge/docs-online-2496ED.svg)](https://docs.reqloom.tech/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Mirzabaig313/Reqloom?include_prereleases&label=download)](https://github.com/Mirzabaig313/Reqloom/releases)
@@ -35,7 +37,16 @@ login, prerequisites, target call — and executes them in the correct order.
 Next on the roadmap: the same engine opened to AI coding agents, so an agent can
 run a chain and you watch it live in the app. See [Coming next](#coming-next).
 
-📦 **Download:** Reqloom is in alpha. Grab the latest pre-release build for macOS (`.dmg`), Windows (`.exe` installer), or Linux (`.AppImage`) from the [Releases page](https://github.com/Mirzabaig313/Reqloom/releases).
+📦 **Desktop app:** Reqloom is in alpha. Grab the latest build for macOS (`.dmg`), Windows (`.exe` installer), or Linux (`.AppImage`) from the [Releases page](https://github.com/Mirzabaig313/Reqloom/releases).
+
+⌨️ **CLI** (from v0.1.2), for your terminal, CI and coding agents:
+
+```bash
+curl -fsSL https://reqloom.tech/install.sh | sh          # macOS, Linux
+irm https://reqloom.tech/install.ps1 | iex               # Windows PowerShell
+```
+
+The CLI and the desktop app are released together and always carry the same version. Details and limits: [Installation](https://docs.reqloom.tech/start/install/).
 
 ## Why Reqloom
 

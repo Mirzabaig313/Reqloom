@@ -1,0 +1,268 @@
+name: Release — desktop app
+
+# Builds the desktop app on Linux, Windows and macOS, packages it and attaches
+# it to the GitHub release for the tag. release-cli.yml attaches the CLI to the
+# same release.
+#   test* tag → trial run, published as a hidden draft (the name avoids the
+#               protection ruleset on v* tags)
+#   v* tag    → the real release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "test*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.1.0-alpha.1)"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          # Apple Silicon. Qt 6.8's stale AGL reference is patched after install.
+          - os: macos-latest
+            name: macos
+
+    steps:
+      # A manual run builds the tag it names, not the branch it was started from.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve release tag
+        id: rel
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_TAG}" ]]; then tag="${INPUT_TAG}"; else tag="${GITHUB_REF#refs/tags/}"; fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      # The CLI and the desktop app share one version, and it equals the tag.
+      - name: Check the tag matches the version
+        shell: bash
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: tools/ci/check-version.sh "$TAG" .
+
+      - uses: ./.github/actions/setup-build
+        with:
+          desktop: "true"
+          cache-key: desktop-${{ matrix.name }}-${{ matrix.name }}-release
+
+      # Overrides the Homebrew Qt path in the macos-release preset with the aqt-installed Qt.
+      - name: Configure
+        shell: bash
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset ${{ matrix.name }}-release \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}" \
+            -DREQLOOM_BUILD_CLI=OFF \
+            -DREQLOOM_BUILD_TESTS=OFF ${REQLOOM_CMAKE_ARGS}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.name }}-release
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${TAG}"
+          build="build/linux-release"
+          out="dist"
+          mkdir -p "$out"
+
+          curl -fsSL -o linuxdeploy \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-plugin-qt \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+
+          appdir="AppDir"
+          rm -rf "$appdir"
+          mkdir -p "$appdir/usr/bin" \
+                   "$appdir/usr/share/applications" \
+                   "$appdir/usr/share/icons/hicolor/256x256/apps"
+          cp "$build/desktop/Reqloom" "$appdir/usr/bin/Reqloom"
+
+          cat > "$appdir/usr/share/applications/Reqloom.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Reqloom
+          Exec=Reqloom
+          Icon=Reqloom
+          Categories=Development;
+          Terminal=false
+          EOF
+          cp desktop/branding/Reqloom-256.png \
+            "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png"
+
+          # Runners often cannot mount FUSE, which the AppImage tools need.
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export QML_SOURCES_PATHS="$PWD/desktop/qml"
+          export QMAKE="${QT_ROOT_DIR}/bin/qmake"
+
+          ./linuxdeploy --appdir "$appdir" \
+            --plugin qt \
+            --output appimage \
+            --desktop-file "$appdir/usr/share/applications/Reqloom.desktop" \
+            --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/Reqloom.png"
+          mv Reqloom*.AppImage "$out/Reqloom-${tag}-linux-x86_64.AppImage"
+
+          # Fallback artifact if the AppImage does not run somewhere.
+          tar -czf "$out/Reqloom-${tag}-linux-x86_64.tar.gz" -C "$appdir" .
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${TAG}"
+          build="build/macos-release"
+          out="dist"
+          mkdir -p "$out"
+
+          app="$build/desktop/Reqloom.app"
+          "${QT_ROOT_DIR}/bin/macdeployqt" "$app" -qmldir="$PWD/desktop/qml"
+
+          # macdeployqt invalidates the signature, and an unsigned arm64 app
+          # reads as "damaged" after download. An ad-hoc signature turns that
+          # into the usual "unidentified developer" prompt. Developer ID
+          # signing and notarization come later.
+          codesign --force --deep --sign - "$app"
+
+          stage="$(mktemp -d)"
+          cp -R "$app" "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "Reqloom" -srcfolder "$stage" \
+            -ov -format UDZO "$out/Reqloom-${tag}-macos.dmg"
+          rm -rf "$stage"
+
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$app" "$out/Reqloom-${tag}-macos.zip"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = $env:TAG
+          $build = "build/windows-release"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          $deskDir = "Reqloom-$tag-windows"
+          New-Item -ItemType Directory -Force -Path $deskDir | Out-Null
+          Copy-Item "$build/desktop/Reqloom.exe" $deskDir
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release --qmldir desktop/qml "$deskDir/Reqloom.exe"
+
+          # windeployqt copies only Qt DLLs; vcpkg's (sqlite3, libcurl, OpenSSL,
+          # zlib) are dynamic on Windows and must sit next to the exe too.
+          $vbin = Get-ChildItem -Path "$build/vcpkg_installed" -Directory -ErrorAction Stop |
+            Where-Object { $_.Name -ne 'vcpkg' } |
+            ForEach-Object { Join-Path $_.FullName 'bin' } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+          if (-not $vbin) { throw "vcpkg bin dir not found under $build/vcpkg_installed" }
+          Copy-Item "$vbin/*.dll" $deskDir -Force
+
+          Compress-Archive -Path "$deskDir/*" -DestinationPath "dist/Reqloom-$tag-windows-x64.zip" -Force
+
+          # Inno Setup is preinstalled on windows-latest; the zip is the fallback.
+          $iss = @"
+          [Setup]
+          AppName=Reqloom
+          AppVersion=$tag
+          DefaultDirName={autopf}\Reqloom
+          DefaultGroupName=Reqloom
+          DisableProgramGroupPage=yes
+          OutputDir=dist
+          OutputBaseFilename=Reqloom-$tag-windows-x64-setup
+          Compression=lzma2
+          SolidCompression=yes
+          ArchitecturesAllowed=x64
+          ArchitecturesInstallIn64BitMode=x64
+          [Files]
+          Source: "$deskDir\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+          [Icons]
+          Name: "{group}\Reqloom"; Filename: "{app}\Reqloom.exe"
+          Name: "{commondesktop}\Reqloom"; Filename: "{app}\Reqloom.exe"
+          [Run]
+          Filename: "{app}\Reqloom.exe"; Description: "Launch Reqloom"; Flags: nowait postinstall skipifsilent
+          "@
+          $iss | Out-File -Encoding ascii -FilePath reqloom.iss
+
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          & $iscc reqloom.iss
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: dist-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: warn
+
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # release-cli.yml publishes to the same release; they take turns.
+    concurrency:
+      group: release-publish-${{ github.ref_name }}
+      cancel-in-progress: false
+    steps:
+      - name: Resolve release tag
+        id: rel
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_TAG}" ]]; then tag="${INPUT_TAG}"; else tag="${GITHUB_REF#refs/tags/}"; fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          path: artifacts
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          # install.sh installs the release GitHub marks latest, which a pre-release never is.
+          prerelease: ${{ startsWith(steps.rel.outputs.tag, 'test') }}
+          draft: ${{ startsWith(steps.rel.outputs.tag, 'test') }}
+          fail_on_unmatched_files: false
+          files: artifacts/*

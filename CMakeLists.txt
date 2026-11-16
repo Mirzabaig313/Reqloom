@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 4.0)
 
 project(reqloom
-    VERSION 0.1.1
+    VERSION 0.1.2
     DESCRIPTION "Workflow-aware API testing tool with auto-resolved dependency chains"
     LANGUAGES CXX
 )

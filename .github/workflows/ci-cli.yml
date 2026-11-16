@@ -1,0 +1,153 @@
+name: CI — engine and CLI
+
+# Builds the engine and the CLI without the desktop app.
+#   push to dev  → debug preset, with tests
+#   push to main → release preset, build only
+# Starts only when the engine, the CLI or the shared build files change.
+# Engine tests run only when the engine or the build files changed since the
+# previous push. That compares pushes, not results: if a push breaks the engine
+# and the next one touches only the CLI, the second run is green. Run this
+# workflow by hand (Actions → Run workflow) for a full run before a release.
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "engine/**"
+      - "cli/**"
+      - "samples/**"
+      - "cmake/**"
+      - "third_party/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "vcpkg.json"
+      - "tools/ci/**"
+      - "tools/install/**"
+      - "tools/package/**"
+      - ".github/actions/setup-build/**"
+      - ".github/workflows/ci-cli.yml"
+      - ".github/workflows/cli-linux-portable.yml"
+  # Run by hand to build and test regardless of what changed, e.g. before a release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  static-checks:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Architectural boundary check
+        run: ./tools/ci/boundary-check.sh
+      - name: CI script tests
+        run: |
+          bash tools/ci/changed.test.sh
+          bash tools/ci/check-version.test.sh
+
+  build:
+    name: ${{ matrix.name }}
+    needs: static-checks
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+    steps:
+      # Full history: the engine-changed check compares against the previous push.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve preset
+        id: preset
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then cfg=release; else cfg=debug; fi
+          echo "value=${{ matrix.name }}-${cfg}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-build
+        with:
+          desktop: "false"
+          cache-key: cli-${{ matrix.name }}-${{ steps.preset.outputs.value }}
+
+      - name: Configure
+        shell: bash
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset ${{ steps.preset.outputs.value }} \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}" \
+            -DREQLOOM_BUILD_DESKTOP=OFF ${REQLOOM_CMAKE_ARGS}
+
+      - name: Build
+        run: cmake --build --preset ${{ steps.preset.outputs.value }}
+
+      - name: Test
+        if: endsWith(steps.preset.outputs.value, '-debug')
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          engine_changed="$(tools/ci/changed.sh "$BEFORE" "$GITHUB_SHA" \
+            engine samples cmake third_party CMakeLists.txt CMakePresets.json vcpkg.json \
+            .github/actions/setup-build .github/workflows/ci-cli.yml)"
+          if [[ "$engine_changed" == "true" ]]; then
+            labels='^(engine_unit|engine_integration|cli_unit)$'
+          else
+            echo "Engine unchanged since the previous push: running CLI tests only."
+            labels='^cli_unit$'
+          fi
+          ctest --preset ${{ steps.preset.outputs.value }} -L "$labels"
+
+  # The release builds the Linux CLI in an older image so it runs on older
+  # systems. Checked on main and on a manual run, so a break shows before a tag.
+  version:
+    name: Read the version
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.read.outputs.value }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - id: read
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$/\1/p' CMakeLists.txt | head -n 1)"
+          tools/ci/check-version.sh "v${version}" . > /dev/null
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+
+  linux-portable:
+    name: portable Linux CLI
+    needs: version
+    uses: ./.github/workflows/cli-linux-portable.yml
+    with:
+      tag: v${{ needs.version.outputs.value }}
+      version: ${{ needs.version.outputs.value }}
+
+  install-scripts:
+    name: install script / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Test install.sh
+        if: runner.os != 'Windows'
+        run: sh tools/install/install.test.sh
+      - name: Test install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/install/install.test.ps1

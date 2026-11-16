@@ -3,8 +3,8 @@
 //
 // Split out of DownloadCards.astro so it can be exercised without a build —
 // see scripts/check-release-assets.mjs. The asset names it matches are produced
-// by .github/workflows/release.yml; if that workflow renames an artifact, the
-// check fails and this file needs the same edit.
+// by .github/workflows/release-desktop.yml; if that workflow renames an artifact,
+// the check fails and this file needs the same edit.
 
 export const REPO = "Mirzabaig313/Reqloom";
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
@@ -14,7 +14,7 @@ export const PLATFORMS = [
     {
         id: "macos",
         label: "macOS",
-        note: "Apple silicon and Intel",
+        note: "Apple silicon",
         match: (n) => n.endsWith(".dmg") || n.endsWith("macos.zip"),
         preferred: (n) => n.endsWith(".dmg"),
     },
@@ -61,7 +61,11 @@ export function groupAssets(release) {
     if (!release) {
         return [];
     }
-    const assets = Array.isArray(release.assets) ? release.assets : [];
+    // Desktop files are named Reqloom-…; the CLI archives in the same release
+    // (reqloom-…, installed by install.sh) are not desktop downloads.
+    const assets = (Array.isArray(release.assets) ? release.assets : []).filter(
+        (a) => typeof a?.name === "string" && a.name.startsWith("Reqloom-"),
+    );
     return PLATFORMS.map((platform) => ({
         ...platform,
         assets: assets

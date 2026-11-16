@@ -1,0 +1,136 @@
+name: CLI — portable Linux build
+
+# Builds and packages the Linux CLI inside an older Linux image, then runs the
+# package in bare containers of an old and a new system. Called by
+# release-cli.yml for a release and by ci-cli.yml as a check.
+#
+# Why a container: a program built against an old glibc runs on newer ones,
+# never the reverse. ubuntu-latest would tie the CLI to glibc 2.39; this image
+# pairs glibc 2.28 with the GCC 14 the code needs. The oldest system the package
+# is actually run on below is the one the documentation may name.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag used in the archive name, e.g. v0.1.2
+        required: true
+        type: string
+      version:
+        description: Version the packaged CLI must print, e.g. 0.1.2
+        required: true
+        type: string
+      ref:
+        description: "What to check out; empty means what the caller ran on"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  build:
+    name: build (glibc 2.28 image)
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64:2026.11.14-1@sha256:d086f64cddcace250ef0f0073583c51b8298159303290a730c9f59bd91edfd2c
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: ./.github/actions/setup-build
+        with:
+          desktop: "false"
+          portable-linux: "true"
+          cache-key: cli-linux-portable-release
+
+      - name: Configure
+        shell: bash
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset linux-release \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}" \
+            -DREQLOOM_BUILD_DESKTOP=OFF \
+            -DREQLOOM_BUILD_TESTS=OFF ${REQLOOM_CMAKE_ARGS}
+
+      - name: Build
+        run: cmake --build --preset linux-release
+
+      - name: Package
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: tools/package/package-cli.sh build/linux-release "$TAG" dist
+
+      - name: Report the newest glibc symbol the package needs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir unpacked && tar -xzf dist/*.tar.gz -C unpacked
+          find unpacked -type f \( -name 'reqloom' -o -name '*.so*' \) -exec objdump -T {} \; 2>/dev/null |
+            grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: cli-linux
+          path: dist/*
+          if-no-files-found: error
+
+  # Bare images: no Qt, ICU, libsecret or compiler runtime to lean on.
+  run:
+    name: run on ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:20.04 # glibc 2.31, the oldest system the documentation names
+          - debian:12
+          - ubuntu:24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: cli-linux
+          path: dist
+
+      - name: Run the packaged CLI
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          archive="$(ls dist/*.tar.gz)"
+          docker run --rm -v "$PWD":/w -w /w "$IMAGE" \
+            sh tools/package/smoke-cli.sh "$archive" /w "$VERSION"
+
+      # The same archive must also survive the installer's own start check.
+      - name: Install it with install.sh
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          mkdir -p "release/$TAG"
+          cp dist/*.tar.gz "release/$TAG/"
+          (cd "release/$TAG" && sha256sum ./*.tar.gz | sed 's#\./##' > "reqloom-$TAG-checksums.txt")
+          docker run --rm -v "$PWD":/w -w /w -e TAG "$IMAGE" sh -c '
+            set -eu
+            if ! command -v curl >/dev/null 2>&1; then
+              apt-get update >/dev/null && apt-get install -y --no-install-recommends curl ca-certificates >/dev/null
+            fi
+            REQLOOM_BASE_URL=file:///w/release REQLOOM_VERSION="$TAG" sh tools/install/install.sh
+            "$HOME/.local/bin/reqloom" --version
+          '

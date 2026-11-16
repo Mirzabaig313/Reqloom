@@ -1,0 +1,84 @@
+name: CI — engine and desktop app
+
+# Builds the engine and the desktop app without the CLI.
+#   push to dev  → debug preset, with the desktop tests
+#   push to main → release preset, build only
+# Starts only when the engine, the desktop app or the shared build files change.
+# The engine's own tests run in ci-cli.yml.
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "engine/**"
+      - "desktop/**"
+      - "samples/**"
+      - "cmake/**"
+      - "third_party/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "vcpkg.json"
+      - "tools/ci/boundary-check.sh"
+      - ".github/actions/setup-build/**"
+      - ".github/workflows/ci-desktop.yml"
+  # Run by hand to build and test regardless of what changed, e.g. before a release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  static-checks:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Architectural boundary check
+        run: ./tools/ci/boundary-check.sh
+
+  build:
+    name: ${{ matrix.name }}
+    needs: static-checks
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Resolve preset
+        id: preset
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then cfg=release; else cfg=debug; fi
+          echo "value=${{ matrix.name }}-${cfg}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-build
+        with:
+          desktop: "true"
+          cache-key: desktop-${{ matrix.name }}-${{ steps.preset.outputs.value }}
+
+      - name: Configure
+        shell: bash
+        run: |
+          # shellcheck disable=SC2086
+          cmake --preset ${{ steps.preset.outputs.value }} \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}" \
+            -DREQLOOM_BUILD_CLI=OFF ${REQLOOM_CMAKE_ARGS}
+
+      - name: Build
+        run: cmake --build --preset ${{ steps.preset.outputs.value }}
+
+      - name: Test
+        if: endsWith(steps.preset.outputs.value, '-debug')
+        run: ctest --preset ${{ steps.preset.outputs.value }} -L "^(desktop_unit|desktop_ui)$"

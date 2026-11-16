@@ -3,8 +3,8 @@
 //   node scripts/check-release-assets.mjs
 //
 // Asserts against the exact artifact names produced by
-// .github/workflows/release.yml. If that workflow renames an artifact, this
-// fails — which is the point: the download page would otherwise silently drop
+// .github/workflows/release-desktop.yml and release-cli.yml. If a workflow
+// renames an artifact, this fails — which is the point: the download page would otherwise silently drop
 // a platform.
 
 import assert from "node:assert/strict";
@@ -19,7 +19,7 @@ import {
 const TAG = "v0.1.0-alpha.1";
 const asset = (name) => ({ name, size: 54_413_816, digest: "sha256:f3e90901901b34fe" });
 
-// Every artifact release.yml uploads, in the order the workflow writes them.
+// Every desktop artifact release-desktop.yml uploads, in the order it writes them.
 const release = {
     tag_name: TAG,
     draft: false,
@@ -91,6 +91,26 @@ assert.deepEqual(
 );
 
 assert.deepEqual(groupAssets(null), [], "no release yields no groups");
+
+// The CLI archives of release-cli.yml share a release with the desktop files and
+// must not appear on the desktop download cards.
+const cliAssets = [
+    asset(`reqloom-${TAG}-macos-arm64.tar.gz`),
+    asset(`reqloom-${TAG}-linux-x86_64.tar.gz`),
+    asset(`reqloom-${TAG}-windows-x64.zip`),
+    asset(`reqloom-${TAG}-checksums.txt`),
+];
+const withCli = groupAssets({ ...release, assets: [...release.assets, ...cliAssets] });
+assert.deepEqual(
+    withCli.flatMap((g) => g.assets.map((a) => a.name)).sort(),
+    release.assets.map((a) => a.name).sort(),
+    "CLI archives are not offered as desktop downloads",
+);
+assert.deepEqual(
+    groupAssets({ tag_name: TAG, assets: cliAssets }),
+    [],
+    "a release holding only the CLI shows no desktop card",
+);
 
 // --- formatting ------------------------------------------------------------
 

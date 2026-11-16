@@ -20,7 +20,11 @@ CI or from a script. Neither is a subset of the other; see
 | [`reqloom lint`](/cli/lint/) | Validates a schema and dry-runs every operation | Pre-commit hooks, CI gate |
 | [`reqloom import`](/cli/import/) | Converts an existing API definition into a project | One-time migration |
 
+[Install it](/start/install/#install-the-cli) with one command; it is released
+with the desktop app and always carries the same version.
+
 ```bash
+curl -fsSL https://reqloom.tech/install.sh | sh
 reqloom --help
 ```
 

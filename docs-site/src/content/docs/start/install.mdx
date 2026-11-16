@@ -1,14 +1,16 @@
 ---
 title: Installation
-description: "Download Reqloom for macOS, Linux, or Windows — or build it from source. Includes the first-launch security steps for unsigned builds."
+description: "Install the reqloom CLI with one command, download the desktop app for macOS, Linux, or Windows, or build from source. Includes the first-launch steps for unsigned builds."
 ---
 
 import { Tabs, TabItem, Aside, Steps } from "@astrojs/starlight/components";
 import DownloadCards from "../../../components/DownloadCards.astro";
 
-Reqloom ships a CLI (`reqloom`) and a desktop app in the same archive. Download
-a build below, or [build from source](#build-from-source) if you want to
-contribute.
+Reqloom has two front ends on one engine: the `reqloom` command-line tool and
+the desktop app. They are installed separately and always carry the same
+version. [Install the CLI](#install-the-cli) with one command,
+[download the desktop app](#download-the-desktop-app), or
+[build from source](#build-from-source) if you want to contribute.
 
 <Aside type="caution" title="Alpha software">
 Reqloom is pre-1.0. The schema format is stable enough to build on — it is
@@ -16,7 +18,58 @@ versioned, and the loader accepts versions 1–3 — but expect rough edges in t
 desktop UI, and expect flags to gain options rather than lose them.
 </Aside>
 
-## Download
+## Install the CLI
+
+Available from v0.1.2.
+
+<Tabs>
+    <TabItem label="macOS and Linux">
+        ```bash
+        curl -fsSL https://reqloom.tech/install.sh | sh
+        ```
+    </TabItem>
+    <TabItem label="Windows (PowerShell)">
+        ```powershell
+        irm https://reqloom.tech/install.ps1 | iex
+        ```
+    </TabItem>
+</Tabs>
+
+Then, in a new terminal:
+
+```bash
+reqloom --version
+```
+
+The script downloads the archive for your system from the
+[GitHub release](https://github.com/Mirzabaig313/Reqloom/releases), checks its
+SHA-256 against the release's checksum file, and stops without changing
+anything if they differ. It needs no `sudo` or administrator rights.
+
+| | macOS and Linux | Windows |
+| --- | --- | --- |
+| Installed into | `~/.reqloom/<version>/` | `%LOCALAPPDATA%\Reqloom\<version>\` |
+| Command | a link at `~/.local/bin/reqloom` | `%LOCALAPPDATA%\Reqloom\bin\reqloom.cmd` |
+| `PATH` | Not edited. If `~/.local/bin` isn't on it, the script prints the line to add | The `bin` folder is added to your user `PATH` |
+
+| To | Do |
+| --- | --- |
+| Upgrade | Run the same command again |
+| Install a specific version | `curl -fsSL https://reqloom.tech/install.sh \| REQLOOM_VERSION=v0.1.2 sh` |
+| Install somewhere else | Set `REQLOOM_INSTALL_DIR` and, on macOS and Linux, `REQLOOM_BIN_DIR` |
+| Leave `PATH` alone on Windows | Set `REQLOOM_NO_PATH=1` |
+| Uninstall | Delete `~/.reqloom` and `~/.local/bin/reqloom` (Windows: delete `%LOCALAPPDATA%\Reqloom` and remove its `bin` folder from `PATH`) |
+
+**Where it runs.** macOS on Apple silicon; Linux x86_64 with glibc 2.31 or
+newer (Ubuntu 20.04, Debian 11, and anything more recent); Windows x64. On anything else,
+[build from source](#build-from-source). The archive carries the libraries the
+CLI needs, so a bare container or CI image is enough.
+
+**In CI or a sandbox there is usually no keychain**, so a project that uses
+[secrets](/schema/secrets-and-transport/) cannot read them there yet. `lint`,
+and runs of projects without secrets, work.
+
+## Download the desktop app
 
 <DownloadCards />
 
@@ -55,17 +108,14 @@ warnings, [build from source](#build-from-source) instead.
 
         </Steps>
 
+        On macOS 15 and later the right-click route may not be offered. Open
+        Reqloom once, dismiss the warning, then go to **System Settings →
+        Privacy & Security** and click **Open Anyway**.
+
         If macOS still refuses, clear the download quarantine flag explicitly:
 
         ```bash
         xattr -dr com.apple.quarantine /Applications/Reqloom.app
-        ```
-
-        To put the CLI on your `PATH`:
-
-        ```bash
-        sudo ln -sf /Applications/Reqloom.app/Contents/MacOS/reqloom \
-                    /usr/local/bin/reqloom
         ```
     </TabItem>
 
@@ -74,7 +124,7 @@ warnings, [build from source](#build-from-source) instead.
 
         ```bash
         chmod +x Reqloom-*-linux-x86_64.AppImage
-        ./Reqloom-*-linux-x86_64.AppImage --help
+        ./Reqloom-*-linux-x86_64.AppImage
         ```
 
         On a minimal system (containers, slim server images) an AppImage may
@@ -88,13 +138,7 @@ warnings, [build from source](#build-from-source) instead.
 
         ```bash
         ./Reqloom-*.AppImage --appimage-extract
-        ./squashfs-root/AppRun --help
-        ```
-
-        To put the CLI on your `PATH`:
-
-        ```bash
-        sudo install -m 755 Reqloom-*-linux-x86_64.AppImage /usr/local/bin/reqloom
+        ./squashfs-root/AppRun
         ```
     </TabItem>
 
@@ -110,18 +154,16 @@ warnings, [build from source](#build-from-source) instead.
 
         </Steps>
 
-        The installer adds the CLI to your `PATH`. Open a **new** terminal
-        afterwards — an already-open one keeps the stale `PATH`.
-
         Prefer no installer? Take the `.zip`, unpack it, and run
-        `reqloom.exe` from the extracted folder.
+        `Reqloom.exe` from the extracted folder.
     </TabItem>
 </Tabs>
 
 ### Verify the download
 
 Every asset is published with a SHA-256 digest, shown truncated next to each
-file above and in full on the release page. To check a download:
+file above and in full on the release page. The CLI install script checks its
+own download for you. To check a desktop download:
 
 <Tabs>
     <TabItem label="macOS">
@@ -144,28 +186,12 @@ file above and in full on the release page. To check a download:
 ## Check that it works
 
 ```bash
+reqloom --version
 reqloom --help
 ```
 
-You should see the three subcommands and their flags:
-
-```ansi
-Reqloom CLI
-  reqloom run <operation> [opts]   Execute a chain ending at <operation>
-    --project <path>                Project directory (default: cwd)
-    --env <name>                    Environment to run against
-    --var KEY=VALUE                 Override an env variable (repeatable)
-    --format text|json|junit        Output format (default: text)
-    --output <file>                 Write rendered output to <file>
-    --quiet                         Suppress live progress on stdout
-  reqloom lint                     Validate the schema in current project
-    --project <path>                Project directory (default: cwd)
-  reqloom import <file>            Import an external API spec
-    --out <dir>                     Directory to write the project (default: cwd)
-    --project-root <dir>            Containment root the spec must resolve under
-    --force                         Overwrite an existing reqloom.yaml
-  reqloom --help                   Show this message
-```
+`--help` lists the three subcommands (`run`, `lint`, `import`) and their
+options; see the [CLI overview](/cli/overview/).
 
 Then validate the bundled sample project, which exercises the parser and the
 dependency resolver without sending a single request:
@@ -184,26 +210,25 @@ sample end to end next.
 
 ## What you get
 
-Every download contains **both front ends**:
-
-- **Reqloom** (desktop) — the workbench. Project explorer, request editor,
-  response inspection, dependency graph, step timeline, run history, and keychain
-  secret storage. Start here if you're building a schema.
-  See [Desktop app](/desktop/overview/).
-- **`reqloom`** (CLI) — for CI and scripting, with JSON and JUnit output.
+- **`reqloom`** (CLI) — installed by the [one-line command](#install-the-cli).
+  For CI, scripting and coding agents, with JSON and JUnit output.
   See [CLI overview](/cli/overview/).
+- **Reqloom** (desktop) — the [downloads](#download-the-desktop-app) above. The
+  workbench: project explorer, request editor, response inspection, dependency
+  graph, step timeline, run history, and keychain secret storage. Start here if
+  you're building a schema. See [Desktop app](/desktop/overview/).
 
-They share one engine and one schema format, so a project behaves identically in
-both. Most people build in the app and run in the CLI —
+The desktop downloads do not contain the CLI, and the CLI install does not
+contain the app. They share one engine and one schema format and are released
+together under one version, so a project behaves identically in both. Most
+people build in the app and run in the CLI —
 [which to use when](/desktop/overview/#which-one-to-use).
-
-To launch the desktop app, open it like any other application. The CLI needs to be
-on your `PATH` — see [First launch](#first-launch) for your platform.
 
 ## Build from source
 
 Needed if you're contributing, or if you're on a platform without a published
-build (Apple Intel is covered by the universal `.dmg`; ARM Linux is not).
+build: the published builds are for Apple silicon, Linux x86_64 and Windows
+x64, so an Intel Mac or ARM Linux builds from source.
 
 **Prerequisites**
 
@@ -368,13 +393,18 @@ ldd    build/linux-debug/cli/reqloom        # Linux
 
 ### `reqloom: command not found` after installing
 
-The CLI lives inside the app bundle or archive and isn't on your `PATH` until
-you link it — see the [First launch](#first-launch) tab for your platform. On
-Windows, open a new terminal so it picks up the updated `PATH`.
+Open a new terminal first. On macOS and Linux the command is a link in
+`~/.local/bin`; if that folder isn't on your `PATH`, add the line the install
+script printed:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
 ## Updating
 
-Downloaded a build? Grab the newer one from the [releases
+The CLI: run the [install command](#install-the-cli) again. The desktop app:
+grab the newer build from the [releases
 page](https://github.com/Mirzabaig313/Reqloom/releases) and replace it. Your
 projects are plain files on disk and are untouched by an upgrade.
 
@@ -392,7 +422,7 @@ brought in a Qt version bump, update Qt first (`brew upgrade qt@6`, or re-run
 
 ## Upgrading from v0.1.0-alpha.1
 
-v0.1.0-alpha.2 changes behaviour that alpha.1 projects may rely on. Run
+v0.1.1 changed behaviour that alpha.1 projects may rely on. Run
 `reqloom lint` on each project after upgrading — most of these show up there —
 and work through the list:
 

@@ -13,7 +13,7 @@
 #   5. boundary-check.sh (architectural firewall)
 #
 # Skip steps with environment variables when iterating:
-#   SKIP_FORMAT=1      skip the clang-format dry-run (CI still enforces)
+#   SKIP_FORMAT=1      skip the clang-format dry-run (nothing else checks formatting)
 #   SKIP_CONFIGURE=1   skip the cmake --preset step (assume already configured)
 #   SKIP_TESTS=1       skip ctest
 #   SKIP_BOUNDARY=1    skip the boundary-check grep
@@ -55,11 +55,8 @@ ok() {
   green "✓ $*"
 }
 
-# 1. clang-format check — runs the same dry-run --Werror that CI runs, over
-#    every C++ source under engine/, cli/, desktop/, ipc/. This mirrors the
-#    static-checks job in .github/workflows/build.yml.
-#    If CI would
-#    reject the push for formatting drift, this catches it locally.
+# 1. clang-format check — dry-run --Werror over every C++ source under engine/,
+#    cli/, desktop/, ipc/. CI does not check formatting; this is the only gate.
 step "1/5  clang-format check"
 
 # Pin to clang-format-18 in the same order tools/format.sh does, so local
@@ -75,15 +72,15 @@ elif [[ -x /usr/local/opt/llvm@18/bin/clang-format ]]; then
   clang_format="/usr/local/opt/llvm@18/bin/clang-format"
 elif command -v clang-format >/dev/null 2>&1; then
   clang_format="clang-format"
-  yellow "  using \$(which clang-format), not pinned to v18 — CI may disagree"
+  yellow "  using \$(which clang-format), not pinned to v18 — results may differ from clang-format 18"
 fi
 
 if [[ -z "$clang_format" && "${SKIP_FORMAT:-0}" != "1" ]]; then
-  fail "clang-format not on PATH. Install clang-format 18 (brew install llvm@18 on macOS, apt install clang-format-18 on Ubuntu) and ensure it's reachable. Override with SKIP_FORMAT=1 if you must (CI will still reject)."
+  fail "clang-format not on PATH. Install clang-format 18 (brew install llvm@18 on macOS, apt install clang-format-18 on Ubuntu) and ensure it's reachable. Override with SKIP_FORMAT=1 if you must; CI does not check formatting, so drift would go unnoticed."
 fi
 
 if [[ "${SKIP_FORMAT:-0}" == "1" ]]; then
-  yellow "  SKIP_FORMAT=1 — skipped (CI will still enforce formatting)"
+  yellow "  SKIP_FORMAT=1 — skipped (nothing else checks formatting)"
 else
   # Portable file collection (no `mapfile` — bash 3.2 on macOS lacks it).
   cpp_files=()
