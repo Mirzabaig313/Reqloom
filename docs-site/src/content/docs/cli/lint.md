@@ -24,9 +24,7 @@ well.
   "schema_version": 1,
   "ok": true,
   "errors": [],
-  "warnings": [
-    "samples/marketplace/reqloom.yaml:8:1: unknown key 'description' in reqloom.yaml; ignored"
-  ]
+  "warnings": []
 }
 ```
 
@@ -40,11 +38,10 @@ reqloom lint --project samples/marketplace
 ```
 
 ```ansi
-  WARNING: samples/marketplace/reqloom.yaml:8:1: unknown key 'description' in reqloom.yaml; ignored
 LINT OK — 3 actors, 5 resources, 27 operations. No errors.
 ```
 
-The warning is a key the parser doesn't read; see [warnings](#warnings). Those counts are the fastest way to confirm the parser sees what you think it
+Those counts are the fastest way to confirm the parser sees what you think it
 sees. If a resource you just added isn't in the total, its file isn't being
 imported — check the `imports:` globs.
 

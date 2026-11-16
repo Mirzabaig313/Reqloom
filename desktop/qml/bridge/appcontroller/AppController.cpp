@@ -893,9 +893,9 @@ void AppController::onLoaded() {
     rebindActiveProject(/*repopulateTree=*/true);
     selectFirstModule();
     if (const QStringList warnings = loadWarnings(); !warnings.isEmpty()) {
-        emit notify(tr("“%1” loaded with %n warning(s); the first: %2", nullptr, warnings.size())
-                        .arg(activeProject().name(), warnings.front()),
-                    true);
+        emit notifyWarning(
+            tr("“%1” loaded with %n warning(s); the first: %2", nullptr, warnings.size())
+                .arg(activeProject().name(), warnings.front()));
     }
 }
 

@@ -1,7 +1,7 @@
 // Toast — stacked feedback notices at the bottom of the window. Informational
-// notices dismiss themselves after `duration` ms; error notices stay until the
-// user closes them (close button, or Escape while the notice has focus) and
-// their text can be selected and copied. The newest `maxShown` are visible and
+// notices dismiss themselves after `duration` ms; warning (amber) and error (red)
+// notices stay until the user closes them (close button, or Escape while the
+// notice has focus) and their text can be selected and copied. The newest `maxShown` are visible and
 // the rest are counted. It lives in the overlay above modal dialogs.
 pragma ComponentBehavior: Bound
 import QtQuick
@@ -43,11 +43,22 @@ Popup {
     }
 
     function show(msg, error, dur) {
+        toast._add(msg, error ? "error" : "info", dur);
+    }
+
+    function warn(msg) {
+        toast._add(msg, "warning", 0);
+    }
+
+    function kindAt(index) {
+        return index >= 0 && index < entries.count ? entries.get(index).kind : "";
+    }
+
+    function _add(msg, kind, dur) {
         const text = String(msg || "");
-        const isError = !!error;
         for (let i = entries.count - 1; i >= 0; --i) {
             const e = entries.get(i);
-            if (e.message === text && e.isError === isError) {
+            if (e.message === text && e.kind === kind) {
                 entries.remove(i);
                 break;
             }
@@ -55,7 +66,7 @@ Popup {
         entries.append({
             "uid": toast._nextUid++,
             "message": text,
-            "isError": isError,
+            "kind": kind,
             "timeout": dur || toast.duration
         });
         while (entries.count > toast.maxQueued) {
@@ -119,7 +130,9 @@ Popup {
                 required property int index
                 required property int uid
                 required property string message
-                required property bool isError
+                required property string kind
+                readonly property bool persistent: entry.kind !== "info"
+                readonly property color tone: entry.kind === "error" ? DesignTokens.statusError : DesignTokens.statusWarning
                 required property int timeout
                 readonly property bool shown: entry.index >= entries.count - toast.maxShown
 
@@ -127,16 +140,16 @@ Popup {
                 Layout.fillWidth: true
                 implicitHeight: body.implicitHeight + DesignTokens.spaceMd * 2
                 radius: DesignTokens.radiusSm
-                color: entry.isError ? Qt.rgba(DesignTokens.statusError.r, DesignTokens.statusError.g, DesignTokens.statusError.b, 0.15) : DesignTokens.surfaceSunken
+                color: entry.persistent ? Qt.rgba(entry.tone.r, entry.tone.g, entry.tone.b, 0.15) : DesignTokens.surfaceSunken
                 border.width: 1
-                border.color: entry.isError ? DesignTokens.statusError : DesignTokens.borderStrong
-                Accessible.role: entry.isError ? Accessible.AlertMessage : Accessible.StaticText
+                border.color: entry.persistent ? entry.tone : DesignTokens.borderStrong
+                Accessible.role: entry.persistent ? Accessible.AlertMessage : Accessible.StaticText
                 Accessible.name: entry.message
 
                 // Only a notice the user can see counts down.
                 Timer {
                     interval: entry.timeout
-                    running: !entry.isError && entry.shown
+                    running: !entry.persistent && entry.shown
                     onTriggered: toast.dismiss(entry.uid)
                 }
 
@@ -147,7 +160,7 @@ Popup {
                     spacing: DesignTokens.spaceSm
 
                     Label {
-                        visible: !entry.isError
+                        visible: !entry.persistent
                         Layout.fillWidth: true
                         text: entry.message
                         color: DesignTokens.textPrimary
@@ -157,9 +170,9 @@ Popup {
                     }
 
                     ScrollView {
-                        visible: entry.isError
+                        visible: entry.persistent
                         Layout.fillWidth: true
-                        Layout.preferredHeight: entry.isError ? Math.min(errorText.implicitHeight, 200) : 0
+                        Layout.preferredHeight: entry.persistent ? Math.min(errorText.implicitHeight, 200) : 0
                         clip: true
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
@@ -171,7 +184,7 @@ Popup {
                             persistentSelection: true
                             textFormat: TextEdit.PlainText
                             wrapMode: TextEdit.Wrap
-                            color: DesignTokens.statusError
+                            color: entry.kind === "error" ? DesignTokens.statusError : DesignTokens.textPrimary
                             selectionColor: DesignTokens.accentMuted
                             selectedTextColor: DesignTokens.textPrimary
                             font.pixelSize: DesignTokens.fontBody
@@ -183,7 +196,7 @@ Popup {
 
                     Button {
                         id: copyBtn
-                        visible: entry.isError
+                        visible: entry.persistent
                         Layout.alignment: Qt.AlignTop
                         text: qsTr("Copy")
                         onClicked: {
@@ -209,7 +222,7 @@ Popup {
 
                     ToolButton {
                         id: closeBtn
-                        visible: entry.isError
+                        visible: entry.persistent
                         Layout.alignment: Qt.AlignTop
                         Accessible.name: qsTr("Dismiss")
                         onClicked: toast.dismiss(entry.uid)
@@ -217,7 +230,7 @@ Popup {
                         contentItem: AppIcon {
                             name: "x"
                             size: 14
-                            color: DesignTokens.statusError
+                            color: entry.tone
                         }
                         background: Rectangle {
                             radius: DesignTokens.radiusSm

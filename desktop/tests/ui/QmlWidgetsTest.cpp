@@ -373,6 +373,21 @@ TEST(Toast, error_stays_while_info_times_out_and_neither_overwrites) {
     EXPECT_TRUE(toast->property("visible").toBool());
 }
 
+TEST(Toast, a_warning_stays_until_dismissed_and_is_not_an_error) {
+    QmlScene scene(QString::fromLatin1(kToastScene));
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    QObject* toast = scene.find("toast");
+    QMetaObject::invokeMethod(
+        toast, "warn", Q_ARG(QVariant, QStringLiteral("loaded with 1 warning: a.yaml:8:1")));
+    QmlScene::settle();
+    QTest::qWait(400);
+
+    ASSERT_EQ(toast->property("count").toInt(), 1);
+    QVariant kind;
+    QMetaObject::invokeMethod(toast, "kindAt", Q_RETURN_ARG(QVariant, kind), Q_ARG(QVariant, 0));
+    EXPECT_EQ(kind.toString(), QStringLiteral("warning"));
+}
+
 TEST(Toast, stack_is_bounded_and_counts_the_rest) {
     QmlScene scene(QString::fromLatin1(kToastScene));
     ASSERT_TRUE(scene.ok()) << scene.error().toStdString();

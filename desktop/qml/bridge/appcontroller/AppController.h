@@ -960,6 +960,8 @@ signals:
     void variableOverridesChanged();
     /// Transient feedback for create/rename/delete outcomes; `isError` tints the message.
     void notify(QString message, bool isError);
+    /// Something worth reading that is not a failure, such as load warnings; stays until dismissed.
+    void notifyWarning(QString message);
 
     /// Emitted after an OpenAPI import when the engine produced per-operation review notes.
     void importReviewNotes(QString notes);

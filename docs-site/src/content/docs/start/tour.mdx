@@ -46,12 +46,8 @@ cd Reqloom/samples/marketplace
     ```
 
     ```ansi
-      WARNING: /path/to/Reqloom/samples/marketplace/reqloom.yaml:8:1: unknown key 'description' in reqloom.yaml; ignored
     LINT OK — 3 actors, 5 resources, 27 operations. No errors.
     ```
-
-    The warning names a key in the sample that the parser doesn't read; it
-    doesn't affect the run.
 
     `lint` sends no requests. It parses every file, resolves every `{{...}}`
     reference, and dry-runs all 27 operations to prove each one's chain can be

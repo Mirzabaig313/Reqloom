@@ -11,6 +11,7 @@ QtObject {
     readonly property color borderSubtle: "#333333"
     readonly property color glassBorder: "#444444"
     readonly property color statusError: "#e5484d"
+    readonly property color statusWarning: "#f5a524"
     readonly property color surfaceRaised: "#222222"
     readonly property color surfaceSunken: "#111111"
     readonly property color textPrimary: "#eeeeee"

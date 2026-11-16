@@ -249,6 +249,9 @@ ApplicationWindow {
         function onNotify(message, isError) {
             toast.show(message, isError);
         }
+        function onNotifyWarning(message) {
+            toast.warn(message);
+        }
         function onImportNeedsOverwrite(specFile, targetDir) {
             importOverwriteDialog.confirmFor(specFile, targetDir);
         }

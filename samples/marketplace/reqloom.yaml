@@ -5,7 +5,6 @@
 version: 1
 name: MarketplaceAPI
 id: b24c09e7-400e-461e-be0f-ab5f28c1c347
-description: B2C marketplace backend (sample)
 default_environment: local
 
 imports:

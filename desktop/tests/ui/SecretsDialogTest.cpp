@@ -222,4 +222,32 @@ TEST(SecretsDialog, move_names_both_folders_and_confirms_the_folder_shown) {
               QStringLiteral("Couldn't use the secrets here: refused"));
 }
 
+TEST(SecretsDialog, conflict_banner_names_the_folder_open_here_too) {
+    SecretsScene scene;
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    scene.stub()->setProperty("folderConflict", QStringLiteral("/projects/old"));
+    scene.open();
+
+    const QString banner = text(scene.find("conflictText"));
+
+    EXPECT_TRUE(banner.contains(QStringLiteral("/projects/old"))) << banner.toStdString();
+    EXPECT_TRUE(banner.contains(QStringLiteral("/projects/here"))) << banner.toStdString();
+}
+
+TEST(SecretsDialog, folder_texts_break_between_words_not_inside_them) {
+    SecretsScene scene;
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    scene.stub()->setProperty("folderConflict", QStringLiteral("/projects/old"));
+    scene.open();
+    SecretsScene::click(scene.find("confirmMoveButton"));
+
+    // Text.Wrap: at word boundaries, and inside a word only when it is longer than a line.
+    constexpr int kWrapAtWordBoundaryOrAnywhere = 4;
+    for (const char* name : {"moveFolders", "conflictText"}) {
+        QObject* label = scene.find(name);
+        ASSERT_NE(label, nullptr) << name;
+        EXPECT_EQ(label->property("wrapMode").toInt(), kWrapAtWordBoundaryOrAnywhere) << name;
+    }
+}
+
 }  // namespace reqloom::desktop::tests

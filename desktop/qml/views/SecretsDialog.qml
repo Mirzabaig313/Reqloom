@@ -125,11 +125,12 @@ Dialog {
                 anchors.margins: DesignTokens.spaceSm
                 spacing: DesignTokens.spaceXs
                 Label {
+                    objectName: "conflictText"
                     Layout.fillWidth: true
-                    text: qsTr("This project's id belongs to another folder on this machine:\n%1\nIf you moved the project here, use its secrets in this folder (the old folder loses access). If this is a copy, give it a new id in reqloom.yaml instead.").arg(SecretsController.folderConflict)
+                    text: qsTr("This project's id belongs to another folder on this machine:\n%1\n\nThis folder:\n%2\n\nIf you moved the project here, use its secrets in this folder (the old folder loses access). If this is a copy, give it a new id in reqloom.yaml instead.").arg(SecretsController.folderConflict).arg(SecretsController.currentFolder)
                     color: DesignTokens.statusError
                     font.pixelSize: DesignTokens.fontLabel
-                    wrapMode: Text.WordWrap
+                    wrapMode: Text.Wrap
                 }
                 Button {
                     id: confirmMoveBtn
@@ -445,7 +446,7 @@ Dialog {
             text: qsTr("Secrets for this project id belong to:\n%1\n\nThey will be used from this folder instead:\n%2\n\nThe old folder loses access to them. To move them back, open the old folder and confirm the move there.").arg(moveDialog.shownOwner).arg(moveDialog.shownHere)
             color: DesignTokens.textPrimary
             font.pixelSize: DesignTokens.fontLabel
-            wrapMode: Text.WrapAnywhere
+            wrapMode: Text.Wrap
         }
 
         footer: DialogButtons {

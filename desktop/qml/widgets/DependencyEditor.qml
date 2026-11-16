@@ -102,7 +102,7 @@ ColumnLayout {
                 color: row.providedVars.length > 0 ? DesignTokens.statusSuccess : DesignTokens.textSecondary
                 font.pixelSize: DesignTokens.fontCaption
                 font.family: row.providedVars.length > 0 ? DesignTokens.fontMono : DesignTokens.fontSans
-                wrapMode: Text.WrapAnywhere
+                wrapMode: Text.Wrap
             }
         }
     }

@@ -13,12 +13,8 @@ reqloom lint --project Reqloom/samples/marketplace
 ```
 
 ```ansi
-  WARNING: Reqloom/samples/marketplace/reqloom.yaml:8:1: unknown key 'description' in reqloom.yaml; ignored
 LINT OK — 3 actors, 5 resources, 27 operations. No errors.
 ```
-
-The warning is for the sample's top-level `description:` key, which the parser
-doesn't read.
 
 Linting needs no server, so this works offline. It's the fastest way to confirm
 your install is sound.
