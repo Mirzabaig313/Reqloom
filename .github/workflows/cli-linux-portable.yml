@@ -58,6 +58,17 @@ jobs:
             -DREQLOOM_BUILD_DESKTOP=OFF \
             -DREQLOOM_BUILD_TESTS=OFF ${REQLOOM_CMAKE_ARGS}
 
+      # CMake prints only the verdict of a failed check; the reason is in this file.
+      - name: Show why configure failed
+        if: failure()
+        shell: bash
+        run: |
+          log=build/linux-release/CMakeFiles/CMakeConfigureLog.yaml
+          if [[ -f "$log" ]]; then tail -n 300 "$log"; else echo "no $log"; fi
+          echo "--- environment"
+          env | grep -E '^(CC|CXX|PATH|LD_LIBRARY_PATH|CMAKE_|CCACHE_|LDFLAGS|CFLAGS|CXXFLAGS)=' || true
+          ccache --version | head -n 1 || true
+
       - name: Build
         run: cmake --build --preset linux-release
 
