@@ -68,7 +68,7 @@ latest_tag() {
 newest_tag_with_cli() { # newest_tag_with_cli <platform> <scratch-file>
   api="${REQLOOM_API_URL:-https://api.github.com/repos/Mirzabaig313/Reqloom/releases?per_page=30}"
   fetch "$api" "$2" 2> /dev/null || return 0
-  grep -o "releases/download/v[0-9][0-9.]*/reqloom-v[0-9][0-9.]*-$1\.tar\.gz" "$2" 2> /dev/null |
+  grep -o "releases/download/v[0-9][0-9.]*/reqloom-cli-v[0-9][0-9.]*-$1\.tar\.gz" "$2" 2> /dev/null |
     head -n 1 | sed -E 's#^releases/download/(v[0-9.]+)/.*$#\1#'
 }
 
@@ -94,7 +94,7 @@ main() {
   stage="$(mktemp -d)"
   trap 'rm -rf "$stage"' EXIT INT TERM
 
-  archive="reqloom-$tag-$platform.tar.gz"
+  archive="reqloom-cli-$tag-$platform.tar.gz"
   say "Downloading $archive"
   if ! fetch "$base_url/$tag/$archive" "$stage/$archive" 2> /dev/null; then
     other=""
@@ -104,11 +104,11 @@ main() {
     fi
     say "Release $tag has no CLI for this system yet; installing $other instead."
     tag="$other"
-    archive="reqloom-$tag-$platform.tar.gz"
+    archive="reqloom-cli-$tag-$platform.tar.gz"
     say "Downloading $archive"
     fetch "$base_url/$tag/$archive" "$stage/$archive" || die "could not download $base_url/$tag/$archive"
   fi
-  checksums="reqloom-$tag-checksums.txt"
+  checksums="reqloom-cli-$tag-checksums.txt"
   fetch "$base_url/$tag/$checksums" "$stage/$checksums" || die "could not download $base_url/$tag/$checksums"
 
   expected="$(awk -v f="$archive" '$2 == f || $2 == "*" f {print $1}' "$stage/$checksums" | head -n 1)"

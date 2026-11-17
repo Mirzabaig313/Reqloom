@@ -18,10 +18,10 @@ function New-FakeRelease([string]$Root, [string]$Tag, [switch]$Broken) {
     } else {
         Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\tar.exe') -Destination (Join-Path $payload 'reqloom.exe')
     }
-    $zip = Join-Path $dir "reqloom-$Tag-windows-x64.zip"
+    $zip = Join-Path $dir "reqloom-cli-$Tag-windows-x64.zip"
     Compress-Archive -Path $payload -DestinationPath $zip -Force
     $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath (Join-Path $dir "reqloom-$Tag-checksums.txt") -Value "$hash  reqloom-$Tag-windows-x64.zip"
+    Set-Content -LiteralPath (Join-Path $dir "reqloom-cli-$Tag-checksums.txt") -Value "$hash  reqloom-cli-$Tag-windows-x64.zip"
 }
 
 # Returns @{ Ok = <bool>; Output = <string> }
@@ -69,14 +69,14 @@ Assert-Case 'installs_and_writes_the_launcher' ($r.Ok -and
 Remove-Item $root -Recurse -Force
 
 $root = New-Root; New-FakeRelease $root 'v9.9.9'
-Add-Content -LiteralPath (Join-Path $root 'releases\v9.9.9\reqloom-v9.9.9-windows-x64.zip') -Value 'x'
+Add-Content -LiteralPath (Join-Path $root 'releases\v9.9.9\reqloom-cli-v9.9.9-windows-x64.zip') -Value 'x'
 $r = Invoke-Install $root 'v9.9.9'
 Assert-Case 'checksum_mismatch_leaves_nothing' ((-not $r.Ok) -and ($r.Output -match 'checksum') -and
     (-not (Test-Path (Join-Path $root 'install')))) $r
 Remove-Item $root -Recurse -Force
 
 $root = New-Root; New-FakeRelease $root 'v9.9.9'
-Remove-Item (Join-Path $root 'releases\v9.9.9\reqloom-v9.9.9-windows-x64.zip')
+Remove-Item (Join-Path $root 'releases\v9.9.9\reqloom-cli-v9.9.9-windows-x64.zip')
 $r = Invoke-Install $root 'v9.9.9'
 Assert-Case 'missing_archive_fails_cleanly' ((-not $r.Ok) -and (-not (Test-Path (Join-Path $root 'install')))) $r
 Remove-Item $root -Recurse -Force

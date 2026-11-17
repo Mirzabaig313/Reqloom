@@ -21,8 +21,8 @@ make_release() {
   mkdir -p "$dir" "$1/build/reqloom-$2/bin" "$1/build/reqloom-$2/lib"
   printf '#!/bin/sh\necho "reqloom %s"\n' "$3" > "$1/build/reqloom-$2/bin/reqloom"
   chmod +x "$1/build/reqloom-$2/bin/reqloom"
-  tar -czf "$dir/reqloom-$2-$platform.tar.gz" -C "$1/build" "reqloom-$2"
-  printf '%s  %s\n' "$(sha "$dir/reqloom-$2-$platform.tar.gz")" "reqloom-$2-$platform.tar.gz" > "$dir/reqloom-$2-checksums.txt"
+  tar -czf "$dir/reqloom-cli-$2-$platform.tar.gz" -C "$1/build" "reqloom-$2"
+  printf '%s  %s\n' "$(sha "$dir/reqloom-cli-$2-$platform.tar.gz")" "reqloom-cli-$2-$platform.tar.gz" > "$dir/reqloom-cli-$2-checksums.txt"
 }
 
 # make_broken_release <root> <tag>: the binary is present but cannot start,
@@ -30,8 +30,8 @@ make_release() {
 make_broken_release() {
   make_release "$1" "$2" unused
   printf '#!/bin/sh\necho "version GLIBC_2.31 not found" >&2\nexit 127\n' > "$1/build/reqloom-$2/bin/reqloom"
-  tar -czf "$1/releases/$2/reqloom-$2-$platform.tar.gz" -C "$1/build" "reqloom-$2"
-  printf '%s  %s\n' "$(sha "$1/releases/$2/reqloom-$2-$platform.tar.gz")" "reqloom-$2-$platform.tar.gz" > "$1/releases/$2/reqloom-$2-checksums.txt"
+  tar -czf "$1/releases/$2/reqloom-cli-$2-$platform.tar.gz" -C "$1/build" "reqloom-$2"
+  printf '%s  %s\n' "$(sha "$1/releases/$2/reqloom-cli-$2-$platform.tar.gz")" "reqloom-cli-$2-$platform.tar.gz" > "$1/releases/$2/reqloom-cli-$2-checksums.txt"
 }
 
 # run_install <root> <tag> [extra env assignments...]; sets $status and $output
@@ -78,20 +78,20 @@ if [ $status -eq 0 ] && ! echo "$output" | grep -q "export PATH"; then ok; else 
 rm -rf "$root"
 
 fresh; make_release "$root" v9.9.9 9.9.9
-printf 'x' >> "$root/releases/v9.9.9/reqloom-v9.9.9-$platform.tar.gz"
+printf 'x' >> "$root/releases/v9.9.9/reqloom-cli-v9.9.9-$platform.tar.gz"
 run_install "$root" v9.9.9
 if [ $status -eq 1 ] && echo "$output" | grep -qi "checksum" &&
   [ ! -e "$root/install/v9.9.9" ] && [ ! -e "$root/bin/reqloom" ]; then ok; else fail checksum_mismatch_leaves_nothing; fi
 rm -rf "$root"
 
 fresh; make_release "$root" v9.9.9 9.9.9
-rm "$root/releases/v9.9.9/reqloom-v9.9.9-$platform.tar.gz"
+rm "$root/releases/v9.9.9/reqloom-cli-v9.9.9-$platform.tar.gz"
 run_install "$root" v9.9.9
 if [ $status -eq 1 ] && [ ! -e "$root/install" ] && [ ! -e "$root/bin/reqloom" ]; then ok; else fail missing_archive_fails_cleanly; fi
 rm -rf "$root"
 
 fresh; make_release "$root" v9.9.9 9.9.9
-: > "$root/releases/v9.9.9/reqloom-v9.9.9-checksums.txt"
+: > "$root/releases/v9.9.9/reqloom-cli-v9.9.9-checksums.txt"
 run_install "$root" v9.9.9
 if [ $status -eq 1 ] && echo "$output" | grep -qi "checksum" && [ ! -e "$root/bin/reqloom" ]; then ok; else fail archive_absent_from_checksum_file_is_refused; fi
 rm -rf "$root"
@@ -129,12 +129,12 @@ if [ $status -eq 1 ] && [ "$("$root/bin/reqloom" --version)" = "reqloom 9.9.9" ]
 rm -rf "$root"
 
 fresh; make_release "$root" v9.9.9 9.9.9; make_broken_release "$root" v9.9.9b
-cp "$root/releases/v9.9.9b/reqloom-v9.9.9b-$platform.tar.gz" "$root/broken.tar.gz"
+cp "$root/releases/v9.9.9b/reqloom-cli-v9.9.9b-$platform.tar.gz" "$root/broken.tar.gz"
 run_install "$root" v9.9.9
 ( cd "$root/build" && rm -rf reqloom-v9.9.9 && mkdir -p reqloom-v9.9.9/bin &&
   printf '#!/bin/sh\nexit 127\n' > reqloom-v9.9.9/bin/reqloom && chmod +x reqloom-v9.9.9/bin/reqloom &&
-  tar -czf "$root/releases/v9.9.9/reqloom-v9.9.9-$platform.tar.gz" reqloom-v9.9.9 )
-printf '%s  %s\n' "$(sha "$root/releases/v9.9.9/reqloom-v9.9.9-$platform.tar.gz")" "reqloom-v9.9.9-$platform.tar.gz" > "$root/releases/v9.9.9/reqloom-v9.9.9-checksums.txt"
+  tar -czf "$root/releases/v9.9.9/reqloom-cli-v9.9.9-$platform.tar.gz" reqloom-v9.9.9 )
+printf '%s  %s\n' "$(sha "$root/releases/v9.9.9/reqloom-cli-v9.9.9-$platform.tar.gz")" "reqloom-cli-v9.9.9-$platform.tar.gz" > "$root/releases/v9.9.9/reqloom-cli-v9.9.9-checksums.txt"
 run_install "$root" v9.9.9
 if [ $status -eq 1 ] && [ "$("$root/bin/reqloom" --version)" = "reqloom 9.9.9" ]; then ok; else fail a_failed_reinstall_of_the_same_version_keeps_it; fi
 rm -rf "$root"
@@ -142,7 +142,7 @@ rm -rf "$root"
 # The release GitHub marks latest may have no CLI archive yet (the desktop files
 # are published by another pipeline); the newest release that has one is used.
 fresh; make_release "$root" v9.9.9 9.9.9; mkdir -p "$root/releases/v9.9.10"
-printf '[{"tag_name":"v9.9.10","assets":[]},{"tag_name":"v9.9.9","assets":[{"browser_download_url":"https://github.com/Mirzabaig313/Reqloom/releases/download/v9.9.9/reqloom-v9.9.9-%s.tar.gz"}]}]' "$platform" > "$root/api.json"
+printf '[{"tag_name":"v9.9.10","assets":[]},{"tag_name":"v9.9.9","assets":[{"browser_download_url":"https://github.com/Mirzabaig313/Reqloom/releases/download/v9.9.9/reqloom-cli-v9.9.9-%s.tar.gz"}]}]' "$platform" > "$root/api.json"
 run_install "$root" "" REQLOOM_TEST_LATEST=v9.9.10 REQLOOM_API_URL="file://$root/api.json"
 if [ $status -eq 0 ] && [ "$("$root/bin/reqloom" --version)" = "reqloom 9.9.9" ] && echo "$output" | grep -q "v9.9.10"; then ok; else fail latest_without_a_cli_falls_back_to_the_newest_with_one; fi
 rm -rf "$root"

@@ -41,8 +41,8 @@ function Install-Reqloom {
         }
     }
 
-    $archive = "reqloom-$tag-windows-x64.zip"
-    $checksums = "reqloom-$tag-checksums.txt"
+    $archive = "reqloom-cli-$tag-windows-x64.zip"
+    $checksums = "reqloom-cli-$tag-checksums.txt"
     $stage = Join-Path ([IO.Path]::GetTempPath()) ("reqloom-install-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     try {

@@ -95,10 +95,10 @@ assert.deepEqual(groupAssets(null), [], "no release yields no groups");
 // The CLI archives of release-cli.yml share a release with the desktop files and
 // must not appear on the desktop download cards.
 const cliAssets = [
-    asset(`reqloom-${TAG}-macos-arm64.tar.gz`),
-    asset(`reqloom-${TAG}-linux-x86_64.tar.gz`),
-    asset(`reqloom-${TAG}-windows-x64.zip`),
-    asset(`reqloom-${TAG}-checksums.txt`),
+    asset(`reqloom-cli-${TAG}-macos-arm64.tar.gz`),
+    asset(`reqloom-cli-${TAG}-linux-x86_64.tar.gz`),
+    asset(`reqloom-cli-${TAG}-windows-x64.zip`),
+    asset(`reqloom-cli-${TAG}-checksums.txt`),
 ];
 const withCli = groupAssets({ ...release, assets: [...release.assets, ...cliAssets] });
 assert.deepEqual(

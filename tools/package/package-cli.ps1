@@ -64,7 +64,7 @@ try {
         throw "package: expected 'reqloom $ExpectedVersion', got '$version'"
     }
 
-    $archive = Join-Path (Resolve-Path $OutDir) "$name-windows-x64.zip"
+    $archive = Join-Path (Resolve-Path $OutDir) "reqloom-cli-$Tag-windows-x64.zip"
     Compress-Archive -Path $dir -DestinationPath $archive -Force
     Write-Host $archive
 } finally {

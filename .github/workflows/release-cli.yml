@@ -155,9 +155,9 @@ jobs:
           set -euo pipefail
           cd artifacts
           ls -l
-          sha256sum "reqloom-${TAG}-macos-arm64.tar.gz" "reqloom-${TAG}-linux-x86_64.tar.gz" \
-            "reqloom-${TAG}-windows-x64.zip" > "reqloom-${TAG}-checksums.txt"
-          cat "reqloom-${TAG}-checksums.txt"
+          sha256sum "reqloom-cli-${TAG}-macos-arm64.tar.gz" "reqloom-cli-${TAG}-linux-x86_64.tar.gz" \
+            "reqloom-cli-${TAG}-windows-x64.zip" > "reqloom-cli-${TAG}-checksums.txt"
+          cat "reqloom-cli-${TAG}-checksums.txt"
 
       - name: Publish to the GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2

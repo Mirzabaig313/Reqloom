@@ -136,7 +136,7 @@ jobs:
           set -euo pipefail
           mkdir -p "release/$TAG"
           cp dist/*.tar.gz "release/$TAG/"
-          (cd "release/$TAG" && sha256sum ./*.tar.gz | sed 's#\./##' > "reqloom-$TAG-checksums.txt")
+          (cd "release/$TAG" && sha256sum ./*.tar.gz | sed 's#\./##' > "reqloom-cli-${TAG}-checksums.txt")
           docker run --rm -v "$PWD":/w -w /w -e TAG "$IMAGE" sh -c '
             set -eu
             if ! command -v curl >/dev/null 2>&1; then

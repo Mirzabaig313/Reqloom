@@ -152,6 +152,6 @@ case "$(uname -s)-$(uname -m)" in
     ;;
 esac
 
-archive="$out/$name-$platform.tar.gz"
+archive="$out/reqloom-cli-$tag-$platform.tar.gz"
 tar -czf "$archive" -C "$stage" "$name"
 echo "$archive"
