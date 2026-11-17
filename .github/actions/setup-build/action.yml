@@ -60,7 +60,7 @@ runs:
         dnf install -y --setopt=install_weak_deps=False epel-release dnf-plugins-core
         dnf config-manager --set-enabled powertools || true
         dnf install -y --setopt=install_weak_deps=False \
-          autoconf automake libtool pkgconf-pkg-config make perl git curl zip unzip tar which findutils \
+          autoconf automake libtool pkgconf-pkg-config make perl git curl zip unzip tar which findutils sudo \
           kernel-headers libsecret-devel ccache patchelf
         dnf install -y --setopt=install_weak_deps=False autoconf-archive || true
         major="$(g++ -dumpversion | cut -d. -f1)"
@@ -126,6 +126,9 @@ runs:
         cache: true
         # The container brings its own Python; setup-python supports only the runner images.
         setup-python: ${{ inputs.portable-linux != 'true' }}
+        # The action's own dependency step runs "sudo apt-get", which the container
+        # (root, dnf) has neither of; the step above installed what is needed.
+        install-deps: ${{ inputs.portable-linux != 'true' }}
 
     - name: Install Qt for the CLI (Windows / macOS)
       if: runner.os != 'Linux' && inputs.desktop != 'true'
