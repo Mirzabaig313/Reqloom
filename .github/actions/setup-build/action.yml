@@ -61,7 +61,7 @@ runs:
         dnf config-manager --set-enabled powertools || true
         dnf install -y --setopt=install_weak_deps=False \
           autoconf automake libtool pkgconf-pkg-config make perl git curl zip unzip tar which findutils sudo \
-          kernel-headers libsecret-devel ccache patchelf
+          kernel-headers libsecret-devel patchelf
         dnf install -y --setopt=install_weak_deps=False autoconf-archive || true
         major="$(g++ -dumpversion | cut -d. -f1)"
         if [[ "$major" -lt 14 ]]; then
@@ -179,6 +179,8 @@ runs:
     # sccache cannot cache MSVC objects that write to a shared PDB, hence Embedded.
     - name: Configure the compiler cache
       shell: bash
+      env:
+        PORTABLE_LINUX: ${{ inputs.portable-linux }}
       run: |
         set -euo pipefail
         dir="${RUNNER_TEMP}/compiler-cache"
@@ -192,20 +194,10 @@ runs:
           echo "CCACHE_DIR=$dir" >> "$GITHUB_ENV"
           echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
           echo "REQLOOM_CMAKE_ARGS=" >> "$GITHUB_ENV"
-          # A cache that cannot compile makes every CMake check fail without a
-          # reason, so it is tried on a small threaded program first and left out
-          # if it fails. The build is then slower, not broken.
-          probe="${RUNNER_TEMP}/compiler-probe"
-          mkdir -p "$probe"
-          printf '%s\n' '#include <pthread.h>' 'static void* run(void* a) { return a; }' \
-            'int main() { pthread_t t; pthread_create(&t, nullptr, run, nullptr); return pthread_join(t, nullptr); }' \
-            > "$probe/probe.cpp"
-          "${CXX:-c++}" -std=c++23 -pthread "$probe/probe.cpp" -o "$probe/direct" ||
-            echo "::warning::the compiler alone cannot build a threaded program"
-          if ! CCACHE_DIR="$dir" ccache "${CXX:-c++}" -std=c++23 -pthread -c "$probe/probe.cpp" -o "$probe/probe.o"; then
-            echo "::warning::ccache cannot compile here ($(ccache --version | head -n 1)); building without it"
-            launcher=""
-          fi
+          # The older image's ccache (3.7) does not understand the flags CMake adds
+          # for C++23 module scanning, and every compile through it fails. That
+          # build goes without a cache.
+          if [[ "$PORTABLE_LINUX" == "true" ]]; then launcher=""; fi
         fi
         if [[ -n "$launcher" ]]; then
           echo "CMAKE_C_COMPILER_LAUNCHER=$launcher" >> "$GITHUB_ENV"
