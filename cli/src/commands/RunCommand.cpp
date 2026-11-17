@@ -6,6 +6,7 @@
 #include "ArgParser.h"
 #include "ByteSizeArgument.h"
 #include "ExitCodes.h"
+#include "HostApprovalPrompt.h"
 #include "PathText.h"
 #include "RunInterrupt.h"
 
@@ -57,6 +58,7 @@ constexpr std::array kOptions{
     OptionSpec{.name = "--quiet"},
     OptionSpec{.name = "--failure-body-size", .takesValue = true},
     OptionSpec{.name = "--response-body-size", .takesValue = true},
+    OptionSpec{.name = "--non-interactive"},
 };
 
 /// Most operation names listed when the target does not exist.
@@ -72,6 +74,9 @@ struct RunArgs {
     bool quiet{false};
     std::optional<std::size_t> failureExcerptBytes;
     std::optional<std::size_t> responseBodyBytes;
+    bool nonInteractive{false};
+    /// Hosts `REQLOOM_APPROVED_HOSTS` approves for this run.
+    std::vector<std::string> approvedHosts;
 };
 
 void printUsage(std::FILE* stream) {
@@ -96,6 +101,11 @@ void printUsage(std::FILE* stream) {
         "                       With --format json, most of each step's response body\n"
         "                       kept in its `response` field (default 2KiB; 0 = none;\n"
         "                       capped at 1MiB). Masked before it is cut; never unmasked.\n"
+        "  --non-interactive    Never ask to approve a host, even at a terminal\n"
+        "Credentials, secrets and session cookies go only to hosts a person approved for\n"
+        "this project. At a terminal, run asks (yes/no) the first time; with no terminal\n"
+        "it never asks and the run fails before sending. CI approves hosts for a run with\n"
+        "REQLOOM_APPROVED_HOSTS=[http://|https://]host[:port],... (no scheme means https).\n"
         "With --format json or junit, stdout (or --output) receives exactly one document\n"
         "for every outcome, errors before the first step included; diagnostics go to stderr.\n"
         "Exit codes:\n"
@@ -192,6 +202,7 @@ void printUsage(std::FILE* stream) {
     }
     // Machine-readable formats imply --quiet: stdout carries a single document.
     out.quiet = parsed.has("--quiet") || out.format != Format::Text;
+    out.nonInteractive = parsed.has("--non-interactive");
     return out;
 }
 
@@ -369,6 +380,24 @@ struct Report {
         text.printProjectPreamble(project.name, project.actors.size(), project.resources.size());
     }
 
+    // Host approval (FR-15.9). Asking needs a terminal and the user setting that lets the CLI
+    // approve; `REQLOOM_APPROVED_HOSTS` obeys the same setting, so turning CLI approval off leaves
+    // the desktop app as the only way to approve.
+    const auto approvals = ce::makeFileHostApprovalStore();
+    const bool cliMayApprove = approvals->cliApprovalAllowed().value_or(false);
+    TerminalHostApprover approver{
+        !cfg.nonInteractive && terminalAttached(), cliMayApprove, stdin, stderr};
+    auto options = runOptions(cfg);
+    options.hostApprover = &approver;
+    if (cliMayApprove) {
+        options.approvedHostsForRun = cfg.approvedHosts;
+    } else if (!cfg.approvedHosts.empty()) {
+        std::println(stderr,
+                     "warning: {} is ignored: approving hosts from the command line is turned "
+                     "off on this machine",
+                     kApprovedHostsVariable);
+    }
+
     ce::ExecutionEngine engine(ce::makeDefaultDependencies());
     RunInterrupt interrupt{[&engine](ce::RunId id) {
         engine.cancel(id);
@@ -384,7 +413,7 @@ struct Report {
     });
 
     ce::RunContext ctx;
-    const auto result = engine.run(project, ce::OperationId{cfg.targetOp}, ctx, runOptions(cfg));
+    const auto result = engine.run(project, ce::OperationId{cfg.targetOp}, ctx, options);
     const int code = result ? report.deliver(renderRun(cfg, report, text, summary, *result),
                                              result->succeeded() ? kExitSuccess : kExitFailed)
                             : report.failWith(kExitFailed, result.error(), "Engine error");
@@ -393,7 +422,12 @@ struct Report {
     return code == kExitSystem || signalCode == 0 ? code : signalCode;
 }
 
-[[nodiscard]] int execute(const RunArgs& cfg, Report& report) {
+[[nodiscard]] int execute(RunArgs cfg, Report& report) {
+    auto approved = hostsApprovedByEnvironment();
+    if (!approved) {
+        return report.fail(kExitUsage, kCodeUsage, approved.error(), "Error: " + approved.error());
+    }
+    cfg.approvedHosts = std::move(*approved);
     auto project = loadProject(cfg, report);
     if (!project) {
         return project.error();

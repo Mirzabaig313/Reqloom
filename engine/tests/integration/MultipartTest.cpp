@@ -8,6 +8,7 @@
 // Files under test reach libcurl's mime API, so this test exercises the
 // real network path end-to-end.
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/FormBody.h>
@@ -133,7 +134,7 @@ void setPlainFormFields(ce::Project& project, std::map<std::string, std::string>
 
 /// Run `form.url_encoded` and return the captured request.
 [[nodiscard]] nlohmann::json runPlainForm(const ce::Project& project, const std::string& baseUrl) {
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"form.url_encoded"}, ctx);
     EXPECT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -174,7 +175,7 @@ TEST_F(MultipartFixture, file_upload_sends_multipart_with_file_bytes) {
     TempUploadFile tmp{"reqloom-multipart-fixture-bytes"};
 
     auto project = loadProject(harness_->baseUrl(), tmp.path().string());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"upload.with_file"}, ctx);
@@ -214,7 +215,7 @@ TEST_F(MultipartFixture, file_upload_sends_multipart_with_file_bytes) {
 
 TEST_F(MultipartFixture, plain_form_still_uses_url_encoded_body) {
     auto project = loadProject(harness_->baseUrl(), "/dev/null-not-used");
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"form.url_encoded"}, ctx);
@@ -230,7 +231,7 @@ TEST_F(MultipartFixture, plain_form_still_uses_url_encoded_body) {
 
 TEST_F(MultipartFixture, missing_upload_file_fails_with_upload_unreadable) {
     auto project = loadProject(harness_->baseUrl(), "/no/such/path/reqloom-test-missing-XXX.bin");
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"upload.with_file"}, ctx);
@@ -319,7 +320,7 @@ TEST_F(MultipartFixture, variable_resolving_to_at_path_is_a_text_part_under_mult
     project.resources.at(ce::ResourceId{"upload"}).operations.at("with_file").bodyForm =
         std::map<std::string, std::string>{{"documentType", "{{env.sneaky}}"}};
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"upload.with_file"}, ctx);
     ASSERT_TRUE(result.has_value()) << result.error().detail;

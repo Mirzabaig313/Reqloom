@@ -14,6 +14,7 @@
 // success_when was never evaluated and the operation either succeeded
 // on the wrong response or failed an extraction).
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
@@ -115,7 +116,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"payment.pay"}, ctx);
 
@@ -176,7 +177,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"job.submit"}, ctx);
 
@@ -245,7 +246,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     const auto t0 = std::chrono::steady_clock::now();
@@ -314,7 +315,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
 
@@ -374,7 +375,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
 
@@ -439,7 +440,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
 
@@ -496,7 +497,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
 
@@ -571,7 +572,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"payment.pay"}, ctx);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
@@ -656,7 +657,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"job.submit"}, ctx);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
@@ -722,7 +723,7 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     std::vector<ce::ExchangeKind> requests;
     std::vector<ce::ExchangeKind> responses;
     engine.subscribe([&](const ce::RunEvent& ev) {

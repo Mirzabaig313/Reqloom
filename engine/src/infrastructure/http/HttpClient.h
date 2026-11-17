@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -45,6 +46,13 @@ struct CancelCheck {
     }
 };
 
+struct HttpRequest;
+
+/// Called before a redirect hop is sent, with the request for that hop: its URL, method, headers
+/// and body as they will be sent. It may change the request (drop a header) or refuse the hop; a
+/// refusal ends the transfer with that error before anything reaches the next host.
+using RedirectCheck = std::function<std::expected<void, ReqloomError>(HttpRequest& next)>;
+
 struct HttpRequest {
     HttpMethod method{HttpMethod::Get};
     std::string url;
@@ -63,6 +71,9 @@ struct HttpRequest {
 
     /// When false a 3xx response is returned as is instead of being followed.
     bool followRedirects{true};
+
+    /// Checks each redirect hop (host approval, FR-15.9); unset follows every hop.
+    RedirectCheck onRedirect;
 
     /// When it reports a cancel, the transfer is aborted and `send` returns `ErrorCode::Cancelled`.
     CancelCheck cancel;

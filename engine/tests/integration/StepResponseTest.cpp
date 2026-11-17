@@ -7,6 +7,7 @@
 #include "infrastructure/schema/SchemaParser.h"
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/PublicApi.h>
 
@@ -112,6 +113,7 @@ struct Fixture {
         respond(422, std::string(pad, 'x') + " session " + token + " cannot pay; card declined"));
     auto* raw = http.get();
     ce::ExecutionEngine::Dependencies deps{std::move(http), nullptr, nullptr, nullptr, nullptr};
+    deps.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     return std::make_unique<Fixture>(raw, ce::ExecutionEngine{std::move(deps)}, buildProject());
 }
 

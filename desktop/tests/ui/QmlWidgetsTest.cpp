@@ -480,4 +480,119 @@ TEST(UnsavedChangesDialog, escape_answers_cancel) {
     EXPECT_EQ(dialog->property("last").toInt(), 2);
 }
 
+namespace {
+
+const char* kHostScene = R"(
+    HostApprovalDialog {
+        id: dlg
+        objectName: "dlg"
+        property int answeredCount: 0
+        property int lastId: -1
+        property bool lastApprove: true
+        onAnswered: (requestId, approve) => {
+            dlg.lastId = requestId; dlg.lastApprove = approve; dlg.answeredCount += 1;
+        }
+    }
+)";
+
+void askHost(QObject* dialog) {
+    QMetaObject::invokeMethod(dialog,
+                              "ask",
+                              Q_ARG(QVariant, 7),
+                              Q_ARG(QVariant, QStringLiteral("Shop")),
+                              Q_ARG(QVariant, QStringLiteral("api.example.com:443")),
+                              Q_ARG(QVariant, QStringLiteral("the credentials of actor 'admin'")),
+                              Q_ARG(QVariant, QStringLiteral("https://api.example.com/login")));
+    QmlScene::settle();
+}
+
+}  // namespace
+
+TEST(HostApprovalDialog, names_the_project_host_and_credential) {
+    QmlScene scene(QString::fromLatin1(kHostScene));
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    askHost(scene.find("dlg"));
+    EXPECT_TRUE(scene.find("dlg")->property("visible").toBool());
+    EXPECT_EQ(text(scene.find("hostApprovalHost")), QStringLiteral("api.example.com:443"));
+    const auto message = text(scene.find("hostApprovalMessage"));
+    EXPECT_TRUE(message.contains(QStringLiteral("Shop"))) << message.toStdString();
+    EXPECT_TRUE(message.contains(QStringLiteral("actor 'admin'"))) << message.toStdString();
+}
+
+// Review finding 4: project-controlled text is shown as plain text, never as rich text.
+TEST(HostApprovalDialog, project_text_is_never_rendered_as_rich_text) {
+    QmlScene scene(QString::fromLatin1(kHostScene));
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    QObject* dialog = scene.find("dlg");
+    QMetaObject::invokeMethod(
+        dialog,
+        "ask",
+        Q_ARG(QVariant, 8),
+        Q_ARG(QVariant, QStringLiteral("<b>x</b><img src=\"http://evil.test/p\">")),
+        Q_ARG(QVariant, QStringLiteral("<font color=red>api.trusted.test</font>")),
+        Q_ARG(QVariant, QStringLiteral("<i>a secret</i>")),
+        Q_ARG(QVariant, QStringLiteral("https://evil.test/<br>")));
+    QmlScene::settle();
+    for (const char* name : {"hostApprovalMessage", "hostApprovalHost"}) {
+        QObject* label = scene.find(name);
+        ASSERT_NE(label, nullptr) << name;
+        EXPECT_EQ(label->property("textFormat").toInt(), 0) << name << " is not Text.PlainText";
+    }
+}
+
+TEST(HostApprovalDialog, approve_button_approves_once) {
+    QmlScene scene(QString::fromLatin1(kHostScene));
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    QObject* dialog = scene.find("dlg");
+    askHost(dialog);
+    QMetaObject::invokeMethod(scene.find("hostApprovalApproveButton"), "click");
+    QmlScene::settle();
+    EXPECT_EQ(dialog->property("answeredCount").toInt(), 1);
+    EXPECT_EQ(dialog->property("lastId").toInt(), 7);
+    EXPECT_TRUE(dialog->property("lastApprove").toBool());
+}
+
+TEST(HostApprovalDialog, a_second_question_waits_until_the_first_is_answered) {
+    QmlScene scene(QString::fromLatin1(kHostScene));
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    QObject* dialog = scene.find("dlg");
+    askHost(dialog);  // id 7
+    QMetaObject::invokeMethod(dialog,
+                              "ask",
+                              Q_ARG(QVariant, -1),
+                              Q_ARG(QVariant, QStringLiteral("Shop")),
+                              Q_ARG(QVariant, QStringLiteral("idp.example.com:443")),
+                              Q_ARG(QVariant, QStringLiteral("an OAuth2 client secret")),
+                              Q_ARG(QVariant, QStringLiteral("https://idp.example.com/token")));
+    QmlScene::settle();
+    EXPECT_EQ(text(scene.find("hostApprovalHost")), QStringLiteral("api.example.com:443"));
+    QMetaObject::invokeMethod(scene.find("hostApprovalApproveButton"), "click");
+    QTest::qWait(400);
+    EXPECT_EQ(dialog->property("lastId").toInt(), 7);
+    EXPECT_TRUE(dialog->property("lastApprove").toBool());
+    EXPECT_TRUE(dialog->property("visible").toBool());
+    EXPECT_EQ(text(scene.find("hostApprovalHost")), QStringLiteral("idp.example.com:443"));
+    scene.key(Qt::Key_Escape);
+    QTest::qWait(400);
+    EXPECT_EQ(dialog->property("answeredCount").toInt(), 2);
+    EXPECT_EQ(dialog->property("lastId").toInt(), -1);
+    EXPECT_FALSE(dialog->property("lastApprove").toBool());
+}
+
+TEST(HostApprovalDialog, escape_and_the_default_button_send_nothing) {
+    for (const bool useEscape : {true, false}) {
+        QmlScene scene(QString::fromLatin1(kHostScene));
+        ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+        QObject* dialog = scene.find("dlg");
+        askHost(dialog);
+        if (useEscape) {
+            scene.key(Qt::Key_Escape);
+        } else {
+            scene.key(Qt::Key_Space);
+        }
+        EXPECT_EQ(dialog->property("answeredCount").toInt(), 1) << useEscape;
+        EXPECT_FALSE(dialog->property("lastApprove").toBool()) << useEscape;
+    }
+}
+
 }  // namespace reqloom::desktop::tests

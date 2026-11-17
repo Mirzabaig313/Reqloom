@@ -25,6 +25,7 @@ reqloom_apply_sanitizers(reqloom-cli-renderers)
 add_library(reqloom-cli-support OBJECT
     src/commands/ArgParser.cpp
     src/commands/RunInterrupt.cpp
+    src/commands/HostApprovalPrompt.cpp
     src/output/ReportWriter.cpp
 )
 target_include_directories(reqloom-cli-support
@@ -46,6 +47,7 @@ add_executable(reqloom-cli
     src/commands/RunCommand.cpp
     src/commands/LintCommand.cpp
     src/commands/ImportCommand.cpp
+    src/commands/HostsCommand.cpp
 )
 
 target_link_libraries(reqloom-cli

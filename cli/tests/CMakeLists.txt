@@ -69,7 +69,9 @@ gtest_discover_tests(reqloom-cli-import-tests
 # Run command tests — compile the command directly, like the import tests.
 add_executable(reqloom-cli-run-tests
     unit/RunCommandTest.cpp
+    unit/HostsCommandTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/RunCommand.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/HostsCommand.cpp
 )
 target_include_directories(reqloom-cli-run-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
@@ -181,6 +183,7 @@ add_executable(reqloom-cli-support-tests
     unit/ArgParserTest.cpp
     unit/ReportWriterTest.cpp
     unit/RunInterruptTest.cpp
+    unit/HostApprovalPromptTest.cpp
 )
 target_include_directories(reqloom-cli-support-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src

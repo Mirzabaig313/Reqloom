@@ -36,6 +36,7 @@ reqloom_apply_sanitizers(reqloom-engine-domain)
 # pure interfaces declared in `engine/include/reqloom/engine/*.h`.
 add_library(reqloom-engine-infrastructure OBJECT
     src/infrastructure/http/CurlHttpClient.cpp
+    src/infrastructure/http/HostKey.cpp
     src/infrastructure/storage/SqliteHistoryStore.cpp
     src/infrastructure/secrets/KeychainSecretStore.cpp
     src/infrastructure/secrets/FileProjectTrustStore.cpp
@@ -101,6 +102,7 @@ add_library(reqloom-engine-application OBJECT
     src/application/SecretRedaction.cpp
     src/application/SecretEnvironment.cpp
     src/application/StepEvidence.cpp
+    src/application/HostGate.cpp
 )
 target_include_directories(reqloom-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

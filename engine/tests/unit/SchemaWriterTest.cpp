@@ -1589,3 +1589,16 @@ TEST(SchemaWriter, writer_keeps_on_disk_project_id_when_rewriting_without_one) {
     ASSERT_TRUE(third.has_value()) << third.error().detail;
     EXPECT_EQ(ce::parseProject(*third)->id, "kept-id");
 }
+
+TEST(SchemaWriter, actor_allowed_hosts_round_trip) {
+    ScratchDir scratch;
+    auto original = makeRoundTripProject();
+    original.actors.at(ce::ActorId{"user"}).allowedHosts = {"api.example.com",
+                                                            "auth.example.com:8443"};
+    auto written = ce::writeProject(scratch.path(), original);
+    ASSERT_TRUE(written.has_value()) << written.error().detail;
+    auto reloaded = ce::parseProject(*written);
+    ASSERT_TRUE(reloaded.has_value()) << reloaded.error().detail;
+    EXPECT_EQ(reloaded->actors.at(ce::ActorId{"user"}).allowedHosts,
+              (std::vector<std::string>{"api.example.com", "auth.example.com:8443"}));
+}

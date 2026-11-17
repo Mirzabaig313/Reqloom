@@ -88,8 +88,14 @@ file outside every project:
 | Linux | `$XDG_CONFIG_HOME/reqloom/projects.json`, else `~/.config/reqloom/projects.json` |
 | Windows | `%APPDATA%\Reqloom\projects.json` |
 
-Set `REQLOOM_CONFIG_DIR` to use `<that directory>/projects.json` instead — useful
-for CI and tests.
+No environment variable moves this file: it also holds the hosts you approved
+and the setting that stops the command line approving hosts, so a program that
+can set variables for the commands it runs must not be able to point Reqloom at
+a fresh, empty copy. The home directory comes from your user account, not from
+`$HOME` (Windows still uses `%APPDATA%`). A file Reqloom cannot read as a JSON
+object is treated as damaged: nothing in it counts, the command line cannot
+approve hosts, and Reqloom will not overwrite it until you repair it or move it
+aside.
 
 After that, a different folder with the same id gets no secrets. The run fails
 with `E_SECRET_ACCESS_FAILED`, and the message names both folders. What to do
@@ -355,6 +361,142 @@ list there
 schema quietly reading `AWS_SECRET_ACCESS_KEY` — not against a project that was
 edited to add a name. Prefer `!secret` on developer machines and `{{$.env.X}}`
 only where a CI secret store is already doing the work.
+
+## Hosts that may receive credentials
+
+A project names its hosts in files anyone can edit, an AI agent included. So
+Reqloom sends an actor's credentials, a secret or a session cookie to a host
+only after **you** have approved that host for that project. The project file
+can never approve a host by itself.
+
+### What needs approval
+
+Whether a request carries a credential is decided first from what the operation
+**refers to**, then from the bytes about to be sent, so a transformed value
+(`{{$.hex.encode(secret.KEY)}}`) or a hook's rewrite still counts. A request
+needs an approved host when:
+
+- it is sent as an actor (an operation run as the actor, its sign-in, refresh,
+  or OAuth2 token request), or its templates use any actor's values
+  (`{{admin.access_token}}`), even through a `$.` function;
+- its templates or its pre-request hook use a `{{secret.X}}` (from the keychain
+  or from `REQLOOM_SECRET_<NAME>`), a `{{$.env.X}}`, an environment value that is
+  a secret, inline or default auth, or a value the project sends as a credential
+  elsewhere;
+- it uploads a local file (`body_form` `@path`): any file, since it can hold
+  anything; the question names the file;
+- it carries a `Cookie` header, or a header, query parameter or body field whose
+  name looks like a credential (`Authorization`, `X-Api-Key`, `key`, `password`,
+  `token`, …), or the value of a secret or session token anywhere;
+- it presents a client certificate.
+
+A request that carries none of these, such as a public `GET`, needs no approval,
+so in a chain such steps before the first refused one are still sent. Secret
+values shorter than 4 characters cannot be recognised by value.
+
+### How hosts are compared
+
+A host is approved as `scheme://host:port`: `https://API.example.com/v1` is
+`https://api.example.com:443`, `http://127.0.0.1:3000` is
+`http://127.0.0.1:3000`. Approving `https://` never covers `http://` on the same
+host, even on the same port. The name is compared without case and without a
+trailing dot. An IP address is compared as the URL parser normalises it
+(`127.1` is `127.0.0.1`; an IPv6 zone is ignored). A name with non-ASCII
+characters cannot be approved: write it in its `xn--` form. There are no
+wildcards. `localhost` and `127.0.0.1` are different hosts, and neither is
+approved automatically.
+
+For an `https://` host, a request that turns TLS verification off
+(`tls_verify: false`) or trusts a certificate authority the project names
+(`ca_bundle`) is a separate question even when the host is approved, since
+someone in between could read the credential. Without a terminal it is
+refused.
+
+### Restricting an actor: `allowed_hosts`
+
+```yaml title="actors/vendor.yaml"
+vendor:
+  auth:
+    strategy: oauth2_client_credentials
+    token_url: https://auth.example.com/oauth/token
+    client_id: shop
+    client_secret: "{{secret.VENDOR_CLIENT_SECRET}}"
+  allowed_hosts:
+    - api.example.com          # any port
+    - auth.example.com:443     # this port only
+```
+
+An actor's credentials, and any request that uses its values, go only to the
+hosts in its `allowed_hosts` (host and optional port, no scheme). Without the
+list, they go only to the host of the environment's `baseUrl`. The list can only
+restrict: each host on it still needs your approval, and a host not on it is
+refused without asking. An actor whose `token_url` or sign-in is on a different
+host than `baseUrl` must therefore list both.
+
+### Where approvals are kept
+
+In your user settings, next to the record of which folder owns each project id
+(`projects.json` in Reqloom's config folder, which no environment variable
+moves), keyed by the project's `id:`. A project needs an `id:` to be approved. A copy of
+a project in another folder that claims the same id does not inherit the
+approvals.
+
+### Redirects, hooks and token URLs
+
+The check runs on the request as it is finally sent, so a pre-request hook that
+rewrites the URL, or a `token_url` on another host, is checked like anything
+else. It runs again before every redirect hop. As before, `Authorization` and
+`Cookie` are dropped when a redirect changes host, port or scheme. A hop that
+continues a request carrying a credential keeps that status while it still
+carries anything the project supplied: a body, a header other than `Accept`,
+`Accept-Encoding`, `Accept-Language`, `Cache-Control`, `Connection`,
+`Content-Type`, `Pragma` or `User-Agent` holding an ordinary value, or a value
+from the original query string. Its host must then be allowed and approved, or
+the step fails before the hop is sent. A hop that carries none of that, such as
+a plain `GET` to a download host, is followed.
+
+### Approving a host
+
+- **Desktop app:** the first time a run needs a host, the app asks, showing the
+  project, the host and what would be sent. **Approve and send** remembers the
+  answer; **Don't send** (the default) fails that step. Approved hosts are listed
+  in **Manage Secrets**, where each can be revoked.
+- **Command line at a terminal:** `reqloom run` asks the same question and waits
+  for `yes` or `no`. `reqloom hosts approve <host>` approves one ahead of time,
+  after asking yes or no.
+- **No terminal (an agent, CI, a pipe):** nothing is asked and nothing is
+  assumed. The step fails with `E_HOST_NOT_APPROVED` before anything is sent,
+  naming the host and how to approve it.
+- **CI:** set `REQLOOM_APPROVED_HOSTS` in the pipeline to a comma-separated list
+  of hosts, each `[http://|https://]host[:port]`; no scheme means `https`, no
+  port the scheme's default (`api.example.com` is `https://api.example.com:443`;
+  a local server is `http://127.0.0.1:3000`). It approves them for that run only
+  and is never stored. It still respects `allowed_hosts`, and it cannot approve
+  TLS verification being off or a project-named certificate authority.
+
+### Letting only the desktop app approve
+
+An AI agent that runs commands may run them in a pseudo-terminal and answer the
+prompt, or set `REQLOOM_APPROVED_HOSTS` itself. On a machine where agents run,
+turn approval from the command line off: untick **Let the reqloom command line
+approve hosts** in **Manage Secrets**, or run `reqloom hosts cli-approval off`.
+The terminal prompt, `reqloom hosts approve` and `REQLOOM_APPROVED_HOSTS` then
+approve nothing, and only the desktop app can. Turning it back on is possible
+only in the app.
+
+This lowers the risk; it does not rule it out. The setting is a file in your
+user account, and any program running as you, an agent included, can edit or
+delete that file. A pseudo-terminal also looks like a terminal to `reqloom`,
+so a program driving one can answer the prompt. Nothing here can prove that a
+person answered.
+
+### After upgrading
+
+Projects that ran before host approval existed have no approved hosts. The
+first run asks once per host, including the `baseUrl` host. A CI pipeline needs
+`REQLOOM_APPROVED_HOSTS` added before its next run. An actor whose sign-in or
+`token_url` is on a different host than `baseUrl` is not asked about: it fails
+with `E_HOST_NOT_APPROVED` until that host is listed in its `allowed_hosts`.
 
 ## Transport
 

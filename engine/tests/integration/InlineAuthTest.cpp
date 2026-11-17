@@ -4,6 +4,7 @@
 // Authorization / API-key header. Fails on the parent commit: Operation had
 // no inlineAuth field and the executor injected nothing.
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
@@ -123,7 +124,7 @@ protected:
 
 TEST_F(InlineAuthFixture, bearer_token_reaches_the_wire) {
     auto project = makeProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"echo.bearer"}, ctx);
@@ -137,7 +138,7 @@ TEST_F(InlineAuthFixture, bearer_token_reaches_the_wire) {
 
 TEST_F(InlineAuthFixture, basic_auth_is_base64_encoded) {
     auto project = makeProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"echo.basic"}, ctx);
@@ -152,7 +153,7 @@ TEST_F(InlineAuthFixture, basic_auth_is_base64_encoded) {
 
 TEST_F(InlineAuthFixture, api_key_header_reaches_the_wire) {
     auto project = makeProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"echo.apikey"}, ctx);
@@ -166,7 +167,7 @@ TEST_F(InlineAuthFixture, api_key_header_reaches_the_wire) {
 
 TEST_F(InlineAuthFixture, aws_sigv4_signs_the_request) {
     auto project = makeProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"echo.aws"}, ctx);
@@ -184,7 +185,7 @@ TEST_F(InlineAuthFixture, aws_sigv4_signs_the_request) {
 
 TEST_F(InlineAuthFixture, oauth1_signs_the_request) {
     auto project = makeProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"echo.oauth"}, ctx);
@@ -201,7 +202,7 @@ TEST_F(InlineAuthFixture, oauth1_signs_the_request) {
 
 TEST_F(InlineAuthFixture, jwt_bearer_injects_a_signed_token) {
     auto project = makeProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"echo.jwt"}, ctx);
@@ -227,7 +228,7 @@ TEST_F(InlineAuthFixture, oauth2_fetches_a_token_and_injects_bearer) {
                               .oauth2ClientId = "cid",
                               .oauth2ClientSecret = "csecret"});
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"echo.oauth2"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -249,7 +250,7 @@ TEST_F(InlineAuthFixture, an_inline_oauth2_token_exchange_is_named_as_such) {
                               .oauth2ClientId = "cid",
                               .oauth2ClientSecret = "csecret"});
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     std::vector<ce::ExchangeKind> requests;
     std::vector<ce::ExchangeKind> responses;
     engine.subscribe([&](const ce::RunEvent& ev) {
@@ -277,7 +278,7 @@ TEST_F(InlineAuthFixture, inherit_uses_the_project_default_auth) {
     echo.operations["inherit"] =
         makeOp("inherit", "/inherit", ce::InlineAuth{.type = ce::InlineAuthType::Inherit});
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"echo.inherit"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -298,7 +299,7 @@ TEST_F(InlineAuthFixture, jwt_unsupported_algorithm_fails_the_step) {
                                                       .jwtSecret = "s",
                                                       .jwtPayload = R"({"sub":"x"})"});
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"echo.jwtbad"}, ctx);
     ASSERT_TRUE(result.has_value()) << "engine itself returned an error";
@@ -326,7 +327,7 @@ TEST_F(InlineAuthFixture, oauth2_token_is_cached_across_operations) {
     echo.operations["cachea"] = makeOp("cachea", "/cache-a", oauth2);
     echo.operations["cacheb"] = makeOp("cacheb", "/cache-b", oauth2);
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     ASSERT_TRUE(engine.run(project, ce::OperationId{"echo.cachea"}, ctx));
     ASSERT_TRUE(engine.run(project, ce::OperationId{"echo.cacheb"}, ctx));
@@ -354,7 +355,7 @@ TEST_F(InlineAuthFixture, oauth2_token_cache_is_cleared_by_reset_sessions) {
     ce::RunOptions clean;
     clean.resetSessions = true;
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     ASSERT_TRUE(engine.run(project, ce::OperationId{"echo.cachea"}, ctx));
     ASSERT_TRUE(engine.run(project, ce::OperationId{"echo.cacheb"}, ctx, clean));
@@ -383,7 +384,7 @@ TEST_F(InlineAuthFixture, oauth2_password_grant_with_basic_client_auth) {
                               .oauth2ClientSecret = "csecret",
                               .oauth2ClientAuth = "basic"});
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"echo.oauth2pw"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -421,7 +422,7 @@ TEST_F(InlineAuthFixture, oauth2_authorization_code_injects_obtained_token) {
                               .oauth2CallbackUrl = "http://127.0.0.1:8080/callback",
                               .oauth2AccessToken = "authcode-tok"});
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"echo.authcode"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -443,7 +444,7 @@ TEST_F(InlineAuthFixture, oauth2_authorization_code_without_token_fails_clearly)
                               .oauth2ClientId = "cid",
                               .oauth2AuthUrl = "https://id.test/authorize"});
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"echo.authcode2"}, ctx);
     ASSERT_TRUE(result.has_value());

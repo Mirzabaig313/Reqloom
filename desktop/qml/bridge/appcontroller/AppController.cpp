@@ -16,6 +16,7 @@
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/FormBody.h>
+#include <reqloom/engine/HostApproval.h>
 #include <reqloom/engine/ImportCredentials.h>
 #include <reqloom/engine/Predicate.h>
 #include <reqloom/engine/ProjectTrustStore.h>
@@ -131,6 +132,16 @@ AppController::AppController(QObject* parent)
     connect(runController_.get(), &RunController::runRefused, this, [this](const QString& message) {
         emit notify(message, true);
     });
+    connect(&runController_->hostApprovals(),
+            &HostApprovalBroker::approvalRequested,
+            this,
+            [this](int id,
+                   const QString& projectName,
+                   const QString& host,
+                   const QString& credential,
+                   const QString& url) {
+                emit hostApprovalRequested(id, projectName, host, credential, url);
+            });
 
     treeFilter_.setSourceModel(&tree_);
 
@@ -1506,29 +1517,66 @@ void AppController::oauth2GetNewToken() {
     config.clientAuth = editAuthOauth2ClientAuth_;
     config.pkceMethod = editAuthOauth2PkceMethod_;
 
-    // One flow at a time; a fresh click supersedes any in-flight attempt.
-    oauthTabUid_ = tabs_.valid(activeTabIndex_) ? tabs_.stateAt(activeTabIndex_).uid : 0;
-    oauthFlow_ = std::make_unique<OAuth2AuthCodeFlow>();
-    connect(oauthFlow_.get(), &OAuth2AuthCodeFlow::succeeded, this, [this](const QString& token) {
-        const int index = tabs_.indexOfUid(oauthTabUid_);
-        if (index < 0) {
-            emit notify(tr("The OAuth2 token arrived after its tab was closed, so it was dropped."),
+    // The token request carries the client secret and the authorization code: its host needs the
+    // person's approval like any run's (FR-15.9).
+    auto start = [this, config]() {
+        // One flow at a time; a fresh click supersedes any in-flight attempt.
+        oauthTabUid_ = tabs_.valid(activeTabIndex_) ? tabs_.stateAt(activeTabIndex_).uid : 0;
+        oauthFlow_ = std::make_unique<OAuth2AuthCodeFlow>();
+        connect(
+            oauthFlow_.get(), &OAuth2AuthCodeFlow::succeeded, this, [this](const QString& token) {
+                const int index = tabs_.indexOfUid(oauthTabUid_);
+                if (index < 0) {
+                    emit notify(
+                        tr("The OAuth2 token arrived after its tab was closed, so it was dropped."),
                         true);
-            return;
-        }
-        if (index == activeTabIndex_) {
-            editAuthOauth2AccessToken_ = token;
-            emit editChanged();
-        } else {
-            tabs_.stateAt(index).editAuthOauth2AccessToken = token;
-        }
-        emit notify(tr("Access token acquired for “%1”").arg(tabs_.displayTitle(index)), false);
-    });
-    connect(oauthFlow_.get(), &OAuth2AuthCodeFlow::failed, this, [this](const QString& error) {
-        emit notify(QStringLiteral("OAuth2 authorization failed: %1").arg(error), true);
-    });
-    emit notify(QStringLiteral("Opening browser to authorize…"), false);
-    oauthFlow_->start(config);
+                    return;
+                }
+                if (index == activeTabIndex_) {
+                    editAuthOauth2AccessToken_ = token;
+                    emit editChanged();
+                } else {
+                    tabs_.stateAt(index).editAuthOauth2AccessToken = token;
+                }
+                emit notify(tr("Access token acquired for “%1”").arg(tabs_.displayTitle(index)),
+                            false);
+            });
+        connect(oauthFlow_.get(), &OAuth2AuthCodeFlow::failed, this, [this](const QString& error) {
+            emit notify(QStringLiteral("OAuth2 authorization failed: %1").arg(error), true);
+        });
+        emit notify(QStringLiteral("Opening browser to authorize…"), false);
+        oauthFlow_->start(config);
+    };
+    // Fail closed: no project to approve against, a URL that cannot be read, or one Qt and
+    // libcurl read as different hosts never starts the flow.
+    if (!activeProject().hasProject()) {
+        emit notify(tr("OAuth2 authorization was not started: no project is open."), true);
+        return;
+    }
+    const auto host = qtRequestHostKey(config.tokenUrl);
+    if (!host) {
+        emit notify(tr("OAuth2 authorization was not started: %1").arg(host.error()), true);
+        return;
+    }
+    const auto approved =
+        engine::makeFileHostApprovalStore()->isApproved(activeProject().project(), *host);
+    if (!approved) {
+        emit notify(tr("OAuth2 authorization was not started: %1")
+                        .arg(QString::fromStdString(approved.error().detail)),
+                    true);
+        return;
+    }
+    if (!*approved) {
+        pendingOauthTokenUrl_ = config.tokenUrl;
+        pendingOauthStart_ = std::move(start);
+        emit hostApprovalRequested(kOauthApprovalId,
+                                   activeProject().name(),
+                                   QString::fromStdString(*host),
+                                   tr("this OAuth2 client's secret and authorization code"),
+                                   config.tokenUrl);
+        return;
+    }
+    start();
 }
 
 void AppController::setEditAuthOauth2ClientId(const QString& value) {
@@ -2495,6 +2543,37 @@ QVariantList AppController::autoGeneratedHeaders() const {
         row(QStringLiteral("Accept-Encoding"), sv(engine::kDefaultAcceptEncoding)),
         row(QStringLiteral("Connection"), sv(engine::kDefaultConnection)),
     };
+}
+
+void AppController::answerHostApproval(const int id, const bool approve) {
+    if (id != kOauthApprovalId) {
+        runController_->hostApprovals().answer(id, approve);
+        return;
+    }
+    auto start = std::exchange(pendingOauthStart_, nullptr);
+    const QString tokenUrl = std::exchange(pendingOauthTokenUrl_, QString{});
+    if (!start) {
+        return;
+    }
+    if (!approve) {
+        emit notify(tr("OAuth2 authorization was not started: the token URL's host was not "
+                       "approved."),
+                    true);
+        return;
+    }
+    const auto host = qtRequestHostKey(tokenUrl);
+    if (!host || !activeProject().hasProject()) {
+        emit notify(tr("OAuth2 authorization was not started: the project or its token URL "
+                       "changed."),
+                    true);
+        return;
+    }
+    if (auto done = engine::makeFileHostApprovalStore()->approve(activeProject().project(), *host);
+        !done) {
+        emit notify(QString::fromStdString(done.error().detail), true);
+        return;
+    }
+    start();
 }
 
 }  // namespace reqloom::desktop::qml

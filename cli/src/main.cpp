@@ -1,5 +1,6 @@
 // reqloom CLI entry point.
 #include "commands/ExitCodes.h"
+#include "commands/HostsCommand.h"
 #include "commands/ImportCommand.h"
 #include "commands/LintCommand.h"
 #include "commands/RunCommand.h"
@@ -32,6 +33,9 @@ void printUsage(std::FILE* stream) {
         "                                    (default 4KiB, 0 = none, at most 1MiB)\n"
         "    --response-body-size <size>     Response body per step in JSON output, e.g. 8KiB\n"
         "                                    (default 2KiB, 0 = none, at most 1MiB; masked)\n"
+        "    --non-interactive               Never ask to approve a host\n"
+        "  reqloom hosts [list|approve <host>|revoke <host>|cli-approval off]\n"
+        "                                   Hosts the project may send credentials to\n"
         "  reqloom lint [<project-dir>]     Validate a project's schema\n"
         "    --project <path>                Project directory (default: cwd)\n"
         "    --format text|json              Output format (default: text)\n"
@@ -68,6 +72,9 @@ void printUsage(std::FILE* stream) {
     }
     if (verb == QStringLiteral("lint")) {
         return reqloom::cli::lintCommand(args.mid(2));
+    }
+    if (verb == QStringLiteral("hosts")) {
+        return reqloom::cli::hostsCommand(args.mid(2));
     }
     if (verb == QStringLiteral("import")) {
         return reqloom::cli::importCommand(args.mid(2));

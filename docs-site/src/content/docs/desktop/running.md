@@ -23,6 +23,20 @@ A run belongs to the tab that started it. You can switch tabs while it runs; its
 response and timeline are in its own tab when you come back. Closing that tab
 cancels the run.
 
+### Approving a host
+
+The first time a run would send an actor's credentials, a secret or a session
+cookie, or upload a local file, to a host, including the project's own `baseUrl`
+host, the app stops and asks: **Send credentials to this host?**, naming the project, the host, what
+would be sent and the request URL. **Approve and send** remembers the answer for
+this project; **Don't send**, the default, fails the step with
+`E_HOST_NOT_APPROVED` and sends nothing. Cancelling the run while the question
+is open counts as no. The same question guards **Get New Token** for an OAuth2
+authorization-code flow. Approved hosts are listed in **Manage Secrets**, with
+**Revoke** next to each, and the switch that lets the `reqloom` command line
+approve hosts (any program running as you can still edit the settings file, so
+turning it off lowers the risk from AI agents rather than ruling it out). See [hosts that may receive credentials](/schema/secrets-and-transport/#hosts-that-may-receive-credentials).
+
 ### Dry run
 
 **More ▾ → Dry Run — preview without sending.** Resolves the whole chain, works

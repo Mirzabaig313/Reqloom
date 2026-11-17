@@ -44,6 +44,9 @@ public:
     /// overlapping matches merge into one marker.
     [[nodiscard]] std::string redact(std::string_view text) const;
 
+    /// True when `text` contains any registered spelling.
+    [[nodiscard]] bool containsAny(std::string_view text) const;
+
     /// True when nothing has been registered.
     [[nodiscard]] bool empty() const;
 

@@ -66,6 +66,12 @@ std::string stepNextAction(const ce::StepResult& step, const std::string_view ta
                 "its credentials ({}), then {}.",
                 kSecretHint,
                 rerun);
+        case C::HostNotApproved:
+            return "A credential was not sent because its host is not approved for this project; "
+                   "detail names the host. Ask the person you work for whether that host should "
+                   "receive the project's credentials, and let them approve it themselves. Do not "
+                   "approve hosts on their behalf, and do not change allowed_hosts or baseUrl to "
+                   "get around this.";
         case C::SecretAccessFailed:
             return std::format(
                 "The keychain could not be read: set REQLOOM_SECRET_<NAME> for each secret the "
@@ -124,6 +130,10 @@ std::string errorNextAction(const std::string_view code) {
     }
     if (code == kCodeInternal) {
         return "Unexpected failure inside reqloom: rerun once, and report it if it repeats.";
+    }
+    if (code == "E_HOST_NOT_APPROVED") {
+        return "A credential was not sent because its host is not approved for this project. Ask "
+               "the person you work for to approve the host named in error.detail themselves.";
     }
     if (code == "E_SECRET_ACCESS_FAILED") {
         return "The keychain could not be read: set REQLOOM_SECRET_<NAME> for each secret the "

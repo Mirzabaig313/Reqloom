@@ -4,6 +4,7 @@
 // signals, never calling back into the engine.
 #pragma once
 
+#include "application/HostApprovalBroker.h"
 #include "application/UrlTemplate.h"
 
 #include <reqloom/engine/PublicApi.h>
@@ -154,6 +155,9 @@ public:
     RunController& operator=(RunController&&) = delete;
 
     [[nodiscard]] bool isRunning() const noexcept;
+
+    /// Asks the person before a run sends credentials to a host not yet approved (FR-15.9).
+    [[nodiscard]] HostApprovalBroker& hostApprovals() noexcept { return hostApprovals_; }
 
     /// Point the controller at a different project (workspace switch). Must not be called while a
     /// run is in flight.
@@ -333,6 +337,8 @@ private:
     // Pinned `{{resource.var}}` → value, seeded before each run (value picker).
     std::vector<std::pair<std::string, std::string>> variableOverrides_;
     std::shared_ptr<EventGate> gate_{std::make_shared<EventGate>()};
+    // The destructor declines its open questions (requestCancel) before waiting for the worker.
+    HostApprovalBroker hostApprovals_;
 };
 
 }  // namespace reqloom::desktop

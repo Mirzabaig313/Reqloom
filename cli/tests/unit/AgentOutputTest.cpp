@@ -7,6 +7,9 @@
 
 #include "commands/RunCommand.h"
 
+#include <reqloom/engine/Factories.h>
+#include <reqloom/engine/HostApproval.h>
+
 #include "MockSutHarness.h"
 
 #include <gtest/gtest.h>
@@ -21,7 +24,9 @@
 #include <cstddef>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cli = reqloom::cli;
@@ -31,6 +36,40 @@ using reqloom::cli::tests::captureRun;
 using reqloom::cli::tests::TempDir;
 
 namespace {
+
+/// Sets an environment variable for one scope and restores the previous value.
+class ScopedEnv {
+public:
+    ScopedEnv(const char* name, const std::string& value) : name_(name) {
+        if (const char* old = std::getenv(name); old != nullptr) {
+            previous_ = old;
+        }
+        set(value);
+    }
+    ~ScopedEnv() { previous_ ? set(*previous_) : unset(); }
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+    ScopedEnv(ScopedEnv&&) = delete;
+    ScopedEnv& operator=(ScopedEnv&&) = delete;
+
+private:
+    void set(const std::string& value) const {
+#ifdef _WIN32
+        _putenv_s(name_, value.c_str());
+#else
+        setenv(name_, value.c_str(), 1);
+#endif
+    }
+    void unset() const {
+#ifdef _WIN32
+        _putenv_s(name_, "");
+#else
+        unsetenv(name_);
+#endif
+    }
+    const char* name_;
+    std::optional<std::string> previous_;
+};
 
 [[nodiscard]] std::string fakeSessionId() {
     std::string id{"fake-cli-sid-"};
@@ -65,6 +104,8 @@ public:
                                       R"( cannot pay","reason":"card declined"}}
 ]})");
         sut_ = std::make_unique<reqloom::tests::MockSutHarness>(routes);
+        // The bearer header is a credential: CI-style approval of the mock server's host.
+        approved_ = std::make_unique<ScopedEnv>("REQLOOM_APPROVED_HOSTS", host());
         write("reqloom.yaml", R"(version: 1
 name: AgentOutput
 default_environment: local
@@ -91,9 +132,22 @@ resources:
 )");
     }
     [[nodiscard]] std::string str() const { return path().string(); }
+    [[nodiscard]] std::string host() const {
+        return "http://127.0.0.1:" + std::to_string(sut_->port());
+    }
+    void withdrawApproval() { approved_.reset(); }
+    /// Give the project an id, which host approvals are keyed by.
+    void giveId() const {
+        auto text = reqloom::cli::tests::readText(path() / "reqloom.yaml");
+        text.replace(text.find("name: AgentOutput\n"),
+                     std::string_view{"name: AgentOutput\n"}.size(),
+                     "name: AgentOutput\nid: agent-host-0001\n");
+        write("reqloom.yaml", text);
+    }
 
 private:
     std::unique_ptr<reqloom::tests::MockSutHarness> sut_;
+    std::unique_ptr<ScopedEnv> approved_;
 };
 
 [[nodiscard]] CapturedRun run(const std::vector<std::string>& args) {
@@ -193,4 +247,75 @@ TEST(AgentOutput, cli_reads_secrets_from_the_uppercased_environment_variable) {
     const auto pay = parseJson(r.out).value("steps").toArray().at(1).toObject();
     EXPECT_EQ(pay.value(QStringLiteral("http_status")).toInt(), 422) << r.out;
     EXPECT_EQ(r.out.find("fake-cli-env-secret-1"), std::string::npos) << r.out;
+}
+
+// ─── Host approval (FR-15.9) ────────────────────────────────────────────────
+
+TEST(AgentOutput, credential_to_an_unapproved_host_fails_before_sending_and_names_the_fix) {
+    AgentProject project;
+    project.withdrawApproval();
+    project.giveId();
+    const auto r = run({"order.pay", "--project", project.str(), "--format", "json"});
+    EXPECT_EQ(r.rc, 1) << r.err;
+    const auto doc = parseJson(r.out);
+    const auto pay = doc.value("steps").toArray().at(1).toObject();
+    EXPECT_EQ(pay.value("error_code").toString(), QStringLiteral("E_HOST_NOT_APPROVED")) << r.out;
+    const auto detail = pay.value("detail").toString().toStdString();
+    EXPECT_NE(detail.find(project.host()), std::string::npos) << detail;
+    EXPECT_NE(detail.find("REQLOOM_APPROVED_HOSTS=" + project.host()), std::string::npos) << detail;
+    EXPECT_NE(detail.find("reqloom hosts approve"), std::string::npos) << detail;
+    EXPECT_TRUE(pay.value("http_status").isNull()) << "the step reached the server: " << r.out;
+    EXPECT_NE(pay.value("next_action").toString().indexOf(QStringLiteral("Ask the person")), -1)
+        << r.out;
+}
+
+TEST(AgentOutput, cli_approval_turned_off_ignores_the_environment_variable) {
+    AgentProject project;  // REQLOOM_APPROVED_HOSTS names the host
+    project.giveId();
+    const reqloom::cli::tests::TempDir config;
+    const auto previousDir = reqloom::engine::configDirectoryForTesting();
+    reqloom::engine::setConfigDirectoryForTesting(config.path());
+    struct Restore {
+        std::optional<std::filesystem::path> dir;
+        ~Restore() { reqloom::engine::setConfigDirectoryForTesting(dir); }
+    } const restore{previousDir};
+    ASSERT_TRUE(reqloom::engine::makeFileHostApprovalStore()->setCliApprovalAllowed(false));
+    const auto r = run({"order.pay", "--project", project.str(), "--format", "json"});
+    EXPECT_EQ(r.rc, 1) << r.err;
+    EXPECT_NE(r.err.find("REQLOOM_APPROVED_HOSTS is ignored"), std::string::npos) << r.err;
+    const auto pay = parseJson(r.out).value("steps").toArray().at(1).toObject();
+    const auto detail = pay.value("detail").toString().toStdString();
+    EXPECT_NE(detail.find("Reqloom app"), std::string::npos) << detail;
+    EXPECT_EQ(detail.find("REQLOOM_APPROVED_HOSTS"), std::string::npos) << detail;
+}
+
+TEST(AgentOutput, malformed_approved_hosts_variable_is_an_invocation_error) {
+    AgentProject project;
+    const ScopedEnv bad{"REQLOOM_APPROVED_HOSTS", "https://evil.example/x"};
+    const auto r = run({"order.pay", "--project", project.str(), "--format", "json"});
+    EXPECT_EQ(r.rc, 2) << r.err;
+    EXPECT_NE(r.out.find("REQLOOM_APPROVED_HOSTS"), std::string::npos) << r.out;
+}
+
+// Coordinator item 1, at the CLI: an environment secret bound for a host nobody approved never
+// leaves the process.
+TEST(AgentOutput, environment_secret_is_not_sent_to_an_unapproved_host) {
+    AgentProject project;
+    project.withdrawApproval();
+    project.giveId();
+    // The secret is the only credential session.open carries, under an ordinary name.
+    auto yaml = reqloom::cli::tests::readText(project.path() / "reqloom.yaml");
+    const std::string anchor = "        path: /sessions\n";
+    yaml.insert(yaml.find(anchor) + anchor.size(),
+                "        query_params:\n          ref: \"{{secret.api_key}}\"\n");
+    project.write("reqloom.yaml", yaml);
+    const ScopedEnv secret{"REQLOOM_SECRET_API_KEY", "fake-cli-env-secret-2"};
+    const auto r =
+        run({"session.open", "--project", project.str(), "--format", "json", "--non-interactive"});
+    EXPECT_EQ(r.rc, 1) << r.err << r.out;
+    const auto step = parseJson(r.out).value("steps").toArray().at(0).toObject();
+    EXPECT_EQ(step.value("error_code").toString(), QStringLiteral("E_HOST_NOT_APPROVED")) << r.out;
+    EXPECT_TRUE(step.value("http_status").isNull()) << "the request reached the server: " << r.out;
+    EXPECT_EQ(r.out.find("fake-cli-env-secret-2"), std::string::npos) << r.out;
+    EXPECT_EQ(r.err.find("fake-cli-env-secret-2"), std::string::npos) << r.err;
 }

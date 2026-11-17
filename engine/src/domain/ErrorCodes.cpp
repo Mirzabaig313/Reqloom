@@ -44,6 +44,8 @@ std::string_view toCodeString(ErrorCode code) noexcept {
             return "E_SESSION_REFRESH_FAILED";
         case ErrorCode::SecretAccessFailed:
             return "E_SECRET_ACCESS_FAILED";
+        case ErrorCode::HostNotApproved:
+            return "E_HOST_NOT_APPROVED";
         case ErrorCode::HookFailure:
             return "E_HOOK_FAILURE";
         case ErrorCode::HookTimeout:
@@ -114,6 +116,8 @@ std::string_view humanize(ErrorCode code) noexcept {
             return "Authentication failed";
         case ErrorCode::SecretAccessFailed:
             return "Could not read secret";
+        case ErrorCode::HostNotApproved:
+            return "Host not approved for credentials";
         case ErrorCode::HookFailure:
             return "Hook script failed";
         case ErrorCode::HookTimeout:
@@ -148,7 +152,7 @@ std::string_view humanize(ErrorCode code) noexcept {
 
 std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
     // Reverse of toCodeString; the drift guard below fails the build if this array lags the enum.
-    constexpr std::array<ErrorCode, 32> kAll = {
+    constexpr std::array<ErrorCode, 33> kAll = {
         ErrorCode::SchemaInvalid,
         ErrorCode::YamlParse,
         ErrorCode::Cycle,
@@ -167,6 +171,7 @@ std::optional<ErrorCode> fromCodeString(std::string_view code) noexcept {
         ErrorCode::StatusMismatch,
         ErrorCode::SessionRefreshFailed,
         ErrorCode::SecretAccessFailed,
+        ErrorCode::HostNotApproved,
         ErrorCode::HookFailure,
         ErrorCode::HookTimeout,
         ErrorCode::ExtractionFailed,
@@ -238,6 +243,7 @@ ErrorClass classify(ErrorCode code) noexcept {
             return ErrorClass::Auth;
 
         case ErrorCode::SecretAccessFailed:
+        case ErrorCode::HostNotApproved:
             return ErrorClass::Auth;
 
         case ErrorCode::HookFailure:

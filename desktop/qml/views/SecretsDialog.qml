@@ -128,6 +128,7 @@ Dialog {
                     objectName: "conflictText"
                     Layout.fillWidth: true
                     text: qsTr("This project's id belongs to another folder on this machine:\n%1\n\nThis folder:\n%2\n\nIf you moved the project here, use its secrets in this folder (the old folder loses access). If this is a copy, give it a new id in reqloom.yaml instead.").arg(SecretsController.folderConflict).arg(SecretsController.currentFolder)
+                    textFormat: Text.PlainText
                     color: DesignTokens.statusError
                     font.pixelSize: DesignTokens.fontLabel
                     wrapMode: Text.Wrap
@@ -295,6 +296,60 @@ Dialog {
                     color: DesignTokens.borderSubtle
                     opacity: 0.5
                 }
+            }
+        }
+
+        // Hosts this user approved to receive the project's credentials (FR-15.9). Approving
+        // happens when a run first needs a host; here they can be reviewed and revoked.
+        Label {
+            Layout.fillWidth: true
+            Layout.topMargin: DesignTokens.spaceSm
+            text: SecretsController.approvedHosts.length === 0
+                  ? qsTr("No host is approved to receive this project's credentials yet. The app asks the first time a run needs one.")
+                  : qsTr("Hosts approved to receive this project's credentials, secrets and session cookies:")
+            color: DesignTokens.textSecondary
+            font.pixelSize: DesignTokens.fontLabel
+            wrapMode: Text.WordWrap
+        }
+        Repeater {
+            model: SecretsController.approvedHosts
+            delegate: RowLayout {
+                id: hostRow
+                required property string modelData
+                Layout.fillWidth: true
+                spacing: DesignTokens.spaceSm
+                Label {
+                    Layout.fillWidth: true
+                    text: hostRow.modelData
+                    textFormat: Text.PlainText
+                    color: DesignTokens.textPrimary
+                    font.family: DesignTokens.fontMono
+                    font.pixelSize: DesignTokens.fontLabel
+                    elide: Text.ElideRight
+                }
+                GlassButton {
+                    objectName: "revokeHostButton"
+                    text: qsTr("Revoke")
+                    destructive: true
+                    Accessible.name: qsTr("Revoke %1").arg(hostRow.modelData)
+                    onClicked: SecretsController.revokeHost(hostRow.modelData)
+                }
+            }
+        }
+        CheckBox {
+            id: cliApprovalToggle
+            objectName: "cliHostApprovalToggle"
+            Layout.fillWidth: true
+            text: qsTr("Let the reqloom command line approve hosts (at a terminal, or with REQLOOM_APPROVED_HOSTS). Turning this off stops the command line approving hosts, but a program running as you can still edit Reqloom's settings file, so it lowers the risk from AI agents rather than ruling it out.")
+            checked: SecretsController.cliHostApproval
+            onToggled: SecretsController.cliHostApproval = checked
+            contentItem: Text {
+                text: cliApprovalToggle.text
+                color: DesignTokens.textSecondary
+                font.pointSize: DesignTokens.fontLabelPointSize
+                leftPadding: cliApprovalToggle.indicator.width + DesignTokens.spaceSm
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.WordWrap
             }
         }
     }

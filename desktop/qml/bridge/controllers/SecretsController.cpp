@@ -4,6 +4,8 @@
 
 #include "application/ProjectModel.h"
 
+#include <reqloom/engine/Factories.h>
+
 namespace reqloom::desktop::qml {
 
 int SecretListModel::rowCount(const QModelIndex& parent) const {
@@ -60,7 +62,8 @@ void SecretListModel::clear() {
     endResetModel();
 }
 
-SecretsController::SecretsController(QObject* parent) : QObject(parent) {}
+SecretsController::SecretsController(QObject* parent)
+    : QObject(parent), hostApprovals_(engine::makeFileHostApprovalStore()) {}
 
 SecretsController::~SecretsController() = default;
 
@@ -85,10 +88,54 @@ void SecretsController::reloadList() {
         folderConflict_ = conflict;
         emit folderConflictChanged();
     }
+    QStringList hosts;
+    if (project_ != nullptr && project_->hasProject()) {
+        if (auto approved = hostApprovals_->approvedHosts(project_->project())) {
+            for (const auto& host : *approved) {
+                hosts.append(QString::fromStdString(host));
+            }
+        }
+    }
+    if (hosts != approvedHosts_) {
+        approvedHosts_ = hosts;
+        emit approvedHostsChanged();
+    }
     if (folder != currentFolder_) {
         currentFolder_ = folder;
         emit currentFolderChanged();
     }
+}
+
+bool SecretsController::cliHostApproval() const {
+    return hostApprovals_->cliApprovalAllowed().value_or(false);
+}
+
+void SecretsController::setCliHostApproval(const bool allowed) {
+    if (allowed == cliHostApproval()) {
+        return;
+    }
+    if (auto done = hostApprovals_->setCliApprovalAllowed(allowed); !done) {
+        setLastError(QStringLiteral("Couldn't change the setting: %1")
+                         .arg(QString::fromStdString(done.error().detail)));
+        return;
+    }
+    emit cliHostApprovalChanged();
+}
+
+bool SecretsController::revokeHost(const QString& host) {
+    if (project_ == nullptr || !project_->hasProject()) {
+        return false;
+    }
+    if (auto done = hostApprovals_->revoke(project_->project(), host.toStdString()); !done) {
+        setLastError(QStringLiteral("Couldn't revoke %1: %2")
+                         .arg(host, QString::fromStdString(done.error().detail)));
+        return false;
+    }
+    setLastError({});
+    reloadList();
+    emit notify(QStringLiteral("%1 no longer receives this project's credentials.").arg(host),
+                false);
+    return true;
 }
 
 void SecretsController::setLastError(const QString& error) {

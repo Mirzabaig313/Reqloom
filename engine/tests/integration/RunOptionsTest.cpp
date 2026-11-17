@@ -11,6 +11,7 @@
 // Each test fails on the parent commit if the corresponding RunOptions
 // flag is not wired through ExecutionEngine::run().
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include "infrastructure/hooks/HookRunner.h"
 #include "infrastructure/http/HttpClient.h"
@@ -87,6 +88,7 @@ private:
     captured = http.get();
     ce::ExecutionEngine::Dependencies dependencies{
         std::move(http), nullptr, nullptr, nullptr, nullptr};
+    dependencies.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     return ce::ExecutionEngine{std::move(dependencies)};
 }
 
@@ -284,7 +286,7 @@ TEST_F(RunOptionsFixture, reset_extractions_clears_cache_before_run) {
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     // First run — populates the extraction cache.
@@ -319,7 +321,7 @@ TEST_F(RunOptionsFixture, reset_sessions_invalidates_session_before_run) {
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     // First run — establishes a session.
@@ -489,7 +491,7 @@ resources:
     // Add a "staging" environment pointing at the real mock SUT.
     loaded->environments["staging"] = {{"baseUrl", harness_->baseUrl()}};
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     // Default environment (port 1) must fail.
     {
@@ -522,7 +524,7 @@ TEST_F(RunOptionsFixture, run_events_include_run_started_and_run_ended) {
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     bool sawRunStarted = false;
     bool sawRunEnded = false;
@@ -807,7 +809,7 @@ TEST_F(RunOptionsFixture, step_started_events_are_emitted_for_each_step) {
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::StepStarted> stepStartedEvents;
 
@@ -852,7 +854,7 @@ TEST_F(RunOptionsFixture, request_prepared_event_fires_with_masked_headers) {
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::RequestPrepared> events;
     engine.subscribe([&](const ce::RunEvent& ev) {
@@ -990,6 +992,7 @@ resources:
     // Secrets need the folder check; a scratch trust file keeps it hermetic.
     dependencies.trust =
         ce::makeFileProjectTrustStore(ct::uniqueTempPath("reqloom-trust-hook-url", ".json"));
+    dependencies.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     ce::ExecutionEngine engine{std::move(dependencies)};
 
     std::vector<ce::RequestPrepared> emitted;
@@ -1084,7 +1087,7 @@ TEST_F(RunOptionsFixture, response_received_event_carries_status_and_size) {
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::ResponseReceived> events;
     engine.subscribe([&](const ce::RunEvent& ev) {
@@ -1119,7 +1122,7 @@ TEST_F(RunOptionsFixture, capture_response_bodies_off_by_default_leaves_body_emp
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::ResponseReceived> events;
     engine.subscribe([&](const ce::RunEvent& ev) {
@@ -1146,7 +1149,7 @@ TEST_F(RunOptionsFixture, capture_response_bodies_includes_auth_and_main_path_bo
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::ResponseReceived> events;
     engine.subscribe([&](const ce::RunEvent& ev) {
@@ -1186,7 +1189,7 @@ TEST_F(RunOptionsFixture, auth_request_response_events_share_step_index_with_par
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::RequestPrepared> reqEvents;
     std::vector<ce::ResponseReceived> respEvents;
@@ -1226,7 +1229,7 @@ TEST_F(RunOptionsFixture, extraction_applied_event_carries_variable_names_only) 
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::ExtractionApplied> events;
     engine.subscribe([&](const ce::RunEvent& ev) {
@@ -1304,7 +1307,7 @@ TEST_F(RunOptionsFixture, step_cancelled_event_fires_for_each_cancelled_step) {
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::StepCancelled> cancelEvents;
     ce::RunId observedRunId{};
@@ -1369,11 +1372,13 @@ TEST_F(RunOptionsFixture, run_persists_full_event_stream_to_history_store) {
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine::Dependencies deps = ce::makeDefaultDependencies();
+    ce::ExecutionEngine::Dependencies deps =
+        reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies());
     ASSERT_NE(deps.history, nullptr);
     auto opened = deps.history->open(dbPath);
     ASSERT_TRUE(opened.has_value()) << opened.error().detail;
 
+    deps.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     ce::ExecutionEngine engine(std::move(deps));
     ce::RunContext ctx;
 
@@ -1450,9 +1455,11 @@ TEST_F(RunOptionsFixture, history_store_persists_request_headers_already_masked)
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine::Dependencies deps = ce::makeDefaultDependencies();
+    ce::ExecutionEngine::Dependencies deps =
+        reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies());
     ASSERT_TRUE(deps.history->open(dbPath).has_value());
 
+    deps.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     ce::ExecutionEngine engine(std::move(deps));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
@@ -1525,9 +1532,11 @@ resources:
     ASSERT_TRUE(loaded.has_value()) << loaded.error().detail;
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
-    ce::ExecutionEngine::Dependencies deps = ce::makeDefaultDependencies();
+    ce::ExecutionEngine::Dependencies deps =
+        reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies());
     ASSERT_TRUE(deps.history->open(dbPath).has_value());
 
+    deps.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     ce::ExecutionEngine engine(std::move(deps));
     ce::RunContext ctx;
     auto result = engine.run(*loaded, ce::OperationId{"sess.start"}, ctx);
@@ -1668,6 +1677,7 @@ struct ScriptedRun {
     script(*raw);
     ce::ExecutionEngine::Dependencies dependencies{
         std::move(http), nullptr, nullptr, nullptr, nullptr};
+    dependencies.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     ce::ExecutionEngine engine{std::move(dependencies)};
     ScriptedRun out;
     engine.subscribe([&](const ce::RunEvent& event) {

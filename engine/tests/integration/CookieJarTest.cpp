@@ -15,6 +15,7 @@
 #include "infrastructure/schema/SchemaParser.h"
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
@@ -86,7 +87,7 @@ protected:
 
 TEST_F(CookieJarFixture, second_op_carries_cookies_set_by_first_op) {
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto created = engine.run(project, ce::OperationId{"widget.create"}, ctx);
@@ -124,7 +125,7 @@ TEST_F(CookieJarFixture, second_op_carries_cookies_set_by_first_op) {
 
 TEST_F(CookieJarFixture, different_actors_have_isolated_cookie_jars) {
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     // Run as alice — populates alice's jar with auth_marker.
@@ -153,7 +154,7 @@ TEST_F(CookieJarFixture, different_actors_have_isolated_cookie_jars) {
 
 TEST_F(CookieJarFixture, user_set_cookie_header_wins_over_jar) {
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     // Populate the jar first.
@@ -182,7 +183,7 @@ TEST_F(CookieJarFixture, user_set_cookie_survives_401_recovery) {
     // `if (!req.headers.contains("Cookie"))`; the recovery path did
     // not. Mirror the precedence: user-set Cookie wins on the retry too.
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     // Populate alice's jar so there's a real choice between jar and
@@ -287,7 +288,8 @@ public:
         http->setCookies = std::move(setCookies);
         http_ = http.get();
         engine_ = std::make_unique<ce::ExecutionEngine>(
-            ce::ExecutionEngine::Dependencies{std::move(http), nullptr, nullptr, nullptr, nullptr});
+            reqloom::tests::withApprovedHosts(ce::ExecutionEngine::Dependencies{
+                std::move(http), nullptr, nullptr, nullptr, nullptr}));
     }
     ~CookieScopeRig() {
         std::error_code ec;

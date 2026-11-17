@@ -163,6 +163,7 @@ Popup {
                         visible: !entry.persistent
                         Layout.fillWidth: true
                         text: entry.message
+                        textFormat: Text.PlainText
                         color: DesignTokens.textPrimary
                         font.pixelSize: DesignTokens.fontBody
                         wrapMode: Text.Wrap

@@ -314,3 +314,44 @@ TEST(SecretRedaction, assertion_details_are_value_redacted_in_events_and_step_re
     ce::redactStepResult(step, registry);
     EXPECT_EQ(step.assertions[0].detail, R"(expected == "<redacted>")");
 }
+
+// Coordinator items 2 and 3 at the function level: agent profile only.
+TEST(SecretRedaction, agent_text_fallback_decodes_every_json_escape_before_matching) {
+    ce::SecretRegistry registry;
+    registry.add(
+        "fake/emoji-\xF0\x9F\x98\x80"
+        "-secret-3");
+    // Unparsable (cut short); the secret is spelled with \/ and a surrogate pair.
+    const std::string body = R"({"ok":"plain","x":"fake\/emoji-\ud83d\ude00-secret-3","y":"cut)";
+    const auto masked = ce::redactSensitiveBodyFields(body, ce::MaskProfile::Agent, &registry);
+    ASSERT_TRUE(masked.has_value());
+    EXPECT_EQ(*masked, R"({"ok":"plain","x":"<redacted>","y":"cut)");
+}
+
+TEST(SecretRedaction, agent_masks_a_number_or_key_holding_a_secret_and_nothing_else) {
+    ce::SecretRegistry registry;
+    registry.add("4815162342");
+    const auto masked = ce::redactSensitiveBodyFields(
+        R"({"4815162342":1,"n":4815162342,"m":12,"k":"v"})", ce::MaskProfile::Agent, &registry);
+    ASSERT_TRUE(masked.has_value());
+    EXPECT_EQ(*masked, R"({"<redacted>":1,"n":"<redacted>","m":12,"k":"v"})");
+}
+
+TEST(SecretRedaction, display_profile_keeps_keys_and_numbers) {
+    const auto masked = ce::redactSensitiveBodyFields(
+        R"({"4815162342":1,"n":4815162342})", ce::MaskProfile::Display, nullptr);
+    ASSERT_TRUE(masked.has_value());
+    EXPECT_EQ(*masked, R"({"4815162342":1,"n":4815162342})");
+}
+
+// Review finding 7: a number too long for 64 bits is parsed as a double and printed in exponent
+// form, which would show its leading digits; the original text is checked instead.
+TEST(SecretRedaction, agent_masks_a_numeric_secret_longer_than_a_64_bit_integer) {
+    ce::SecretRegistry registry;
+    registry.add("123456789012345678901234567890");
+    const auto masked = ce::redactSensitiveBodyFields(
+        R"({"n":123456789012345678901234567890,"m":1.5})", ce::MaskProfile::Agent, &registry);
+    ASSERT_TRUE(masked.has_value());
+    EXPECT_EQ(masked->find("12345678901234"), std::string::npos) << *masked;
+    EXPECT_EQ(*masked, R"({"n":"<redacted>","m":1.5})");
+}

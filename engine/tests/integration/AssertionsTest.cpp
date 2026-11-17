@@ -3,6 +3,7 @@
 // response and records pass/fail on the StepResult, failing the step (and run)
 // when any assertion is false.
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/Predicate.h>
@@ -99,7 +100,7 @@ TEST_F(Assertions, passing_assertions_succeed_and_are_recorded) {
                          "          - $.status_code == 200\n"
                          "          - $.data.status == 'confirmed'\n"
                          "          - $.data.total > 10\n"));
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"order.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -117,7 +118,7 @@ TEST_F(Assertions, a_failing_assertion_fails_the_step) {
     auto project =
         load(projectYaml("        assert:\n"
                          "          - $.data.status == 'shipped'\n"));
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"order.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -137,7 +138,7 @@ TEST_F(Assertions, a_failed_assertion_says_what_was_compared) {
         load(projectYaml("        assert:\n"
                          "          - $.status_code == 200\n"
                          "          - $.data.status == 'shipped'\n"));
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"order.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -155,7 +156,7 @@ TEST_F(Assertions, records_each_result_even_when_a_later_one_fails) {
         load(projectYaml("        assert:\n"
                          "          - $.data.id\n"
                          "          - $.data.total > 1000\n"));
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"order.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -176,7 +177,7 @@ TEST_F(Assertions, an_unparsable_assertion_reports_the_parser_message) {
     op.assertions.front().expr = bad;
     const auto parserError = ce::evaluatePredicate(bad, "{}", 200);
     ASSERT_FALSE(parserError.has_value());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"order.get"}, ctx);
@@ -193,7 +194,7 @@ TEST_F(Assertions, extraction_from_a_non_json_body_reports_why) {
     auto& op = project.resources.at(ce::ResourceId{"order"}).operations.at("get");
     op.pathTemplate = "/api/v1/plain-text";
     op.extractions.push_back({"token", "$.token", ce::Extraction::Source::JsonPath});
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"order.get"}, ctx);

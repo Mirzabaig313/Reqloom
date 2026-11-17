@@ -89,6 +89,12 @@ struct Actor {
 
     ActorInjection inject;
 
+    /// `allowed_hosts:` — the only hosts this actor's credentials may go to (`api.example.com` for
+    /// any port, `api.example.com:8443` for one). Empty means the host of the environment's
+    /// `baseUrl`. The list only restricts: a listed host still needs the person's approval
+    /// (FR-15.9).
+    std::vector<std::string> allowedHosts;
+
     /// Where the actor was defined; see `SourceLocation`.
     SourceLocation source;
 };

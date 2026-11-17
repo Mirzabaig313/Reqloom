@@ -1,6 +1,7 @@
 // Factories — concrete-implementation factory entry points.
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/Hook.h>
+#include <reqloom/engine/HostApproval.h>
 #include <reqloom/engine/ProjectTrustStore.h>
 
 #include "ImportFromApidog.h"
@@ -120,6 +121,18 @@ std::unique_ptr<ProjectTrustStore> makeFileProjectTrustStore(const std::filesyst
     return std::make_unique<FileProjectTrustStore>(file);
 }
 
+std::unique_ptr<HostApprovalStore> makeFileHostApprovalStore() {
+    auto path = FileProjectTrustStore::defaultPath();
+    if (!path) {
+        return std::make_unique<FileProjectTrustStore>(path.error());
+    }
+    return std::make_unique<FileProjectTrustStore>(std::move(*path));
+}
+
+std::unique_ptr<HostApprovalStore> makeFileHostApprovalStore(const std::filesystem::path& file) {
+    return std::make_unique<FileProjectTrustStore>(file);
+}
+
 std::unique_ptr<HookRunner> makeQuickJsHookRunner() {
     return std::make_unique<QuickJsHookRunner>();
 }
@@ -137,6 +150,7 @@ ExecutionEngine::Dependencies makeDefaultDependencies() {
         makeQuickJsHookRunner(),
     };
     deps.trust = makeFileProjectTrustStore();
+    deps.hostApprovals = makeFileHostApprovalStore();
     return deps;
 }
 

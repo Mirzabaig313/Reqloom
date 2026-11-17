@@ -73,6 +73,8 @@ qt_add_executable(reqloom-desktop
     src/application/OAuth2AuthCodeFlow.h
     src/application/RunController.cpp
     src/application/RunController.h
+    src/application/HostApprovalBroker.cpp
+    src/application/HostApprovalBroker.h
     src/application/ExecutionPreview.cpp
     src/application/ExecutionPreview.h
     src/application/SavedResponseStore.cpp
@@ -138,6 +140,7 @@ qt_add_qml_module(reqloom-desktop
         qml/widgets/GlassMenuItem.qml
         qml/widgets/DialogButtons.qml
         qml/widgets/UnsavedChangesDialog.qml
+        qml/widgets/HostApprovalDialog.qml
         qml/widgets/GlassTextField.qml
         qml/widgets/FieldLabel.qml
         qml/widgets/FieldError.qml

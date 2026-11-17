@@ -18,9 +18,11 @@
 #include "HookScope.h"
 #include "JsonExtraction.h"
 
+#include <reqloom/engine/HostApproval.h>
 #include <reqloom/engine/JsonValues.h>
 #include <reqloom/engine/ProjectIdentity.h>
 #include "../domain/SecretRegistry.h"
+#include "HostGate.h"
 #include "MultipartBuilder.h"
 #include "PredicateEvaluator.h"
 #include "PredicateTemplates.h"
@@ -804,6 +806,53 @@ struct ExecutionEngine::Impl {
     // every event against it.
     const SecretRegistry* activeSecrets{nullptr};
 
+    /// The run's host approval check (FR-15.9); every request goes through it. Set for the
+    /// duration of `run()`.
+    HostGate* gate{nullptr};
+
+    [[nodiscard]] static const Actor* actorFor(const Project& project, const ActorId& id) {
+        if (id.value.empty()) {
+            return nullptr;
+        }
+        const auto it = project.actors.find(id);
+        return it == project.actors.end() ? nullptr : &it->second;
+    }
+
+    /// `<resource>.<field>` references the project sends as credentials; set per run.
+    std::set<std::string> gateCredentialRefs;
+
+    /// Send `req` for `op` once the host check admits it. Whether it carries a credential is
+    /// decided from what `op` refers to as well as from its bytes: run as `runAs`, or referring
+    /// to secrets, `$.env`, inline auth, an actor's values or a credential extraction (each such
+    /// actor's limits apply), it always does.
+    [[nodiscard]] std::expected<HttpResponse, ReqloomError> guardedSend(const HttpRequest& req,
+                                                                        const Project& project,
+                                                                        const Operation& op,
+                                                                        const ResolveContext& rctx,
+                                                                        const Actor* runAs) {
+        SendPurpose purpose{};
+        if (runAs != nullptr) {
+            purpose.actors.push_back(runAs);
+            purpose.carriesCredential = true;
+        }
+        const auto use = operationCredentialUse(op, project, rctx.envVars, gateCredentialRefs);
+        for (const auto& id : use.actors) {
+            const Actor* actor = actorFor(project, ActorId{id});
+            if (actor != nullptr &&
+                std::ranges::find(purpose.actors, actor) == purpose.actors.end()) {
+                purpose.actors.push_back(actor);
+            }
+        }
+        if (!use.reason.empty()) {
+            if (!purpose.carriesCredential) {
+                purpose.reason = use.reason;
+            }
+            purpose.carriesCredential = true;
+        }
+        GatedHttpClient client{*deps.http, gate, std::move(purpose)};
+        return client.send(req);
+    }
+
     explicit Impl(Dependencies d) : deps(std::move(d)) {}
 
     /// Ids come from the open history store, unique across processes. Without a store a
@@ -1022,7 +1071,8 @@ struct ExecutionEngine::Impl {
             }
 
             if (actor.refresh) {
-                AuthDependencies const refreshDeps{deps.http.get(),
+                GatedHttpClient refreshHttp{*deps.http, gate, SendPurpose{{&actor}, true, {}}};
+                AuthDependencies const refreshDeps{&refreshHttp,
                                                    &varResolver,
                                                    sink,
                                                    runId,
@@ -1052,7 +1102,8 @@ struct ExecutionEngine::Impl {
             }
         }
 
-        AuthDependencies authDeps{deps.http.get(),
+        GatedHttpClient signInHttp{*deps.http, gate, SendPurpose{{&actor}, true, {}}};
+        AuthDependencies authDeps{&signInHttp,
                                   &varResolver,
                                   sink,
                                   runId,
@@ -1306,7 +1357,7 @@ struct ExecutionEngine::Impl {
                                  ExchangeKind::PollAttempt});
 
             req.cancel = cancelCheck(runId);
-            auto resp = deps.http->send(req);
+            auto resp = guardedSend(req, project, op, rctx, pollActor);
             if (!resp) {
                 return std::unexpected(resp.error());
             }
@@ -1676,7 +1727,8 @@ struct ExecutionEngine::Impl {
         auto sink = [this](const RunEvent& ev) {
             this->emit(ev);
         };
-        AuthDependencies authDeps{deps.http.get(),
+        GatedHttpClient tokenHttp{*deps.http, gate, SendPurpose{{}, true, {}}};
+        AuthDependencies authDeps{&tokenHttp,
                                   &varResolver,
                                   sink,
                                   runId,
@@ -2047,8 +2099,9 @@ struct ExecutionEngine::Impl {
             }
             if (auto authError = ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
                 // A missing secret keeps its own code; every other sign-in failure is an auth one.
-                failPreparation(authError->code == ErrorCode::VarUnresolved
-                                    ? ErrorCode::VarUnresolved
+                failPreparation(authError->code == ErrorCode::VarUnresolved ||
+                                        authError->code == ErrorCode::HostNotApproved
+                                    ? authError->code
                                     : ErrorCode::SessionRefreshFailed,
                                 std::move(authError->detail));
                 return result;
@@ -2132,7 +2185,7 @@ struct ExecutionEngine::Impl {
                                  ExchangeKind::Operation});
 
             req.cancel = cancelCheck(runId);
-            auto resp = deps.http->send(req);
+            auto resp = guardedSend(req, project, op, rctx, actorFor(project, op.actor));
             if (resp) {
                 httpResp = std::move(*resp);
                 keepResponse(result, *httpResp, ctx);
@@ -2173,6 +2226,7 @@ struct ExecutionEngine::Impl {
             if (!isRetryable(lastError.code) || !safeToResend || attempt + 1 >= maxAttempts) {
                 result.status = StepResult::Status::Failed;
                 result.error = lastError.code;
+                result.detail = lastError.detail;
                 result.attempts = attemptCount;
                 return result;
             }
@@ -2204,7 +2258,14 @@ struct ExecutionEngine::Impl {
                     return cancelledStep();
                 }
                 ctx.invalidateSession(op.actor);
-                if (!ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
+                auto reauthError = ensureSession(actorIt->second, ctx, rctx, runId, stepIndex);
+                if (reauthError && reauthError->code == ErrorCode::HostNotApproved) {
+                    result.status = StepResult::Status::Failed;
+                    result.error = ErrorCode::HostNotApproved;
+                    result.detail = std::move(reauthError->detail);
+                    return result;
+                }
+                if (!reauthError) {
                     if (isCancelled(runId)) {
                         return cancelledStep();
                     }
@@ -2258,7 +2319,8 @@ struct ExecutionEngine::Impl {
                                          ExchangeKind::Operation});
 
                     req.cancel = cancelCheck(runId);
-                    auto retryResp = deps.http->send(req);
+                    auto retryResp =
+                        guardedSend(req, project, op, rctx, actorFor(project, op.actor));
                     ++attemptCount;
                     result.attempts = attemptCount;
                     if (retryResp) {
@@ -2818,6 +2880,31 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     }
 
     registerResolveSecrets(rctx, ctx.secretRegistry());
+
+    // Host approval (FR-15.9): from here on every request goes through the gate.
+    HostGate::Config gateConfig{};
+    gateConfig.project = &project;
+    if (const auto base = rctx.envVars.find("baseUrl"); base != rctx.envVars.end()) {
+        gateConfig.baseUrl = base->second;
+    }
+    gateConfig.registry = &ctx.secretRegistry();
+    for (const auto& value : rctx.secrets | std::views::values) {
+        // Values the registry ignores as too short are still matched as plain text; under four
+        // characters they would match almost any request.
+        if (value.size() >= 4 && !SecretRegistry::isRegistrable(value)) {
+            gateConfig.shortSecrets.push_back(value);
+        }
+    }
+    gateConfig.store = impl_->deps.hostApprovals.get();
+    impl_->gateCredentialRefs = credentialReferences(project);
+    gateConfig.approver = options.hostApprover;
+    gateConfig.approvedForRun = options.approvedHostsForRun;
+    HostGate gate{std::move(gateConfig)};
+    impl_->gate = &gate;
+    struct GateReset {
+        HostGate*& slot;
+        ~GateReset() { slot = nullptr; }
+    } const gateReset{impl_->gate};
 
     RunResult result;
     result.runId = runId;

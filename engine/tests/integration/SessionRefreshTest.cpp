@@ -16,6 +16,7 @@
 // cover both surfaces without confusing the contracts.
 
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include "infrastructure/hooks/HookRunner.h"
 #include "infrastructure/http/HttpClient.h"
@@ -93,7 +94,7 @@ protected:
 
 TEST_F(SessionRefreshFixture, ttl_expiry_uses_refresh_block_instead_of_full_re_auth) {
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::SessionRefreshed> refreshEvents;
     engine.subscribe([&](const ce::RunEvent& ev) {
@@ -143,7 +144,7 @@ TEST_F(SessionRefreshFixture, ttl_expiry_uses_refresh_block_instead_of_full_re_a
 
 TEST_F(SessionRefreshFixture, a_refresh_exchange_is_named_a_session_refresh) {
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto first = engine.run(project, ce::OperationId{"me.get_first"}, ctx);
     ASSERT_TRUE(first.has_value() && first->succeeded());
@@ -168,7 +169,7 @@ TEST_F(SessionRefreshFixture, a_refresh_exchange_is_named_a_session_refresh) {
 
 TEST_F(SessionRefreshFixture, http_401_triggers_one_shot_reauth_and_retry) {
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     std::vector<ce::SessionRefreshed> refreshEvents;
     engine.subscribe([&](const ce::RunEvent& ev) {
@@ -295,8 +296,8 @@ resources:
 
     auto http = std::make_unique<RoutedHttpClient>();
     auto* routed = http.get();
-    ce::ExecutionEngine engine{
-        ce::ExecutionEngine::Dependencies{std::move(http), nullptr, nullptr, nullptr, nullptr}};
+    ce::ExecutionEngine engine{reqloom::tests::withApprovedHosts(
+        ce::ExecutionEngine::Dependencies{std::move(http), nullptr, nullptr, nullptr, nullptr})};
 
     std::size_t refreshes{};
     engine.subscribe([&](const ce::RunEvent& ev) {

@@ -434,6 +434,7 @@ void RunController::runWithOverride(const QString& target,
     options.resetExtractions = clean;
     options.resetSessions = clean;
     options.captureResponseBodies = captureResponseBodies_;
+    options.hostApprover = &hostApprovals_;
 
     const ce::OperationId targetId{target.toStdString()};
     // Strong handle to the worker's project (a patched copy for an override run), so a concurrent
@@ -462,6 +463,7 @@ void RunController::runWithOverride(const QString& target,
     // Cleared before the worker exists, so a cancel can neither hit a stale id nor carry over.
     gate_->runId.store(0);
     gate_->cancelPending.store(false);
+    hostApprovals_.reopen();
     running_ = true;
     emit runningChanged(true);
 
@@ -492,6 +494,8 @@ void RunController::cancelRun() {
 }
 
 void RunController::requestCancel() {
+    // A worker waiting for the person to approve a host is released with a no.
+    hostApprovals_.declineAll();
     // Sequentially consistent: either this sees the id the callback stored, or the callback sees
     // the pending flag set here, so the cancel cannot fall between the two.
     gate_->cancelPending.store(true);

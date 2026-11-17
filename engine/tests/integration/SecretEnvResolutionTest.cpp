@@ -7,6 +7,7 @@
 #include "infrastructure/schema/SchemaParser.h"
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/ProjectTrustStore.h>
 #include <reqloom/engine/PublicApi.h>
@@ -146,6 +147,7 @@ ce::ExecutionEngine makeEngine(Fakes& out, const bool withSecretStore = true) {
     ce::ExecutionEngine::Dependencies deps{
         std::move(http), nullptr, nullptr, std::move(secrets), nullptr};
     deps.trust = std::move(trust);
+    deps.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     return ce::ExecutionEngine{std::move(deps)};
 }
 

@@ -11,6 +11,7 @@
 //     into ExecutionEngine had to be threaded through.
 
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
@@ -52,7 +53,7 @@ protected:
 
 TEST_F(ExtractionSourcesFixture, executor_resolves_header_status_and_cookie_sources) {
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"order.create"}, ctx);
@@ -83,7 +84,7 @@ TEST_F(ExtractionSourcesFixture, extracted_header_value_flows_into_subsequent_te
     // body-extracted variable. The variable resolver doesn't care
     // about the source kind — it just looks at the resource cache.
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"order.create"}, ctx);

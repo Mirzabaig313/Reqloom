@@ -113,9 +113,12 @@ add_executable(reqloom-desktop-secret-tests
     unit/ExecutionPreviewTest.cpp
     unit/RunControllerContextTest.cpp
     unit/RunControllerLifecycleTest.cpp
+    unit/HostApprovalBrokerTest.cpp
     unit/RunTabRouterTest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/RunController.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/RunController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/HostApprovalBroker.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/HostApprovalBroker.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ExecutionPreview.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ExecutionPreview.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/views/Formatting.cpp

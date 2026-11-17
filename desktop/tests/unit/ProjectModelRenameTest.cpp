@@ -370,4 +370,27 @@ TEST(ProjectModelRename, deleting_the_only_environment_is_refused) {
     EXPECT_TRUE(model.project().environments.contains("local"));
 }
 
+// An actor edited and saved in the app keeps its `allowed_hosts` (FR-15.9): dropping it would
+// silently lift the restriction.
+TEST(ProjectModelRename, saving_an_actor_keeps_its_allowed_hosts) {
+    QTemporaryDir dir;
+    ProjectModel model;
+    ASSERT_TRUE(load(dir, buildReferenceProject(), model));
+    QString error;
+    ce::Actor restricted = model.project().actors.at(ce::ActorId{"user"});
+    restricted.allowedHosts = {"api.example.com", "auth.example.com:8443"};
+    ASSERT_TRUE(model.saveActor(QStringLiteral("user"), restricted, error)) << error.toStdString();
+
+    // A later edit starts from the loaded actor, as the actor editor does.
+    ce::Actor edited = model.project().actors.at(ce::ActorId{"user"});
+    edited.description = "edited";
+    ASSERT_TRUE(model.saveActor(QStringLiteral("user"), edited, error)) << error.toStdString();
+
+    ProjectModel reloaded;
+    reloaded.loadFromDirectory(dir.path());
+    ASSERT_TRUE(reloaded.hasProject());
+    EXPECT_EQ(reloaded.project().actors.at(ce::ActorId{"user"}).allowedHosts,
+              (std::vector<std::string>{"api.example.com", "auth.example.com:8443"}));
+}
+
 }  // namespace reqloom::desktop::tests

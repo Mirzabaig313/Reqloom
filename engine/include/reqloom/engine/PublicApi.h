@@ -10,6 +10,7 @@
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/FormBody.h>
 #include <reqloom/engine/Hook.h>
+#include <reqloom/engine/HostApproval.h>
 #include <reqloom/engine/JsonValues.h>
 #include <reqloom/engine/Operation.h>
 #include <reqloom/engine/Predicate.h>

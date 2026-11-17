@@ -7,6 +7,7 @@ import Reqloom
 Label {
     property string title: ""
     text: title
+    textFormat: Text.PlainText
     color: DesignTokens.textPrimary
     font.pointSize: DesignTokens.fontSubtitlePointSize
     font.weight: DesignTokens.weightSemiBold

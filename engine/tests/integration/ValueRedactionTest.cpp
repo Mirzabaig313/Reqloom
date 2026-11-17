@@ -11,6 +11,7 @@
 #include "infrastructure/schema/SchemaParser.h"
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/ProjectTrustStore.h>
@@ -284,6 +285,7 @@ struct RunSetup {
                                            setup.secrets.empty() ? nullptr : std::move(secrets),
                                            nullptr};
     deps.trust = std::make_unique<MemoryTrustStore>();
+    deps.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     ce::ExecutionEngine engine{std::move(deps)};
     engine.subscribe([&out](const ce::RunEvent& e) { out.emitted.push_back(e); });
     ce::RunContext ctx;

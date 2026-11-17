@@ -45,6 +45,11 @@ Three parts, and each answers a separate question:
 - **`session`** — how long to reuse it before authenticating again
 - **`inject`** — what every operation running as this actor should carry
 
+An actor can also declare `allowed_hosts:`, the only hosts its credentials may
+go to; without it, only the host of the environment's `baseUrl`. Every host also
+needs your approval before credentials are sent — see
+[hosts that may receive credentials](/schema/secrets-and-transport/#hosts-that-may-receive-credentials).
+
 ## Using an actor
 
 Name it on the operation:

@@ -159,6 +159,22 @@ void SecretRegistry::addPatternLocked(std::string pattern) {
     patterns_.insert(std::move(pattern));
 }
 
+bool SecretRegistry::containsAny(std::string_view text) const {
+    const std::shared_lock lock(mutex_);
+    if (patterns_.empty() || text.size() < shortestPattern_) {
+        return false;
+    }
+    for (std::size_t i{}; i + shortestPattern_ <= text.size(); ++i) {
+        for (const auto& pattern : byFirstByte_.at(static_cast<unsigned char>(text[i]))) {
+            if (pattern.size() <= text.size() - i &&
+                text.compare(i, pattern.size(), pattern) == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 std::string SecretRegistry::redact(std::string_view text) const {
     const std::shared_lock lock(mutex_);
     if (patterns_.empty() || text.size() < shortestPattern_) {

@@ -5,6 +5,7 @@
 #include "infrastructure/schema/SchemaParser.h"
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/ProjectTrustStore.h>
@@ -192,6 +193,7 @@ struct Rig {
                                                std::move(secretsOwned),
                                                ce::makeQuickJsHookRunner()};
         deps.trust = std::make_unique<MemoryTrustStore>();
+        deps.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
         engine = std::make_unique<ce::ExecutionEngine>(std::move(deps));
     }
 };

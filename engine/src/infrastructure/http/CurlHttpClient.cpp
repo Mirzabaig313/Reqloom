@@ -11,6 +11,7 @@
 #include <cstring>
 #include <format>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -232,7 +233,10 @@ CurlHttpClient::CurlHttpClient() {
 
 CurlHttpClient::~CurlHttpClient() = default;
 
-std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest& request) {
+std::expected<HttpResponse, ReqloomError> CurlHttpClient::sendOnce(const HttpRequest& request,
+                                                                   std::string& redirectUrl,
+                                                                   const bool afterHop) {
+    redirectUrl.clear();
     CurlEasyHandle const curl{curl_easy_init()};
     if (!curl) {
         return std::unexpected(ReqloomError{
@@ -260,8 +264,8 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
     curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &responseBody);
     curl_easy_setopt(curl.get(), CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.get(), CURLOPT_HEADERDATA, &responseHeaders);
-    curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, request.followRedirects ? 1L : 0L);
-    curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, kMaxRedirects);
+    // `send` follows redirects itself, one hop per transfer.
+    curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(curl.get(),
                      CURLOPT_TIMEOUT_MS,
                      toCurlLongClamped(static_cast<std::int64_t>(request.timeout.count())));
@@ -418,17 +422,117 @@ std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest
         curl_easy_getinfo(curl.get(), CURLINFO_REDIRECT_COUNT, &redirects);
         curl_easy_getinfo(curl.get(), CURLINFO_REQUEST_SIZE, &requestBytes);
         return std::unexpected(
-            describeCurlFailure(res, responseBody, redirects > 0 || requestBytes > 0));
+            describeCurlFailure(res, responseBody, afterHop || redirects > 0 || requestBytes > 0));
     }
 
     long httpStatus = 0;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &httpStatus);
+    // libcurl follows any 3xx with a Location except 304; it resolves a relative Location against
+    // the request URL.
+    if (httpStatus >= 300 && httpStatus < 400 && httpStatus != 304) {
+        char* next = nullptr;
+        if (curl_easy_getinfo(curl.get(), CURLINFO_REDIRECT_URL, &next) == CURLE_OK &&
+            next != nullptr) {
+            redirectUrl = next;
+        }
+    }
 
     response.status = static_cast<int>(httpStatus);
     response.body = std::move(responseBody.body);
     response.headers = std::move(responseHeaders);
     response.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
     return response;
+}
+
+namespace {
+
+/// `scheme://host:port` of a URL as libcurl reads it, lowercased; empty when it cannot be parsed.
+[[nodiscard]] std::string originOf(const std::string& url) {
+    CURLU* handle = curl_url();
+    if (handle == nullptr) {
+        return {};
+    }
+    std::string origin{};
+    if (curl_url_set(handle, CURLUPART_URL, url.c_str(), 0) == CURLUE_OK) {
+        char* scheme = nullptr;
+        char* host = nullptr;
+        char* port = nullptr;
+        if (curl_url_get(handle, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK &&
+            curl_url_get(handle, CURLUPART_HOST, &host, 0) == CURLUE_OK &&
+            curl_url_get(handle, CURLUPART_PORT, &port, CURLU_DEFAULT_PORT) == CURLUE_OK) {
+            origin = std::string{scheme} + "://" + host + ":" + port;
+            for (auto& c : origin) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+        }
+        curl_free(scheme);
+        curl_free(host);
+        curl_free(port);
+    }
+    curl_url_cleanup(handle);
+    return origin;
+}
+
+void eraseHeader(std::map<std::string, std::string>& headers, std::string_view name) {
+    std::erase_if(headers, [name](const auto& kv) { return headerNameEquals(kv.first, name); });
+}
+
+}  // namespace
+
+std::expected<HttpResponse, ReqloomError> CurlHttpClient::send(const HttpRequest& request) {
+    std::string redirectUrl;
+    if (!request.followRedirects) {
+        return sendOnce(request, redirectUrl, false);
+    }
+    const auto start = std::chrono::steady_clock::now();
+    const auto firstOrigin = originOf(request.url);
+    HttpRequest hop = request;
+    for (long hops = 0;; ++hops) {
+        auto response = sendOnce(hop, redirectUrl, hops > 0);
+        if (!response) {
+            return response;
+        }
+        const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start);
+        if (redirectUrl.empty()) {
+            response->elapsed = spent;
+            return response;
+        }
+        if (hops >= kMaxRedirects) {
+            return std::unexpected(ReqloomError{
+                ErrorCode::NetworkPolicy,
+                ErrorClass::Network,
+                std::format("too many redirects: stopped after {} (curl: Number of redirects hit "
+                            "maximum amount)",
+                            kMaxRedirects)});
+        }
+        // A timeout of 0 means no limit to libcurl, so it has no budget to spend.
+        const bool limited = request.timeout.count() > 0;
+        if (limited && spent >= request.timeout) {
+            return std::unexpected(ReqloomError{
+                ErrorCode::NetworkTimeout, ErrorClass::Network, "curl error: Timeout was reached"});
+        }
+        hop.url = redirectUrl;
+        hop.timeout = limited ? request.timeout - spent : request.timeout;
+        // libcurl's rules without CURLOPT_POSTREDIR: a 301, 302 or 303 is re-sent without a body.
+        // The method string is kept, as CURLOPT_CUSTOMREQUEST keeps it.
+        const int status = response->status;
+        if (status == 301 || status == 302 || status == 303) {
+            hop.body.reset();
+            hop.multipart.clear();
+        }
+        // libcurl sends Authorization and Cookie only to the first request's host, port and
+        // scheme.
+        if (originOf(hop.url) != firstOrigin) {
+            eraseHeader(hop.headers, "Authorization");
+            eraseHeader(hop.headers, "Cookie");
+        }
+        if (hop.onRedirect) {
+            if (auto allowed = hop.onRedirect(hop); !allowed) {
+                return std::unexpected(allowed.error());
+            }
+        }
+    }
 }
 
 }  // namespace reqloom::engine

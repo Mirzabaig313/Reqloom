@@ -155,6 +155,58 @@ std::set<std::string> hookSecretNames(const Operation& op,
     return secrets;
 }
 
+OperationCredentialUse operationCredentialUse(const Operation& op,
+                                              const Project& project,
+                                              const std::map<std::string, std::string>& envVars,
+                                              const std::set<std::string>& credentialRefs) {
+    OperationCredentialUse use;
+    const auto because = [&use](std::string why) {
+        if (use.reason.empty()) {
+            use.reason = std::move(why);
+        }
+    };
+    const auto texts = operationTexts(op, project);
+    if (!hookSecretNames(op, project, envVars, op.preRequestScript.value_or(std::string{}))
+             .empty()) {
+        because("a secret");
+    }
+    std::set<std::string> found;
+    for (const auto text : texts) {
+        found.clear();
+        collectScoped(text, "$.env", found);
+        if (!found.empty()) {
+            because("a value from the environment ($.env)");
+        }
+        for (const auto& [id, _] : project.actors) {
+            found.clear();
+            collectScoped(text, id.value, found);
+            if (!found.empty()) {
+                use.actors.insert(id.value);
+                because("values of actor '" + id.value + "'");
+            }
+        }
+        for (const auto& ref : credentialRefs) {
+            const auto dot = ref.find('.');
+            found.clear();
+            collectScoped(text, std::string_view{ref}.substr(0, dot), found);
+            if (found.contains(ref.substr(dot + 1))) {
+                because("a value this project sends as a credential (" + ref + ")");
+            }
+        }
+    }
+    const InlineAuth* auth = nullptr;
+    if (op.inlineAuth && op.inlineAuth->type == InlineAuthType::Inherit) {
+        auth = project.defaultAuth ? &*project.defaultAuth : nullptr;
+    } else if (op.inlineAuth) {
+        auth = &*op.inlineAuth;
+    }
+    if (auth != nullptr && auth->type != InlineAuthType::None &&
+        auth->type != InlineAuthType::Inherit) {
+        because("the operation's inline auth");
+    }
+    return use;
+}
+
 std::set<std::string> hookScriptSecretNames(const std::string_view script) {
     std::set<std::string> secrets;
     collectScriptSecrets(script, secrets);

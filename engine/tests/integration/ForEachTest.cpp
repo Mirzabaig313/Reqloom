@@ -4,6 +4,7 @@
 // HTTP request per item, and that the continue-on-error flag controls whether a
 // failed iteration stops the remaining ones.
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
@@ -117,7 +118,7 @@ TEST_F(ForEachFanOut, runs_detail_once_per_list_item_when_all_succeed) {
     harness_ = std::make_unique<ct::MockSutHarness>(fixturesDir() / "foreach-routes.json");
     auto project = load(projectYaml(/*continueOnError=*/false));
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"org_detail.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -130,7 +131,7 @@ TEST_F(ForEachFanOut, stops_at_first_failed_iteration_by_default) {
     harness_ = std::make_unique<ct::MockSutHarness>(fixturesDir() / "foreach-fail-routes.json");
     auto project = load(projectYaml(/*continueOnError=*/false));
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"org_detail.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);
@@ -144,7 +145,7 @@ TEST_F(ForEachFanOut, continue_on_error_runs_every_iteration_despite_a_failure) 
     harness_ = std::make_unique<ct::MockSutHarness>(fixturesDir() / "foreach-fail-routes.json");
     auto project = load(projectYaml(/*continueOnError=*/true));
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
     auto result = engine.run(project, ce::OperationId{"org_detail.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << (result ? "" : result.error().detail);

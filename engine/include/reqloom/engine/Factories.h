@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,8 +28,14 @@ namespace reqloom::engine {
 [[nodiscard]] bool keychainBackendAvailable() noexcept;
 
 /// Where the per-user project trust file lives: `projects.json` in the application config
-/// directory (`REQLOOM_CONFIG_DIR` overrides it). Error when the home/config variable is unset.
+/// directory of the current user account. No environment variable moves it (the home directory
+/// comes from the account database on macOS and Linux; Windows still reads `APPDATA`).
 [[nodiscard]] std::expected<std::filesystem::path, ReqloomError> defaultProjectTrustStorePath();
+
+/// Test-only seam: put the trust file in `directory` instead (nullopt restores the default). The
+/// shipped programs never call it; test executables call it before `main`.
+void setConfigDirectoryForTesting(std::optional<std::filesystem::path> directory);
+[[nodiscard]] std::optional<std::filesystem::path> configDirectoryForTesting();
 
 /// The file-backed ProjectTrustStore at `defaultProjectTrustStorePath()`. If that path cannot
 /// be resolved, every call reports the error.
@@ -36,6 +43,15 @@ namespace reqloom::engine {
 
 /// The file-backed ProjectTrustStore at an explicit file path (tests, tools).
 [[nodiscard]] std::unique_ptr<ProjectTrustStore> makeFileProjectTrustStore(
+    const std::filesystem::path& file);
+
+/// The file-backed HostApprovalStore (approved hosts per project, FR-15.9). It shares the trust
+/// file at `defaultProjectTrustStorePath()`, so approvals are bound to the folder that owns each
+/// project id. If that path cannot be resolved, every call reports the error.
+[[nodiscard]] std::unique_ptr<HostApprovalStore> makeFileHostApprovalStore();
+
+/// The file-backed HostApprovalStore at an explicit trust file path (tests, tools).
+[[nodiscard]] std::unique_ptr<HostApprovalStore> makeFileHostApprovalStore(
     const std::filesystem::path& file);
 
 class LlmClient;

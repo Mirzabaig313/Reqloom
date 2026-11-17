@@ -8,6 +8,7 @@
 // stub left ctx.request unchanged.
 
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
@@ -71,7 +72,7 @@ protected:
 
 TEST_F(HooksFixture, pre_request_hook_signs_the_outgoing_request) {
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"signed.send"}, ctx);
@@ -94,7 +95,7 @@ TEST_F(HooksFixture, pre_request_hook_signs_the_outgoing_request) {
 
 TEST_F(HooksFixture, post_response_hook_transforms_body_before_extraction) {
     auto project = loadProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"wrapped.get"}, ctx);

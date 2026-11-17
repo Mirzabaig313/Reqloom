@@ -77,6 +77,7 @@ inject: { headers: { Authorization: "Bearer {{vendor.token}}" } }
 | `auth` | map | — |
 | `session` | map | — |
 | `inject` | map with only `headers` | — |
+| `allowed_hosts` | list of hosts, each `host` or `host:port`; no scheme, path or wildcard | the host of the environment's `baseUrl` |
 
 `inject` has no sub-key other than `headers`.
 

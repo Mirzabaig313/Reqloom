@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace ce = reqloom::engine;
 namespace fs = std::filesystem;
@@ -537,4 +538,57 @@ TEST(SchemaValidation, overlong_project_id_is_rejected) {
     auto project = ce::parseProject(yaml);
     ASSERT_FALSE(project.has_value());
     EXPECT_EQ(project.error().code, ce::ErrorCode::SchemaInvalid);
+}
+
+// ───— actor allowed_hosts ───────────────────────────────────────────
+
+namespace {
+
+[[nodiscard]] std::string actorWithAllowedHosts(const std::string& list) {
+    return R"YAML(
+version: 1
+name: Hosts
+environment:
+  baseUrl: http://localhost:0
+actors:
+  user:
+    auth:
+      method: POST
+      path: /login
+      extract: { token: $.token }
+    allowed_hosts:
+)YAML" + list +
+           R"YAML(
+resources:
+  thing:
+    operations:
+      get:
+        method: GET
+        path: /thing
+        actor: user
+)YAML";
+}
+
+}  // namespace
+
+TEST(SchemaValidation, actor_allowed_hosts_are_parsed) {
+    ScratchDir scratch;
+    const auto yaml = scratch.write(
+        "reqloom.yaml", actorWithAllowedHosts("      - api.example.com\n      - 127.0.0.1:3000\n"));
+    auto project = ce::parseProject(yaml);
+    ASSERT_TRUE(project.has_value()) << project.error().detail;
+    EXPECT_EQ(project->actors.at(ce::ActorId{"user"}).allowedHosts,
+              (std::vector<std::string>{"api.example.com", "127.0.0.1:3000"}));
+}
+
+TEST(SchemaValidation, actor_allowed_hosts_entry_with_a_scheme_or_wildcard_is_a_load_error) {
+    for (const char* bad : {"https://api.example.com", "*.example.com", "api.example.com/v1"}) {
+        ScratchDir scratch;
+        const auto yaml = scratch.write(
+            "reqloom.yaml", actorWithAllowedHosts(std::string{"      - \""} + bad + "\"\n"));
+        auto project = ce::parseProject(yaml);
+        ASSERT_FALSE(project.has_value()) << bad;
+        EXPECT_NE(project.error().detail.find("allowed_hosts"), std::string::npos)
+            << project.error().detail;
+    }
 }

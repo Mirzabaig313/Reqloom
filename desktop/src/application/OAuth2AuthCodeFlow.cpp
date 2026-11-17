@@ -261,6 +261,10 @@ void OAuth2AuthCodeFlow::exchangeCode(const QString& code) {
     form.addQueryItem(QStringLiteral("code_verifier"), verifier_);
 
     QNetworkRequest request{QUrl(config_.tokenUrl)};
+    // The body carries the client secret and the code; only the approved host may receive them
+    // (FR-15.9), so a redirect to anywhere else is not followed.
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::ManualRedirectPolicy);
     request.setHeader(QNetworkRequest::ContentTypeHeader,
                       QStringLiteral("application/x-www-form-urlencoded"));
     request.setRawHeader("Accept", "application/json");

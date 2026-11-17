@@ -28,38 +28,22 @@ namespace fs = std::filesystem;
 
 namespace {
 
-/// Sets (or, with nullopt, unsets) REQLOOM_CONFIG_DIR for one test and
-/// restores the previous value at scope exit.
+/// Points the trust file at `value` through the test seam (nullopt: the real default) for one
+/// test, restoring the previous seam at scope exit.
 class ScopedConfigDirOverride {
 public:
-    explicit ScopedConfigDirOverride(const std::optional<std::string>& value) {
-        if (const char* old = std::getenv(kVar); old != nullptr) {
-            previous_ = old;
-        }
-        apply(value);
+    explicit ScopedConfigDirOverride(const std::optional<std::string>& value)
+        : previous_(ce::configDirectoryForTesting()) {
+        ce::setConfigDirectoryForTesting(value ? std::optional<fs::path>{*value} : std::nullopt);
     }
-    ~ScopedConfigDirOverride() { apply(previous_); }
+    ~ScopedConfigDirOverride() { ce::setConfigDirectoryForTesting(previous_); }
     ScopedConfigDirOverride(const ScopedConfigDirOverride&) = delete;
     ScopedConfigDirOverride& operator=(const ScopedConfigDirOverride&) = delete;
     ScopedConfigDirOverride(ScopedConfigDirOverride&&) = delete;
     ScopedConfigDirOverride& operator=(ScopedConfigDirOverride&&) = delete;
 
 private:
-    static constexpr const char* kVar = "REQLOOM_CONFIG_DIR";
-
-    static void apply(const std::optional<std::string>& value) {
-#if defined(_WIN32)
-        _putenv_s(kVar, value ? value->c_str() : "");
-#else
-        if (value) {
-            setenv(kVar, value->c_str(), 1);
-        } else {
-            unsetenv(kVar);
-        }
-#endif
-    }
-
-    std::optional<std::string> previous_;
+    std::optional<fs::path> previous_;
 };
 
 /// A scratch directory removed at scope exit, holding the trust file and
@@ -176,7 +160,9 @@ TEST(ProjectTrustStore, rebind_moves_the_record_to_the_new_folder) {
     EXPECT_FALSE(ce::checkProjectFolder(store.get(), projectAt(folderA)).has_value());
 }
 
-TEST(ProjectTrustStore, corrupt_file_is_treated_as_empty) {
+TEST(ProjectTrustStore, corrupt_file_reads_as_empty_and_is_never_rewritten) {
+    // Review finding 3: rewriting a damaged file from scratch would silently drop every folder
+    // binding and the CLI approval setting.
     Scratch scratch;
     fs::create_directories(scratch.trustFile().parent_path());
     {
@@ -190,11 +176,10 @@ TEST(ProjectTrustStore, corrupt_file_is_treated_as_empty) {
     EXPECT_FALSE(none->has_value());
 
     const auto folder = scratch.folder("a");
-    ASSERT_TRUE(ce::checkProjectFolder(store.get(), projectAt(folder)).has_value());
-    const auto doc = nlohmann::json::parse(slurp(scratch.trustFile()));
-    EXPECT_EQ(doc.at("version"), 1);
-    EXPECT_EQ(doc.at("projects").at("proj-a").at("folder").get<std::string>(),
-              fs::canonical(folder).string());
+    const auto bound = ce::checkProjectFolder(store.get(), projectAt(folder));
+    ASSERT_FALSE(bound.has_value()) << "a damaged trust file was overwritten";
+    EXPECT_NE(bound.error().detail.find("damaged"), std::string::npos) << bound.error().detail;
+    EXPECT_EQ(slurp(scratch.trustFile()), "{ this is not json");
 }
 
 TEST(ProjectTrustStore, wrong_shape_json_is_treated_as_empty) {
@@ -330,7 +315,7 @@ TEST(ProjectTrustStore, default_path_is_outside_any_project_and_platform_specifi
 #endif
 }
 
-TEST(ProjectTrustStore, config_dir_override_replaces_the_platform_directory) {
+TEST(ProjectTrustStore, test_seam_replaces_the_platform_directory) {
     const fs::path dir = reqloom::tests::uniqueTempPath("reqloom-config-override");
     const ScopedConfigDirOverride override{dir.string()};
 
@@ -340,14 +325,28 @@ TEST(ProjectTrustStore, config_dir_override_replaces_the_platform_directory) {
     EXPECT_EQ(*path, dir / "projects.json");
 }
 
-TEST(ProjectTrustStore, empty_config_dir_override_is_ignored) {
-    const ScopedConfigDirOverride empty{std::string{}};
-
-    auto path = ce::defaultProjectTrustStorePath();
-
-    ASSERT_TRUE(path.has_value()) << path.error().detail;
-    EXPECT_TRUE(path->is_absolute()) << path->string();
+#if !defined(_WIN32)
+// Review finding 3: an environment variable must not move the file that holds the approvals and
+// the CLI approval setting (`REQLOOM_CONFIG_DIR=$(mktemp -d) reqloom run …`).
+TEST(ProjectTrustStore, environment_variables_do_not_move_the_file) {
+    const ScopedConfigDirOverride unset{std::nullopt};
+    const auto before = ce::defaultProjectTrustStorePath();
+    ASSERT_TRUE(before.has_value()) << before.error().detail;
+    const std::string decoy = reqloom::tests::uniqueTempPath("reqloom-decoy").string();
+    const char* oldHome = std::getenv("HOME");
+    const std::string savedHome = oldHome != nullptr ? oldHome : "";
+    setenv("REQLOOM_CONFIG_DIR", decoy.c_str(), 1);
+    setenv("HOME", decoy.c_str(), 1);
+    setenv("XDG_CONFIG_HOME", decoy.c_str(), 1);
+    const auto after = ce::defaultProjectTrustStorePath();
+    setenv("HOME", savedHome.c_str(), 1);
+    unsetenv("XDG_CONFIG_HOME");
+    unsetenv("REQLOOM_CONFIG_DIR");
+    ASSERT_TRUE(after.has_value()) << after.error().detail;
+    EXPECT_EQ(*after, *before);
+    EXPECT_EQ(after->string().find(decoy), std::string::npos) << after->string();
 }
+#endif
 
 // ─── Same folder, different spelling ────────────────────────────────────────
 

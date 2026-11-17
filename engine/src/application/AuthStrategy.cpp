@@ -139,6 +139,9 @@ public:
 
             req.cancel = deps_.cancel;
             auto response = deps_.http->send(req);
+            if (!response && response.error().code == ErrorCode::HostNotApproved) {
+                return std::unexpected(response.error());
+            }
             if (!response) {
                 return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
                                                     ErrorClass::Auth,
@@ -358,6 +361,9 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
 
     req.cancel = deps.cancel;
     const auto response = http.send(req);
+    if (!response && response.error().code == ErrorCode::HostNotApproved) {
+        return std::unexpected(response.error());
+    }
     if (!response) {
         return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
@@ -1035,6 +1041,9 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
 
     req.cancel = deps.cancel;
     auto response = deps.http->send(req);
+    if (!response && response.error().code == ErrorCode::HostNotApproved) {
+        return std::unexpected(response.error());
+    }
     if (!response) {
         return std::unexpected(ReqloomError{ErrorCode::SessionRefreshFailed,
                                             ErrorClass::Auth,

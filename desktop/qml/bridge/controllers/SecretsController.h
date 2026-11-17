@@ -4,10 +4,13 @@
 
 #include "application/SecretManager.h"
 
+#include <reqloom/engine/HostApproval.h>
+
 #include <QtQml/qqmlregistration.h>
 #include <QtCore/QAbstractListModel>
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 #include <QtQml/QQmlEngine>
 
 #include <memory>
@@ -56,6 +59,12 @@ class SecretsController : public QObject {
     Q_PROPERTY(QString currentFolder READ currentFolder NOTIFY currentFolderChanged)
     /// Why the last store/clear/confirmMove failed; empty after a success.
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
+    /// Hosts this user approved to receive the open project's credentials (FR-15.9), sorted.
+    Q_PROPERTY(QStringList approvedHosts READ approvedHosts NOTIFY approvedHostsChanged)
+    /// The user setting: may the reqloom command line approve hosts? Off leaves this app as the
+    /// only place to approve one.
+    Q_PROPERTY(bool cliHostApproval READ cliHostApproval WRITE setCliHostApproval NOTIFY
+                   cliHostApprovalChanged)
 
 public:
     explicit SecretsController(QObject* parent = nullptr);
@@ -78,6 +87,12 @@ public:
     [[nodiscard]] QString folderConflict() const { return folderConflict_; }
     [[nodiscard]] QString currentFolder() const { return currentFolder_; }
     [[nodiscard]] QString lastError() const { return lastError_; }
+    [[nodiscard]] QStringList approvedHosts() const { return approvedHosts_; }
+    [[nodiscard]] bool cliHostApproval() const;
+    void setCliHostApproval(bool allowed);
+
+    /// Forget an approved host for the open project. A failure sets lastError.
+    Q_INVOKABLE bool revokeHost(const QString& host);
 
     /// Refresh the list against `project`. Call when a project loads or the
     /// dialog opens.
@@ -97,6 +112,8 @@ signals:
     void folderConflictChanged();
     void currentFolderChanged();
     void lastErrorChanged();
+    void approvedHostsChanged();
+    void cliHostApprovalChanged();
 
 private:
     SecretManager manager_;
@@ -105,6 +122,8 @@ private:
     QString folderConflict_;
     QString currentFolder_;
     QString lastError_;
+    QStringList approvedHosts_;
+    std::unique_ptr<engine::HostApprovalStore> hostApprovals_;
 
     void reloadList();
     void setLastError(const QString& error);

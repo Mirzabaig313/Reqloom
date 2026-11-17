@@ -56,6 +56,7 @@ add_executable(reqloom-engine-unit-tests
     unit/ProjectTrustStoreTest.cpp
     unit/ProjectIdInsertTest.cpp
     unit/KeychainSecretStoreTest.cpp
+    unit/HostApprovalStoreTest.cpp
 )
 target_include_directories(reqloom-engine-unit-tests
     PRIVATE
@@ -107,6 +108,8 @@ add_executable(reqloom-engine-integration-tests
     integration/ValueRedactionTest.cpp
     integration/EngineStateTest.cpp
     integration/AuthSessionTest.cpp
+    integration/RedirectHopTest.cpp
+    integration/HostApprovalTest.cpp
 )
 target_link_libraries(reqloom-engine-integration-tests
     PRIVATE

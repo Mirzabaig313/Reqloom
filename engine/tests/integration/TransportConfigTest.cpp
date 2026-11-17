@@ -15,6 +15,7 @@
 
 #include "MockSutHarness.h"
 #include "infrastructure/http/CurlHttpClient.h"
+#include "support/HermeticDependencies.h"
 #include "support/TempPath.h"
 
 #include <reqloom/engine/Factories.h>
@@ -91,7 +92,7 @@ TEST(TransportConfigIntegration, low_connect_timeout_aborts_quickly) {
     // that timeframe rather than the default 5s.
     auto project = buildProject(std::chrono::milliseconds{200});
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     const auto t0 = std::chrono::steady_clock::now();
@@ -302,7 +303,7 @@ namespace {
 }  // namespace
 
 TEST_F(CurlTransportFixture, cancel_interrupts_a_request_in_flight_and_is_not_retried) {
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     std::thread canceller;
     int requestsPrepared = 0;
     engine.subscribe([&](const ce::RunEvent& ev) {

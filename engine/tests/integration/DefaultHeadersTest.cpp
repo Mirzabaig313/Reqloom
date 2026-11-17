@@ -5,6 +5,7 @@
 // request headers. Fails on the parent commit: CurlHttpClient set no
 // User-Agent / Accept-Encoding at all.
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/HttpDefaults.h>
@@ -93,7 +94,7 @@ protected:
 
 TEST_F(DefaultHeadersFixture, auto_generated_headers_reach_the_wire) {
     auto project = makeProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"echo.plain"}, ctx);
@@ -112,7 +113,7 @@ TEST_F(DefaultHeadersFixture, auto_generated_headers_reach_the_wire) {
 
 TEST_F(DefaultHeadersFixture, caller_user_agent_overrides_the_default) {
     auto project = makeProject(harness_->baseUrl());
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ce::RunContext ctx;
 
     auto result = engine.run(project, ce::OperationId{"echo.custom"}, ctx);

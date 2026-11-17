@@ -806,6 +806,13 @@ std::string emitActor(const Actor& actor) {
         emitStringMap(e, actor.inject.headers);
         e << YAML::EndMap;
     }
+    if (!actor.allowedHosts.empty()) {
+        e << YAML::Key << "allowed_hosts" << YAML::Value << YAML::BeginSeq;
+        for (const auto& host : actor.allowedHosts) {
+            e << host;
+        }
+        e << YAML::EndSeq;
+    }
 
     e << YAML::EndMap;
     return e.c_str();

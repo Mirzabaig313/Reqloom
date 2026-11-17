@@ -48,6 +48,11 @@ enum class ErrorCode : std::uint8_t {
     /// missing key just leaves the reference unresolved).
     SecretAccessFailed,
 
+    /// A credential, secret or session cookie was not sent because the request's host is not
+    /// approved for this project (FR-15.9), or is outside the actor's `allowed_hosts`. Raised
+    /// before the request (or the redirect hop) is sent. Not retryable.
+    HostNotApproved,
+
     // Hooks
     HookFailure,
     HookTimeout,

@@ -21,6 +21,25 @@ namespace reqloom::engine {
     const std::map<std::string, std::string>& envVars,
     std::string_view script);
 
+/// What an operation's request is built from, as far as credentials go (FR-15.9): why it carries
+/// one (empty when nothing it refers to is a credential) and the actors whose values it uses.
+struct OperationCredentialUse {
+    std::string reason;
+    std::set<std::string> actors;
+};
+
+/// Judged from what the operation refers to, not from the bytes sent, so a transformed value
+/// (`{{$.hex.encode(secret.k)}}`) or a hook's rewrite still counts. Counts: a `{{secret.*}}`
+/// (directly, through a `!secret` environment value, or read by the pre-request hook), a
+/// `{{$.env.*}}`, inline or default auth, any actor's values, and any `<resource>.<field>` in
+/// `credentialRefs` (values the project sends as credentials). `actors` lists every actor whose
+/// values appear, the operation's own actor included.
+[[nodiscard]] OperationCredentialUse operationCredentialUse(
+    const Operation& op,
+    const Project& project,
+    const std::map<std::string, std::string>& envVars,
+    const std::set<std::string>& credentialRefs);
+
 /// Secret names a hook script reads literally (`ctx.secret.NAME` / `ctx.secret["NAME"]`).
 [[nodiscard]] std::set<std::string> hookScriptSecretNames(std::string_view script);
 

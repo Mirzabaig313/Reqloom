@@ -29,6 +29,7 @@ Options may come before or after the operation, `--name=value` works as well as
 | `--quiet` | Suppress live progress | off |
 | `--failure-body-size <size>` | How much response text a failure message quotes: bytes, or a whole number with `KiB` or `MiB`; `0` for none; at most 1 MiB | `4KiB` |
 | `--response-body-size <size>` | With `--format json`, how much of each step's response body the `response` field keeps, after masking: same units; `0` for none; at most 1 MiB | `2KiB` |
+| `--non-interactive` | Never ask to approve a host, even at a terminal | off |
 | `--help` / `-h` | Show usage | — |
 
 There are no short forms other than `-h`, and no `--dry-run`, `--timeout`,
@@ -446,7 +447,46 @@ within about a second, the remaining steps are marked `CANCEL`, and the report
 is still written in full, in every format. The exit code is `130` after SIGINT
 and `143` after SIGTERM. A second signal exits at once without a report.
 
+## Approving hosts
+
+Credentials, secrets and session cookies go only to hosts you approved for the
+project ([the rule](/schema/secrets-and-transport/#hosts-that-may-receive-credentials)).
+At a terminal, the first request that needs a new host stops and asks, on
+stderr:
+
+```ansi
+Project 'Shop' (id 6f1c…) is about to send the credentials of actor 'admin' to
+    https://api.example.com:443
+  request: https://api.example.com/v1/auth/login
+This host has not been approved for this project. Only approve it if you expect this project to send credentials there.
+Approve https://api.example.com:443 and remember the answer (yes/no)?
+```
+
+Text from the project (its name, actor names, the URL) is printed with control
+characters shown as escapes (`\x1b`), so it cannot rewrite the prompt. `yes`
+(or `y`) approves and remembers it; `no`, an empty line or end of input
+sends nothing. With no terminal, or with `--non-interactive`, nothing is asked:
+the step fails with `E_HOST_NOT_APPROVED` before it is sent, and the detail says
+how to approve the host. In JSON output its `next_action` tells an agent to ask
+you rather than approve the host itself.
+
+### `reqloom hosts`
+
+| Command | Does |
+| --- | --- |
+| `reqloom hosts` or `reqloom hosts list` | Print the hosts approved for the project |
+| `reqloom hosts approve <host>` | Approve a host after asking yes or no (`api.example.com` means `https://api.example.com:443`; give `http://` or `:port` for others). Needs a terminal |
+| `reqloom hosts revoke <host>` | Forget an approval |
+| `reqloom hosts cli-approval off` | Let only the desktop app approve hosts; turn it back on in the app |
+
+Each takes `--project <path>` like `run`.
+
 ## In CI
+
+A CI pipeline approves the hosts a run sends credentials to with
+`REQLOOM_APPROVED_HOSTS`, a comma-separated list of
+`[http://|https://]host[:port]` (no scheme means `https`). It applies to that run only and is never stored. A malformed entry
+is an invocation error (exit `2`).
 
 A CI runner has no OS keychain, so pass each secret the project uses as a
 `REQLOOM_SECRET_<NAME>` environment variable, the name in upper case (see
@@ -458,6 +498,7 @@ before anything is sent.
 - name: Run API workflow tests
   env:
     REQLOOM_SECRET_ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    REQLOOM_APPROVED_HOSTS: staging-api.example.com,auth.example.com
   run: |
     reqloom run checkout.complete \
       --project api-tests \

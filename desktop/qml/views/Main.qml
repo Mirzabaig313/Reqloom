@@ -258,6 +258,9 @@ ApplicationWindow {
         function onImportReviewNotes(notes) {
             importNotesDialog.showNotes(notes);
         }
+        function onHostApprovalRequested(id, projectName, host, credential, url) {
+            hostApprovalDialog.ask(id, projectName, host, credential, url);
+        }
         function onUnsavedChangesPrompt(title, message, saveText, discardText, cancelText) {
             unsavedChangesDialog.ask(title, message, saveText, discardText, cancelText);
         }
@@ -841,6 +844,11 @@ ApplicationWindow {
         }
 
         onAccepted: AppController.createProject(folderUrl, npNameField.text)
+    }
+
+    HostApprovalDialog {
+        id: hostApprovalDialog
+        onAnswered: (requestId, approve) => AppController.answerHostApproval(requestId, approve)
     }
 
     UnsavedChangesDialog {

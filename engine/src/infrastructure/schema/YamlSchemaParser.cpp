@@ -4,6 +4,7 @@
 #include "../../domain/DependencyResolver.h"
 #include "../../domain/JsonBodyTemplate.h"
 
+#include <reqloom/engine/HostApproval.h>
 #include <reqloom/engine/ProjectIdentity.h>
 
 #include <yaml-cpp/yaml.h>
@@ -997,7 +998,7 @@ Actor parseActor(ParseCtx& ctx, const std::string& actorId, const YAML::Node& no
     }
     warnUnknownKeys(ctx,
                     node,
-                    {"name", "description", "auth", "session", "inject"},
+                    {"name", "description", "auth", "session", "inject", "allowed_hosts"},
                     std::format("actor '{}'", actorId));
     Actor actor;
     actor.id = ActorId{actorId};
@@ -1011,6 +1012,20 @@ Actor parseActor(ParseCtx& ctx, const std::string& actorId, const YAML::Node& no
     if (const auto inject = mapAt(node, "inject"); present(inject)) {
         warnUnknownKeys(ctx, inject, {"headers"}, "inject");
         actor.inject.headers = readStringMap(inject, "headers");
+    }
+    if (const auto hosts = seqAt(node, "allowed_hosts"); present(hosts)) {
+        for (const auto& item : hosts) {
+            if (!item.IsScalar() || item.Scalar().find("://") != std::string::npos ||
+                !hostKeyForEntry(item.Scalar())) {
+                fault(item,
+                      std::format("actor '{}': an allowed_hosts item must be a host name or IP "
+                                  "address, optionally with :port (no scheme, path or wildcard), "
+                                  "got {}",
+                                  actorId,
+                                  item.IsScalar() ? "'" + item.Scalar() + "'" : describe(item)));
+            }
+            actor.allowedHosts.push_back(item.Scalar());
+        }
     }
     return actor;
 }
@@ -1413,8 +1428,8 @@ struct EntityBody {
     return {file.stem().string(), doc, 1};
 }
 
-constexpr std::array<std::string_view, 5> kActorFields{
-    "name", "description", "auth", "session", "inject"};
+constexpr std::array<std::string_view, 6> kActorFields{
+    "name", "description", "auth", "session", "inject", "allowed_hosts"};
 constexpr std::array<std::string_view, 3> kResourceFields{"name", "description", "operations"};
 
 constexpr std::array<std::string_view, 13> kRootKeys{"version",

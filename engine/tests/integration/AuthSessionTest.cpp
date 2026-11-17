@@ -6,6 +6,7 @@
 #include "infrastructure/schema/SchemaParser.h"
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/ExecutionEngine.h>
 #include <reqloom/engine/Operation.h>
@@ -72,6 +73,8 @@ ce::Project makeActorProject(const std::string& tokenUrl) {
     actor.authConfig["token_url"] = tokenUrl;
     actor.authConfig["client_id"] = "client-1";
     actor.authConfig["client_secret"] = "client-secret-1";
+    // The token endpoint is on another host than baseUrl: the actor must list both (FR-15.9).
+    actor.allowedHosts = {"api.test", "idp.test"};
     p.actors[actor.id] = actor;
 
     ce::Operation op;
@@ -97,8 +100,8 @@ Harness makeHarness() {
     auto http = std::make_unique<ScriptedHttpClient>();
     Harness h;
     h.http = http.get();
-    h.engine = std::make_unique<ce::ExecutionEngine>(
-        ce::ExecutionEngine::Dependencies{std::move(http), nullptr, nullptr, nullptr, nullptr});
+    h.engine = std::make_unique<ce::ExecutionEngine>(reqloom::tests::withApprovedHosts(
+        ce::ExecutionEngine::Dependencies{std::move(http), nullptr, nullptr, nullptr, nullptr}));
     return h;
 }
 
@@ -158,7 +161,8 @@ TEST(AuthSession, rejected_login_reaches_the_step_detail) {
 
 TEST(AuthSession, unreachable_token_endpoint_reaches_the_step_detail) {
     auto h = makeHarness();
-    const auto project = makeActorProject("http://unreachable.test/token");
+    auto project = makeActorProject("http://unreachable.test/token");
+    project.actors.at(ce::ActorId{"svc"}).allowedHosts.emplace_back("unreachable.test");
 
     ce::RunContext ctx;
     auto result = h.engine->run(project, ce::OperationId{"me.get"}, ctx);

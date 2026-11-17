@@ -58,6 +58,7 @@ Dialog {
     contentItem: Label {
         objectName: "unsavedChangesMessage"
         text: root.message
+        textFormat: Text.PlainText
         color: DesignTokens.textSecondary
         font.pixelSize: DesignTokens.fontLabel
         wrapMode: Text.WordWrap

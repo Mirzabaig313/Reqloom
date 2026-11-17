@@ -6,6 +6,7 @@
 // uses: open a DB, run a chain against the mock SUT, then read the run back
 // out through the public API without touching infrastructure headers.
 #include "MockSutHarness.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
@@ -120,7 +121,7 @@ TEST_F(HistoryFacadeFixture, list_runs_returns_persisted_run_after_open) {
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
     TempDb db;
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     auto opened = engine.openHistory(db.path());
     ASSERT_TRUE(opened.has_value()) << opened.error().detail;
 
@@ -153,7 +154,7 @@ TEST_F(HistoryFacadeFixture, history_events_replays_the_run_timeline) {
     loaded->environments["local"]["baseUrl"] = harness_->baseUrl();
 
     TempDb db;
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ASSERT_TRUE(engine.openHistory(db.path()).has_value());
 
     ce::RunContext ctx;
@@ -179,7 +180,8 @@ TEST_F(HistoryFacadeFixture, run_ids_stay_unique_across_engine_restarts_on_one_d
     TempDb db;
     ce::RunId firstId{};
     {
-        ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+        ce::ExecutionEngine engine(
+            reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
         ASSERT_TRUE(engine.openHistory(db.path()).has_value());
         ce::RunContext ctx;
         auto run = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
@@ -187,7 +189,7 @@ TEST_F(HistoryFacadeFixture, run_ids_stay_unique_across_engine_restarts_on_one_d
         firstId = run->runId;
     }
 
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
     ASSERT_TRUE(engine.openHistory(db.path()).has_value());
     ce::RunContext ctx;
     auto run = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
@@ -219,7 +221,7 @@ TEST_F(HistoryFacadeFixture, run_ids_stay_unique_across_engine_restarts_on_one_d
 TEST_F(HistoryFacadeFixture, list_runs_without_open_reports_internal_error) {
     // No openHistory() call — the store is inert, so the read facade must
     // surface a clean error rather than crash or silently return nothing.
-    ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    ce::ExecutionEngine engine(reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
 
     auto runs = engine.listRuns(10);
     ASSERT_FALSE(runs.has_value());

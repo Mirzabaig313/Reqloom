@@ -32,6 +32,8 @@ class HistoryStore;
 class SecretStore;
 class HookRunner;
 class ProjectTrustStore;
+class HostApprovalStore;
+class HostApprover;
 
 /// Result of a run.
 struct RunResult {
@@ -139,6 +141,15 @@ struct RunOptions {
     /// With `recordResponses`, the most bytes of masked body kept per step row; 0 keeps none.
     /// Values above `kMaxFailureExcerptBytes` are clamped.
     std::size_t responseBodyBytes{kDefaultResponseBodyBytes};
+
+    /// Asks the person to approve a host before a credential is sent to it (FR-15.9); not owned,
+    /// must outlive the run. Null means nobody can be asked: a request carrying a credential to a
+    /// host that is not approved fails before it is sent.
+    HostApprover* hostApprover{nullptr};
+
+    /// Host keys (`hostKeyForEntry`) approved for this run only and never stored: the CLI fills it
+    /// from `REQLOOM_APPROVED_HOSTS` for CI. Still limited by an actor's `allowed_hosts`.
+    std::vector<std::string> approvedHostsForRun;
 };
 
 /// Upper bound on a captured response body (5 MiB); larger bodies are truncated.
@@ -184,6 +195,10 @@ public:
         /// Which folder each project id belongs to, checked before any secret; with `secrets` but
         /// no `trust`, a run that references secrets fails.
         std::unique_ptr<ProjectTrustStore> trust;
+        /// Hosts this user approved per project (FR-15.9). Without it no host is approved: a
+        /// request carrying a credential, secret or session cookie fails before it is sent, unless
+        /// `RunOptions` approves its host for the run or the run's approver says yes.
+        std::unique_ptr<HostApprovalStore> hostApprovals;
     };
 
     explicit ExecutionEngine(Dependencies deps);

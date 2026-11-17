@@ -2,6 +2,8 @@
 
 #include "TextRenderer.h"
 
+#include "TerminalText.h"
+
 #include "StepFormatting.h"
 
 #include <format>
@@ -39,7 +41,7 @@ void TextRenderer::printProjectPreamble(const std::string& projectName,
     }
     ostreamPrintln(progress_,
                    "Loaded project: {} ({} actors, {} resources)",
-                   projectName,
+                   terminalSafe(projectName),
                    actorCount,
                    resourceCount);
 }
@@ -54,9 +56,9 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
                 }
                 ostreamPrintln(progress_,
                                "Running: {} (chain of {} steps, env={})",
-                               e.target.value,
+                               terminalSafe(e.target.value),
                                e.chainSize,
-                               e.envName);
+                               terminalSafe(e.envName));
             } else if constexpr (std::is_same_v<T, ce::StepStarted>) {
                 if (quiet_) {
                     return;
@@ -64,21 +66,23 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
                 ostreamPrintln(progress_,
                                "  [{}] Running: {} (attempt {})",
                                e.stepIndex + 1,
-                               e.op.value,
+                               terminalSafe(e.op.value),
                                e.attempt);
             } else if constexpr (std::is_same_v<T, ce::StepSkipped>) {
                 if (quiet_) {
                     return;
                 }
-                ostreamPrintln(
-                    progress_, "  [{}] Skipped: {} (cached)", e.stepIndex + 1, e.op.value);
+                ostreamPrintln(progress_,
+                               "  [{}] Skipped: {} (cached)",
+                               e.stepIndex + 1,
+                               terminalSafe(e.op.value));
             } else if constexpr (std::is_same_v<T, ce::StepFailed>) {
                 ostreamPrintln(err_,
                                "  [{}] FAILED: {} [{}] — {}",
                                e.stepIndex + 1,
-                               e.op.value,
+                               terminalSafe(e.op.value),
                                std::string(ce::toCodeString(e.code)),
-                               e.detail);
+                               terminalSafe(e.detail, /*keepNewlines=*/true));
             } else if constexpr (std::is_same_v<T, ce::RunEnded>) {
                 if (quiet_) {
                     return;
@@ -96,8 +100,8 @@ void TextRenderer::render(const ce::OperationId& target,
     ostreamPrintln(summary_, "\n--- Chain Summary ---");
     ostreamPrintln(summary_,
                    "Target: {}   Env: {}   Outcome: {}",
-                   target.value,
-                   environment,
+                   terminalSafe(target.value),
+                   terminalSafe(environment),
                    std::string(runOutcomeName(result.outcome)));
 
     for (const auto& step : result.steps) {
@@ -108,11 +112,11 @@ void TextRenderer::render(const ce::OperationId& target,
         ostreamPrintln(summary_,
                        "  {:<6} {} ({}ms) err={}",
                        std::string(statusGlyph(step.status)),
-                       step.op.value,
+                       terminalSafe(step.op.value),
                        step.elapsed.count(),
                        errorCodeName(step));
         if (!step.detail.empty()) {
-            ostreamPrintln(summary_, "         {}", step.detail);
+            ostreamPrintln(summary_, "         {}", terminalSafe(step.detail, true));
         }
         printAssertions(step, "");
     }
@@ -132,9 +136,9 @@ void TextRenderer::printChildRow(const ce::StepResult& row) {
                    "    {} {:<6} {} ({}ms){}",
                    label,
                    std::string(statusGlyph(row.status)),
-                   row.op.value,
+                   terminalSafe(row.op.value),
                    row.elapsed.count(),
-                   row.detail.empty() ? std::string{} : "  " + row.detail);
+                   row.detail.empty() ? std::string{} : "  " + terminalSafe(row.detail, true));
     if (row.forEachIndex && !row.pollAttempt) {
         printAssertions(row, std::format(" (iter #{})", *row.forEachIndex));
     }
@@ -146,9 +150,9 @@ void TextRenderer::printAssertions(const ce::StepResult& row, std::string_view a
                        "         {} assert{}: {}",
                        a.passed ? std::string{"\u2713"} : std::string{"\u2717"},
                        attribution,
-                       a.name);
+                       terminalSafe(a.name));
         if (!a.passed && !a.detail.empty()) {
-            ostreamPrintln(summary_, "             {}", a.detail);
+            ostreamPrintln(summary_, "             {}", terminalSafe(a.detail, true));
         }
     }
 }

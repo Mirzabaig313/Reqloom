@@ -6,6 +6,7 @@
 #include "infrastructure/schema/SchemaParser.h"
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/PublicApi.h>
 
@@ -132,6 +133,7 @@ TEST(JsonBodyEscaping, sent_bodies_escape_string_placeholders_and_keep_raw_value
     captured->enqueue(201, "{}");
     ce::ExecutionEngine::Dependencies dependencies{
         std::move(http), nullptr, nullptr, nullptr, nullptr};
+    dependencies.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     ce::ExecutionEngine engine{std::move(dependencies)};
 
     ce::RunContext ctx;

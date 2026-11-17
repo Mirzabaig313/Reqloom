@@ -346,6 +346,12 @@ public:
     Q_INVOKABLE void closeTab(int index);
     /// Close every tab except `index`, asking first when that drops unsaved edits.
     Q_INVOKABLE void closeOtherTabs(int index);
+    /// The `hostApprovalRequested` id of an OAuth2 authorization waiting for approval; run
+    /// questions use positive ids.
+    static constexpr int kOauthApprovalId = -1;
+    /// Answer a `hostApprovalRequested` question: true approves the host for this project and
+    /// sends, false sends nothing.
+    Q_INVOKABLE void answerHostApproval(int id, bool approve);
     /// Answer the pending `unsavedChangesPrompt`: 0 saves, 1 discards, anything else cancels.
     Q_INVOKABLE void resolveUnsavedChanges(int choice);
     /// True when the window may close now; otherwise asks about the unsaved tabs and emits
@@ -946,6 +952,10 @@ signals:
     /// `resolveUnsavedChanges`.
     void unsavedChangesPrompt(
         QString title, QString message, QString saveText, QString discardText, QString cancelText);
+    /// A run is about to send `credential` to `host`, which the person has not approved for this
+    /// project (FR-15.9); the run waits for `answerHostApproval(id, …)`.
+    void hostApprovalRequested(
+        int id, QString projectName, QString host, QString credential, QString url);
     /// The unsaved tabs were saved or discarded after `requestQuit`; the window may close.
     void quitApproved();
     void unsavedTabsChanged();
@@ -1283,6 +1293,10 @@ private:
     QString editAuthOauth2PkceMethod_{QStringLiteral("S256")};
     QString editAuthOauth2AccessToken_;  ///< Ephemeral; never persisted to YAML.
     std::unique_ptr<OAuth2AuthCodeFlow> oauthFlow_;
+    // An OAuth2 authorization waiting for the person to approve its token URL's host (FR-15.9):
+    // the token URL and what starts the flow once approved.
+    QString pendingOauthTokenUrl_;
+    std::function<void()> pendingOauthStart_;
     QString editAuthOauth2TokenUrl_;
     QString editAuthOauth2ClientId_;
     QString editAuthOauth2ClientSecret_;

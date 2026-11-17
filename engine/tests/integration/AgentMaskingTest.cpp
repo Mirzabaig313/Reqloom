@@ -7,6 +7,7 @@
 #include "infrastructure/schema/SchemaParser.h"
 #include "infrastructure/secrets/SecretStore.h"
 #include "infrastructure/storage/HistoryStore.h"
+#include "support/HermeticDependencies.h"
 
 #include <reqloom/engine/PublicApi.h>
 
@@ -135,6 +136,7 @@ struct Harness {
     auto http = std::make_unique<ScriptedHttpClient>();
     harness->http = http.get();
     ce::ExecutionEngine::Dependencies deps{std::move(http), nullptr, nullptr, nullptr, nullptr};
+    deps.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     harness->engine = std::make_unique<ce::ExecutionEngine>(std::move(deps));
     auto* raw = harness.get();
     harness->engine->subscribe([raw](const ce::RunEvent& event) { raw->events.push_back(event); });
@@ -412,11 +414,13 @@ TEST(AgentMasking, form_hint_field_value_stays_readable) {
     EXPECT_NE(body.find(R"("note":"access_token")"), std::string::npos) << body;
 }
 
-TEST(AgentMasking, json_keys_are_never_replaced_only_values) {
+TEST(AgentMasking, json_key_is_replaced_only_when_it_holds_a_registered_secret) {
+    // Coordinator item 2 (2026-11-17): a key that holds a secret value leaks it, so it is masked;
+    // every other key stays as received.
     const ScopedEnv env{"REQLOOM_SECRET_PASS", "fake-key-name-77"};
     auto h = makeHarness();
     h->http->routes["/sessions"] =
-        respond(201, R"({"fake-key-name-77":"fake-key-name-77","sid":"s"})");
+        respond(201, R"({"fake-key-name-77":"fake-key-name-77","sid":"s","kind":"x"})");
     h->http->routes["/pay"] = respond(500, R"({"error":"down"})");
     auto project = bearerProject();
     auto& pay = project.resources.at(ce::ResourceId{"order"}).operations.at("pay");
@@ -425,5 +429,52 @@ TEST(AgentMasking, json_keys_are_never_replaced_only_values) {
     const auto result = h->engine->run(project, ce::OperationId{"order.pay"}, ctx, cli());
     ASSERT_TRUE(result.has_value()) << result.error().detail;
     EXPECT_EQ(bodyOf(row(*result, "session.open")),
-              R"({"fake-key-name-77":"<redacted>","sid":"s"})");
+              R"({"<redacted>":"<redacted>","sid":"s","kind":"x"})");
+}
+
+// ─── Coordinator item 2: secrets as non-string JSON scalars ─────────────────
+
+TEST(AgentMasking, numeric_secret_returned_as_a_json_number_is_masked) {
+    const ScopedEnv env{"REQLOOM_SECRET_PIN", "4815162342"};
+    auto h = makeHarness();
+    h->http->routes["/sessions"] =
+        respond(201, R"({"data":{"sid":"s","account":4815162342,"count":12}})");
+    h->http->routes["/pay"] = respond(422, R"({"echo":4815162342})");
+    auto project = bearerProject();
+    auto& open = project.resources.at(ce::ResourceId{"session"}).operations.at("open");
+    extract(open, "account", "$.data.account");
+    open.bodyTemplate = R"({"pin":"{{secret.PIN}}"})";
+    ce::RunContext ctx;
+    const auto result = h->engine->run(project, ce::OperationId{"order.pay"}, ctx, cli());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto& opened = row(*result, "session.open");
+    EXPECT_EQ(bodyOf(opened), R"({"data":{"sid":"s","account":"<redacted>","count":12}})");
+    EXPECT_EQ(extracted(opened, "account").find("4815162342"), std::string::npos);
+    const auto& paid = row(*result, "order.pay");
+    EXPECT_EQ(bodyOf(paid).find("4815162342"), std::string::npos) << bodyOf(paid);
+    EXPECT_EQ(paid.detail.find("4815162342"), std::string::npos) << paid.detail;
+}
+
+// ─── Coordinator item 3: escaped spellings in JSON that does not parse ──────
+
+TEST(AgentMasking, secret_escaped_as_slash_or_unicode_in_unparsable_json_is_masked) {
+    const ScopedEnv slash{"REQLOOM_SECRET_PATHY", "fake/slash/secret-1"};
+    const ScopedEnv uni{"REQLOOM_SECRET_UNI", "fake-unicode-secret-2"};
+    auto h = makeHarness();
+    // Cut off mid-document, as a body past the retention limit is: it cannot be parsed.
+    h->http->routes["/sessions"] = respond(
+        201,
+        R"({"data":{"sid":"s"},"a":"fake\/slash\/secret-1","b":"\u0066ake-unicode-secr\u0065t-2","c":"ok","d":"\u0066ake-unicode)");
+    h->http->routes["/pay"] = respond(500, R"({"error":"down"})");
+    auto project = bearerProject();
+    auto& pay = project.resources.at(ce::ResourceId{"order"}).operations.at("pay");
+    pay.headers["X-A"] = "{{secret.PATHY}}";
+    pay.headers["X-B"] = "{{secret.UNI}}";
+    ce::RunContext ctx;
+    const auto result = h->engine->run(project, ce::OperationId{"order.pay"}, ctx, cli());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto body = bodyOf(row(*result, "session.open"));
+    EXPECT_EQ(body.find("slash\\/secret"), std::string::npos) << body;
+    EXPECT_EQ(body.find("secr\\u0065t"), std::string::npos) << body;
+    EXPECT_NE(body.find(R"("c":"ok")"), std::string::npos) << "ordinary values must stay: " << body;
 }
