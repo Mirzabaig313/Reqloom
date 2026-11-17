@@ -149,3 +149,45 @@ TEST(LintCommand, json_report_warns_about_unknown_keys) {
     ASSERT_FALSE(warnings.isEmpty()) << r.out;
     EXPECT_TRUE(warnings.at(0).toString().contains(QStringLiteral("mystery_key"))) << r.out;
 }
+
+TEST(LintCommand, warns_about_a_secret_name_no_environment_variable_can_supply) {
+    const ProjectDir project{
+        "version: 1\nname: S\nid: lint-secret-names\nresources:\n  item:\n    operations:\n"
+        "      read:\n        method: GET\n        path: /x\n        headers:\n"
+        "          X-One: \"{{secret.api-key}}\"\n          X-Two: \"{{secret.GOOD_NAME}}\"\n"};
+    const auto r = lint({project.str(), "--format", "json"});
+    EXPECT_EQ(r.rc, 0) << r.err;
+    const auto warnings = parseJson(r.out).value(QStringLiteral("warnings")).toArray();
+    ASSERT_EQ(warnings.size(), 1) << r.out;
+    const auto text = warnings.at(0).toString();
+    EXPECT_TRUE(text.contains(QStringLiteral("api-key"))) << r.out;
+    EXPECT_TRUE(text.contains(QStringLiteral("REQLOOM_SECRET_"))) << r.out;
+}
+
+TEST(LintCommand, flags_two_secret_names_that_share_one_environment_variable) {
+    const ProjectDir project{
+        "version: 1\nname: S\nid: lint-secret-share\nresources:\n  item:\n    operations:\n"
+        "      read:\n        method: GET\n        path: /x\n        headers:\n"
+        "          X-One: \"{{secret.api_key}}\"\n          X-Two: \"{{secret.API_KEY}}\"\n"};
+    const auto r = lint({project.str(), "--format", "json"});
+    EXPECT_EQ(r.rc, 0) << r.err;
+    const auto warnings = parseJson(r.out).value(QStringLiteral("warnings")).toArray();
+    ASSERT_EQ(warnings.size(), 1) << r.out;
+    const auto text = warnings.at(0).toString();
+    EXPECT_TRUE(text.contains(QStringLiteral("REQLOOM_SECRET_API_KEY"))) << r.out;
+    EXPECT_TRUE(text.contains(QStringLiteral("api_key"))) << r.out;
+}
+
+TEST(LintCommand, missing_id_warning_says_environment_secrets_still_work) {
+    const ProjectDir project{
+        "version: 1\nname: S\nresources:\n  item:\n    operations:\n"
+        "      read:\n        method: GET\n        path: /x\n        headers:\n"
+        "          X-One: \"{{secret.API_KEY}}\"\n"};
+    const auto r = lint({project.str(), "--format", "json"});
+    const auto warnings = parseJson(r.out).value(QStringLiteral("warnings")).toArray();
+    ASSERT_EQ(warnings.size(), 1) << r.out;
+    const auto text = warnings.at(0).toString();
+    EXPECT_FALSE(text.contains(QStringLiteral("runs will fail"))) << r.out;
+    EXPECT_TRUE(text.contains(QStringLiteral("keychain"))) << r.out;
+    EXPECT_TRUE(text.contains(QStringLiteral("REQLOOM_SECRET_"))) << r.out;
+}

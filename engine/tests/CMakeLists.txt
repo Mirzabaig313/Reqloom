@@ -100,6 +100,9 @@ add_executable(reqloom-engine-integration-tests
     integration/CookieJarTest.cpp
     integration/TransportConfigTest.cpp
     integration/SecretLoadingTest.cpp
+    integration/SecretEnvResolutionTest.cpp
+    integration/StepResponseTest.cpp
+    integration/AgentMaskingTest.cpp
     integration/JsonBodyEscapingTest.cpp
     integration/ValueRedactionTest.cpp
     integration/EngineStateTest.cpp

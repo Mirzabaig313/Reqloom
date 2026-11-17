@@ -60,12 +60,20 @@ std::expected<std::optional<std::string>, ReqloomError> KeychainSecretStore::rea
     QKeychain::ReadPasswordJob job{QString::fromUtf8(kKeychainService)};
     job.setAutoDelete(false);
     job.setKey(toQt(name));
+    unreachable_.store(false, std::memory_order_release);
     if (!runJobBlocking(job)) {
-        // No event loop to drive the job: report "secret not present" (surfaces as VarUnresolved).
+        // No event loop to drive the job: the secret is absent and this read could not reach a
+        // keychain, so the engine says no secret backend is available.
+        unreachable_.store(true, std::memory_order_release);
         return std::optional<std::string>{};
     }
 
     if (job.error() == QKeychain::EntryNotFound) {
+        return std::optional<std::string>{};
+    }
+    if (job.error() == QKeychain::NoBackendAvailable) {
+        // A headless Linux machine with no Secret Service on its session bus.
+        unreachable_.store(true, std::memory_order_release);
         return std::optional<std::string>{};
     }
     if (job.error() != QKeychain::NoError) {
@@ -127,8 +135,8 @@ namespace {
                         ErrorClass::Auth,
                         "secret not " + std::string{action} +
                             ": this build has no OS keychain backend. Install a Reqloom build "
-                            "with keychain support, or pass the value through an allowed "
-                            "environment variable ({{$.env.NAME}}) instead."};
+                            "with keychain support, or run the reqloom CLI with the secret in "
+                            "the environment variable REQLOOM_SECRET_<NAME>."};
 }
 
 }  // namespace
@@ -142,6 +150,7 @@ bool KeychainSecretStore::backendAvailable() noexcept {
 
 std::expected<std::optional<std::string>, ReqloomError> KeychainSecretStore::read(
     const std::string& /*name*/) {
+    unreachable_.store(true, std::memory_order_release);
     return std::optional<std::string>{};
 }
 

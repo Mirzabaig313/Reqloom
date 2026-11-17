@@ -2,6 +2,8 @@
 
 #include "SecretStore.h"
 
+#include <atomic>
+
 namespace reqloom::engine {
 
 class KeychainSecretStore final : public SecretStore {
@@ -22,6 +24,12 @@ public:
                                             const std::string& value) override;
     std::expected<void, ReqloomError> remove(const std::string& name) override;
     [[nodiscard]] bool available() const noexcept override { return backendAvailable(); }
+    [[nodiscard]] bool lastReadUnreachable() const noexcept override {
+        return unreachable_.load(std::memory_order_acquire);
+    }
+
+private:
+    std::atomic<bool> unreachable_{false};
 };
 
 }  // namespace reqloom::engine

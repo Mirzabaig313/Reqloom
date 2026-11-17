@@ -99,6 +99,9 @@ inline constexpr std::size_t kDefaultFailureExcerptBytes = 4096;
 /// enormous detail. A larger value is clamped.
 inline constexpr std::size_t kMaxFailureExcerptBytes = std::size_t{1024} * 1024;
 
+/// Default bytes of masked response body kept per step for agent-facing output (2 KiB).
+inline constexpr std::size_t kDefaultResponseBodyBytes = 2048;
+
 /// Per-run options.
 struct RunOptions {
     bool dryRun{false};
@@ -114,6 +117,28 @@ struct RunOptions {
     /// Most bytes of the (masked) response body quoted in a failed step's detail and auth endpoint
     /// errors; 0 quotes nothing, values above `kMaxFailureExcerptBytes` are clamped.
     std::size_t failureExcerptBytes{kDefaultFailureExcerptBytes};
+
+    /// The run's results go to an agent-facing surface (the CLI), never to a person's view. Adds
+    /// masking the desktop app does not do: values the project uses as credentials (by where it
+    /// sends them, by credential-like names, cookies a response sets) are masked from the moment
+    /// they appear, failure excerpts mask credential-named fields, and every StepResult is
+    /// masked again when the run ends. Off (the default), events, history and results are masked
+    /// exactly as before.
+    bool agentOutput{false};
+
+    /// Read `{{secret.NAME}}` from `REQLOOM_SECRET_<NAME>` before the keychain (FR-11.5). Only the
+    /// CLI sets this: a desktop app started from a terminal must not let the environment override
+    /// Manage Secrets.
+    bool secretsFromEnvironment{false};
+
+    /// Agent-facing output: keep each step's response body and extracted values on its
+    /// `StepResult` (`response`, `extracted`). Before `run()` returns they are masked with every
+    /// secret the run learned, credentials sent later in the run included, and only then cut.
+    bool recordResponses{false};
+
+    /// With `recordResponses`, the most bytes of masked body kept per step row; 0 keeps none.
+    /// Values above `kMaxFailureExcerptBytes` are clamped.
+    std::size_t responseBodyBytes{kDefaultResponseBodyBytes};
 };
 
 /// Upper bound on a captured response body (5 MiB); larger bodies are truncated.

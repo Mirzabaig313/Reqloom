@@ -11,6 +11,7 @@
 
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
+#include <reqloom/engine/SecretStore.h>
 
 #include <array>
 #include <cstddef>
@@ -19,6 +20,7 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <map>
 #include <optional>
 #include <print>
 #include <ranges>
@@ -136,6 +138,43 @@ void dryRunAll(const ce::Project& project, LintResult& result, std::size_t& tota
     }
 }
 
+/// `name` with every character no environment variable name may hold replaced by '_'.
+[[nodiscard]] std::string suggestedSecretName(std::string_view name) {
+    std::string out{};
+    for (const char c : name) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        out.push_back(ok ? c : '_');
+    }
+    return out;
+}
+
+/// A name no environment variable can carry still works from the keychain, so this warns rather
+/// than fails: on CI or in an agent sandbox (no keychain) the secret would have no source at all.
+void appendSecretNameWarnings(const ce::Project& project, std::vector<std::string>& warnings) {
+    std::map<std::string, std::string> firstByVariable{};
+    for (const auto& name : ce::collectSecretReferences(project)) {
+        if (const auto variable = ce::secretEnvironmentVariable(name)) {
+            const auto [it, inserted] = firstByVariable.try_emplace(*variable, name);
+            if (!inserted) {
+                warnings.push_back(std::format(
+                    "secrets '{}' and '{}' both map to the environment variable {}; a CLI run "
+                    "with it set fails rather than give both the same value. Rename one.",
+                    it->second,
+                    name,
+                    *variable));
+            }
+        } else {
+            warnings.push_back(std::format(
+                "secret '{}' cannot be supplied through an environment variable: only names made "
+                "of letters, digits and '_' map to {}<NAME>. Without a keychain (CI, agent "
+                "sandboxes) it has no source; rename it, for example to '{}'.",
+                name,
+                ce::kSecretEnvironmentPrefix,
+                suggestedSecretName(name)));
+        }
+    }
+}
+
 [[nodiscard]] int lintProject(const fs::path& projectPath, bool json) {
     const auto yamlPath = projectPath / "reqloom.yaml";
     std::error_code ec;
@@ -157,9 +196,11 @@ void dryRunAll(const ce::Project& project, LintResult& result, std::size_t& tota
     result.warnings = project.loadWarnings;
     if (project.id.empty() && !ce::collectSecretReferences(project).empty()) {
         result.warnings.push_back(std::format(
-            "project uses secrets but has no id; runs will fail. Add `id: {}` to reqloom.yaml.",
+            "project uses secrets but has no id, so they cannot be read from the keychain (the "
+            "CLI still reads them from REQLOOM_SECRET_<NAME>). Add `id: {}` to reqloom.yaml.",
             ce::generateProjectId()));
     }
+    appendSecretNameWarnings(project, result.warnings);
     // Load warnings (unknown keys, imports that matched nothing) never fail the lint.
     for (const auto& warning : result.warnings) {
         std::println(stderr, "  WARNING: {}", warning);

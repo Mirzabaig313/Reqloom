@@ -47,6 +47,14 @@ public:
     /// True when nothing has been registered.
     [[nodiscard]] bool empty() const;
 
+    /// Length of the longest registered spelling (0 when empty).
+    [[nodiscard]] std::size_t longestPattern() const;
+
+    /// Also register (from now on, and for every value already known) each value's JSON-escaped
+    /// spelling (`"` → `\"`, `\` → `\\`), so a secret quoted inside JSON text that could not be
+    /// parsed is still found. Agent-facing runs only; off by default.
+    void enableJsonEscapedSpellings();
+
 private:
     void addPatternLocked(std::string pattern);
 
@@ -55,6 +63,8 @@ private:
     /// Patterns bucketed by first byte, each bucket longest-first.
     std::array<std::vector<std::string>, 256> byFirstByte_{};
     std::size_t shortestPattern_{0};
+    std::size_t longestPattern_{0};
+    bool jsonEscaped_{false};
 };
 
 }  // namespace reqloom::engine

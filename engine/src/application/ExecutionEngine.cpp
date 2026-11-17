@@ -25,7 +25,9 @@
 #include "PredicateEvaluator.h"
 #include "PredicateTemplates.h"
 #include "RequestSigners.h"
+#include "SecretEnvironment.h"
 #include "SecretRedaction.h"
+#include "StepEvidence.h"
 
 #include <algorithm>
 #include <atomic>
@@ -280,14 +282,31 @@ struct ExtractionEvidence {
     return "The last " + producer + " response did not contain '" + field + "'.";
 }
 
-[[nodiscard]] std::optional<std::string> keychainUnavailableReason(const std::string_view token) {
+/// Why a `{{secret.X}}`, or an `{{env.K}}` whose value uses a secret, has no value; else nullopt.
+[[nodiscard]] std::optional<std::string> unresolvedSecretReason(const std::string_view token,
+                                                                const ResolveContext& rctx,
+                                                                const SecretSourceState& sources) {
     const auto parts = parseVariableParts(token);
-    if (!parts || parts->rawScope != "secret") {
+    if (!parts) {
         return std::nullopt;
     }
-    return "no OS keychain is available on this machine; {{" + std::string{token} +
-           "}} cannot be read. Use a Reqloom build with keychain support, or pass the value "
-           "through an allowed environment variable ({{$.env.NAME}}) instead.";
+    if (parts->rawScope == "secret") {
+        return missingSecretCause(parts->field, sources);
+    }
+    if (parts->rawScope != "env") {
+        return std::nullopt;
+    }
+    const auto it = rctx.envVars.find(std::string{parts->field});
+    if (it == rctx.envVars.end()) {
+        return std::nullopt;
+    }
+    for (const auto& name : referencedSecretNames({it->second}, {})) {
+        if (!rctx.secrets.contains(name)) {
+            return "{{" + std::string{token} + "}} uses {{secret." + name + "}}, and " +
+                   missingSecretCause(name, sources);
+        }
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] UnresolvedVariableDiagnostic makeUnresolvedDiagnostic(
@@ -729,6 +748,9 @@ void registerResolveSecrets(const ResolveContext& rctx, SecretRegistry& registry
     }
 }
 
+/// Items of one list extraction kept for agent-facing output.
+constexpr std::size_t kExtractedListItems = 20;
+
 /// Last field name of an extraction source (`$.data.access_token` → `access_token`).
 [[nodiscard]] std::string_view sourceFieldName(std::string_view path) {
     while (!path.empty() && (path.back() == ']' || path.back() == '\'' || path.back() == '"')) {
@@ -765,8 +787,18 @@ struct ExecutionEngine::Impl {
     // Runs are serialized per engine (concurrent run() is unsupported), so a plain member is safe.
     bool captureResponseBodies{false};
     std::size_t failureExcerptBytes{kDefaultFailureExcerptBytes};
-    // True for a run whose secret store has no backend on this machine.
-    bool secretStoreUnavailable{false};
+    // Keep each row's response body and extracted values for agent-facing output.
+    bool recordResponses{false};
+    std::size_t responseBodyBytes{kDefaultResponseBodyBytes};
+    // The run prints to an agent (`RunOptions::agentOutput`): extra masking on. Off, the desktop
+    // gets exactly the masking it always had.
+    bool agentOutput{false};
+    // Raw body bytes kept on rows so far this run (`kMaxRetainedBodyBytesPerRun`).
+    std::size_t retainedBodyBytes{0};
+    // `<resource>.<field>` references the project sends as credentials (`credentialReferences`).
+    std::set<std::string> credentialRefs;
+    // Where this run's secrets came from, to explain one that has no value.
+    SecretSourceState secretSources{};
 
     // Secret values of the run in progress; set for the duration of run(), and emit() redacts
     // every event against it.
@@ -815,6 +847,47 @@ struct ExecutionEngine::Impl {
         for (auto& instance : instances) {
             instance.producer = op.id;
             ctx.appendInstance(op.resource, std::move(instance));
+        }
+    }
+
+    // A secret-looking extraction, or one the project sends as a credential somewhere.
+    // Desktop: as before, by name. Agent: also by credential-like names and by where the project
+    // sends the value (`credentialRefs`).
+    [[nodiscard]] bool isCredentialExtraction(const Operation& op, const Extraction& ext) const {
+        if (!agentOutput) {
+            return isSecretExtraction(ext);
+        }
+        return isSecretExtraction(ext) || isAgentSensitiveName(ext.variableName) ||
+               isAgentSensitiveName(sourceFieldName(ext.sourcePath)) ||
+               credentialRefs.contains(op.resource.value + "." + ext.variableName);
+    }
+
+    // With `recordResponses`, one extracted value for agent-facing output; a credential
+    // extraction is only ever the marker.
+    void keepExtracted(StepResult& row,
+                       const Operation& op,
+                       const Extraction& ext,
+                       std::string name,
+                       const std::string& value) const {
+        if (recordResponses) {
+            row.extracted.push_back(ExtractedValue{
+                std::move(name),
+                isCredentialExtraction(op, ext) ? std::string{kRedactedHeaderValue} : value,
+                false});
+        }
+    }
+
+    // The row's status, and with `recordResponses` its body, from the latest response.
+    void keepResponse(StepResult& row, const HttpResponse& response, const RunContext& ctx) {
+        row.httpStatus = response.status;
+        if (agentOutput) {
+            // A session cookie is a credential even if the run never sends it back.
+            registerSetCookies(response.headers, ctx.secretRegistry());
+        }
+        if (recordResponses) {
+            const bool budgetLeft = retainedBodyBytes < kMaxRetainedBodyBytesPerRun;
+            keepResponseBody(row, response.body, budgetLeft ? responseBodyBytes : 0);
+            retainedBodyBytes += row.response->body.size();
         }
     }
 
@@ -904,6 +977,24 @@ struct ExecutionEngine::Impl {
         }
     }
 
+    // A sign-in must not go out with a secret missing: that reads as a 401 from the API, not as
+    // the missing secret it is (FR-11.6).
+    [[nodiscard]] std::optional<ReqloomError> missingSignInSecret(
+        const Actor& actor, const ResolveContext& rctx) const {
+        for (const auto& name :
+             referencedSecretNames(actorReferenceTemplates(actor), rctx.envVars)) {
+            if (!rctx.secrets.contains(name)) {
+                return ReqloomError{ErrorCode::VarUnresolved,
+                                    ErrorClass::Resolution,
+                                    "actor '" + actor.id.value +
+                                        "' could not sign in: Variable: {{secret." + name +
+                                        "}}\nLocation: sign-in of actor '" + actor.id.value +
+                                        "'\nCause: " + missingSecretCause(name, secretSources)};
+            }
+        }
+        return std::nullopt;
+    }
+
     // Authenticate an actor if its session is not live; nullopt on success, else why sign-in
     // failed.
     std::optional<ReqloomError> ensureSession(const Actor& actor,
@@ -917,6 +1008,13 @@ struct ExecutionEngine::Impl {
         };
 
         const auto* existing = ctx.session(actor.id);
+        const bool live = existing != nullptr && existing->state == ActorSession::State::Live &&
+                          std::chrono::steady_clock::now() < existing->expiresAt;
+        if (!live) {
+            if (auto missing = missingSignInSecret(actor, rctx)) {
+                return missing;
+            }
+        }
         if ((existing != nullptr) && existing->state == ActorSession::State::Live) {
             const auto now = std::chrono::steady_clock::now();
             if (now < existing->expiresAt) {
@@ -932,7 +1030,8 @@ struct ExecutionEngine::Impl {
                                                    captureResponseBodies,
                                                    failureExcerptBytes,
                                                    ExchangeKind::SessionRefresh,
-                                                   cancelCheck(runId)};
+                                                   cancelCheck(runId),
+                                                   agentOutput};
                 auto refreshed = runRefresh(actor, ctx, rctx, refreshDeps);
                 if (refreshed) {
                     ActorSession updated = *existing;
@@ -961,7 +1060,8 @@ struct ExecutionEngine::Impl {
                                   captureResponseBodies,
                                   failureExcerptBytes,
                                   ExchangeKind::SignIn,
-                                  cancelCheck(runId)};
+                                  cancelCheck(runId),
+                                  agentOutput};
         auto authenticator = selectAuthenticator(actor, std::move(authDeps));
         if (!authenticator) {
             return ReqloomError{ErrorCode::SessionRefreshFailed,
@@ -1193,6 +1293,9 @@ struct ExecutionEngine::Impl {
                                  "poll_until: inline auth signing failed (" + *why + ")"});
             }
 
+            if (agentOutput) {
+                registerSentCredentials(req, ctx.secretRegistry());
+            }
             emit(RequestPrepared{runId,
                                  stepIndex,
                                  req.method,
@@ -1240,6 +1343,7 @@ struct ExecutionEngine::Impl {
             attemptRow.op = op.id;
             attemptRow.pollAttempt = attempt + 1;
             attemptRow.attempts = 1;
+            keepResponse(attemptRow, lastResponse, ctx);
             if (failMatched) {
                 attemptRow.status = StepResult::Status::Failed;
                 attemptRow.error = ErrorCode::PollFailPredicate;
@@ -1255,7 +1359,7 @@ struct ExecutionEngine::Impl {
                 attemptRow.detail =
                     "in_progress (HTTP " + std::to_string(lastResponse.status) + ")";
             }
-            ctx.record(attemptRow);
+            ctx.record(withoutEvidence(attemptRow));
             attemptRows.push_back(std::move(attemptRow));
 
             if (failMatched) {
@@ -1580,7 +1684,8 @@ struct ExecutionEngine::Impl {
                                   captureResponseBodies,
                                   failureExcerptBytes,
                                   ExchangeKind::InlineAuthToken,
-                                  cancelCheck(runId)};
+                                  cancelCheck(runId),
+                                  agentOutput};
         auto authenticator = selectAuthenticator(actor, std::move(authDeps));
         if (!authenticator) {
             return ReqloomError{ErrorCode::SessionRefreshFailed,
@@ -1648,8 +1753,8 @@ struct ExecutionEngine::Impl {
             if (!reason) {
                 reason = unsetFieldReason(ctx, safeVariable);
             }
-            if (!reason && secretStoreUnavailable) {
-                reason = keychainUnavailableReason(safeVariable);
+            if (!reason) {
+                reason = unresolvedSecretReason(safeVariable, rctx, secretSources);
             }
             return std::string{"Variable: {{"} + std::string{safeVariable} +
                    "}}\nLocation: " + std::string{location} + "\nCause: " +
@@ -1941,7 +2046,11 @@ struct ExecutionEngine::Impl {
                 return result;
             }
             if (auto authError = ensureSession(actorIt->second, ctx, rctx, runId, stepIndex)) {
-                failPreparation(ErrorCode::SessionRefreshFailed, std::move(authError->detail));
+                // A missing secret keeps its own code; every other sign-in failure is an auth one.
+                failPreparation(authError->code == ErrorCode::VarUnresolved
+                                    ? ErrorCode::VarUnresolved
+                                    : ErrorCode::SessionRefreshFailed,
+                                std::move(authError->detail));
                 return result;
             }
         }
@@ -2010,6 +2119,9 @@ struct ExecutionEngine::Impl {
                 return result;
             }
 
+            if (agentOutput) {
+                registerSentCredentials(req, ctx.secretRegistry());
+            }
             emit(RequestPrepared{runId,
                                  stepIndex,
                                  req.method,
@@ -2023,6 +2135,7 @@ struct ExecutionEngine::Impl {
             auto resp = deps.http->send(req);
             if (resp) {
                 httpResp = std::move(*resp);
+                keepResponse(result, *httpResp, ctx);
                 emit(ResponseReceived{runId,
                                       stepIndex,
                                       httpResp->status,
@@ -2132,6 +2245,9 @@ struct ExecutionEngine::Impl {
                         return result;
                     }
 
+                    if (agentOutput) {
+                        registerSentCredentials(req, ctx.secretRegistry());
+                    }
                     emit(RequestPrepared{runId,
                                          stepIndex,
                                          req.method,
@@ -2147,6 +2263,7 @@ struct ExecutionEngine::Impl {
                     result.attempts = attemptCount;
                     if (retryResp) {
                         httpResp = std::move(*retryResp);
+                        keepResponse(result, *httpResp, ctx);
                         emit(ResponseReceived{runId,
                                               stepIndex,
                                               httpResp->status,
@@ -2191,11 +2308,12 @@ struct ExecutionEngine::Impl {
             result.detail =
                 "HTTP " + std::to_string(httpResp->status) + " (expected " + expected + ")";
             const auto& show = op.failureMessageShow.value_or(project.failureMessageShow);
+            const auto profile = agentOutput ? MaskProfile::Agent : MaskProfile::Display;
             auto excerpt = selectedBodyExcerpt(
-                httpResp->body, show, &ctx.secretRegistry(), failureExcerptBytes);
+                httpResp->body, show, &ctx.secretRegistry(), failureExcerptBytes, profile);
             if (!excerpt) {
-                excerpt =
-                    safeBodyExcerpt(httpResp->body, &ctx.secretRegistry(), failureExcerptBytes);
+                excerpt = safeBodyExcerpt(
+                    httpResp->body, &ctx.secretRegistry(), failureExcerptBytes, profile);
             }
             if (excerpt) {
                 result.detail += " — " + *excerpt;
@@ -2286,8 +2404,11 @@ struct ExecutionEngine::Impl {
                 // them.
                 for (const auto& ext : scalarExts) {
                     const auto found = detailed->values.find(ext.variableName);
-                    if (found != detailed->values.end() && isSecretExtraction(ext)) {
+                    if (found != detailed->values.end() && isCredentialExtraction(op, ext)) {
                         ctx.secretRegistry().add(found->second);
+                    }
+                    if (found != detailed->values.end()) {
+                        keepExtracted(result, op, ext, ext.variableName, found->second);
                     }
                 }
 
@@ -2384,10 +2505,17 @@ struct ExecutionEngine::Impl {
                 std::optional<std::string> emptyList;
                 for (const auto& ext : listExts) {
                     auto values = extractValues(httpResp->body, ext.sourcePath);
-                    if (isSecretExtraction(ext)) {
+                    if (isCredentialExtraction(op, ext)) {
                         for (const auto& value : values) {
                             ctx.secretRegistry().add(value);
                         }
+                    }
+                    for (std::size_t k = 0; k < std::min(values.size(), kExtractedListItems); ++k) {
+                        keepExtracted(result,
+                                      op,
+                                      ext,
+                                      ext.variableName + "[" + std::to_string(k) + "]",
+                                      values[k]);
                     }
                     count = std::max(count, values.size());
                     if (values.empty() && !emptyList) {
@@ -2548,6 +2676,16 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     impl_->cancelledRunId.store(0, std::memory_order_release);
     impl_->producedThisRun.clear();
     impl_->captureResponseBodies = options.captureResponseBodies;
+    impl_->recordResponses = options.recordResponses;
+    // Responses on StepResult are agent-facing, so recording them turns agent masking on.
+    impl_->agentOutput = options.agentOutput || options.recordResponses;
+    impl_->retainedBodyBytes = 0;
+    impl_->responseBodyBytes = std::min(options.responseBodyBytes, kMaxFailureExcerptBytes);
+    impl_->credentialRefs =
+        impl_->agentOutput ? credentialReferences(project) : std::set<std::string>{};
+    if (impl_->agentOutput) {
+        ctx.secretRegistry().enableJsonEscapedSpellings();
+    }
     impl_->failureExcerptBytes = std::min(options.failureExcerptBytes, kMaxFailureExcerptBytes);
     const auto runStart = std::chrono::steady_clock::now();
     impl_->activeSecrets = &ctx.secretRegistry();
@@ -2599,18 +2737,45 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
         emitRunEnded(RunOutcome::Failed);
         return std::unexpected(std::move(error));
     };
-    impl_->secretStoreUnavailable =
-        impl_->deps.secrets && !options.dryRun && !impl_->deps.secrets->available();
-    if (impl_->deps.secrets && !options.dryRun) {
+    // `REQLOOM_SECRET_<NAME>` first (FR-11.5): a hit needs no keychain, project id or trust
+    // check. Only the names left go to the keychain, and only when it exists.
+    impl_->secretSources = SecretSourceState{};
+    impl_->secretSources.environmentEnabled = options.secretsFromEnvironment;
+    if (!options.dryRun) {
         auto secretNames = DependencyResolver::collectSecretReferences(project);
         appendHookScriptSecrets(project, chain, secretNames);
+        if (options.secretsFromEnvironment) {
+            // `api_key` and `API_KEY` would silently get one value: refuse instead.
+            if (auto shared = sharedEnvironmentVariable(secretNames)) {
+                return failBeforeFirstStep(
+                    ReqloomError{ErrorCode::SchemaInvalid,
+                                 ErrorClass::Schema,
+                                 "secrets " + *shared +
+                                     ", so both would get the same value; rename one of them"});
+            }
+        }
+        std::vector<std::string> keychainNames{};
+        for (const auto& name : secretNames) {
+            if (!options.secretsFromEnvironment) {
+                keychainNames.push_back(name);
+            } else if (auto value = readSecretFromEnvironment(name, impl_->secretSources)) {
+                rctx.secrets[name] = std::move(*value);
+            } else {
+                keychainNames.push_back(name);
+            }
+        }
+        impl_->secretSources.backendAvailable =
+            impl_->deps.secrets && impl_->deps.secrets->available();
+        if (!impl_->secretSources.backendAvailable) {
+            keychainNames.clear();
+        }
         // A copied or hostile project may claim another project's id; refuse before any read.
-        if (!secretNames.empty()) {
+        if (!keychainNames.empty()) {
             if (auto trusted = checkProjectFolder(impl_->deps.trust.get(), project); !trusted) {
                 return failBeforeFirstStep(trusted.error());
             }
         }
-        for (const auto& name : secretNames) {
+        for (const auto& name : keychainNames) {
             auto key = projectSecretKey(project, name);
             if (!key) {
                 return failBeforeFirstStep(key.error());
@@ -2632,10 +2797,19 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
                 return cancelled;
             }
             if (!value) {
+                const auto variable =
+                    options.secretsFromEnvironment ? secretEnvironmentVariable(name) : std::nullopt;
                 return failBeforeFirstStep(ReqloomError{
                     ErrorCode::SecretAccessFailed,
                     ErrorClass::Auth,
-                    "secret store: failed to read '" + name + "': " + value.error().detail});
+                    "secret store: failed to read '" + name + "': " + value.error().detail +
+                        (variable ? " To supply it without the keychain, set " + *variable + "."
+                                  : std::string{})});
+            }
+            // A read can find out only while reading that no keychain is reachable (no session
+            // bus, no event loop); the run then says so. Per read, so the next run tries again.
+            if (impl_->deps.secrets->lastReadUnreachable()) {
+                impl_->secretSources.backendAvailable = false;
             }
             if (value->has_value()) {
                 rctx.secrets[name] = std::move(**value);
@@ -2771,7 +2945,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
                     if (iter.status == StepResult::Status::Cancelled) {
                         anyCancelled = true;
                     }
-                    ctx.record(iter);
+                    ctx.record(withoutEvidence(iter));
                     result.steps.push_back(std::move(iter));
                     // A cancel always stops the fan-out. A failure stops it only
                     // when continue-on-error is off.
@@ -2820,7 +2994,7 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
                 result.steps.push_back(std::move(row));
             }
             result.steps.push_back(stepResult);
-            ctx.record(stepResult);
+            ctx.record(withoutEvidence(stepResult));
         }
 
         if (stepResult.status == StepResult::Status::Failed) {
@@ -2858,6 +3032,11 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
         }
     }
 
+    // Mask with every secret the run learned (credentials sent in later steps included), then cut.
+    if (impl_->agentOutput) {
+        finalizeStepEvidence(
+            result.steps, ctx, options.recordResponses ? options.responseBodyBytes : 0);
+    }
     emitRunEnded(result.outcome);
     return result;
 }

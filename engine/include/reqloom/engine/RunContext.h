@@ -8,6 +8,7 @@
 #include <reqloom/engine/Transport.h>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -79,6 +80,25 @@ struct AssertionResult {
     std::string detail;
 };
 
+/// What the API returned for one step row, kept for agent-facing output when the run asked for it
+/// (`RunOptions::recordResponses`). The body is content from the system under test: untrusted
+/// data, never Reqloom's own words. When `run()` returns, it is masked with every secret the run
+/// learned (`maskCapturedBody`), then cut to `limitBytes`.
+struct StepResponse {
+    std::string body;           ///< Masked, then at most `limitBytes` (cut on a UTF-8 boundary).
+    std::size_t totalBytes{0};  ///< Size of the body as received.
+    std::size_t limitBytes{0};  ///< The cut that applied (`RunOptions::responseBodyBytes`).
+    bool truncated{false};      ///< True when the masked body did not fit in `limitBytes`.
+    bool binary{false};         ///< Not text, so withheld: `body` is empty.
+};
+
+/// One value a step extracted, for agent-facing output: masked, then shortened.
+struct ExtractedValue {
+    std::string name;
+    std::string value;
+    bool truncated{false};
+};
+
 /// One step in a chain.
 struct StepResult {
     enum class Status : std::uint8_t {
@@ -109,6 +129,17 @@ struct StepResult {
 
     /// Results of the operation's declared assertions, in declaration order.
     std::vector<AssertionResult> assertions;
+
+    /// HTTP status of the last response this row's own request received (retries included);
+    /// empty when no response arrived. Sign-in exchanges are not counted.
+    std::optional<int> httpStatus;
+
+    /// The response body, with `RunOptions::recordResponses`; see `StepResponse`.
+    std::optional<StepResponse> response;
+
+    /// Values this row extracted, with `RunOptions::recordResponses`, in declaration order (a
+    /// list extraction gives `name[0]`, `name[1]`, …). Masked like the body.
+    std::vector<ExtractedValue> extracted;
 };
 
 struct ExtractionTrace {

@@ -56,6 +56,7 @@ constexpr std::array kOptions{
     OptionSpec{.name = "--output", .takesValue = true},
     OptionSpec{.name = "--quiet"},
     OptionSpec{.name = "--failure-body-size", .takesValue = true},
+    OptionSpec{.name = "--response-body-size", .takesValue = true},
 };
 
 /// Most operation names listed when the target does not exist.
@@ -70,6 +71,7 @@ struct RunArgs {
     fs::path outputPath;  ///< empty = stdout
     bool quiet{false};
     std::optional<std::size_t> failureExcerptBytes;
+    std::optional<std::size_t> responseBodyBytes;
 };
 
 void printUsage(std::FILE* stream) {
@@ -90,6 +92,10 @@ void printUsage(std::FILE* stream) {
         "                       Most of the response body quoted in a failure message,\n"
         "                       as bytes or with KiB/MiB (default 4KiB; 0 = none;\n"
         "                       capped at 1MiB). Secrets are masked at any size.\n"
+        "  --response-body-size <size>\n"
+        "                       With --format json, most of each step's response body\n"
+        "                       kept in its `response` field (default 2KiB; 0 = none;\n"
+        "                       capped at 1MiB). Masked before it is cut; never unmasked.\n"
         "With --format json or junit, stdout (or --output) receives exactly one document\n"
         "for every outcome, errors before the first step included; diagnostics go to stderr.\n"
         "Exit codes:\n"
@@ -130,6 +136,31 @@ void printUsage(std::FILE* stream) {
     return {};
 }
 
+/// `flag`'s byte size into `target`, or an error naming the flag.
+[[nodiscard]] std::expected<void, std::string> parseSize(const ParsedArguments& parsed,
+                                                         const std::string_view flag,
+                                                         std::optional<std::size_t>& target) {
+    if (const auto size = parsed.value(flag)) {
+        target = parseByteSizeArgument(*size);
+        if (!target) {
+            return std::unexpected(std::format(
+                "{} must be a byte count or a size in KiB or MiB such as 16KiB, got '{}'",
+                flag,
+                *size));
+        }
+    }
+    return {};
+}
+
+[[nodiscard]] std::expected<void, std::string> parseSizes(const ParsedArguments& parsed,
+                                                          RunArgs& out) {
+    if (auto failure = parseSize(parsed, "--failure-body-size", out.failureExcerptBytes);
+        !failure) {
+        return failure;
+    }
+    return parseSize(parsed, "--response-body-size", out.responseBodyBytes);
+}
+
 [[nodiscard]] std::expected<RunArgs, std::string> toRunArgs(const ParsedArguments& parsed) {
     if (parsed.positionals.empty()) {
         return std::unexpected(std::string{"missing <operation>"});
@@ -156,14 +187,8 @@ void printUsage(std::FILE* stream) {
     if (const auto output = parsed.value("--output")) {
         out.outputPath = pathFromUtf8(*output);
     }
-    if (const auto size = parsed.value("--failure-body-size")) {
-        out.failureExcerptBytes = parseByteSizeArgument(*size);
-        if (!out.failureExcerptBytes) {
-            return std::unexpected(std::format(
-                "--failure-body-size must be a byte count or a size in KiB or MiB such as "
-                "16KiB, got '{}'",
-                *size));
-        }
+    if (auto sizes = parseSizes(parsed, out); !sizes) {
+        return std::unexpected(sizes.error());
     }
     // Machine-readable formats imply --quiet: stdout carries a single document.
     out.quiet = parsed.has("--quiet") || out.format != Format::Text;
@@ -306,6 +331,13 @@ struct Report {
     if (cfg.failureExcerptBytes) {
         options.failureExcerptBytes = *cfg.failureExcerptBytes;
     }
+    // Every CLI format can reach an agent: agent masking always, secrets from
+    // REQLOOM_SECRET_<NAME> before the keychain. Only the JSON document has a field for the
+    // response; the engine masks it before returning.
+    options.agentOutput = true;
+    options.secretsFromEnvironment = true;
+    options.recordResponses = cfg.format == Format::Json;
+    options.responseBodyBytes = cfg.responseBodyBytes.value_or(ce::kDefaultResponseBodyBytes);
     return options;
 }
 

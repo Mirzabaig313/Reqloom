@@ -16,6 +16,34 @@ namespace reqloom::engine {
 
 namespace {
 
+/// `value` as it appears inside a JSON string: `"`, `\` and control bytes escaped.
+[[nodiscard]] std::string jsonEscaped(std::string_view value) {
+    std::string out{};
+    out.reserve(value.size());
+    for (const char c : value) {
+        switch (c) {
+            case '"':
+                out += "\\\"";
+                break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            default:
+                out.push_back(c);
+        }
+    }
+    return out;
+}
+
 // Words that are long enough to register but appear in ordinary text; a
 // "secret" equal to one of them would shred every event.
 constexpr std::array<std::string_view, 4> kCommonWords = {
@@ -95,6 +123,26 @@ void SecretRegistry::add(std::string_view value) {
     addPatternLocked(stripPadding(base64Url(b64)));
     addPatternLocked(stripPadding(b64));
     addPatternLocked(std::move(b64));
+    if (jsonEscaped_) {
+        addPatternLocked(jsonEscaped(value));
+    }
+}
+
+std::size_t SecretRegistry::longestPattern() const {
+    const std::shared_lock lock(mutex_);
+    return longestPattern_;
+}
+
+void SecretRegistry::enableJsonEscapedSpellings() {
+    const std::unique_lock lock(mutex_);
+    if (jsonEscaped_) {
+        return;
+    }
+    jsonEscaped_ = true;
+    const std::vector<std::string> known{patterns_.begin(), patterns_.end()};
+    for (const auto& pattern : known) {
+        addPatternLocked(jsonEscaped(pattern));
+    }
 }
 
 void SecretRegistry::addPatternLocked(std::string pattern) {
@@ -107,6 +155,7 @@ void SecretRegistry::addPatternLocked(std::string pattern) {
     bucket.insert(pos, pattern);
     shortestPattern_ =
         shortestPattern_ == 0 ? pattern.size() : std::min(shortestPattern_, pattern.size());
+    longestPattern_ = std::max(longestPattern_, pattern.size());
     patterns_.insert(std::move(pattern));
 }
 

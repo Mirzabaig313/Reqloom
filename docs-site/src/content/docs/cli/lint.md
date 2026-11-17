@@ -66,7 +66,9 @@ LINT OK — 1 actors, 1 resources, 1 operations. No errors.
 | `imported file … is not under actors/, resources/ or environments/` | The file is ignored |
 | `file is empty; ignored` | An imported file has no content |
 | `unknown _provenance source '…'` | Importer metadata this build doesn't know; kept as written |
-| `project uses secrets but has no id` | A real run will fail; the line suggests an id |
+| `project uses secrets but has no id` | Its secrets cannot be read from the keychain (the CLI still reads `REQLOOM_SECRET_<NAME>` variables); the line suggests an id |
+| `secrets '…' and '…' both map to the environment variable …` | Two names differing only in case share one `REQLOOM_SECRET_` variable; a CLI run with it set fails. Rename one |
+| `secret '…' cannot be supplied through an environment variable` | The name has a character other than a letter, digit or `_`, so no [`REQLOOM_SECRET_<NAME>`](/schema/secrets-and-transport/#on-ci-and-in-agent-sandboxes-environment-variables) variable can carry it; on CI it has no source. The line suggests a name |
 
 Warnings are printed only by `reqloom lint`, and only when the project loads; a
 load error is printed alone. `reqloom run` and the desktop app don't show them.

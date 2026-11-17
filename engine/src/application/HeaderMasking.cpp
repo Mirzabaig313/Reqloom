@@ -40,6 +40,18 @@ constexpr std::array<std::string_view, 5> kSensitiveSubstrings = {
     return out;
 }
 
+/// Lower case with `-` and `_` removed.
+[[nodiscard]] std::string flatLower(std::string_view name) {
+    std::string flat;
+    flat.reserve(name.size());
+    for (const char c : name) {
+        if (c != '-' && c != '_') {
+            flat.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+    }
+    return flat;
+}
+
 [[nodiscard]] bool matchesSubstringPolicy(std::string_view name) {
     const auto lower = toLowerCopy(name);
     std::string flat;
@@ -70,6 +82,51 @@ bool isSensitiveHeader(std::string_view name) noexcept {
     } catch (...) {
         return true;
     }
+}
+
+bool isCredentialName(std::string_view name) noexcept {
+    static constexpr std::array<std::string_view, 13> kNeedles{"authorization",
+                                                               "cookie",
+                                                               "token",
+                                                               "secret",
+                                                               "password",
+                                                               "passwd",
+                                                               "apikey",
+                                                               "accesskey",
+                                                               "privatekey",
+                                                               "credential",
+                                                               "session",
+                                                               "bearer",
+                                                               "jwt"};
+    try {
+        const auto flat = flatLower(name);
+        return flat == "auth" || flat == "key" ||
+               std::ranges::any_of(kNeedles, [&flat](const std::string_view needle) {
+                   return flat.find(needle) != std::string::npos;
+               });
+    } catch (...) {
+        return true;
+    }
+}
+
+bool isCredentialHeader(std::string_view name) noexcept {
+    return isSensitiveHeader(name) || isCredentialName(name);
+}
+
+bool isCredentialBodyField(std::string_view name) noexcept {
+    try {
+        const auto flat = flatLower(name);
+        if (flat == "key" || flat == "auth" || flat.ends_with("type") || flat.ends_with("hint")) {
+            return false;
+        }
+        return isCredentialName(name);
+    } catch (...) {
+        return true;
+    }
+}
+
+bool isAgentSensitiveName(std::string_view name) noexcept {
+    return isSensitiveHeader(name) || isCredentialName(name);
 }
 
 bool isSensitiveName(std::string_view name) noexcept {

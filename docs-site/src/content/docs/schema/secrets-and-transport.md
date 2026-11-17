@@ -127,31 +127,94 @@ security add-generic-password -s "com.reqloom.secrets" \
 Omit the value after `-w` and it prompts, keeping it out of your shell history.
 :::
 
+### On CI and in agent sandboxes: environment variables
+
+A CI runner or a cloud sandbox for an AI agent usually has no OS keychain. There,
+supply each secret to the `reqloom` CLI as an environment variable named
+`REQLOOM_SECRET_` followed by the secret's name in upper case:
+
+| Reference | Environment variable |
+| --- | --- |
+| `{{secret.ADMIN_PASSWORD}}` | `REQLOOM_SECRET_ADMIN_PASSWORD` |
+| `{{secret.stripe_key}}` | `REQLOOM_SECRET_STRIPE_KEY` |
+
+```yaml title=".github/workflows/api-tests.yml"
+- name: Run API workflow tests
+  env:
+    REQLOOM_SECRET_ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    REQLOOM_SECRET_VENDOR_PASSWORD: ${{ secrets.VENDOR_PASSWORD }}
+  run: reqloom run refund.approve --project api-tests --format junit --output results.xml
+```
+
+In a CLI run, a `{{secret.NAME}}` is looked up in this order, and the first hit
+wins:
+
+1. The environment variable `REQLOOM_SECRET_<NAME>`.
+2. The OS keychain.
+3. Neither: the step that needs it fails with `E_VAR_UNRESOLVED`, naming the
+   secret, before anything is sent.
+
+The details:
+
+- **The desktop app never reads these variables.** It uses the keychain only, even
+  when it was started from a terminal that has `REQLOOM_SECRET_*` set, so the
+  environment can never override a value saved in Manage Secrets.
+- **Only the prefixed name is read.** A plain `ADMIN_PASSWORD` variable is never
+  consulted, so a project cannot pick up `PATH`, `HOME` or another variable that
+  happens to share a secret's name.
+- **The name is upper-cased.** `api_key` is read from `REQLOOM_SECRET_API_KEY`;
+  `REQLOOM_SECRET_api_key` is never read. Only names made of ASCII letters,
+  digits and `_` map to a variable. A secret such as `api-key` can come only from
+  the keychain; `reqloom lint` warns about it and suggests a name (`api_key`).
+- **Two names cannot share a variable.** `api_key` and `API_KEY` both map to
+  `REQLOOM_SECRET_API_KEY`. `reqloom lint` warns about the pair, and a CLI run
+  with that variable set fails before sending anything, with `E_SCHEMA_INVALID`
+  naming both secrets, rather than give both the same value.
+- **An empty variable counts as unset.** CI systems often turn a missing secret
+  into an empty string; the failure then says `REQLOOM_SECRET_<NAME> is set but
+  empty` instead of sending an empty credential.
+- **A value from the environment never touches the keychain.** That secret causes
+  no keychain read and no unlock prompt. When every secret the project uses comes
+  from the environment, the keychain is not opened at all and the project's `id:`
+  and folder are not checked, so a project without an `id:` can use secrets this
+  way.
+- **Masked like any secret.** The value is replaced by `<redacted>` in every
+  output, exactly as a keychain value is.
+
 ### How they're loaded
 
 Only the secrets your schema actually references are read, and only at the start
 of a real run. Reqloom scans your operations, environments, and actor auth,
-collects the distinct `secret.X` names, and requests exactly those. There is no
-bulk keychain dump.
+collects the distinct `secret.X` names, takes those it finds in
+`REQLOOM_SECRET_<NAME>` variables, and requests exactly the rest from the
+keychain. There is no bulk keychain dump.
 
 Two consequences worth knowing:
 
 - **Dry runs never touch the keychain.** `reqloom lint` and the desktop's chain
   preview skip secret loading entirely, so they never trigger an unlock prompt.
   Unresolved `{{secret.X}}` in a preview is expected, not a bug.
-- **A missing secret is not a keychain error.** If the keychain has no entry for
-  the name, the reference stays unresolved: an operation that uses it fails with
-  `E_VAR_UNRESOLVED` before sending, and a login that uses it is sent with the
-  reference text and usually gets a 401. Only a *backend* failure (locked
-  keychain, denied access, no keychain service) or a folder conflict raises
-  `E_SECRET_ACCESS_FAILED`.
-- **A build with no OS keychain backend reads no secrets.** Every
-  `{{secret.X}}` is then missing, and the failure says why: `no OS keychain is
-  available on this machine; {{secret.X}} cannot be read. Use a Reqloom build
-  with keychain support, or pass the value through an allowed environment
-  variable ({{$.env.NAME}}) instead.` Saving or deleting a secret in such a build
-  fails with `E_SECRET_ACCESS_FAILED` (`secret not saved: this build has no OS
-  keychain backend. …`) rather than appearing to succeed.
+- **A missing secret is not a keychain error.** If neither the environment nor
+  the keychain has the name, the reference stays unresolved: the step that uses
+  it fails with `E_VAR_UNRESOLVED` before sending — a login included, so it never
+  reaches the API as a confusing 401. The message names the variable to set:
+  `the secret 'ADMIN_PASSWORD' has no value. Set REQLOOM_SECRET_ADMIN_PASSWORD,
+  or store it with Manage Secrets in the desktop app.` (the desktop app's message
+  points at Manage Secrets only). Only a *backend* failure (locked keychain,
+  denied access) or a folder conflict raises `E_SECRET_ACCESS_FAILED`; in the CLI
+  its message also names the variable that would supply the secret without the
+  keychain.
+- **No secret backend is never silent.** When there is no keychain to read — a
+  build without keychain support, or a machine where the keychain service isn't
+  running, such as a headless Linux box — the first missing secret says so. In
+  the CLI: `no secret backend available; set REQLOOM_SECRET_ADMIN_PASSWORD or run
+  on a desktop session with a keychain.` In the desktop app, which reads no
+  environment: `no secret backend available; {{secret.ADMIN_PASSWORD}} cannot be
+  read here. Run on a desktop session with a keychain, or run the reqloom CLI with
+  REQLOOM_SECRET_ADMIN_PASSWORD set.` A keychain that could not be reached is
+  tried again on the next run. Saving or deleting a secret in a build with no
+  keychain backend fails with `E_SECRET_ACCESS_FAILED` (`secret not saved: this
+  build has no OS keychain backend. …`) rather than appearing to succeed.
 
 ### Masking
 
@@ -168,6 +231,38 @@ one exception is a captured response body, below. Masking works two ways:
   header, extracted variable, or response-body field whose name contains
   `token`, `secret`, `password`, `key`, or `auth`, are masked. This covers tokens
   in failure messages, including a failed login's response.
+- **By use, in CLI output only.** The `reqloom` CLI can be read by an AI agent,
+  so it masks more than the desktop app. The desktop app and run history show
+  exactly what they always did; everything below applies only to CLI output.
+  - *Field names.* Besides the names above, any response field or extracted
+    variable whose name contains `authorization`, `cookie`, `token`, `secret`,
+    `password`, `passwd`, `apikey`, `accesskey`, `privatekey`, `credential`,
+    `session`, `bearer` or `jwt`, or is exactly `auth` or `key` — so `jwt` and
+    `session_id` are masked even when the run never sends them.
+  - *Extractions the project sends as credentials.* An extraction is masked from
+    the moment it is extracted when any template in the project places it in a
+    credential position: a header the display policy masks or that has a
+    credential name (`Authorization`, `X-Auth-Key`,
+    `Ocp-Apim-Subscription-Key`, `Authentication`, …), a query parameter with a
+    credential name (including `key` and `auth`), a request-body field with a
+    credential name (but not one named exactly `key` or `auth`, or ending in
+    `type` or `hint`, such as `{"Key": "Environment"}` or `token_type_hint`), inline
+    auth, or an actor's login, refresh or injected headers.
+  - *Values actually sent* in those positions (the token after `Bearer`, the user
+    and password inside `Basic`), as a backstop for values a hook sets.
+  - *Cookies.* Every cookie value a request sends or a response sets with
+    `Set-Cookie`, whatever its name: no name reliably tells a session cookie
+    from a preference, and missing a session cookie would leak it.
+  - *Escaped secrets.* A secret containing `"` or `\` is still found inside a JSON
+    response, which carries it escaped.
+  - *Keys stay.* Only values are replaced; a JSON key is never rewritten.
+
+  So a session id extracted as `sid` from `$.data.sid` and sent as
+  `Authorization: Bearer {{session.sid}}` never appears in `reqloom run` output,
+  neither in the response it came from nor in its `extracted` entry, while
+  `keyword`, `author` or a `Key`/`Value` tag keep their values readable.
+
+Values shorter than 6 characters are not masked by value.
 
 :::caution[Captured bodies are stored as received]
 With **Capture bodies** on in the desktop app, a captured response body is shown,
@@ -175,8 +270,9 @@ and saved in run history, exactly as the API sent it — tokens included, and th
 includes a login's response. Headers, URLs, failure messages and extracted
 values stay masked. The run history file then holds those tokens in clear text.
 The desktop app turns Capture bodies **on** when it starts; untick it before
-running against an API whose responses carry real credentials. The CLI never
-captures bodies.
+running against an API whose responses carry real credentials. The CLI shows
+response bodies only in `reqloom run --format json`, and there they are always
+masked with the CLI rules above; no flag turns that off.
 :::
 
 ### Failure messages

@@ -8,6 +8,7 @@
 add_library(reqloom-cli-renderers OBJECT
     src/output/TextRenderer.cpp
     src/output/JsonRenderer.cpp
+    src/output/NextAction.cpp
     src/output/JUnitRenderer.cpp
     src/output/TextEncoding.cpp
 )

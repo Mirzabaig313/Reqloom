@@ -27,9 +27,10 @@ namespace {
 
 using ordered_json = nlohmann::ordered_json;
 
-/// Sensitive-name policy for body fields: the header policy applied to the field name.
-[[nodiscard]] bool isSensitiveField(std::string_view name) noexcept {
-    return isSensitiveHeader(name);
+/// Sensitive-name policy for body fields: the header policy applied to the field name, widened
+/// for agent-facing output (`jwt`, `session_id`).
+[[nodiscard]] bool isSensitiveField(std::string_view name, const MaskProfile profile) noexcept {
+    return profile == MaskProfile::Agent ? isAgentSensitiveName(name) : isSensitiveHeader(name);
 }
 
 /// Text that can be quoted in a detail: valid UTF-8 with no control bytes
@@ -86,13 +87,14 @@ using ordered_json = nlohmann::ordered_json;
 /// marker and return the index of the next '<'; else nullopt.
 [[nodiscard]] std::optional<std::size_t> redactXmlElement(std::string_view s,
                                                           const std::size_t open,
+                                                          const MaskProfile profile,
                                                           std::string& out) {
     std::size_t j = open + 1;
     while (j < s.size() && (isKeyChar(s[j]) || s[j] == ':')) {
         ++j;
     }
     if (j == open + 1 || j >= s.size() || s[j] != '>' ||
-        !isSensitiveField(s.substr(open + 1, j - open - 1))) {
+        !isSensitiveField(s.substr(open + 1, j - open - 1), profile)) {
         return std::nullopt;
     }
     const auto close = s.find('<', j + 1);
@@ -142,14 +144,15 @@ using ordered_json = nlohmann::ordered_json;
 
 /// Conservative scan of free text for `key=value`, `key: value` and
 /// `<key>value</key>` with a sensitive key; such values become the marker.
-[[nodiscard]] std::string redactKeyValueText(std::string_view s) {
+[[nodiscard]] std::string redactKeyValueText(std::string_view s,
+                                             const MaskProfile profile = MaskProfile::Display) {
     std::string out{};
     out.reserve(s.size());
     std::size_t i{};
     while (i < s.size()) {
         const char c = s[i];
         if (c == '<') {
-            if (const auto next = redactXmlElement(s, i, out)) {
+            if (const auto next = redactXmlElement(s, i, profile, out)) {
                 i = *next;
                 continue;
             }
@@ -172,7 +175,7 @@ using ordered_json = nlohmann::ordered_json;
         while (k < s.size() && isInlineSpace(s[k])) {
             ++k;
         }
-        if (k >= s.size() || (s[k] != '=' && s[k] != ':') || !isSensitiveField(key)) {
+        if (k >= s.size() || (s[k] != '=' && s[k] != ':') || !isSensitiveField(key, profile)) {
             out.append(key);
             i = j;
             continue;
@@ -188,22 +191,26 @@ using ordered_json = nlohmann::ordered_json;
     return out;
 }
 
-void redactJsonNode(ordered_json& node) {
+/// Masks values only, never keys. With a registry (agent profile), each string value is also
+/// value-redacted while still decoded, so a secret holding `"` or `\\` matches before the dump
+/// escapes it.
+void redactJsonNode(ordered_json& node, const MaskProfile profile, const SecretRegistry* registry) {
     if (node.is_object()) {
         for (auto it = node.begin(); it != node.end(); ++it) {
-            if (isSensitiveField(it.key())) {
+            if (isSensitiveField(it.key(), profile)) {
                 it.value() = std::string{kRedactedValueMarker};
             } else {
-                redactJsonNode(it.value());
+                redactJsonNode(it.value(), profile, registry);
             }
         }
     } else if (node.is_array()) {
         for (auto& element : node) {
-            redactJsonNode(element);
+            redactJsonNode(element, profile, registry);
         }
     } else if (node.is_string()) {
         // A message string can itself carry `token=…` text.
-        node = redactKeyValueText(node.get_ref<const std::string&>());
+        auto text = redactKeyValueText(node.get_ref<const std::string&>(), profile);
+        node = registry != nullptr ? registry->redact(text) : std::move(text);
     }
 }
 
@@ -260,47 +267,61 @@ void redactHeaderValues(std::vector<std::pair<std::string, std::string>>& header
 }
 
 /// One selected value as failure text, masked like the default excerpt.
-[[nodiscard]] std::string maskedSelection(std::string_view path, const nlohmann::json& value) {
+[[nodiscard]] std::string maskedSelection(std::string_view path,
+                                          const nlohmann::json& value,
+                                          const MaskProfile profile,
+                                          const SecretRegistry* registry) {
     // Naming a credential field in `show` does not unmask it.
-    if (isSensitiveField(lastFieldName(path))) {
+    if (isSensitiveField(lastFieldName(path), profile)) {
         return std::string{kRedactedValueMarker};
     }
+    const SecretRegistry* leaves = profile == MaskProfile::Agent ? registry : nullptr;
     if (value.is_string()) {
-        return redactKeyValueText(value.get_ref<const std::string&>());
+        auto text = redactKeyValueText(value.get_ref<const std::string&>(), profile);
+        return leaves != nullptr ? leaves->redact(text) : text;
     }
     const auto text = value.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     if (value.is_structured()) {
-        return redactSensitiveBodyFields(text).value_or(std::string{kRedactedValueMarker});
+        return redactSensitiveBodyFields(text, profile, leaves)
+            .value_or(std::string{kRedactedValueMarker});
     }
     return text;
 }
 
 }  // namespace
 
-std::optional<std::string> redactSensitiveBodyFields(std::string_view body) {
+std::optional<std::string> redactSensitiveBodyFields(std::string_view body,
+                                                     const MaskProfile profile,
+                                                     const SecretRegistry* registry) {
     if (!isSafeText(body)) {
         return std::nullopt;
     }
-    if (looksLikeJson(body)) {
+    // The JSON walk and dump recurse once per level: a body nested past the limit gets the text
+    // scan instead, so a hostile response cannot overflow the stack.
+    if (looksLikeJson(body) && !jsonNestingExceeds(body)) {
         auto doc = ordered_json::parse(body, nullptr, /*allow_exceptions=*/false);
         if (!doc.is_discarded()) {
-            redactJsonNode(doc);
+            redactJsonNode(doc, profile, registry);
             return doc.dump(-1, ' ', false, ordered_json::error_handler_t::replace);
         }
     }
-    return redactKeyValueText(body);
+    auto text = redactKeyValueText(body, profile);
+    return registry != nullptr ? registry->redact(text) : text;
 }
 
 std::optional<std::string> safeBodyExcerpt(std::string_view body,
                                            const SecretRegistry* registry,
-                                           const std::size_t maxBytes) {
+                                           const std::size_t maxBytes,
+                                           const MaskProfile profile) {
     const auto limit = std::min(maxBytes, kMaxFailureExcerptBytes);
     if (body.empty() || limit == 0) {
         return std::nullopt;
     }
+    const bool agent = profile == MaskProfile::Agent;
     std::optional<std::string> fields{};
     try {
-        fields = redactSensitiveBodyFields(body);
+        // The agent profile value-redacts string values before the dump, never keys.
+        fields = redactSensitiveBodyFields(body, profile, agent ? registry : nullptr);
     } catch (...) {
         // Fail closed: a body we could not process is not quoted.
         return std::nullopt;
@@ -310,14 +331,16 @@ std::optional<std::string> safeBodyExcerpt(std::string_view body,
     }
     // Value-redact the whole text before cutting, so a secret straddling
     // the cut cannot leave a recognisable prefix behind.
-    std::string masked = registry != nullptr ? registry->redact(*fields) : std::move(*fields);
+    std::string masked =
+        registry != nullptr && !agent ? registry->redact(*fields) : std::move(*fields);
     return capExcerpt(std::move(masked), limit, body.size());
 }
 
 std::optional<std::string> selectedBodyExcerpt(std::string_view body,
                                                const std::vector<std::string>& paths,
                                                const SecretRegistry* registry,
-                                               const std::size_t maxBytes) {
+                                               const std::size_t maxBytes,
+                                               const MaskProfile profile) {
     const auto limit = std::min(maxBytes, kMaxFailureExcerptBytes);
     if (paths.empty() || limit == 0 || !looksLikeJson(body) || !isSafeText(body) ||
         jsonNestingExceeds(body)) {
@@ -331,7 +354,8 @@ std::optional<std::string> selectedBodyExcerpt(std::string_view body,
     try {
         for (const auto& path : paths) {
             if (const auto* value = walkJsonPath(doc, path)) {
-                text += (text.empty() ? "" : "; ") + path + ": " + maskedSelection(path, *value);
+                text += (text.empty() ? "" : "; ") + path + ": " +
+                        maskedSelection(path, *value, profile, registry);
             }
         }
     } catch (...) {
@@ -350,14 +374,11 @@ std::optional<std::string> selectedBodyExcerpt(std::string_view body,
 std::optional<std::string> maskCapturedBody(std::string_view body, const RunContext& ctx) {
     std::optional<std::string> fields{};
     try {
-        fields = redactSensitiveBodyFields(body);
+        fields = redactSensitiveBodyFields(body, MaskProfile::Agent, &ctx.secretRegistry());
     } catch (...) {
         return std::nullopt;
     }
-    if (!fields) {
-        return std::nullopt;
-    }
-    return ctx.secretRegistry().redact(*fields);
+    return fields;
 }
 
 void redactEvent(RunEvent& event, const SecretRegistry& registry) {

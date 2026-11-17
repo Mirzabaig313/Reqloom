@@ -45,6 +45,10 @@ struct AuthDependencies {
 
     /// Stamped on the flow's requests so a cancelled run stops a sign-in in flight.
     CancelCheck cancel{};
+
+    /// Mirrors `RunOptions::agentOutput`: register sent credentials and mask failure excerpts for
+    /// an agent. Off, sign-in is masked exactly as before.
+    bool agentOutput{false};
 };
 
 class Authenticator {

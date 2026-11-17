@@ -3,11 +3,13 @@
 
 #include "JsonRenderer.h"
 
+#include "NextAction.h"
 #include "StepFormatting.h"
 #include "TextEncoding.h"
 
 #include <reqloom/engine/PublicApi.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <ostream>
@@ -80,6 +82,7 @@ void writeHead(std::ostream& out,
                const Summary& s) {
     out << "{\n";
     out << "  \"schema_version\": " << JsonRenderer::kSchemaVersion << ",\n";
+    out << "  \"contract_version\": " << jsonString(JsonRenderer::kContractVersion) << ",\n";
     out << "  \"run_id\": " << runId << ",\n";
     out << "  \"target\": " << jsonString(target.value) << ",\n";
     out << "  \"environment\": " << jsonString(environment) << ",\n";
@@ -100,7 +103,39 @@ template <typename T>
     return value ? std::to_string(*value) : std::string{"null"};
 }
 
-void writeStep(std::ostream& out, const ce::StepResult& step) {
+void writeExtracted(std::ostream& out, const ce::StepResult& step) {
+    out << "      \"extracted\": [";
+    bool first = true;
+    for (const auto& value : step.extracted) {
+        out << (first ? "" : ",") << "\n        { \"name\": " << jsonString(value.name)
+            << ", \"value\": " << jsonString(value.value)
+            << ", \"truncated\": " << (value.truncated ? "true" : "false") << " }";
+        first = false;
+    }
+    out << (step.extracted.empty() ? "" : "\n      ") << "],\n";
+}
+
+/// The response sits in its own object, marked as content from the system under test, so an
+/// agent can tell it from Reqloom's words (FR-15.4). Already masked and cut by the engine.
+void writeResponse(std::ostream& out, const ce::StepResult& step) {
+    out << "      \"response\": ";
+    if (!step.response) {
+        out << "null,\n";
+        return;
+    }
+    const auto& r = *step.response;
+    out << "{\n";
+    out << "        \"source\": \"system_under_test\",\n";
+    out << "        \"untrusted\": true,\n";
+    out << "        \"body\": " << jsonString(r.body) << ",\n";
+    out << "        \"body_bytes\": " << r.totalBytes << ",\n";
+    out << "        \"limit_bytes\": " << r.limitBytes << ",\n";
+    out << "        \"truncated\": " << (r.truncated ? "true" : "false") << ",\n";
+    out << "        \"binary\": " << (r.binary ? "true" : "false") << "\n";
+    out << "      },\n";
+}
+
+void writeStep(std::ostream& out, const ce::StepResult& step, const ce::OperationId& target) {
     out << "\n    {\n";
     out << "      \"op\": " << jsonString(step.op.value) << ",\n";
     out << "      \"status\": " << jsonString(statusGlyph(step.status)) << ",\n";
@@ -120,8 +155,51 @@ void writeStep(std::ostream& out, const ce::StepResult& step) {
             << ", \"detail\": " << jsonString(a.detail) << " }";
         first = false;
     }
-    out << (step.assertions.empty() ? "" : "\n      ") << "]\n";
+    out << (step.assertions.empty() ? "" : "\n      ") << "],\n";
+    out << "      \"http_status\": " << orNull(step.httpStatus) << ",\n";
+    writeExtracted(out, step);
+    writeResponse(out, step);
+    out << "      \"next_action\": "
+        << (step.status == ce::StepResult::Status::Failed
+                ? jsonString(stepNextAction(step, target.value))
+                : std::string{"null"})
+        << "\n";
     out << "    }";
+}
+
+/// Index of the row that failed the run: the first failed operation row, else the first failed
+/// poll attempt or for_each iteration.
+[[nodiscard]] std::optional<std::size_t> failedStepIndex(const ce::RunResult& result) {
+    std::optional<std::size_t> any{};
+    for (std::size_t i = 0; i < result.steps.size(); ++i) {
+        const auto& step = result.steps[i];
+        if (step.status != ce::StepResult::Status::Failed) {
+            continue;
+        }
+        if (!step.pollAttempt && !step.forEachIndex) {
+            return i;
+        }
+        any = any.value_or(i);
+    }
+    return any;
+}
+
+void writeFailedStep(std::ostream& out,
+                     const ce::OperationId& target,
+                     const ce::RunResult& result) {
+    const auto index = failedStepIndex(result);
+    if (!index) {
+        out << "  \"failed_step\": null,\n";
+        return;
+    }
+    const auto& step = result.steps[*index];
+    out << "  \"failed_step\": {\n";
+    out << "    \"index\": " << *index << ",\n";
+    out << "    \"op\": " << jsonString(step.op.value) << ",\n";
+    out << "    \"error_code\": "
+        << (step.error ? jsonString(ce::toCodeString(*step.error)) : std::string{"null"}) << ",\n";
+    out << "    \"next_action\": " << jsonString(stepNextAction(step, target.value)) << "\n";
+    out << "  },\n";
 }
 
 }  // namespace
@@ -138,11 +216,12 @@ void JsonRenderer::render(const ce::OperationId& target,
               runOutcomeName(result.outcome),
               summarize(result));
     out_ << "  \"error\": null,\n";
+    writeFailedStep(out_, target, result);
     out_ << "  \"steps\": [";
     bool first = true;
     for (const auto& step : result.steps) {
         out_ << (first ? "" : ",");
-        writeStep(out_, step);
+        writeStep(out_, step, target);
         first = false;
     }
     out_ << (result.steps.empty() ? "" : "\n  ") << "]\n";
@@ -158,8 +237,10 @@ void JsonRenderer::renderError(const ce::OperationId& target,
     writeHead(out_, runId, target, environment, kErrorOutcomeName, Summary{});
     out_ << "  \"error\": {\n";
     out_ << "    \"code\": " << jsonString(code) << ",\n";
-    out_ << "    \"detail\": " << jsonString(detail) << "\n";
+    out_ << "    \"detail\": " << jsonString(detail) << ",\n";
+    out_ << "    \"next_action\": " << jsonString(errorNextAction(code)) << "\n";
     out_ << "  },\n";
+    out_ << "  \"failed_step\": null,\n";
     out_ << "  \"steps\": []\n";
     out_ << "}\n";
 }

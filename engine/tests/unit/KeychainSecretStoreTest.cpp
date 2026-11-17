@@ -26,6 +26,7 @@ TEST(KeychainSecretStore, placeholder_build_explains_that_no_backend_exists) {
     const auto written = store.write("p/name", "value-123456");
     ASSERT_FALSE(written.has_value());
     EXPECT_NE(written.error().detail.find("no OS keychain backend"), std::string::npos);
+    EXPECT_NE(written.error().detail.find("REQLOOM_SECRET_"), std::string::npos);
     const auto read = store.read("p/name");
     ASSERT_TRUE(read.has_value());
     EXPECT_FALSE(read->has_value());
@@ -33,5 +34,17 @@ TEST(KeychainSecretStore, placeholder_build_explains_that_no_backend_exists) {
 
 TEST(KeychainSecretStore, available_reports_whether_a_backend_exists) {
     const ce::KeychainSecretStore store;
+    EXPECT_EQ(store.available(), ce::KeychainSecretStore::backendAvailable());
+}
+
+TEST(KeychainSecretStore, read_that_cannot_reach_a_keychain_says_so_for_that_read_only) {
+    // No QCoreApplication here, so no keychain job can run: the read finds nothing and reports
+    // that it could not reach a keychain (FR-11.6). The store stays available: the next read
+    // tries again, so a keyring daemon that starts late is not lost for the whole session.
+    ce::KeychainSecretStore store;
+    const auto read = store.read("reqloom-test/never-stored");
+    ASSERT_TRUE(read.has_value());
+    EXPECT_FALSE(read->has_value());
+    EXPECT_TRUE(store.lastReadUnreachable());
     EXPECT_EQ(store.available(), ce::KeychainSecretStore::backendAvailable());
 }

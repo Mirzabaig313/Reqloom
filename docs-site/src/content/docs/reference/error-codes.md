@@ -104,11 +104,15 @@ quotes the response, with secrets masked and up to 4 KiB by default; see
 | `E_SESSION_REFRESH_FAILED` | An actor's login or token refresh failed, or a request couldn't be signed (such as a SigV4 multipart upload to a service other than S3) | For a login, the detail starts `actor '<id>' could not sign in:` and gives the cause; also raised when the server is unreachable during login |
 | `E_SECRET_ACCESS_FAILED` | The OS keychain couldn't be read, the project's `id:` belongs to a different folder on this machine, or a secret couldn't be saved or removed (including in a build with no keychain backend) | Unlock the keychain or grant access; for a folder conflict, see [each project id belongs to one folder](/schema/secrets-and-transport/#each-project-id-belongs-to-one-folder) |
 
-A *missing* keychain entry is **not** `E_SECRET_ACCESS_FAILED` — the variable is
-left unresolved, so an operation fails with `E_VAR_UNRESOLVED` and a login usually
-gets a 401. Only a backend failure or a folder conflict raises this on a run. In
-a build with no keychain backend every secret is missing, and the
-`E_VAR_UNRESOLVED` detail says `no OS keychain is available on this machine`.
+A *missing* secret is **not** `E_SECRET_ACCESS_FAILED`: when neither
+`REQLOOM_SECRET_<NAME>` nor the keychain has it, the step that needs it — a login
+included — fails with `E_VAR_UNRESOLVED` before sending, and the detail names the
+variable to set. Only a backend failure or a folder conflict raises this on a run.
+With no keychain to read (a build without one, or a machine without a keychain
+service) the `E_VAR_UNRESOLVED` detail starts `no secret backend available` and,
+in the CLI, names the `REQLOOM_SECRET_<NAME>` variable to set (the name in upper
+case). See
+[secrets on CI](/schema/secrets-and-transport/#on-ci-and-in-agent-sandboxes-environment-variables).
 
 ## Extraction & assertions
 

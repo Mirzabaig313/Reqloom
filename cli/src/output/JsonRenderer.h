@@ -17,6 +17,10 @@ public:
     /// Version of the document shape, written as the top-level `schema_version`.
     static constexpr int kSchemaVersion = 1;
 
+    /// Version of the agent contract, `<schema_version>.<minor>`: the minor part grows with each
+    /// additive change (1.1 added the response, extracted values, `next_action`, `failed_step`).
+    static constexpr std::string_view kContractVersion = "1.1";
+
     explicit JsonRenderer(std::ostream& out);
 
     void render(const engine::OperationId& target,

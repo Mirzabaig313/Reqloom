@@ -253,10 +253,11 @@ TEST(SecretLoading, secret_without_a_keychain_says_no_keychain_is_available) {
     EXPECT_TRUE(fakes.http->requests().empty());
     const auto* step = failedStep(*result);
     ASSERT_NE(step, nullptr);
-    const std::string expected =
-        "no OS keychain is available on this machine; {{secret.API_KEY}} cannot be read";
+    // FR-11.6: the cause up front. This engine reads no environment (desktop), so the message
+    // points at a keychain or the CLI rather than offering the variable as a fix here.
+    const std::string expected = "no secret backend available";
     EXPECT_NE(step->detail.find(expected), std::string::npos) << step->detail;
-    EXPECT_NE(step->detail.find("{{$.env.NAME}}"), std::string::npos) << step->detail;
+    EXPECT_NE(step->detail.find("{{secret.API_KEY}}"), std::string::npos) << step->detail;
     ASSERT_EQ(failures.size(), 1U);
     EXPECT_NE(failures.front().find(expected), std::string::npos) << failures.front();
 }

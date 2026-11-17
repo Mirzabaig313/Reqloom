@@ -1,6 +1,7 @@
 // Engine-internal: builds the execution chain for a target operation.
 #pragma once
 
+#include <reqloom/engine/Actor.h>
 #include <reqloom/engine/Dependency.h>
 #include <reqloom/engine/ErrorCodes.h>
 #include <reqloom/engine/ExecutionEngine.h>
@@ -40,6 +41,10 @@ public:
     /// exactly those secrets rather than bulk-dump the keychain.
     [[nodiscard]] static std::vector<std::string> collectSecretReferences(const Project& project);
 };
+
+/// Every template of `actor` that can hold a `{{...}}` reference: auth config, sign-in and
+/// refresh requests, and injected headers. Views into `actor`.
+[[nodiscard]] std::vector<std::string_view> actorReferenceTemplates(const Actor& actor);
 
 /// Check that an actor id, resource id or environment name (`kind`) can be a file stem: not
 /// empty, no leading `.`, no `/`, `\`, `:` or NUL. Used at load (`validate`) and by the writer.

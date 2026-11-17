@@ -134,7 +134,8 @@ new `id:` in `reqloom.yaml` and enter its secrets again. See
 If your build has no keychain backend, a red banner says so. **Set…** and
 **Clear** then fail with an error (`secret not saved: this build has no OS
 keychain backend. …`) instead of appearing to work, and a run that needs a secret
-says that no OS keychain is available.
+says that no secret backend is available. The desktop app never reads
+`REQLOOM_SECRET_<NAME>` environment variables; only the `reqloom` CLI does.
 
 ## Environments
 

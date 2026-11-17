@@ -845,6 +845,10 @@ std::expected<void, ReqloomError> checkEntityFileStem(std::string_view kind,
                     name)});
 }
 
+std::vector<std::string_view> actorReferenceTemplates(const Actor& actor) {
+    return actorTemplates(actor);
+}
+
 std::vector<std::string> DependencyResolver::collectSecretReferences(const Project& project) {
     std::set<std::string> names;
 

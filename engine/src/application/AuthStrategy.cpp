@@ -4,6 +4,7 @@
 #include "HeaderMasking.h"
 #include "JsonExtraction.h"
 #include "SecretRedaction.h"
+#include "StepEvidence.h"
 
 #include "../domain/Codecs.h"
 #include "../domain/JsonBodyTemplate.h"
@@ -120,6 +121,9 @@ public:
                 }
             }
 
+            if (deps_.agentOutput) {
+                registerSentCredentials(req, ctx.secretRegistry());
+            }
             if (deps_.emit) {
                 // runId/stepIndex are the parent step's so the timeline groups the auth request
                 // under its op.
@@ -160,8 +164,11 @@ public:
             cookies::absorbSetCookies(response->headers, actor.id, ctx, req.url);
 
             if (step.expectStatus && response->status != *step.expectStatus) {
-                const auto excerpt = safeBodyExcerpt(
-                    response->body, &ctx.secretRegistry(), deps_.failureExcerptBytes);
+                const auto excerpt =
+                    safeBodyExcerpt(response->body,
+                                    &ctx.secretRegistry(),
+                                    deps_.failureExcerptBytes,
+                                    deps_.agentOutput ? MaskProfile::Agent : MaskProfile::Display);
                 return std::unexpected(
                     ReqloomError{ErrorCode::SessionRefreshFailed,
                                  ErrorClass::Auth,
@@ -373,7 +380,11 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
 
     if (response->status < 200 || response->status >= 300) {
         // Sensitive fields are masked; a failed token response may still carry a token.
-        const auto excerpt = safeBodyExcerpt(response->body, nullptr, deps.failureExcerptBytes);
+        const auto excerpt =
+            safeBodyExcerpt(response->body,
+                            nullptr,
+                            deps.failureExcerptBytes,
+                            deps.agentOutput ? MaskProfile::Agent : MaskProfile::Display);
         return std::unexpected(ReqloomError{
             ErrorCode::SessionRefreshFailed,
             ErrorClass::Auth,
@@ -1008,6 +1019,9 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
         }
     }
 
+    if (deps.agentOutput) {
+        registerSentCredentials(req, ctx.secretRegistry());
+    }
     if (deps.emit) {
         deps.emit(RequestPrepared{deps.runId,
                                   deps.stepIndex,

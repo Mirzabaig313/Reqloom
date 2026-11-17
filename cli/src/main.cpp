@@ -30,6 +30,8 @@ void printUsage(std::FILE* stream) {
         "    --quiet                         Suppress live progress on stdout\n"
         "    --failure-body-size <size>      Response text in a failure message, e.g. 16KiB\n"
         "                                    (default 4KiB, 0 = none, at most 1MiB)\n"
+        "    --response-body-size <size>     Response body per step in JSON output, e.g. 8KiB\n"
+        "                                    (default 2KiB, 0 = none, at most 1MiB; masked)\n"
         "  reqloom lint [<project-dir>]     Validate a project's schema\n"
         "    --project <path>                Project directory (default: cwd)\n"
         "    --format text|json              Output format (default: text)\n"

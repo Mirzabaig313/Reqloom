@@ -99,6 +99,8 @@ add_library(reqloom-engine-application OBJECT
     src/application/RequestSigners.cpp
     src/application/HeaderMasking.cpp
     src/application/SecretRedaction.cpp
+    src/application/SecretEnvironment.cpp
+    src/application/StepEvidence.cpp
 )
 target_include_directories(reqloom-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

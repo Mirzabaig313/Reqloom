@@ -12,6 +12,7 @@
 #include <reqloom/engine/RunContext.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -21,10 +22,20 @@ namespace reqloom::engine {
 
 class SecretRegistry;
 
+/// Who reads the masked text. `Display`: the desktop app and run history, masked exactly as they
+/// always were. `Agent` (`RunOptions::agentOutput`): field names also masked by
+/// `isAgentSensitiveName`, and JSON string values value-redacted while decoded (keys never).
+enum class MaskProfile : std::uint8_t { Display, Agent };
+
 /// Copy of `body` with values of sensitive-named fields replaced by the marker: JSON is walked
 /// structurally (key order kept), other text gets a conservative `key=value` / `key: value` /
 /// `<key>value</key>` scan. nullopt when the body is not text (binary, NUL bytes, invalid UTF-8).
-[[nodiscard]] std::optional<std::string> redactSensitiveBodyFields(std::string_view body);
+/// With `registry`, secrets are value-redacted too: in JSON string values before the dump (keys
+/// never), in other text over the whole text.
+[[nodiscard]] std::optional<std::string> redactSensitiveBodyFields(
+    std::string_view body,
+    MaskProfile profile = MaskProfile::Display,
+    const SecretRegistry* registry = nullptr);
 
 /// Failure-detail excerpt of `body`: field redaction, then value redaction against `registry`
 /// (when non-null), then at most `maxBytes` bytes (clamped to `kMaxFailureExcerptBytes`, cut
@@ -33,7 +44,8 @@ class SecretRegistry;
 [[nodiscard]] std::optional<std::string> safeBodyExcerpt(
     std::string_view body,
     const SecretRegistry* registry,
-    std::size_t maxBytes = kDefaultFailureExcerptBytes);
+    std::size_t maxBytes = kDefaultFailureExcerptBytes,
+    MaskProfile profile = MaskProfile::Display);
 
 /// Failure text built from the parts of a JSON `body` that `paths` select (`failure_message.show`):
 /// `<path>: <value>` per path that matched, in order, joined by "; ". A scalar prints as its
@@ -44,7 +56,8 @@ class SecretRegistry;
     std::string_view body,
     const std::vector<std::string>& paths,
     const SecretRegistry* registry,
-    std::size_t maxBytes = kDefaultFailureExcerptBytes);
+    std::size_t maxBytes = kDefaultFailureExcerptBytes,
+    MaskProfile profile = MaskProfile::Display);
 
 /// Value-redact every free-text field of `event` in place (URLs, header
 /// values, details, extracted values, diagnostics). `ResponseReceived::body`
