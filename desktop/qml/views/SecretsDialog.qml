@@ -45,6 +45,8 @@ Dialog {
     onAboutToHide: {
         setDialog.close();
         moveDialog.close();
+        // A shown value never outlives the dialog.
+        SecretsController.hideRevealed();
     }
 
     function openSource(name) {
@@ -81,7 +83,7 @@ Dialog {
 
         Label {
             Layout.fillWidth: true
-            text: qsTr("Secrets referenced by this project via {{secret.NAME}}. Values are " + "stored in your OS keychain and never shown here.")
+            text: qsTr("Secrets referenced by this project via {{secret.NAME}}. Values are " + "stored in your OS keychain; Show reads one from the keychain and displays it until you hide it or close this dialog.")
             color: DesignTokens.textSecondary
             font.pixelSize: DesignTokens.fontLabel
             wrapMode: Text.WordWrap
@@ -188,11 +190,14 @@ Dialog {
                 required property string name
                 required property string status
                 required property string detail
+                required property bool revealed
+                required property string revealedValue
+                required property string revealMessage
                 readonly property bool sourceFocused: name === dialog.focusedSecretName
                 width: ListView.view.width
                 // Row grows with its tallest child (reference label or the
                 // Set…/Clear actions) at large OS text sizes.
-                height: rowContent.height + (rowError.visible ? rowError.implicitHeight + DesignTokens.spaceXs : 0)
+                height: rowContent.height + (revealLine.visible ? revealLine.implicitHeight + DesignTokens.spaceXs : 0) + (rowError.visible ? rowError.implicitHeight + DesignTokens.spaceXs : 0)
                 color: sourceFocused ? DesignTokens.accentMuted : "transparent"
 
                 function focusSetAction() {
@@ -224,6 +229,34 @@ Dialog {
                         font.pixelSize: DesignTokens.fontLabel
                     }
 
+                    Button {
+                        id: revealSecretBtn
+                        objectName: "revealSecretButton"
+                        // Reads the keychain only when pressed; pressing again hides and forgets.
+                        visible: SecretsController.backendAvailable && secretRow.status !== "not set"
+                        text: secretRow.revealed ? qsTr("Hide") : qsTr("Show")
+                        Accessible.name: secretRow.revealed ? qsTr("Hide the stored value of %1").arg(secretRow.name) : qsTr("Show the stored value of %1").arg(secretRow.name)
+                        implicitHeight: Math.max(28, implicitContentHeight + DesignTokens.spaceXs * 2)
+                        leftPadding: DesignTokens.spaceSm
+                        rightPadding: DesignTokens.spaceSm
+                        background: Rectangle {
+                            radius: DesignTokens.radiusSm
+                            color: revealSecretBtn.down ? DesignTokens.accentMuted : "transparent"
+                            border.width: revealSecretBtn.activeFocus ? 2 : 1
+                            border.color: revealSecretBtn.activeFocus ? DesignTokens.accent : DesignTokens.borderStrong
+                        }
+                        contentItem: Text {
+                            text: (secretRow.revealed ? "\u25C9 " : "\u25CE ") + revealSecretBtn.text
+                            color: DesignTokens.textSecondary
+                            font.pixelSize: DesignTokens.fontLabel
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        onClicked: {
+                            dialog.clearMessages();
+                            SecretsController.toggleReveal(secretRow.name);
+                        }
+                    }
                     Button {
                         id: setSecretBtn
                         objectName: "setSecretButton"
@@ -278,11 +311,31 @@ Dialog {
                     }
                 }
 
+                // The stored value while shown, or why it can't be (not set, read failed). Plain,
+                // non-selectable text: it is not copied anywhere.
+                Label {
+                    id: revealLine
+                    objectName: "revealedValue"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: rowContent.bottom
+                    anchors.leftMargin: DesignTokens.spaceSm
+                    anchors.rightMargin: DesignTokens.spaceSm
+                    visible: secretRow.revealed || secretRow.revealMessage !== ""
+                    text: secretRow.revealed ? secretRow.revealedValue : secretRow.revealMessage
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: secretRow.revealed ? DesignTokens.textPrimary : DesignTokens.statusError
+                    font.family: secretRow.revealed ? DesignTokens.fontMono : font.family
+                    font.pixelSize: DesignTokens.fontLabel
+                    Accessible.name: secretRow.revealed ? qsTr("Stored value of %1").arg(secretRow.name) : secretRow.revealMessage
+                }
+
                 FieldError {
                     id: rowError
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    anchors.top: rowContent.bottom
+                    anchors.top: revealLine.visible ? revealLine.bottom : rowContent.bottom
                     anchors.leftMargin: DesignTokens.spaceSm
                     anchors.rightMargin: DesignTokens.spaceSm
                     // A folder conflict gives every row the same reason, which the banner already says.

@@ -42,6 +42,26 @@ public:
     [[nodiscard]] static std::vector<std::string> collectSecretReferences(const Project& project);
 };
 
+/// `LabelledReference::field` of a template the operation inherits from the project's default
+/// auth (`auth: { type: inherit }`); its position is `Project::defaultAuthSource`.
+inline constexpr std::string_view kDefaultAuthField = "default_auth";
+
+/// One `{{scope.name}}` reference in an operation's templates. `$` built-ins have scope `$` and
+/// the rest as name (`uuid`, `env.HOME`); a built-in's bare argument is reported as well.
+struct LabelledReference {
+    std::string field;  ///< YAML field holding it (`SourceLocation::fieldLines` key).
+    std::string scope;
+    std::string name;
+};
+
+/// Every reference in `op`'s request, auth, assertion and poll templates, in template order (a
+/// reference used twice appears twice).
+[[nodiscard]] std::vector<LabelledReference> operationReferences(const Operation& op,
+                                                                 const Project& project);
+
+/// Every `{{scope.name}}` reference in `text` (`field` left empty), as `operationReferences`.
+[[nodiscard]] std::vector<LabelledReference> templateReferences(std::string_view text);
+
 /// Every template of `actor` that can hold a `{{...}}` reference: auth config, sign-in and
 /// refresh requests, and injected headers. Views into `actor`.
 [[nodiscard]] std::vector<std::string_view> actorReferenceTemplates(const Actor& actor);

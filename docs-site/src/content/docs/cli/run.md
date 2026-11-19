@@ -30,6 +30,7 @@ Options may come before or after the operation, `--name=value` works as well as
 | `--failure-body-size <size>` | How much response text a failure message quotes: bytes, or a whole number with `KiB` or `MiB`; `0` for none; at most 1 MiB | `4KiB` |
 | `--response-body-size <size>` | With `--format json`, how much of each step's response body the `response` field keeps, after masking: same units; `0` for none; at most 1 MiB | `2KiB` |
 | `--non-interactive` | Never ask to approve a host, even at a terminal | off |
+| `--agent <name>` | Record the run as started by this agent (letters, digits, space and `. _ - / @`, at most 64). Self-reported and shown in the app only; it decides nothing | `$REQLOOM_AGENT`, else a person at the command line |
 | `--help` / `-h` | Show usage | — |
 
 There are no short forms other than `-h`, and no `--dry-run`, `--timeout`,
@@ -185,7 +186,7 @@ reqloom run order.pay --format json
 ```json
 {
   "schema_version": 1,
-  "contract_version": "1.1",
+  "contract_version": "1.2",
   "run_id": 1,
   "target": "order.pay",
   "environment": "local",
@@ -199,6 +200,7 @@ reqloom run order.pay --format json
     "for_each_iterations": 0,
     "poll_attempts": 0
   },
+  "recorded": true,
   "error": null,
   "failed_step": {
     "index": 4,
@@ -326,7 +328,9 @@ its error code and its next action — or is `null` when nothing failed.
 only if a field is renamed, removed or changes meaning. `contract_version` is
 `<schema_version>.<minor>`: the minor number grows with each set of added fields.
 `1.1` added `contract_version`, `failed_step`, and on each step `http_status`,
-`extracted`, `response` and `next_action`.
+`extracted`, `response` and `next_action`. `1.2` added `recorded`: `true` when
+the run's masked steps are in the project's run history, so
+[`reqloom show <run_id> <index>`](/cli/show/) can print one in full.
 
 **A run that never starts still writes one document.** When the operation or
 environment is unknown, the project isn't found or doesn't load, or the engine
@@ -336,12 +340,13 @@ refuses the run, `outcome` is `ERROR`, `steps` is empty, `run_id` is `null` and
 ```json
 {
   "schema_version": 1,
-  "contract_version": "1.1",
+  "contract_version": "1.2",
   "run_id": null,
   "target": "nope.missing",
   "environment": "local",
   "outcome": "ERROR",
   "summary": { "succeeded": 0, "failed": 0, "skipped": 0, "blocked": 0, "cancelled": 0, "for_each_iterations": 0, "poll_attempts": 0 },
+  "recorded": false,
   "error": {
     "code": "E_CLI_UNKNOWN_OPERATION",
     "detail": "unknown operation 'nope.missing'; the project has: cart.add_item, …",
@@ -439,6 +444,23 @@ An environment the project doesn't define is exit code `2`:
 ```ansi
 Error: unknown environment 'nope'; the project has: local
 ```
+
+## Run history
+
+Every run is recorded in the project's run history, the store the desktop app
+shows, labelled with who started it: a person at the command line, or the agent
+named by `--agent` or `REQLOOM_AGENT`. Each step is recorded after the same
+masking as this command's output, with up to 64 KiB of each body, for
+[`reqloom show`](/cli/show/). In text mode, unless `--quiet`, the run says so on
+stderr:
+
+```ansi
+Recorded as run 42; `reqloom show 42 <step>` prints a step.
+```
+
+If the history cannot be opened the run still happens and its report is the
+same; a `warning:` line on stderr says it was not recorded, and JSON output has
+`"recorded": false`. History is not pruned yet.
 
 ## Interrupting a run
 

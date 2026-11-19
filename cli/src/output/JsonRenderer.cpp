@@ -208,13 +208,15 @@ JsonRenderer::JsonRenderer(std::ostream& out) : out_(out) {}
 
 void JsonRenderer::render(const ce::OperationId& target,
                           std::string_view environment,
-                          const ce::RunResult& result) {
+                          const ce::RunResult& result,
+                          const bool recorded) {
     writeHead(out_,
               std::to_string(result.runId.value),
               target,
               environment,
               runOutcomeName(result.outcome),
               summarize(result));
+    out_ << "  \"recorded\": " << (recorded ? "true" : "false") << ",\n";
     out_ << "  \"error\": null,\n";
     writeFailedStep(out_, target, result);
     out_ << "  \"steps\": [";
@@ -235,6 +237,7 @@ void JsonRenderer::renderError(const ce::OperationId& target,
                                std::string_view detail) {
     const std::string runId = run ? std::to_string(run->value) : std::string{"null"};
     writeHead(out_, runId, target, environment, kErrorOutcomeName, Summary{});
+    out_ << "  \"recorded\": false,\n";
     out_ << "  \"error\": {\n";
     out_ << "    \"code\": " << jsonString(code) << ",\n";
     out_ << "    \"detail\": " << jsonString(detail) << ",\n";

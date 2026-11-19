@@ -82,7 +82,7 @@ void TextRenderer::onEvent(const ce::RunEvent& event) {
                                e.stepIndex + 1,
                                terminalSafe(e.op.value),
                                std::string(ce::toCodeString(e.code)),
-                               terminalSafe(e.detail, /*keepNewlines=*/true));
+                               continuedLines(e.detail, "      | "));
             } else if constexpr (std::is_same_v<T, ce::RunEnded>) {
                 if (quiet_) {
                     return;
@@ -116,7 +116,7 @@ void TextRenderer::render(const ce::OperationId& target,
                        step.elapsed.count(),
                        errorCodeName(step));
         if (!step.detail.empty()) {
-            ostreamPrintln(summary_, "         {}", terminalSafe(step.detail, true));
+            ostreamPrintln(summary_, "         {}", continuedLines(step.detail, "         | "));
         }
         printAssertions(step, "");
     }
@@ -132,13 +132,14 @@ void TextRenderer::printChildRow(const ce::StepResult& row) {
                     ? std::format("iter #{} poll #{:<2}", *row.forEachIndex, *row.pollAttempt)
                     : std::format("poll #{:<2}", *row.pollAttempt);
     }
-    ostreamPrintln(summary_,
-                   "    {} {:<6} {} ({}ms){}",
-                   label,
-                   std::string(statusGlyph(row.status)),
-                   terminalSafe(row.op.value),
-                   row.elapsed.count(),
-                   row.detail.empty() ? std::string{} : "  " + terminalSafe(row.detail, true));
+    ostreamPrintln(
+        summary_,
+        "    {} {:<6} {} ({}ms){}",
+        label,
+        std::string(statusGlyph(row.status)),
+        terminalSafe(row.op.value),
+        row.elapsed.count(),
+        row.detail.empty() ? std::string{} : "  " + continuedLines(row.detail, "           | "));
     if (row.forEachIndex && !row.pollAttempt) {
         printAssertions(row, std::format(" (iter #{})", *row.forEachIndex));
     }
@@ -152,7 +153,8 @@ void TextRenderer::printAssertions(const ce::StepResult& row, std::string_view a
                        attribution,
                        terminalSafe(a.name));
         if (!a.passed && !a.detail.empty()) {
-            ostreamPrintln(summary_, "             {}", terminalSafe(a.detail, true));
+            ostreamPrintln(
+                summary_, "             {}", continuedLines(a.detail, "             | "));
         }
     }
 }

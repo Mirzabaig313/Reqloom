@@ -48,6 +48,9 @@ add_executable(reqloom-cli
     src/commands/LintCommand.cpp
     src/commands/ImportCommand.cpp
     src/commands/HostsCommand.cpp
+    src/commands/InspectCommands.cpp
+    src/commands/ProjectCommand.cpp
+    src/commands/ShowCommand.cpp
 )
 
 target_link_libraries(reqloom-cli

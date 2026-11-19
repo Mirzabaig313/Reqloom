@@ -178,6 +178,10 @@ Raised by the `reqloom` command itself, before the engine runs. They appear as
 | `E_CLI_UNKNOWN_OPERATION` | The operation isn't in the project; the message lists the ones that are | `2` |
 | `E_CLI_UNKNOWN_ENVIRONMENT` | `--env` names an environment the project doesn't define | `2` |
 | `E_CLI_INTERNAL` | An unexpected error in the command | `3` |
+| `E_CLI_NO_HISTORY` | `show`: the project has no run history yet, or it cannot be read | `2` (`3` when unreadable) |
+| `E_CLI_UNKNOWN_RUN` | `show`: no run with that id, or a run the desktop app started (not printable from the CLI) | `2` |
+| `E_CLI_UNKNOWN_STEP` | `show`: the run has no such step; the message lists its steps | `2` |
+| `E_CLI_PATH_NOT_FOUND` | `show --path`: the path selects nothing, or the recorded body was cut or is not JSON | `1` |
 
 ## Which are retried
 

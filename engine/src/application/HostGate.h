@@ -15,6 +15,8 @@
 #include <reqloom/engine/Actor.h>
 #include <reqloom/engine/ErrorCodes.h>
 
+#include <cstdint>
+#include <expected>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -71,12 +73,21 @@ public:
     [[nodiscard]] std::optional<std::string> credentialIn(const HttpRequest& request,
                                                           const SendPurpose& purpose) const;
 
+    /// Why `host` may not receive what `purpose` carries because of an actor's `allowed_hosts` (or
+    /// the `baseUrl` rule), or nothing. Never asks; used by `planChain` too.
+    [[nodiscard]] std::optional<ReqloomError> checkCandidate(const std::string& host,
+                                                             const SendPurpose& purpose) const;
+
+    /// How `host` is approved already, without asking anyone or recording anything; the store's
+    /// error when it refuses (another folder claims the project id, unreadable file, no id).
+    enum class PriorApproval : std::uint8_t { None, ForRun, Stored };
+    [[nodiscard]] std::expected<PriorApproval, ReqloomError> approvedWithoutAsking(
+        const std::string& host) const;
+
 private:
     /// `admit` without installing the redirect check (the check a redirect hop runs).
     [[nodiscard]] std::optional<ReqloomError> check(const HttpRequest& request,
                                                     const SendPurpose& purpose);
-    [[nodiscard]] std::optional<ReqloomError> checkCandidate(const std::string& host,
-                                                             const SendPurpose& purpose) const;
     [[nodiscard]] std::optional<ReqloomError> checkActorCandidate(const std::string& host,
                                                                   const Actor& actor) const;
     [[nodiscard]] std::optional<ReqloomError> checkApproval(const std::string& host,

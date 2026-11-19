@@ -1,8 +1,11 @@
 // SecretsController — QML bridge over SecretManager: lists required {{secret.NAME}} entries with
-// their keychain state and sets/clears secrets. Never returns stored values.
+// their keychain state and sets/clears secrets. A stored value reaches the UI only when the person
+// asks to see it (`toggleReveal`, `readStoredValue`), read from the keychain at that moment; it is
+// held only while shown and is never written, logged or copied.
 #pragma once
 
 #include "application/SecretManager.h"
+#include "application/SecretReveal.h"
 
 #include <reqloom/engine/HostApproval.h>
 
@@ -11,6 +14,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
+#include <QtCore/QVariantMap>
 #include <QtQml/QQmlEngine>
 
 #include <memory>
@@ -29,9 +33,23 @@ class SecretListModel : public QAbstractListModel {
     Q_OBJECT
 
 public:
-    enum Roles : int { NameRole = Qt::UserRole + 1, StatusRole, DetailRole };
+    enum Roles : int {
+        NameRole = Qt::UserRole + 1,
+        StatusRole,
+        DetailRole,
+        RevealedRole,       ///< bool: the stored value is shown
+        RevealedValueRole,  ///< QString: the value while shown, else empty
+        RevealMessageRole,  ///< QString: why nothing is shown (not set, read failed)
+    };
 
     explicit SecretListModel(QObject* parent = nullptr) : QAbstractListModel(parent) {}
+
+    /// The reveal state rows read; not owned.
+    void setReveal(const SecretReveal* reveal) { reveal_ = reveal; }
+    /// Repaint `name`'s reveal roles.
+    void revealChanged(const QString& name);
+    /// Repaint every row's reveal roles.
+    void allRevealsChanged();
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
@@ -43,6 +61,7 @@ public:
 
 private:
     QList<SecretEntry> entries_;
+    const SecretReveal* reveal_{nullptr};
 };
 
 class SecretsController : public QObject {
@@ -101,6 +120,15 @@ public:
     Q_INVOKABLE bool store(const QString& name, const QString& value);
     /// Clear a secret. Emits notify on success; a failure sets lastError.
     Q_INVOKABLE bool clear(const QString& name);
+    /// Show `name`'s stored value (read from the keychain now) or, when shown, hide it. The
+    /// row's `revealed`, `revealedValue` and `revealMessage` roles carry the result.
+    Q_INVOKABLE void toggleReveal(const QString& name);
+    /// Hide and forget every shown value (the dialog closes).
+    Q_INVOKABLE void hideRevealed();
+    /// The value stored for `name` now, for a one-off view in the request panel; nothing is kept
+    /// here. `{ shown: bool, value: string, message: string }`.
+    Q_INVOKABLE QVariantMap readStoredValue(const QString& name) const;
+
     /// The user confirms the open project was moved here: bind its id to
     /// this folder so its secrets work here. `shownOwner` is the recorded folder
     /// the user was shown; the move is refused if the record changed. Emits
@@ -117,6 +145,7 @@ signals:
 
 private:
     SecretManager manager_;
+    SecretReveal reveal_{manager_};
     SecretListModel list_;
     const ProjectModel* project_{nullptr};
     QString folderConflict_;

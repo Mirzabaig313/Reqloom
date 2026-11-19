@@ -41,6 +41,10 @@ struct RunResult {
     RunOutcome outcome{RunOutcome::Succeeded};
     std::vector<StepResult> steps;
 
+    /// The masked step rows were stored in run history (`RunOptions::recordResponses` with history
+    /// open, under a run id the store reserved), so `recordedSteps(runId)` returns them.
+    bool recorded{false};
+
     [[nodiscard]] bool succeeded() const noexcept { return outcome == RunOutcome::Succeeded; }
 };
 
@@ -64,6 +68,9 @@ struct Project {
     /// Project-wide default auth for operations whose inline auth is `InlineAuthType::Inherit`.
     /// Empty means no auth.
     std::optional<InlineAuth> defaultAuth;
+
+    /// Where `defaultAuth` was defined (the root `auth:` key). Set by the parser, never in YAML.
+    SourceLocation defaultAuthSource;
 
     std::map<ActorId, Actor> actors;
     std::map<ResourceId, Resource> resources;
@@ -92,6 +99,10 @@ struct Project {
     /// Non-fatal findings from the load (unknown keys, imports that matched nothing), each
     /// prefixed with `file:line:column:`. Never written to YAML.
     std::vector<std::string> loadWarnings;
+
+    /// Where each of `loadWarnings` was found, at the same index (file, line, column; line 0 when
+    /// the warning is about a whole file). Never written to YAML.
+    std::vector<SourceLocation> loadWarningSources;
 };
 
 /// Default bytes of response body quoted in a failure detail (4 KiB).
@@ -150,6 +161,10 @@ struct RunOptions {
     /// Host keys (`hostKeyForEntry`) approved for this run only and never stored: the CLI fills it
     /// from `REQLOOM_APPROVED_HOSTS` for CI. Still limited by an actor's `allowed_hosts`.
     std::vector<std::string> approvedHostsForRun;
+
+    /// Who started the run, recorded on `RunStarted` and in run history (FR-15.8). For display
+    /// only.
+    RunInitiator initiator{};
 };
 
 /// Upper bound on a captured response body (5 MiB); larger bodies are truncated.
@@ -166,6 +181,9 @@ struct RunHistoryEntry {
     std::string outcome;  ///< Empty, or Succeeded / Failed / Cancelled.
     std::size_t chainSize{0};
     std::int64_t elapsedMs{-1};  ///< Wall-clock run duration in ms; -1 until the run ends.
+    RunInitiator initiator{};    ///< Who started it; `App` for runs recorded before FR-15.8.
+    /// The run's masked step rows were recorded (`recordedSteps` can read them).
+    bool hasRecordedSteps{false};
 };
 
 class ExecutionEngine {
@@ -244,12 +262,25 @@ public:
     [[nodiscard]] std::expected<void, ReqloomError> openHistory(
         const std::filesystem::path& dbPath);
 
+    /// Open an existing run-history database for reading only (`listRuns`, `historyEvents`,
+    /// `recordedSteps`); nothing is created or upgraded, and runs are not recorded. Errors when
+    /// the file is missing or older than this build's schema.
+    [[nodiscard]] std::expected<void, ReqloomError> openHistoryReadOnly(
+        const std::filesystem::path& dbPath);
+
     /// Past runs, newest-first, capped at `limit` (0 = no limit). Requires `openHistory`.
     [[nodiscard]] std::expected<std::vector<RunHistoryEntry>, ReqloomError> listRuns(
         std::size_t limit = 100) const;
 
     /// Replay every persisted event for one run in emission order. Requires `openHistory`.
     [[nodiscard]] std::expected<std::vector<RunEvent>, ReqloomError> historyEvents(RunId run) const;
+
+    /// The step rows of a run that recorded them (`RunOptions::recordResponses` with history
+    /// open), in `RunResult::steps` order, already masked for agent-facing output; empty for a run
+    /// that recorded none (every desktop run). Requires `openHistory`. Agent-facing surfaces read
+    /// past runs only through this, never through `historyEvents`, which keep what a person saw.
+    [[nodiscard]] std::expected<std::vector<StepResult>, ReqloomError> recordedSteps(
+        RunId run) const;
 
     /// Delete all runs from the open history database. Requires `openHistory`.
     std::expected<void, ReqloomError> clearHistory();

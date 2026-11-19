@@ -48,6 +48,8 @@ add_executable(reqloom-engine-unit-tests
     unit/SqliteHistoryStoreTest.cpp
     unit/SqliteHistoryStoreConcurrencyTest.cpp
     unit/SchemaValidationTest.cpp
+    unit/SchemaErrorPositionTest.cpp
+    unit/ProjectInsightTest.cpp
     unit/SchemaStrictnessTest.cpp
     unit/SchemaWriterSafetyTest.cpp
     unit/SecretEnvTagTest.cpp
@@ -104,6 +106,8 @@ add_executable(reqloom-engine-integration-tests
     integration/SecretEnvResolutionTest.cpp
     integration/StepResponseTest.cpp
     integration/AgentMaskingTest.cpp
+    integration/RunRecordingTest.cpp
+    integration/DesktopRequestEvidenceTest.cpp
     integration/JsonBodyEscapingTest.cpp
     integration/ValueRedactionTest.cpp
     integration/EngineStateTest.cpp

@@ -1,8 +1,8 @@
 // Desktop-side facade over the engine's keychain-backed SecretStore: lists the `{{secret.NAME}}`
 // references a project makes, which are present in the keychain, and sets / clears them. Every
 // access first checks the folder against the per-user trust record, so a project copying another's
-// id can't touch its secrets. Never returns a stored value to the UI, only presence, so a value
-// can't leak into a log or clipboard.
+// id can't touch its secrets. Returns presence only, except `reveal`, which reads one value for
+// the person when they ask to see it (SecretReveal); the value is never logged or stored.
 #pragma once
 
 #include <reqloom/engine/ProjectTrustStore.h>
@@ -53,6 +53,16 @@ public:
     /// The distinct `{{secret.NAME}}` references the project declares, each
     /// annotated with whether the keychain currently holds a value. Sorted.
     [[nodiscard]] QList<SecretEntry> referencedSecrets(const ProjectModel& project) const;
+
+    enum class RevealOutcome : std::uint8_t { Revealed, NotSet, Failed };
+
+    /// Read one of `project`'s stored secrets for display, now. Desktop only, on the person's
+    /// explicit request. Refused (Failed, `error` set) when this folder does not own the project
+    /// id, so a copy claiming the id cannot read the original's secrets.
+    [[nodiscard]] RevealOutcome reveal(const ProjectModel& project,
+                                       const QString& name,
+                                       QString& value,
+                                       QString& error) const;
 
     /// Store (create or overwrite) one of `project`'s secrets, namespaced by project id.
     /// On failure `error` carries a human-readable message.

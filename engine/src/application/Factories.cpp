@@ -29,6 +29,7 @@
 #include "../infrastructure/secrets/FileProjectTrustStore.h"
 #include "../infrastructure/secrets/KeychainSecretStore.h"
 #include "../infrastructure/secrets/SecretStore.h"
+#include "../infrastructure/storage/HistoryLocation.h"
 #include "../infrastructure/storage/HistoryStore.h"
 #include "../infrastructure/storage/SqliteHistoryStore.h"
 #include "../infrastructure/typings/StaticHookTypingsEmitter.h"
@@ -107,6 +108,11 @@ bool keychainBackendAvailable() noexcept {
 
 std::expected<std::filesystem::path, ReqloomError> defaultProjectTrustStorePath() {
     return FileProjectTrustStore::defaultPath();
+}
+
+std::expected<std::filesystem::path, ReqloomError> defaultHistoryDatabasePath(
+    const std::filesystem::path& projectRoot) {
+    return historyDatabasePathFor(projectRoot);
 }
 
 std::unique_ptr<ProjectTrustStore> makeFileProjectTrustStore() {

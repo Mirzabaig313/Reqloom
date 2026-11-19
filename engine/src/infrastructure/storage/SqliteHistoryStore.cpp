@@ -1,8 +1,11 @@
 // SqliteHistoryStore — SQLite-backed run-history persistence.
 //
 // Schema v1:
-//   runs(run_id, target_op, env_name, started_at, ended_at, outcome, chain_size)
+//   runs(run_id, target_op, env_name, started_at, ended_at, outcome, chain_size, elapsed_ms,
+//        initiator, initiator_name)
 //   run_events(id, run_id, seq, event_type, step_index, op_id, payload, at)
+//   run_steps(run_id, row, payload): a CLI run's step rows, masked for agent-facing output
+//        (`appendSteps`); `reqloom show` reads only these, never `run_events`.
 //
 // Events are stored as JSON in `payload`; `runs` denormalises what the history sidebar needs.
 //
@@ -24,6 +27,7 @@
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
+#include <format>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -280,6 +284,146 @@ constexpr EnumWireMap<UnresolvedVariableCause, 9> kUnresolvedVariableCauses{{
     return out;
 }
 
+[[nodiscard]] std::string_view stepStatusToWire(StepResult::Status status) noexcept {
+    switch (status) {
+        case StepResult::Status::Pending:
+            return "Pending";
+        case StepResult::Status::Ready:
+            return "Ready";
+        case StepResult::Status::Skipped:
+            return "Skipped";
+        case StepResult::Status::Succeeded:
+            return "Succeeded";
+        case StepResult::Status::Failed:
+            return "Failed";
+        case StepResult::Status::Cancelled:
+            return "Cancelled";
+        case StepResult::Status::Blocked:
+            return "Blocked";
+    }
+    return "Pending";
+}
+
+[[nodiscard]] StepResult::Status stepStatusFromWire(std::string_view s) noexcept {
+    using S = StepResult::Status;
+    for (const auto status :
+         {S::Pending, S::Ready, S::Skipped, S::Succeeded, S::Failed, S::Cancelled, S::Blocked}) {
+        if (stepStatusToWire(status) == s) {
+            return status;
+        }
+    }
+    return S::Pending;
+}
+
+[[nodiscard]] json bodyToJson(const StepResponse& r) {
+    return {{"body", r.body},
+            {"totalBytes", r.totalBytes},
+            {"limitBytes", r.limitBytes},
+            {"truncated", r.truncated},
+            {"binary", r.binary}};
+}
+
+[[nodiscard]] StepResponse bodyFromJson(const json& j) {
+    StepResponse r;
+    r.body = j.value("body", std::string{});
+    r.totalBytes = j.value("totalBytes", std::size_t{0});
+    r.limitBytes = j.value("limitBytes", std::size_t{0});
+    r.truncated = j.value("truncated", false);
+    r.binary = j.value("binary", false);
+    return r;
+}
+
+template <typename T>
+[[nodiscard]] json optionalToJson(const std::optional<T>& value) {
+    return value ? json(*value) : json(nullptr);
+}
+
+[[nodiscard]] json stepToJson(const StepResult& step) {
+    json assertions = json::array();
+    for (const auto& a : step.assertions) {
+        assertions.push_back(
+            {{"name", a.name}, {"expr", a.expr}, {"passed", a.passed}, {"detail", a.detail}});
+    }
+    json extracted = json::array();
+    for (const auto& e : step.extracted) {
+        extracted.push_back({{"name", e.name}, {"value", e.value}, {"truncated", e.truncated}});
+    }
+    json out = {
+        {"op", step.op.value},
+        {"status", std::string{stepStatusToWire(step.status)}},
+        {"error", step.error ? json(std::string{toCodeString(*step.error)}) : json(nullptr)},
+        {"attempts", step.attempts},
+        {"elapsedMs", step.elapsed.count()},
+        {"detail", step.detail},
+        {"pollAttempt", optionalToJson(step.pollAttempt)},
+        {"forEachIndex", optionalToJson(step.forEachIndex)},
+        {"assertions", std::move(assertions)},
+        {"httpStatus", optionalToJson(step.httpStatus)},
+        {"response", step.response ? bodyToJson(*step.response) : json(nullptr)},
+        {"extracted", std::move(extracted)},
+        {"request", nullptr}};
+    if (step.request) {
+        out["request"] = {{"method", step.request->method},
+                          {"url", step.request->url},
+                          {"headers", headersToJson(step.request->headers)},
+                          {"body", bodyToJson(step.request->body)},
+                          {"multipart", step.request->multipart},
+                          {"sent", step.request->sent}};
+    }
+    return out;
+}
+
+template <typename T>
+[[nodiscard]] std::optional<T> optionalFromJson(const json& j, const char* key) {
+    const auto it = j.find(key);
+    if (it == j.end() || it->is_null()) {
+        return std::nullopt;
+    }
+    return it->get<T>();
+}
+
+[[nodiscard]] StepResult stepFromJson(const json& j) {
+    StepResult step;
+    step.op = OperationId{j.value("op", std::string{})};
+    step.status = stepStatusFromWire(j.value("status", std::string{}));
+    if (const auto code = optionalFromJson<std::string>(j, "error")) {
+        step.error = fromCodeString(*code).value_or(ErrorCode::Internal);
+    }
+    step.attempts = j.value("attempts", 0);
+    step.elapsed = std::chrono::milliseconds{j.value("elapsedMs", std::int64_t{0})};
+    step.detail = j.value("detail", std::string{});
+    step.pollAttempt = optionalFromJson<int>(j, "pollAttempt");
+    step.forEachIndex = optionalFromJson<int>(j, "forEachIndex");
+    for (const auto& a : j.value("assertions", json::array())) {
+        step.assertions.push_back(AssertionResult{a.value("name", std::string{}),
+                                                  a.value("expr", std::string{}),
+                                                  a.value("passed", false),
+                                                  a.value("detail", std::string{})});
+    }
+    step.httpStatus = optionalFromJson<int>(j, "httpStatus");
+    if (const auto it = j.find("response"); it != j.end() && it->is_object()) {
+        step.response = bodyFromJson(*it);
+    }
+    for (const auto& e : j.value("extracted", json::array())) {
+        step.extracted.push_back(ExtractedValue{e.value("name", std::string{}),
+                                                e.value("value", std::string{}),
+                                                e.value("truncated", false)});
+    }
+    if (const auto it = j.find("request"); it != j.end() && it->is_object()) {
+        StepRequest request;
+        request.method = it->value("method", std::string{});
+        request.url = it->value("url", std::string{});
+        request.headers = headersFromJson(it->value("headers", json::array()));
+        if (const auto body = it->find("body"); body != it->end() && body->is_object()) {
+            request.body = bodyFromJson(*body);
+        }
+        request.multipart = it->value("multipart", false);
+        request.sent = it->value("sent", true);
+        step.request = std::move(request);
+    }
+    return step;
+}
+
 struct StmtDeleter {
     void operator()(sqlite3_stmt* s) const noexcept {
         if (s != nullptr) {
@@ -377,8 +521,11 @@ void putExchange(json& payload, ExchangeKind kind) {
             if constexpr (std::is_same_v<T, RunStarted>) {
                 e.eventType = "RunStarted";
                 e.opId = v.target.value;
-                e.payload = {
-                    {"target", v.target.value}, {"chainSize", v.chainSize}, {"envName", v.envName}};
+                e.payload = {{"target", v.target.value},
+                             {"chainSize", v.chainSize},
+                             {"envName", v.envName},
+                             {"initiator", std::string{runInitiatorKindName(v.initiator.kind)}},
+                             {"initiatorName", v.initiator.name}};
             } else if constexpr (std::is_same_v<T, StepStarted>) {
                 e.eventType = "StepStarted";
                 e.stepIndex = v.stepIndex;
@@ -504,6 +651,8 @@ void putExchange(json& payload, ExchangeKind kind) {
         ev.target = OperationId{p.value("target", std::string{})};
         ev.chainSize = p.value("chainSize", std::size_t{0});
         ev.envName = p.value("envName", std::string{});
+        ev.initiator.kind = runInitiatorKindFromName(p.value("initiator", std::string{}));
+        ev.initiator.name = p.value("initiatorName", std::string{});
         ev.at = at;
         return ev;
     }
@@ -688,6 +837,9 @@ struct SqliteHistoryStore::Impl {
     // Runs whose RunStarted was refused (id already in use); their later events are refused
     // too, so they cannot append onto the other run's timeline.
     std::set<std::uint64_t> rejectedRuns;
+    /// Runs whose RunStarted this connection stored: the only ones `appendSteps` writes rows for,
+    /// so rows never land under another process's run.
+    std::set<std::uint64_t> startedRuns;
 
     [[nodiscard]] std::expected<void, ReqloomError> exec(std::string_view sql) const {
         char* err = nullptr;
@@ -712,6 +864,65 @@ struct SqliteHistoryStore::Impl {
         return StmtPtr{raw};
     }
 
+    /// Names one query returns in its first column (table names, column names).
+    [[nodiscard]] std::expected<std::set<std::string>, ReqloomError> names(std::string_view sql,
+                                                                           int column = 0) const {
+        auto stmt = prepare(sql);
+        if (!stmt) {
+            return std::unexpected(stmt.error());
+        }
+        std::set<std::string> out;
+        int rc = SQLITE_ROW;
+        while ((rc = sqlite3_step(stmt->get())) == SQLITE_ROW) {
+            const auto* text = sqlite3_column_text(stmt->get(), column);
+            out.emplace(text != nullptr ? reinterpret_cast<const char*>(text) : "");
+        }
+        if (rc != SQLITE_DONE) {
+            return std::unexpected(sqliteError(db.get(), "history: read schema"));
+        }
+        return out;
+    }
+
+    static constexpr std::array<std::string_view, 5> kTables{
+        "schema_version", "runs", "run_events", "run_id_allocator", "run_steps"};
+    static constexpr std::array<std::string_view, 2> kIndexes{"idx_run_events_run_seq",
+                                                              "idx_runs_started_at"};
+    /// Columns added to `runs` after v1 was first shipped, with their declarations.
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 3> kAddedColumns{{
+        {"elapsed_ms", "INTEGER"},
+        {"initiator", "TEXT"},
+        {"initiator_name", "TEXT"},
+    }};
+
+    /// The `runs` columns still missing, or every table, index and column when one is missing.
+    [[nodiscard]] std::expected<bool, ReqloomError> schemaComplete() const {
+        const auto present = names("SELECT name FROM sqlite_master;");
+        if (!present) {
+            return std::unexpected(present.error());
+        }
+        for (const auto name : kTables) {
+            if (!present->contains(std::string{name})) {
+                return false;
+            }
+        }
+        for (const auto name : kIndexes) {
+            if (!present->contains(std::string{name})) {
+                return false;
+            }
+        }
+        const auto columns = names("PRAGMA table_info(runs);", 1);
+        if (!columns) {
+            return std::unexpected(columns.error());
+        }
+        for (const auto& [column, _] : kAddedColumns) {
+            if (!columns->contains(std::string{column})) {
+                return false;
+            }
+        }
+        const auto versions = names("SELECT version FROM schema_version;");
+        return versions && versions->contains("1");
+    }
+
     [[nodiscard]] std::expected<void, ReqloomError> ensureSchema() const {
         if (auto r = exec("PRAGMA journal_mode = WAL;"); !r) {
             return r;
@@ -722,7 +933,22 @@ struct SqliteHistoryStore::Impl {
         if (auto r = exec("PRAGMA synchronous = NORMAL;"); !r) {
             return r;
         }
-
+        // An up-to-date database is only read, so opening it never waits for another process's
+        // write (the desktop app and the CLI share the file).
+        if (const auto complete = schemaComplete(); complete && *complete) {
+            return {};
+        }
+        const auto upgradeError = [this](std::string_view what) {
+            auto error = sqliteError(db.get(), "history: cannot upgrade the run history");
+            error.detail += std::string{" ("} + std::string{what} + ")";
+            return std::unexpected(std::move(error));
+        };
+        // Create, migrate and stamp in one write transaction: a second process waits for the
+        // first, then finds the work done; any failure is an error, never ignored.
+        SqliteTransaction txn{db.get()};
+        if (!txn.began()) {
+            return upgradeError("begin");
+        }
         const char* createSchema = R"SQL(
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY
@@ -756,23 +982,37 @@ struct SqliteHistoryStore::Impl {
                 id      INTEGER PRIMARY KEY CHECK (id = 1),
                 last_id INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS run_steps (
+                run_id  INTEGER NOT NULL,
+                row     INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (run_id, row),
+                FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+            );
         )SQL";
         if (auto r = exec(createSchema); !r) {
-            return r;
+            return upgradeError("create tables");
         }
-
-        // Migration for databases predating elapsed_ms; ALTER fails harmlessly with "duplicate
-        // column name" on newer ones, so the error is ignored.
-        {
-            auto migrated = exec("ALTER TABLE runs ADD COLUMN elapsed_ms INTEGER;");
-            (void)migrated;
+        const auto columns = names("PRAGMA table_info(runs);", 1);
+        if (!columns) {
+            return std::unexpected(columns.error());
         }
-
+        for (const auto& [column, type] : kAddedColumns) {
+            if (columns->contains(std::string{column})) {
+                continue;
+            }
+            const auto alter = std::format("ALTER TABLE runs ADD COLUMN {} {};", column, type);
+            if (auto r = exec(alter); !r) {
+                return upgradeError("add column " + std::string{column});
+            }
+        }
         // v1 is the only version; future migrations check this row and bump it.
         if (auto r = exec("INSERT OR IGNORE INTO schema_version(version) VALUES (1);"); !r) {
-            return r;
+            return upgradeError("stamp version");
         }
-
+        if (!txn.commit()) {
+            return upgradeError("commit");
+        }
         return {};
     }
 
@@ -788,8 +1028,8 @@ struct SqliteHistoryStore::Impl {
 
         auto p2 = prepare(
             "INSERT OR IGNORE INTO runs"
-            "  (run_id, target_op, env_name, started_at, chain_size) "
-            "VALUES (?, ?, ?, ?, ?);");
+            "  (run_id, target_op, env_name, started_at, chain_size, initiator, initiator_name) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?);");
         if (!p2) {
             return std::unexpected(p2.error());
         }
@@ -798,8 +1038,8 @@ struct SqliteHistoryStore::Impl {
         // `started_at IS NULL` limits this to a placeholder row: a started run is never overwritten
         // by another run's RunStarted with the same id.
         auto p3 = prepare(
-            "UPDATE runs SET target_op = ?, env_name = ?, "
-            "started_at = ?, chain_size = ? WHERE run_id = ? AND started_at IS NULL;");
+            "UPDATE runs SET target_op = ?, env_name = ?, started_at = ?, chain_size = ?, "
+            "initiator = ?, initiator_name = ? WHERE run_id = ? AND started_at IS NULL;");
         if (!p3) {
             return std::unexpected(p3.error());
         }
@@ -828,6 +1068,7 @@ struct SqliteHistoryStore::Impl {
         updateRunEndedStmt.reset();
         nextSeqStmt.reset();
         rejectedRuns.clear();
+        startedRuns.clear();
         db.reset();
     }
 
@@ -879,6 +1120,37 @@ std::expected<void, ReqloomError> SqliteHistoryStore::open(const fs::path& dbPat
     }
     if (auto r = impl_->prepareStatements(); !r) {
         return r;
+    }
+    return {};
+}
+
+std::expected<void, ReqloomError> SqliteHistoryStore::openReadOnly(const fs::path& dbPath) {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->close();
+    std::error_code ec;
+    if (!fs::is_regular_file(dbPath, ec)) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "history: no run history database yet"});
+    }
+    sqlite3* raw = nullptr;
+    const auto pathStr = dbPath.string();
+    if (sqlite3_open_v2(
+            pathStr.c_str(), &raw, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nullptr) !=
+        SQLITE_OK) {
+        ReqloomError e = sqliteError(raw, "history: open read-only");
+        sqlite3_close(raw);
+        return std::unexpected(std::move(e));
+    }
+    impl_->db.reset(raw);
+    sqlite3_busy_timeout(impl_->db.get(), kBusyTimeoutMs);
+    const auto complete = impl_->schemaComplete();
+    if (!complete || !*complete) {
+        impl_->close();
+        return std::unexpected(
+            ReqloomError{ErrorCode::Internal,
+                         ErrorClass::Run,
+                         "history: the run history predates this version of Reqloom; a "
+                         "`reqloom run` or the app upgrades it"});
     }
     return {};
 }
@@ -941,6 +1213,7 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
             "history: run id " + std::to_string(env.runId) + " was refused at RunStarted"});
     }
 
+    bool startsRun = false;
     // The run row, optional run-ended update and event insert commit as one unit, so an event never
     // lands without its parent run row.
     SqliteTransaction txn{impl_->db.get()};
@@ -960,6 +1233,11 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
         sqlite3_bind_text(impl_->insertRunStmt.get(), 3, envName.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(impl_->insertRunStmt.get(), 4, env.at.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int64(impl_->insertRunStmt.get(), 5, static_cast<sqlite3_int64>(chainSize));
+        const auto initiator = env.payload.value("initiator", std::string{"app"});
+        const auto initiatorName = env.payload.value("initiatorName", std::string{});
+        sqlite3_bind_text(impl_->insertRunStmt.get(), 6, initiator.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(
+            impl_->insertRunStmt.get(), 7, initiatorName.c_str(), -1, SQLITE_TRANSIENT);
         if (sqlite3_step(impl_->insertRunStmt.get()) != SQLITE_DONE) {
             return std::unexpected(sqliteError(impl_->db.get(), "history: insert run"));
         }
@@ -975,8 +1253,12 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
             impl_->updateRunStartedStmt.get(), 3, env.at.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int64(
             impl_->updateRunStartedStmt.get(), 4, static_cast<sqlite3_int64>(chainSize));
+        sqlite3_bind_text(
+            impl_->updateRunStartedStmt.get(), 5, initiator.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(
+            impl_->updateRunStartedStmt.get(), 6, initiatorName.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int64(
-            impl_->updateRunStartedStmt.get(), 5, static_cast<sqlite3_int64>(env.runId));
+            impl_->updateRunStartedStmt.get(), 7, static_cast<sqlite3_int64>(env.runId));
         if (sqlite3_step(impl_->updateRunStartedStmt.get()) != SQLITE_DONE) {
             return std::unexpected(sqliteError(impl_->db.get(), "history: update run start"));
         }
@@ -987,6 +1269,7 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
                                                 "history: run id " + std::to_string(env.runId) +
                                                     " already belongs to another run"});
         }
+        startsRun = true;
     } else {
         sqlite3_reset(impl_->insertRunStmt.get());
         sqlite3_bind_int64(impl_->insertRunStmt.get(), 1, static_cast<sqlite3_int64>(env.runId));
@@ -994,6 +1277,8 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
         sqlite3_bind_null(impl_->insertRunStmt.get(), 3);
         sqlite3_bind_null(impl_->insertRunStmt.get(), 4);
         sqlite3_bind_int64(impl_->insertRunStmt.get(), 5, 0);
+        sqlite3_bind_null(impl_->insertRunStmt.get(), 6);
+        sqlite3_bind_null(impl_->insertRunStmt.get(), 7);
         if (sqlite3_step(impl_->insertRunStmt.get()) != SQLITE_DONE) {
             return std::unexpected(sqliteError(impl_->db.get(), "history: backfill run"));
         }
@@ -1040,6 +1325,9 @@ std::expected<void, ReqloomError> SqliteHistoryStore::append(const RunEvent& eve
     }
     if (!txn.commit()) {
         return std::unexpected(sqliteError(impl_->db.get(), "history: commit append txn"));
+    }
+    if (startsRun) {
+        impl_->startedRuns.insert(env.runId);
     }
     return {};
 }
@@ -1102,7 +1390,9 @@ std::expected<std::vector<RunHistoryRow>, ReqloomError> SqliteHistoryStore::list
         "SELECT run_id, COALESCE(target_op, ''), COALESCE(env_name, ''), "
         "       COALESCE(started_at, ''), COALESCE(ended_at, ''), "
         "       COALESCE(outcome, ''), COALESCE(chain_size, 0), "
-        "       COALESCE(elapsed_ms, -1) "
+        "       COALESCE(elapsed_ms, -1), COALESCE(initiator, ''), "
+        "       COALESCE(initiator_name, ''), "
+        "       EXISTS (SELECT 1 FROM run_steps WHERE run_steps.run_id = runs.run_id) "
         "FROM runs ORDER BY started_at DESC, run_id DESC";
     if (limit > 0) {
         sql += " LIMIT " + std::to_string(limit);
@@ -1127,6 +1417,10 @@ std::expected<std::vector<RunHistoryRow>, ReqloomError> SqliteHistoryStore::list
         row.outcome = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 5));
         row.chainSize = static_cast<std::size_t>(sqlite3_column_int64(stmt.get(), 6));
         row.elapsedMs = static_cast<std::int64_t>(sqlite3_column_int64(stmt.get(), 7));
+        row.initiator.kind = runInitiatorKindFromName(
+            reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 8)));
+        row.initiator.name = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 9));
+        row.hasRecordedSteps = sqlite3_column_int(stmt.get(), 10) != 0;
         out.push_back(std::move(row));
     }
     return out;
@@ -1145,6 +1439,9 @@ std::expected<void, ReqloomError> SqliteHistoryStore::clear() {
     if (auto r = impl_->exec("DELETE FROM run_events;"); !r) {
         return r;
     }
+    if (auto r = impl_->exec("DELETE FROM run_steps;"); !r) {
+        return r;
+    }
     if (auto r = impl_->exec("DELETE FROM runs;"); !r) {
         return r;
     }
@@ -1152,6 +1449,156 @@ std::expected<void, ReqloomError> SqliteHistoryStore::clear() {
         return std::unexpected(sqliteError(impl_->db.get(), "history: commit clear txn"));
     }
     return {};
+}
+
+std::expected<void, ReqloomError> SqliteHistoryStore::appendSteps(
+    RunId run, const std::vector<StepResult>& steps) {
+    const std::lock_guard lock(impl_->mutex);
+    if (!impl_->db) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: appendSteps before open"});
+    }
+    if (impl_->rejectedRuns.contains(run.value) || !impl_->startedRuns.contains(run.value)) {
+        return std::unexpected(ReqloomError{ErrorCode::Internal,
+                                            ErrorClass::Run,
+                                            "history: run id " + std::to_string(run.value) +
+                                                " was not started through this connection"});
+    }
+    std::vector<std::string> payloads;
+    payloads.reserve(steps.size());
+    try {
+        for (const auto& step : steps) {
+            payloads.push_back(stepToJson(step).dump());
+        }
+    } catch (const json::exception&) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: step is not serializable"});
+    }
+    SqliteTransaction txn{impl_->db.get()};
+    if (!txn.began()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: begin steps txn"));
+    }
+    auto remove = impl_->prepare("DELETE FROM run_steps WHERE run_id = ?;");
+    if (!remove) {
+        return std::unexpected(remove.error());
+    }
+    sqlite3_bind_int64(remove->get(), 1, static_cast<sqlite3_int64>(run.value));
+    if (sqlite3_step(remove->get()) != SQLITE_DONE) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: replace steps"));
+    }
+    auto insert = impl_->prepare("INSERT INTO run_steps (run_id, row, payload) VALUES (?, ?, ?);");
+    if (!insert) {
+        return std::unexpected(insert.error());
+    }
+    for (std::size_t i = 0; i < payloads.size(); ++i) {
+        sqlite3_reset(insert->get());
+        sqlite3_bind_int64(insert->get(), 1, static_cast<sqlite3_int64>(run.value));
+        sqlite3_bind_int64(insert->get(), 2, static_cast<sqlite3_int64>(i));
+        sqlite3_bind_text(insert->get(), 3, payloads[i].c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(insert->get()) != SQLITE_DONE) {
+            return std::unexpected(sqliteError(impl_->db.get(), "history: insert step"));
+        }
+    }
+    remove->reset();
+    insert->reset();
+    if (!txn.commit()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: commit steps txn"));
+    }
+    return {};
+}
+
+std::expected<void, ReqloomError> SqliteHistoryStore::rewriteEvents(
+    RunId run, const std::function<void(RunEvent&)>& edit) {
+    const std::lock_guard lock(impl_->mutex);
+    if (!impl_->db) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: rewriteEvents before open"});
+    }
+    if (!impl_->startedRuns.contains(run.value)) {
+        return std::unexpected(ReqloomError{ErrorCode::Internal,
+                                            ErrorClass::Run,
+                                            "history: run id " + std::to_string(run.value) +
+                                                " was not started through this connection"});
+    }
+    SqliteTransaction txn{impl_->db.get()};
+    if (!txn.began()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: begin rewrite txn"));
+    }
+    auto select = impl_->prepare(
+        "SELECT id, event_type, step_index, payload, at FROM run_events WHERE run_id = ?;");
+    auto update = impl_->prepare("UPDATE run_events SET payload = ? WHERE id = ?;");
+    if (!select || !update) {
+        return std::unexpected(select ? update.error() : select.error());
+    }
+    sqlite3_bind_int64(select->get(), 1, static_cast<sqlite3_int64>(run.value));
+    std::vector<std::pair<std::int64_t, std::string>> changed;
+    while (sqlite3_step(select->get()) == SQLITE_ROW) {
+        const auto id = sqlite3_column_int64(select->get(), 0);
+        const auto* type = reinterpret_cast<const char*>(sqlite3_column_text(select->get(), 1));
+        const auto stepIndex = sqlite3_column_type(select->get(), 2) == SQLITE_NULL
+                                   ? std::optional<std::size_t>{}
+                                   : std::optional<std::size_t>{static_cast<std::size_t>(
+                                         sqlite3_column_int64(select->get(), 2))};
+        const auto* payload = reinterpret_cast<const char*>(sqlite3_column_text(select->get(), 3));
+        const auto* at = reinterpret_cast<const char*>(sqlite3_column_text(select->get(), 4));
+        try {
+            const auto before = json::parse(payload != nullptr ? payload : "{}");
+            auto event = eventFromRow(
+                type != nullptr ? type : "", run.value, stepIndex, at != nullptr ? at : "", before);
+            if (!event) {
+                continue;
+            }
+            edit(*event);
+            auto after = envelopeOf(*event).payload;
+            if (after != before) {
+                changed.emplace_back(id, after.dump());
+            }
+        } catch (const json::exception&) {
+            // A row this build cannot read cannot be rewritten either; it is left as it was.
+            continue;
+        }
+    }
+    for (const auto& [id, payload] : changed) {
+        sqlite3_reset(update->get());
+        sqlite3_bind_text(update->get(), 1, payload.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(update->get(), 2, id);
+        if (sqlite3_step(update->get()) != SQLITE_DONE) {
+            return std::unexpected(sqliteError(impl_->db.get(), "history: rewrite event"));
+        }
+    }
+    select->reset();
+    update->reset();
+    if (!txn.commit()) {
+        return std::unexpected(sqliteError(impl_->db.get(), "history: commit rewrite txn"));
+    }
+    return {};
+}
+
+std::expected<std::vector<StepResult>, ReqloomError> SqliteHistoryStore::stepsFor(RunId run) const {
+    const std::lock_guard lock(impl_->mutex);
+    if (!impl_->db) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: stepsFor before open"});
+    }
+    auto select =
+        impl_->prepare("SELECT payload FROM run_steps WHERE run_id = ? ORDER BY row ASC;");
+    if (!select) {
+        return std::unexpected(select.error());
+    }
+    sqlite3_bind_int64(select->get(), 1, static_cast<sqlite3_int64>(run.value));
+    std::vector<StepResult> out;
+    while (sqlite3_step(select->get()) == SQLITE_ROW) {
+        const auto* payload = reinterpret_cast<const char*>(sqlite3_column_text(select->get(), 0));
+        try {
+            out.push_back(stepFromJson(json::parse(payload != nullptr ? payload : "{}")));
+        } catch (const json::exception&) {
+            // A row this build cannot read fails the whole read: a step list with a hole would
+            // shift every index after it.
+            return std::unexpected(ReqloomError{
+                ErrorCode::SchemaInvalid, ErrorClass::Schema, "history: unreadable step row"});
+        }
+    }
+    return out;
 }
 
 void SqliteHistoryStore::close() {

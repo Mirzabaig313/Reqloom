@@ -9,6 +9,7 @@
 #include "HostApprovalPrompt.h"
 #include "PathText.h"
 #include "RunInterrupt.h"
+#include "RunRecording.h"
 
 #include "../output/JUnitRenderer.h"
 #include "../output/JsonRenderer.h"
@@ -18,6 +19,9 @@
 #include <reqloom/engine/Factories.h>
 #include <reqloom/engine/PublicApi.h>
 
+#include <QtCore/QtEnvironmentVariables>
+
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -59,6 +63,7 @@ constexpr std::array kOptions{
     OptionSpec{.name = "--failure-body-size", .takesValue = true},
     OptionSpec{.name = "--response-body-size", .takesValue = true},
     OptionSpec{.name = "--non-interactive"},
+    OptionSpec{.name = "--agent", .takesValue = true},
 };
 
 /// Most operation names listed when the target does not exist.
@@ -77,6 +82,8 @@ struct RunArgs {
     bool nonInteractive{false};
     /// Hosts `REQLOOM_APPROVED_HOSTS` approves for this run.
     std::vector<std::string> approvedHosts;
+    /// Who started the run (`--agent`, `REQLOOM_AGENT`, else a person at the CLI).
+    ce::RunInitiator initiator{ce::RunInitiator::Kind::Cli, {}};
 };
 
 void printUsage(std::FILE* stream) {
@@ -102,6 +109,11 @@ void printUsage(std::FILE* stream) {
         "                       kept in its `response` field (default 2KiB; 0 = none;\n"
         "                       capped at 1MiB). Masked before it is cut; never unmasked.\n"
         "  --non-interactive    Never ask to approve a host, even at a terminal\n"
+        "  --agent <name>       Record the run as started by this agent (default:\n"
+        "                       $REQLOOM_AGENT, else a person at the command line); shown\n"
+        "                       in the Reqloom app, never used to decide anything\n"
+        "Every run is recorded in the project's run history, which the Reqloom app shows;\n"
+        "`reqloom show <run_id> <step>` prints a recorded step, masked like this output.\n"
         "Credentials, secrets and session cookies go only to hosts a person approved for\n"
         "this project. At a terminal, run asks (yes/no) the first time; with no terminal\n"
         "it never asks and the run fails before sending. CI approves hosts for a run with\n"
@@ -203,6 +215,13 @@ void printUsage(std::FILE* stream) {
     // Machine-readable formats imply --quiet: stdout carries a single document.
     out.quiet = parsed.has("--quiet") || out.format != Format::Text;
     out.nonInteractive = parsed.has("--non-interactive");
+    const auto agent =
+        parsed.value("--agent").value_or(qEnvironmentVariable(kAgentVariable).toStdString());
+    auto initiator = initiatorFor(agent);
+    if (!initiator) {
+        return std::unexpected(std::format("--agent: {}", initiator.error()));
+    }
+    out.initiator = std::move(*initiator);
     return out;
 }
 
@@ -347,8 +366,12 @@ struct Report {
     // response; the engine masks it before returning.
     options.agentOutput = true;
     options.secretsFromEnvironment = true;
-    options.recordResponses = cfg.format == Format::Json;
-    options.responseBodyBytes = cfg.responseBodyBytes.value_or(ce::kDefaultResponseBodyBytes);
+    // Every format records the masked rows for `reqloom show`, with more of each body than the
+    // JSON document prints (`withResponseLimit` cuts that copy).
+    options.recordResponses = true;
+    options.responseBodyBytes =
+        std::max(cfg.responseBodyBytes.value_or(ce::kDefaultResponseBodyBytes), kRecordedBodyBytes);
+    options.initiator = cfg.initiator;
     return options;
 }
 
@@ -356,7 +379,8 @@ struct Report {
                                     const Report& report,
                                     TextRenderer& text,
                                     const std::ostringstream& summary,
-                                    const ce::RunResult& result) {
+                                    const ce::RunResult& result,
+                                    bool recorded) {
     const ce::OperationId target{cfg.targetOp};
     std::ostringstream doc;
     switch (cfg.format) {
@@ -364,7 +388,12 @@ struct Report {
             text.render(target, report.environment, result);
             return summary.str();
         case Format::Json:
-            JsonRenderer{doc}.render(target, report.environment, result);
+            JsonRenderer{doc}.render(
+                target,
+                report.environment,
+                withResponseLimit(result,
+                                  cfg.responseBodyBytes.value_or(ce::kDefaultResponseBodyBytes)),
+                recorded);
             break;
         case Format::JUnit:
             JUnitRenderer{doc}.render(target, report.environment, result);
@@ -399,6 +428,20 @@ struct Report {
     }
 
     ce::ExecutionEngine engine(ce::makeDefaultDependencies());
+    // Record the run where the desktop app keeps this project's history. Failing to is a warning:
+    // the run and its report are unaffected.
+    const bool historyOpen = [&] {
+        const auto dbPath = ce::defaultHistoryDatabasePath(project.rootDir);
+        const auto opened =
+            dbPath ? engine.openHistory(*dbPath)
+                   : std::expected<void, ce::ReqloomError>{std::unexpect, dbPath.error()};
+        if (!opened) {
+            std::println(stderr,
+                         "warning: this run is not recorded in the run history: {}",
+                         opened.error().detail);
+        }
+        return opened.has_value();
+    }();
     RunInterrupt interrupt{[&engine](ce::RunId id) {
         engine.cancel(id);
     }};
@@ -414,9 +457,20 @@ struct Report {
 
     ce::RunContext ctx;
     const auto result = engine.run(project, ce::OperationId{cfg.targetOp}, ctx, options);
-    const int code = result ? report.deliver(renderRun(cfg, report, text, summary, *result),
-                                             result->succeeded() ? kExitSuccess : kExitFailed)
-                            : report.failWith(kExitFailed, result.error(), "Engine error");
+    bool recorded = false;
+    if (result && historyOpen) {
+        recorded = result->recorded;
+        if (recorded && cfg.format == Format::Text && !cfg.quiet) {
+            std::println(stderr,
+                         "Recorded as run {}; `reqloom show {} <step>` prints a step.",
+                         result->runId.value,
+                         result->runId.value);
+        }
+    }
+    const int code = result
+                         ? report.deliver(renderRun(cfg, report, text, summary, *result, recorded),
+                                          result->succeeded() ? kExitSuccess : kExitFailed)
+                         : report.failWith(kExitFailed, result.error(), "Engine error");
     // A signal's code wins over the run's outcome, but not over a report that was not written.
     const int signalCode = interrupt.exitCode();
     return code == kExitSystem || signalCode == 0 ? code : signalCode;

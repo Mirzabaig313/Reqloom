@@ -154,8 +154,14 @@ private:
 /// Every masked free-text field of an event, concatenated, so a test can
 /// assert a value appears nowhere in it. Captured bodies are excluded: they
 /// are the person's own view and stay as received (see `capturedBodies`).
-[[nodiscard]] std::string eventText(const ce::RunEvent& event) {
+/// `requestEvidence` false leaves out request URLs and request and response header values, which a
+/// desktop run shows as sent (owner decision 2026-11-19; only declared secrets are masked there).
+[[nodiscard]] std::string eventText(const ce::RunEvent& event, bool requestEvidence = true) {
     std::string out{};
+    if (!requestEvidence && (std::holds_alternative<ce::RequestPrepared>(event) ||
+                             std::holds_alternative<ce::ResponseReceived>(event))) {
+        return out;
+    }
     const auto headers = [&](const std::vector<std::pair<std::string, std::string>>& hs) {
         for (const auto& [k, v] : hs) {
             out += k + ": " + v + "\n";
@@ -223,13 +229,13 @@ struct Outcome {
     }
 
     /// Every event (emitted and stored) and every step detail as one string.
-    [[nodiscard]] std::string everything() const {
+    [[nodiscard]] std::string everything(bool requestEvidence = true) const {
         std::string all{};
         for (const auto& e : emitted) {
-            all += eventText(e) + "\n";
+            all += eventText(e, requestEvidence) + "\n";
         }
         for (const auto& e : stored) {
-            all += eventText(e) + "\n";
+            all += eventText(e, requestEvidence) + "\n";
         }
         if (result) {
             for (const auto& s : result->steps) {
@@ -518,7 +524,11 @@ resources:
     const auto out = runProject(kLoginYaml, "item.read", setup);
     ASSERT_TRUE(out.result.has_value()) << out.result.error().detail;
     EXPECT_EQ(sentHeader(out, "X-Session"), kToken) << "the request sent must be unchanged";
-    EXPECT_FALSE(contains(out.everything(), kToken)) << out.everything();
+    // A desktop run shows the header as sent (it is not a declared secret); everything else
+    // stays clean.
+    EXPECT_TRUE(contains(out.everything(), kToken)) << "the request evidence shows what was sent";
+    EXPECT_FALSE(contains(out.everything(/*requestEvidence=*/false), kToken))
+        << out.everything(false);
     const auto* failed = out.failedStep();
     ASSERT_NE(failed, nullptr);
     EXPECT_TRUE(contains(failed->detail, "denied")) << failed->detail;
@@ -538,7 +548,7 @@ resources:
             seenExtraction = true;
         }
         if (seenExtraction) {
-            afterExtraction += eventText(e) + "\n";
+            afterExtraction += eventText(e, /*requestEvidence=*/false) + "\n";
         }
     }
     ASSERT_TRUE(seenExtraction);
@@ -623,7 +633,10 @@ resources:
     const auto out = runProject(kActorYaml, "item.read", setup);
     ASSERT_TRUE(out.result.has_value()) << out.result.error().detail;
     EXPECT_EQ(sentHeader(out, "X-Sid"), kSid);
-    EXPECT_FALSE(contains(out.everything(), kSid)) << out.everything();
+    // A desktop run shows the injected header as sent; details and extractions stay clean.
+    EXPECT_TRUE(contains(out.everything(), kSid)) << "the request evidence shows what was sent";
+    EXPECT_FALSE(contains(out.everything(/*requestEvidence=*/false), kSid))
+        << out.everything(false);
     const auto* failed = out.failedStep();
     ASSERT_NE(failed, nullptr);
     EXPECT_TRUE(contains(failed->detail, "expired")) << failed->detail;

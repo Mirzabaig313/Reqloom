@@ -44,6 +44,10 @@ public:
     /// overlapping matches merge into one marker.
     [[nodiscard]] std::string redact(std::string_view text) const;
 
+    /// As `redact`, with `marker` in place of `kRedactedValueMarker` (the desktop names the
+    /// declared secret a request evidence value was: `<secret:NAME>`).
+    [[nodiscard]] std::string redact(std::string_view text, std::string_view marker) const;
+
     /// True when `text` contains any registered spelling.
     [[nodiscard]] bool containsAny(std::string_view text) const;
 

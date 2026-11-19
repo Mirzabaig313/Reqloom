@@ -32,13 +32,46 @@ QVariant SecretListModel::data(const QModelIndex& index, int role) const {
             return QStringLiteral("unknown");
         case DetailRole:
             return entry.detail;
+        case RevealedRole:
+        case RevealedValueRole:
+        case RevealMessageRole: {
+            const RevealState* state = reveal_ != nullptr ? reveal_->state(entry.name) : nullptr;
+            if (role == RevealedRole) {
+                return state != nullptr && state->shown;
+            }
+            if (state == nullptr) {
+                return QString{};
+            }
+            return role == RevealedValueRole ? state->value : state->message;
+        }
         default:
             return {};
     }
 }
 
+void SecretListModel::revealChanged(const QString& name) {
+    const int row = rowForName(name);
+    if (row >= 0) {
+        const QModelIndex at = index(row);
+        emit dataChanged(at, at, {RevealedRole, RevealedValueRole, RevealMessageRole});
+    }
+}
+
+void SecretListModel::allRevealsChanged() {
+    if (!entries_.isEmpty()) {
+        emit dataChanged(index(0),
+                         index(static_cast<int>(entries_.size()) - 1),
+                         {RevealedRole, RevealedValueRole, RevealMessageRole});
+    }
+}
+
 QHash<int, QByteArray> SecretListModel::roleNames() const {
-    return {{NameRole, "name"}, {StatusRole, "status"}, {DetailRole, "detail"}};
+    return {{NameRole, "name"},
+            {StatusRole, "status"},
+            {DetailRole, "detail"},
+            {RevealedRole, "revealed"},
+            {RevealedValueRole, "revealedValue"},
+            {RevealMessageRole, "revealMessage"}};
 }
 
 int SecretListModel::rowForName(const QString& name) const {
@@ -63,7 +96,36 @@ void SecretListModel::clear() {
 }
 
 SecretsController::SecretsController(QObject* parent)
-    : QObject(parent), hostApprovals_(engine::makeFileHostApprovalStore()) {}
+    : QObject(parent), hostApprovals_(engine::makeFileHostApprovalStore()) {
+    list_.setReveal(&reveal_);
+}
+
+void SecretsController::toggleReveal(const QString& name) {
+    if (project_ == nullptr || !project_->hasProject()) {
+        return;
+    }
+    (void)reveal_.toggle(*project_, name);
+    list_.revealChanged(name);
+}
+
+void SecretsController::hideRevealed() {
+    reveal_.hideAll();
+    list_.allRevealsChanged();
+}
+
+QVariantMap SecretsController::readStoredValue(const QString& name) const {
+    // The request panel asks without opening the dialog: always the project open now.
+    const ProjectModel* project = AppController::create(nullptr, nullptr)->projectRaw();
+    if (project == nullptr || !project->hasProject()) {
+        return {{QStringLiteral("shown"), false},
+                {QStringLiteral("value"), QString{}},
+                {QStringLiteral("message"), QStringLiteral("No project is open.")}};
+    }
+    const RevealState state = reveal_.read(*project, name);
+    return {{QStringLiteral("shown"), state.shown},
+            {QStringLiteral("value"), state.value},
+            {QStringLiteral("message"), state.message}};
+}
 
 SecretsController::~SecretsController() = default;
 
@@ -75,6 +137,8 @@ void SecretsController::refresh() {
 }
 
 void SecretsController::reloadList() {
+    // A reload can change the project or its folder: nothing stays shown across it.
+    reveal_.hideAll();
     QString conflict;
     QString folder;
     if (project_ == nullptr || !project_->hasProject()) {

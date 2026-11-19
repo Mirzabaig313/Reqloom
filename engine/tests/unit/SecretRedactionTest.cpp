@@ -355,3 +355,28 @@ TEST(SecretRedaction, agent_masks_a_numeric_secret_longer_than_a_64_bit_integer)
     EXPECT_EQ(masked->find("12345678901234"), std::string::npos) << *masked;
     EXPECT_EQ(*masked, R"({"n":"<redacted>","m":1.5})");
 }
+
+// A body cut before masking no longer parses and gets the text scan: a sensitive key whose value
+// is an object or a list is masked to its closing bracket, or to the end of the kept text.
+TEST(SecretRedaction, cut_body_masks_a_nested_value_under_a_sensitive_key) {
+    const std::string body =
+        "{\n  \"id\": 7,\n  \"credentials\": {\n    \"access\": \"AKIAFAKE00000001\",\n"
+        "    \"private\": \"fake-private-0002\"\n  },\n  \"tokens\": [\n    \"fake-tok-0003\",\n"
+        "    \"fake-tok-0004\"\n  ],\n  \"note\": \"kept\",\n  \"secret\": {\n"
+        "    \"inner\": \"fake-cut-0005\"";  // cut: no closing bracket
+    // Agent profile: `credentials` is a credential name there (the desktop's display policy keeps
+    // its own, unchanged list).
+    {
+        const auto out = ce::redactSensitiveBodyFields(body, ce::MaskProfile::Agent);
+        ASSERT_TRUE(out.has_value());
+        for (const char* leak : {"AKIAFAKE00000001",
+                                 "fake-private-0002",
+                                 "fake-tok-0003",
+                                 "fake-tok-0004",
+                                 "fake-cut-0005"}) {
+            EXPECT_EQ(out->find(leak), std::string::npos) << leak << "\n" << *out;
+        }
+        EXPECT_NE(out->find("kept"), std::string::npos) << *out;
+        EXPECT_NE(out->find("\"id\": 7"), std::string::npos) << *out;
+    }
+}

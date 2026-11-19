@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -898,4 +899,139 @@ TEST(SqliteHistoryStore, run_started_for_existing_run_never_overwrites_it) {
     auto events = store.eventsFor(ce::RunId{1});
     ASSERT_TRUE(events.has_value());
     EXPECT_EQ(events->size(), 2u) << "events of the clashing run were merged into run 1";
+}
+
+// A database from before FR-15.8 gains the initiator columns when it is opened, and a migration
+// that cannot be applied is an error, not a silently half-upgraded store.
+TEST(SqliteHistoryStore, a_database_without_the_initiator_columns_is_upgraded_on_open) {
+    TempDb tmp;
+    {
+        sqlite3* rawDatabase{};
+        ASSERT_EQ(sqlite3_open(tmp.path().string().c_str(), &rawDatabase), SQLITE_OK);
+        std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database{rawDatabase, &sqlite3_close};
+        constexpr const char* kSql = R"SQL(
+            CREATE TABLE runs (run_id INTEGER PRIMARY KEY, target_op TEXT, env_name TEXT,
+                               started_at TEXT, ended_at TEXT, outcome TEXT, chain_size INTEGER);
+            INSERT INTO runs (run_id, target_op, started_at) VALUES
+                (3, 'old.get', '2025-05-27T12:00:00Z');
+        )SQL";
+        ASSERT_EQ(sqlite3_exec(database.get(), kSql, nullptr, nullptr, nullptr), SQLITE_OK);
+    }
+    ce::SqliteHistoryStore store;
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+    ce::RunStarted started{ce::RunId{4}, ce::OperationId{"new.get"}, 1, "e", someTimePoint(), {}};
+    started.initiator = ce::RunInitiator{ce::RunInitiator::Kind::Agent, "agent-x"};
+    ASSERT_TRUE(store.append(started).has_value());
+    const auto runs = store.listRuns(10);
+    ASSERT_TRUE(runs.has_value());
+    ASSERT_EQ(runs->size(), 2U);
+    for (const auto& run : *runs) {
+        if (run.runId.value == 4) {
+            EXPECT_EQ(run.initiator.name, "agent-x");
+        } else {
+            EXPECT_EQ(run.initiator.kind, ce::RunInitiator::Kind::App);
+            EXPECT_EQ(run.elapsedMs, -1);
+        }
+    }
+    // Opening again finds every column and changes nothing.
+    store.close();
+    ASSERT_TRUE(store.open(tmp.path()).has_value());
+}
+
+TEST(SqliteHistoryStore, a_migration_that_cannot_be_applied_fails_the_open_and_says_why) {
+    TempDb tmp;
+    sqlite3* rawDatabase{};
+    ASSERT_EQ(sqlite3_open(tmp.path().string().c_str(), &rawDatabase), SQLITE_OK);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database{rawDatabase, &sqlite3_close};
+    constexpr const char* kSql = R"SQL(
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+        INSERT INTO schema_version(version) VALUES (1);
+        CREATE TABLE runs (run_id INTEGER PRIMARY KEY, target_op TEXT, env_name TEXT,
+                           started_at TEXT, ended_at TEXT, outcome TEXT, chain_size INTEGER,
+                           elapsed_ms INTEGER);
+    )SQL";
+    ASSERT_EQ(sqlite3_exec(database.get(), kSql, nullptr, nullptr, nullptr), SQLITE_OK);
+    // Another process is writing for longer than the busy timeout.
+    ASSERT_EQ(sqlite3_exec(database.get(), "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr),
+              SQLITE_OK);
+    ce::SqliteHistoryStore store;
+    const auto opened = store.open(tmp.path());
+    sqlite3_exec(database.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
+    ASSERT_FALSE(opened.has_value());
+    EXPECT_NE(opened.error().detail.find("upgrade"), std::string::npos) << opened.error().detail;
+}
+
+TEST(SqliteHistoryStore, an_up_to_date_database_opens_while_another_process_writes) {
+    TempDb tmp;
+    {
+        ce::SqliteHistoryStore creator;
+        ASSERT_TRUE(creator.open(tmp.path()).has_value());
+    }
+    sqlite3* rawDatabase{};
+    ASSERT_EQ(sqlite3_open(tmp.path().string().c_str(), &rawDatabase), SQLITE_OK);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database{rawDatabase, &sqlite3_close};
+    ASSERT_EQ(sqlite3_exec(database.get(), "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr),
+              SQLITE_OK);
+    ce::SqliteHistoryStore store;
+    const auto opened = store.open(tmp.path());
+    sqlite3_exec(database.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
+    EXPECT_TRUE(opened.has_value()) << opened.error().detail;
+}
+
+// `reqloom show` only reads: it opens the history read-only and never upgrades or creates it.
+TEST(SqliteHistoryStore, a_read_only_open_neither_creates_nor_upgrades_the_database) {
+    TempDb tmp;
+    {
+        ce::SqliteHistoryStore store;
+        EXPECT_FALSE(store.openReadOnly(tmp.path()).has_value());
+        EXPECT_FALSE(fs::exists(tmp.path()));
+    }
+    {
+        sqlite3* rawDatabase{};
+        ASSERT_EQ(sqlite3_open(tmp.path().string().c_str(), &rawDatabase), SQLITE_OK);
+        std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database{rawDatabase, &sqlite3_close};
+        ASSERT_EQ(sqlite3_exec(database.get(),
+                               "CREATE TABLE runs (run_id INTEGER PRIMARY KEY, target_op TEXT);",
+                               nullptr,
+                               nullptr,
+                               nullptr),
+                  SQLITE_OK);
+    }
+    ce::SqliteHistoryStore store;
+    EXPECT_FALSE(store.openReadOnly(tmp.path()).has_value());
+    sqlite3* rawDatabase{};
+    ASSERT_EQ(sqlite3_open(tmp.path().string().c_str(), &rawDatabase), SQLITE_OK);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database{rawDatabase, &sqlite3_close};
+    int tables = 0;
+    sqlite3_exec(
+        database.get(),
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table';",
+        [](void* out, int, char** values, char**) {
+            *static_cast<int*>(out) = std::atoi(values[0]);
+            return 0;
+        },
+        &tables,
+        nullptr);
+    EXPECT_EQ(tables, 1) << "a read-only open created tables";
+
+    // An up-to-date database reads normally.
+    TempDb current;
+    {
+        ce::SqliteHistoryStore writer;
+        ASSERT_TRUE(writer.open(current.path()).has_value());
+        ASSERT_TRUE(writer
+                        .append(ce::RunStarted{
+                            ce::RunId{1}, ce::OperationId{"a.b"}, 1, "e", someTimePoint(), {}})
+                        .has_value());
+    }
+    ce::SqliteHistoryStore reader;
+    ASSERT_TRUE(reader.openReadOnly(current.path()).has_value());
+    const auto runs = reader.listRuns(5);
+    ASSERT_TRUE(runs.has_value());
+    EXPECT_EQ(runs->size(), 1U);
+    EXPECT_FALSE(reader
+                     .append(ce::RunStarted{
+                         ce::RunId{2}, ce::OperationId{"a.b"}, 1, "e", someTimePoint(), {}})
+                     .has_value());
 }

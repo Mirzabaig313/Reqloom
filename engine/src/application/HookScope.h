@@ -40,6 +40,11 @@ struct OperationCredentialUse {
     const std::map<std::string, std::string>& envVars,
     const std::set<std::string>& credentialRefs);
 
+/// Secret names `actor`'s sign-in, refresh, auth config and injected headers refer to, directly or
+/// through an environment value (`key: !secret NAME`).
+[[nodiscard]] std::set<std::string> actorSecretNames(
+    const Actor& actor, const std::map<std::string, std::string>& envVars);
+
 /// Secret names a hook script reads literally (`ctx.secret.NAME` / `ctx.secret["NAME"]`).
 [[nodiscard]] std::set<std::string> hookScriptSecretNames(std::string_view script);
 

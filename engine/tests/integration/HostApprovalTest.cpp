@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -23,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ce = reqloom::engine;
@@ -602,27 +604,66 @@ namespace {
     return path;
 }
 
+constexpr const char* kEchoSecret = "fake-echo-secret-0016";
+
+[[nodiscard]] std::string hexOf(std::string_view text) {
+    static constexpr char kDigits[] = "0123456789abcdef";
+    std::string out;
+    for (const char c : text) {
+        out.push_back(kDigits[(static_cast<unsigned char>(c) >> 4U) & 0xFU]);
+        out.push_back(kDigits[static_cast<unsigned char>(c) & 0xFU]);
+    }
+    return out;
+}
+
+/// Every byte of `text` percent-encoded, upper case: the same value, spelled differently.
+[[nodiscard]] std::string percentEncodeAll(std::string_view text) {
+    static constexpr char kDigits[] = "0123456789ABCDEF";
+    std::string out;
+    for (const char c : text) {
+        out += '%';
+        out.push_back(kDigits[(static_cast<unsigned char>(c) >> 4U) & 0xFU]);
+        out.push_back(kDigits[static_cast<unsigned char>(c) & 0xFU]);
+    }
+    return out;
+}
+
 class HostApprovalRedirect : public ::testing::Test {
 protected:
     void SetUp() override {
         targetRoutes_ = writeRoutes(nlohmann::json::array(
             {{{"method", "GET"}, {"path", "/landing"}, {"status", 200}, {"body", "{}"}},
-             {{"method", "POST"}, {"path", "/landing"}, {"status", 200}, {"body", "{}"}}}));
+             {{"method", "POST"}, {"path", "/landing"}, {"status", 200}, {"body", "{}"}},
+             {{"method", "GET"}, {"path", "/p/(.*)"}, {"status", 200}, {"body", "{}"}}}));
         target_ = std::make_unique<ct::MockSutHarness>(targetRoutes_);
         const auto landing = target_->baseUrl() + "/landing";
-        originRoutes_ =
-            writeRoutes(nlohmann::json::array({{{"method", "GET"},
-                                                {"path", "/go"},
-                                                {"status", 302},
-                                                {"headers", {{"Location", landing}}}},
-                                               {{"method", "GET"},
-                                                {"path", "/go307"},
-                                                {"status", 307},
-                                                {"headers", {{"Location", landing}}}},
-                                               {{"method", "POST"},
-                                                {"path", "/go307"},
-                                                {"status", 307},
-                                                {"headers", {{"Location", landing}}}}}));
+        originRoutes_ = writeRoutes(nlohmann::json::array(
+            {{{"method", "GET"},
+              {"path", "/go"},
+              {"status", 302},
+              {"headers", {{"Location", landing}}}},
+             {{"method", "GET"},
+              {"path", "/go307"},
+              {"status", 307},
+              {"headers", {{"Location", landing}}}},
+             {{"method", "POST"},
+              {"path", "/go307"},
+              {"status", 307},
+              {"headers", {{"Location", landing}}}},
+             {{"method", "GET"},
+              {"path", "/echo-query"},
+              {"status", 302},
+              {"headers", {{"Location", landing + "?x=" + percentEncodeAll(hexOf(kEchoSecret))}}}},
+             {{"method", "GET"},
+              {"path", "/echo-path"},
+              {"status", 302},
+              {"headers",
+               {{"Location", target_->baseUrl() + "/p/" + percentEncodeAll(hexOf(kEchoSecret))}}}},
+             {{"method", "GET"},
+              {"path", "/same"},
+              {"status", 302},
+              {"headers", {{"Location", "/same-landing"}}}},
+             {{"method", "GET"}, {"path", "/same-landing"}, {"status", 200}, {"body", "{}"}}}));
         origin_ = std::make_unique<ct::MockSutHarness>(originRoutes_);
     }
     void TearDown() override {
@@ -642,6 +683,22 @@ protected:
         auto& op = p.resources.at(ce::ResourceId{"me"}).operations.at("get");
         op.pathTemplate = "/go";
         return p;
+    }
+
+    /// What a route on `server` received last (`path` as declared in its routes file).
+    [[nodiscard]] static nlohmann::json seenAt(const ct::MockSutHarness& server,
+                                               const std::string& path) {
+        auto client = ce::makeCurlHttpClient();
+        ce::HttpRequest probe;
+        std::string encoded;
+        for (const char c : path) {
+            encoded += std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '/' || c == '-'
+                           ? std::string(1, c)
+                           : percentEncodeAll(std::string_view{&c, 1});
+        }
+        probe.url = server.baseUrl() + "/__mock/last-request?path=" + encoded;
+        auto res = client->send(probe);
+        return res ? nlohmann::json::parse(res->body, nullptr, false) : nlohmann::json{};
     }
 
     [[nodiscard]] nlohmann::json landingSeen() const {
@@ -672,7 +729,9 @@ protected:
 
 }  // namespace
 
-TEST_F(HostApprovalRedirect, credential_header_does_not_follow_a_redirect_to_an_unapproved_host) {
+// Since the second security round (2026-11-17) a custom credential header is dropped on a hop to
+// another host instead of stopping the run: the hop carries nothing of the project's.
+TEST_F(HostApprovalRedirect, credential_header_is_dropped_on_a_redirect_to_another_host) {
     ct::MemoryHostApprovals* approvals = nullptr;
     auto engine = curlEngine(approvals);
     const auto p = project();
@@ -680,13 +739,15 @@ TEST_F(HostApprovalRedirect, credential_header_does_not_follow_a_redirect_to_an_
     ce::RunContext ctx;
     auto result = engine->run(p, ce::OperationId{"me.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
-    EXPECT_EQ(lastStep(*result).error, ce::ErrorCode::HostNotApproved) << lastStep(*result).detail;
-    EXPECT_NE(lastStep(*result).detail.find(hostOf(*target_)), std::string::npos)
-        << lastStep(*result).detail;
-    EXPECT_FALSE(landingSeen().value("found", true)) << "the redirect hop reached the next host";
+    EXPECT_TRUE(result->succeeded()) << lastStep(*result).detail;
+    const auto seen = landingSeen();
+    EXPECT_TRUE(seen.value("found", false));
+    EXPECT_FALSE(seen["headers"].contains("x-api-key")) << seen.dump();
 }
 
-TEST_F(HostApprovalRedirect, approved_and_allowed_redirect_target_receives_the_credential) {
+// Behaviour change (2026-11-17): even an allowed and approved second host no longer receives a
+// header the project or actor set; only libcurl's defaults cross hosts on a redirect.
+TEST_F(HostApprovalRedirect, project_headers_never_cross_hosts_even_to_an_approved_host) {
     ct::MemoryHostApprovals* approvals = nullptr;
     auto engine = curlEngine(approvals);
     auto p = project();
@@ -698,7 +759,7 @@ TEST_F(HostApprovalRedirect, approved_and_allowed_redirect_target_receives_the_c
     auto result = engine->run(p, ce::OperationId{"me.get"}, ctx);
     ASSERT_TRUE(result.has_value()) << result.error().detail;
     EXPECT_TRUE(result->succeeded()) << lastStep(*result).detail;
-    EXPECT_EQ(landingSeen()["headers"].value("x-api-key", ""), "fake-test-api-key-0007");
+    EXPECT_FALSE(landingSeen()["headers"].contains("x-api-key")) << landingSeen().dump();
 }
 
 // Security check finding (2026-11-17): a hop keeps the credential status of the request it
@@ -716,8 +777,10 @@ TEST_F(HostApprovalRedirect, transformed_secret_in_a_header_does_not_follow_a_re
     ce::RunContext ctx;
     auto result = engine->run(p, ce::OperationId{"open.get"}, ctx, envSecrets());
     ASSERT_TRUE(result.has_value()) << result.error().detail;
-    EXPECT_EQ(lastStep(*result).error, ce::ErrorCode::HostNotApproved) << lastStep(*result).detail;
-    EXPECT_FALSE(landingSeen().value("found", true)) << "the hop reached the unapproved host";
+    // The bodiless GET hop goes on, without the header.
+    const auto seen = landingSeen();
+    EXPECT_FALSE(seen["headers"].contains("x-trace-id")) << seen.dump();
+    EXPECT_EQ(seen.dump().find(hexOf("fake-hop-secret-0014")), std::string::npos) << seen.dump();
 }
 
 TEST_F(HostApprovalRedirect, transformed_secret_in_a_body_does_not_follow_a_307) {
@@ -750,4 +813,127 @@ TEST_F(HostApprovalRedirect, plain_download_redirect_still_works) {
     const auto seen = landingSeen();
     EXPECT_TRUE(seen.value("found", false));
     EXPECT_FALSE(seen["headers"].contains("authorization")) << seen.dump();
+}
+
+// `reqloom plan` judges hosts by the gate's own rules: what it says is what the run then does.
+TEST(HostApproval, plan_verdict_matches_what_the_run_does) {
+    auto rig = makeRig();
+    const auto project = makeProject();
+    ce::PlanOptions planOptions;
+    planOptions.approvals = rig.approvals;
+    auto plan = ce::planChain(project, ce::OperationId{"me.get"}, planOptions);
+    ASSERT_TRUE(plan.has_value()) << plan.error().detail;
+    ASSERT_EQ(plan->hosts.size(), 1U);
+    EXPECT_EQ(plan->hosts[0].host, "https://api.example.test:443");
+    EXPECT_EQ(plan->hosts[0].status, ce::HostStatus::NotApproved);
+    ce::RunContext ctx;
+    auto refused = rig.engine->run(project, ce::OperationId{"me.get"}, ctx);
+    ASSERT_TRUE(refused.has_value());
+    EXPECT_EQ(lastStep(*refused).error, ce::ErrorCode::HostNotApproved);
+    EXPECT_TRUE(rig.http->requests().empty());
+
+    ASSERT_TRUE(rig.approvals->approve(project, "https://api.example.test:443").has_value());
+    plan = ce::planChain(project, ce::OperationId{"me.get"}, planOptions);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->hosts[0].status, ce::HostStatus::Approved);
+    ce::RunContext ctx2;
+    auto sent = rig.engine->run(project, ce::OperationId{"me.get"}, ctx2);
+    ASSERT_TRUE(sent.has_value());
+    EXPECT_TRUE(sent->succeeded()) << lastStep(*sent).detail;
+
+    // An operation that carries no credential needs no host.
+    plan = ce::planChain(project, ce::OperationId{"open.get"}, planOptions);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_TRUE(plan->hosts.empty());
+}
+
+TEST(HostApproval, plan_refusal_by_allowed_hosts_matches_the_run) {
+    auto rig = makeRig();
+    auto project = makeProject();
+    project.actors.at(ce::ActorId{"svc"}).allowedHosts = {"other.example.test"};
+    ASSERT_TRUE(rig.approvals->approve(project, "https://api.example.test:443").has_value());
+    ce::PlanOptions planOptions;
+    planOptions.approvals = rig.approvals;
+    const auto plan = ce::planChain(project, ce::OperationId{"me.get"}, planOptions);
+    ASSERT_TRUE(plan.has_value());
+    ASSERT_EQ(plan->hosts.size(), 1U);
+    EXPECT_EQ(plan->hosts[0].status, ce::HostStatus::Refused);
+    ce::RunContext ctx;
+    auto refused = rig.engine->run(project, ce::OperationId{"me.get"}, ctx);
+    ASSERT_TRUE(refused.has_value());
+    EXPECT_EQ(lastStep(*refused).error, ce::ErrorCode::HostNotApproved);
+    EXPECT_TRUE(rig.http->requests().empty());
+}
+
+// Security check, second round (2026-11-17): on a hop to another scheme, host or port after a
+// credentialed request, headers the project, actor or a hook set are dropped (not judged by how
+// they look), and a value of the original request echoed in the hop URL, in any URL encoding or
+// in the path, keeps the credential status.
+TEST_F(HostApprovalRedirect, project_headers_do_not_follow_a_redirect_to_another_host) {
+    const ScopedSecretEnv secret{"REQLOOM_SECRET_HDRKEY", "short7k"};
+    ct::MemoryHostApprovals* approvals = nullptr;
+    auto engine = curlEngine(approvals);
+    auto p = makeProject(origin_->baseUrl());
+    auto& op = p.resources.at(ce::ResourceId{"open"}).operations.at("get");
+    op.pathTemplate = "/go";
+    op.headers["User-Agent"] = "{{$.hex.encode(secret.hdrkey)}}";
+    op.headers["Accept-Language"] = "{{$.hex.encode(secret.hdrkey)}}";
+    ASSERT_TRUE(approvals->approve(p, hostOf(*origin_)).has_value());
+    ce::RunContext ctx;
+    auto result = engine->run(p, ce::OperationId{"open.get"}, ctx, envSecrets());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    const auto seen = landingSeen();
+    const auto hex = hexOf("short7k");
+    EXPECT_EQ(seen.dump().find(hex), std::string::npos) << seen.dump();
+    EXPECT_FALSE(seen["headers"].contains("accept-language")) << seen.dump();
+}
+
+TEST_F(HostApprovalRedirect, secret_echoed_in_the_hop_query_in_another_encoding_stops_the_hop) {
+    const ScopedSecretEnv secret{"REQLOOM_SECRET_ECHOKEY", kEchoSecret};
+    ct::MemoryHostApprovals* approvals = nullptr;
+    auto engine = curlEngine(approvals);
+    auto p = makeProject(origin_->baseUrl());
+    p.resources.at(ce::ResourceId{"open"}).operations.at("get").pathTemplate =
+        "/echo-query?t={{$.hex.encode(secret.echokey)}}";
+    ASSERT_TRUE(approvals->approve(p, hostOf(*origin_)).has_value());
+    ce::RunContext ctx;
+    auto result = engine->run(p, ce::OperationId{"open.get"}, ctx, envSecrets());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(lastStep(*result).error, ce::ErrorCode::HostNotApproved) << lastStep(*result).detail;
+    EXPECT_FALSE(landingSeen().value("found", true)) << "the echoed value reached the next host";
+}
+
+TEST_F(HostApprovalRedirect, secret_echoed_in_the_hop_path_stops_the_hop) {
+    const ScopedSecretEnv secret{"REQLOOM_SECRET_ECHOKEY", kEchoSecret};
+    ct::MemoryHostApprovals* approvals = nullptr;
+    auto engine = curlEngine(approvals);
+    auto p = makeProject(origin_->baseUrl());
+    p.resources.at(ce::ResourceId{"open"}).operations.at("get").pathTemplate =
+        "/echo-path?t={{$.hex.encode(secret.echokey)}}";
+    ASSERT_TRUE(approvals->approve(p, hostOf(*origin_)).has_value());
+    ce::RunContext ctx;
+    auto result = engine->run(p, ce::OperationId{"open.get"}, ctx, envSecrets());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_EQ(lastStep(*result).error, ce::ErrorCode::HostNotApproved) << lastStep(*result).detail;
+    EXPECT_FALSE(seenAt(*target_, "/p/(.*)").value("found", true))
+        << "the echoed value reached the next host";
+}
+
+TEST_F(HostApprovalRedirect, same_host_redirect_keeps_the_project_headers) {
+    const ScopedSecretEnv secret{"REQLOOM_SECRET_HDRKEY", "fake-same-host-0017"};
+    ct::MemoryHostApprovals* approvals = nullptr;
+    auto engine = curlEngine(approvals);
+    auto p = makeProject(origin_->baseUrl());
+    auto& op = p.resources.at(ce::ResourceId{"open"}).operations.at("get");
+    op.pathTemplate = "/same";
+    op.headers["X-Custom"] = "{{$.hex.encode(secret.hdrkey)}}";
+    op.headers["Accept-Language"] = "de";
+    ASSERT_TRUE(approvals->approve(p, hostOf(*origin_)).has_value());
+    ce::RunContext ctx;
+    auto result = engine->run(p, ce::OperationId{"open.get"}, ctx, envSecrets());
+    ASSERT_TRUE(result.has_value()) << result.error().detail;
+    EXPECT_TRUE(result->succeeded()) << lastStep(*result).detail;
+    const auto seen = seenAt(*origin_, "/same-landing");
+    EXPECT_EQ(seen["headers"].value("x-custom", ""), hexOf("fake-same-host-0017")) << seen.dump();
+    EXPECT_EQ(seen["headers"].value("accept-language", ""), "de") << seen.dump();
 }

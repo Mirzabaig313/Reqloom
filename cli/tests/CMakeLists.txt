@@ -108,6 +108,8 @@ if(TARGET reqloom-mock-sut)
     add_executable(reqloom-cli-agent-output-tests
         unit/AgentOutputTest.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/RunCommand.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/ShowCommand.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/ProjectCommand.cpp
         ${CMAKE_SOURCE_DIR}/engine/tests/integration/MockSutHarness.cpp
     )
     target_include_directories(reqloom-cli-agent-output-tests
@@ -144,6 +146,45 @@ if(TARGET reqloom-mock-sut)
         DISCOVERY_TIMEOUT 60
     )
 endif()
+
+# list, describe, plan and show — compile the commands directly, like the import tests.
+add_executable(reqloom-cli-inspect-tests
+    unit/InspectCommandsTest.cpp
+    unit/ShowCommandTest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/InspectCommands.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/ProjectCommand.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/commands/ShowCommand.cpp
+)
+# engine/src: ShowCommandTest writes a desktop-style history row through the store directly.
+target_include_directories(reqloom-cli-inspect-tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+        ${CMAKE_SOURCE_DIR}/engine/src
+)
+target_link_libraries(reqloom-cli-inspect-tests
+    PRIVATE
+        reqloom-cli-renderers
+        reqloom-cli-support
+        reqloom::engine
+        Qt6::Core
+        GTest::gtest
+        GTest::gtest_main
+)
+reqloom_set_warnings(reqloom-cli-inspect-tests)
+reqloom_apply_sanitizers(reqloom-cli-inspect-tests)
+reqloom_isolate_test_config(reqloom-cli-inspect-tests)
+
+reqloom_forbid_dependencies(reqloom-cli-inspect-tests
+    Qt6::Widgets
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::QuickWidgets
+)
+
+gtest_discover_tests(reqloom-cli-inspect-tests
+    PROPERTIES LABELS "cli_unit"
+    DISCOVERY_TIMEOUT 60
+)
 
 # Lint command tests — compile the command directly, like the import tests.
 add_executable(reqloom-cli-lint-tests

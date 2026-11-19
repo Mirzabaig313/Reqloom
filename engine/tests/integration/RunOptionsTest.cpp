@@ -838,10 +838,11 @@ TEST_F(RunOptionsFixture, step_started_events_are_emitted_for_each_step) {
 // event variant. Each of these tests fails on the parent commit because
 // the corresponding event was declared in Events.h but never emitted.
 
-TEST_F(RunOptionsFixture, request_prepared_event_fires_with_masked_headers) {
-    // RequestPrepared lets the desktop show "what we're about to send".
-    // The Authorization header carries the actor's bearer token; it
-    // MUST be redacted before reaching the event stream (AC-3.6.3).
+TEST_F(RunOptionsFixture, request_prepared_event_fires_with_real_headers_on_the_desktop) {
+    // RequestPrepared lets the desktop show "what we're about to send". Owner decision
+    // 2026-11-19: a desktop run shows the real URL and the real Authorization value (the actor's
+    // session token is not a declared secret); an agent run masks both, as AC-3.6.3 required of
+    // every run before. The agent half is pinned below.
     //
     // The chain runs two outbound HTTP calls — the auth login and the
     // ping.get itself. Both emit RequestPrepared via the same code path
@@ -874,24 +875,44 @@ TEST_F(RunOptionsFixture, request_prepared_event_fires_with_masked_headers) {
     // Auth login is the first send; ping.get is the second.
     const auto& authPrep = events[0];
     EXPECT_EQ(authPrep.method, ce::HttpMethod::Post);
-    EXPECT_EQ(authPrep.url.find("/api/v1/auth/login"), std::string::npos);
-    EXPECT_NE(authPrep.url.find("/%3Credacted%3E"), std::string::npos);
+    EXPECT_NE(authPrep.url.find("/api/v1/auth/login"), std::string::npos) << authPrep.url;
 
     const auto& pingPrep = events[1];
     EXPECT_EQ(pingPrep.method, ce::HttpMethod::Get);
-    EXPECT_EQ(pingPrep.url.find("/api/v1/with-bearer"), std::string::npos);
-    EXPECT_NE(pingPrep.url.find("/%3Credacted%3E"), std::string::npos);
+    EXPECT_NE(pingPrep.url.find("/api/v1/with-bearer"), std::string::npos) << pingPrep.url;
 
-    // Authorization header on the ping.get request MUST be redacted.
+    // The person sees the bearer token that was sent.
     bool sawAuthHeader = false;
     for (const auto& [k, v] : pingPrep.maskedHeaders) {
         if (k == "Authorization") {
             sawAuthHeader = true;
-            EXPECT_EQ(v, ce::kRedactedHeaderValue)
-                << "Authorization value leaked into the event stream";
+            EXPECT_TRUE(v.starts_with("Bearer ")) << v;
+            EXPECT_NE(v, ce::kRedactedHeaderValue);
         }
     }
-    EXPECT_TRUE(sawAuthHeader) << "Authorization header should still be visible (name only)";
+    EXPECT_TRUE(sawAuthHeader);
+
+    // An agent run of the same chain: URL opaque, Authorization masked.
+    ce::ExecutionEngine agentEngine(
+        reqloom::tests::withApprovedHosts(ce::makeDefaultDependencies()));
+    std::vector<ce::RequestPrepared> agentEvents;
+    agentEngine.subscribe([&](const ce::RunEvent& ev) {
+        if (const auto* e = std::get_if<ce::RequestPrepared>(&ev)) {
+            agentEvents.push_back(*e);
+        }
+    });
+    ce::RunContext agentCtx;
+    ce::RunOptions agent;
+    agent.agentOutput = true;
+    ASSERT_TRUE(agentEngine.run(*loaded, ce::OperationId{"ping.get"}, agentCtx, agent).has_value());
+    ASSERT_EQ(agentEvents.size(), 2u);
+    EXPECT_EQ(agentEvents[0].url.find("/api/v1/auth/login"), std::string::npos);
+    EXPECT_NE(agentEvents[1].url.find("/%3Credacted%3E"), std::string::npos);
+    for (const auto& [k, v] : agentEvents[1].maskedHeaders) {
+        if (k == "Authorization") {
+            EXPECT_EQ(v, ce::kRedactedHeaderValue) << "Authorization leaked to an agent run";
+        }
+    }
 }
 
 TEST_F(RunOptionsFixture, request_prepared_redacts_url_components_without_changing_wire_url) {
@@ -937,15 +958,38 @@ resources:
         http->requests().front().url,
         "http://wire-user:wire-password@placeholder/wire-path?wire-key=wire-query#wire-fragment");
     ASSERT_EQ(events.size(), 1u);
-    EXPECT_EQ(events.front().url,
+    // Desktop (owner decision 2026-11-19): the real URL, with only the userinfo password masked.
+    EXPECT_EQ(
+        events.front().url,
+        "http://wire-user:<redacted>@placeholder/wire-path?wire-key=wire-query#wire-fragment");
+
+    // An agent run keeps every component opaque.
+    CapturingHttpClient* agentHttp{};
+    auto agentEngine = makeCapturingEngine(agentHttp);
+    agentHttp->enqueue(200, "{}");
+    std::vector<ce::RequestPrepared> agentEvents;
+    agentEngine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&event)) {
+            agentEvents.push_back(*prepared);
+        }
+    });
+    ce::RunContext agentContext;
+    ce::RunOptions agent;
+    agent.agentOutput = true;
+    ASSERT_TRUE(
+        agentEngine.run(*loaded, ce::OperationId{"ping.get"}, agentContext, agent).has_value());
+    ASSERT_EQ(agentEvents.size(), 1u);
+    EXPECT_EQ(agentEvents.front().url,
               "http://%3Credacted%3E/%3Credacted%3E?%3Credacted%3E#%3Credacted%3E");
-    EXPECT_EQ(events.front().url.find("placeholder"), std::string::npos);
-    EXPECT_EQ(events.front().url.find("wire-user"), std::string::npos);
-    EXPECT_EQ(events.front().url.find("wire-password"), std::string::npos);
-    EXPECT_EQ(events.front().url.find("wire-path"), std::string::npos);
-    EXPECT_EQ(events.front().url.find("wire-key"), std::string::npos);
-    EXPECT_EQ(events.front().url.find("wire-query"), std::string::npos);
-    EXPECT_EQ(events.front().url.find("wire-fragment"), std::string::npos);
+    for (const char* part : {"placeholder",
+                             "wire-user",
+                             "wire-password",
+                             "wire-path",
+                             "wire-key",
+                             "wire-query",
+                             "wire-fragment"}) {
+        EXPECT_EQ(agentEvents.front().url.find(part), std::string::npos) << part;
+    }
 }
 
 TEST_F(RunOptionsFixture, request_prepared_redacts_hook_secret_hostname_in_events_and_history) {
@@ -1009,7 +1053,8 @@ resources:
     ASSERT_EQ(capturedHttp->requests().size(), 1u);
     EXPECT_EQ(capturedHttp->requests().front().url, "https://wire-secret.example/private-path");
     ASSERT_EQ(emitted.size(), 1u);
-    EXPECT_EQ(emitted.front().url, "https://%3Credacted%3E/%3Credacted%3E");
+    // The host is a declared secret's value: masked even on the desktop; the path is not.
+    EXPECT_EQ(emitted.front().url, "https://<secret:HOST>/private-path");
     EXPECT_EQ(emitted.front().url.find("wire-secret.example"), std::string::npos);
 
     const auto persisted = engine.historyEvents(result->runId);
@@ -1021,7 +1066,7 @@ resources:
         }
     }
     ASSERT_EQ(persistedRequests.size(), 1u);
-    EXPECT_EQ(persistedRequests.front().url, "https://%3Credacted%3E/%3Credacted%3E");
+    EXPECT_EQ(persistedRequests.front().url, "https://<secret:HOST>/private-path");
     EXPECT_EQ(persistedRequests.front().url.find("wire-secret.example"), std::string::npos);
 
     fs::remove(dbPath, ec);
@@ -1069,9 +1114,29 @@ resources:
     EXPECT_EQ(http->requests().front().url,
               "/authorize?client_id=wire-secret&redirect_uri=https://app.example.test/cb");
     ASSERT_EQ(events.size(), 1u);
-    EXPECT_EQ(events.front().url, "/%3Credacted%3E?%3Credacted%3E&%3Credacted%3E");
-    EXPECT_EQ(events.front().url.find("wire-secret"), std::string::npos);
-    EXPECT_EQ(events.front().url.find("app.example.test"), std::string::npos);
+    // Desktop: CLIENT_ID is an ordinary environment value, so the real URL is shown.
+    EXPECT_EQ(events.front().url,
+              "/authorize?client_id=wire-secret&redirect_uri=https://app.example.test/cb");
+
+    // An agent run: the scheme-like text inside the query does not defeat the opaque URL.
+    CapturingHttpClient* agentHttp{};
+    auto agentEngine = makeCapturingEngine(agentHttp);
+    agentHttp->enqueue(200, "{}");
+    std::vector<ce::RequestPrepared> agentEvents;
+    agentEngine.subscribe([&](const ce::RunEvent& event) {
+        if (const auto* prepared = std::get_if<ce::RequestPrepared>(&event)) {
+            agentEvents.push_back(*prepared);
+        }
+    });
+    ce::RunContext agentContext;
+    ce::RunOptions agent;
+    agent.agentOutput = true;
+    ASSERT_TRUE(
+        agentEngine.run(*loaded, ce::OperationId{"oauth.begin"}, agentContext, agent).has_value());
+    ASSERT_EQ(agentEvents.size(), 1u);
+    EXPECT_EQ(agentEvents.front().url, "/%3Credacted%3E?%3Credacted%3E&%3Credacted%3E");
+    EXPECT_EQ(agentEvents.front().url.find("wire-secret"), std::string::npos);
+    EXPECT_EQ(agentEvents.front().url.find("app.example.test"), std::string::npos);
 }
 
 TEST_F(RunOptionsFixture, response_received_event_carries_status_and_size) {
@@ -1441,9 +1506,10 @@ TEST_F(RunOptionsFixture, run_persists_full_event_stream_to_history_store) {
 }
 
 TEST_F(RunOptionsFixture, history_store_persists_request_headers_already_masked) {
-    // The desktop history pane reads headers directly out of the
-    // payload column; the masker that runs at emit time is the only
-    // line of defence between the bearer token and the disk. Pin it.
+    // The history pane reads headers directly out of the payload column; the masker that runs
+    // at emit time is the only line of defence between the bearer token and the disk. Owner
+    // decision 2026-11-19: a desktop run stores the real value (the person's own history); an
+    // agent run's stored header stays masked. Pinned here for the agent run.
     const auto dbPath = ct::uniqueTempPath("reqloom-history-mask", ".sqlite");
     std::error_code ec;
     fs::remove(dbPath, ec);
@@ -1462,7 +1528,9 @@ TEST_F(RunOptionsFixture, history_store_persists_request_headers_already_masked)
     deps.hostApprovals = std::make_unique<reqloom::tests::MemoryHostApprovals>(true);
     ce::ExecutionEngine engine(std::move(deps));
     ce::RunContext ctx;
-    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx);
+    ce::RunOptions agent;
+    agent.agentOutput = true;
+    auto result = engine.run(*loaded, ce::OperationId{"ping.get"}, ctx, agent);
     ASSERT_TRUE(result.has_value());
 
     ce::SqliteHistoryStore reader;

@@ -3,6 +3,9 @@
 // references, and that store/clear round-trip through the injected store.
 #include "application/ProjectModel.h"
 #include "application/SecretManager.h"
+#include "application/SecretReveal.h"
+
+#include <reqloom/engine/Factories.h>
 
 #include <reqloom/engine/ProjectTrustStore.h>
 #include <reqloom/engine/SecretStore.h>
@@ -31,6 +34,11 @@ class FakeSecretStore final : public ce::SecretStore {
 public:
     std::expected<std::optional<std::string>, ce::ReqloomError> read(
         const std::string& name) override {
+        ++reads;
+        if (failReads) {
+            return std::unexpected(
+                ce::ReqloomError{ce::ErrorCode::SecretAccessFailed, ce::ErrorClass::Run, "locked"});
+        }
         if (auto it = values_.find(name); it != values_.end()) {
             return std::optional<std::string>{it->second};
         }
@@ -39,6 +47,7 @@ public:
 
     std::expected<void, ce::ReqloomError> write(const std::string& name,
                                                 const std::string& value) override {
+        ++writes;
         values_[name] = value;
         return {};
     }
@@ -49,6 +58,10 @@ public:
     }
 
     [[nodiscard]] bool has(const std::string& name) const { return values_.contains(name); }
+
+    bool failReads{false};
+    int reads{0};
+    int writes{0};
 
 private:
     std::map<std::string, std::string> values_;
@@ -287,6 +300,148 @@ TEST(SecretManager, referenced_secrets_reports_set_and_unset_against_project) {
     EXPECT_EQ(after[1].state, SecretState::NotSet);
 }
 
+// ─── Reveal (desktop only): the stored value on demand, never kept once hidden ───────────────
+
+namespace {
+
+/// Every file under `dir` with its size, to show a reveal stored nothing.
+[[nodiscard]] std::map<std::string, std::uintmax_t> filesUnder(const std::filesystem::path& dir) {
+    std::map<std::string, std::uintmax_t> out;
+    std::error_code ec;
+    if (!std::filesystem::exists(dir, ec)) {
+        return out;
+    }
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(dir, ec)) {
+        if (entry.is_regular_file(ec)) {
+            out[entry.path().string()] = entry.file_size(ec);
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(SecretReveal, nothing_is_read_until_asked_and_each_show_reads_the_keychain_again) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    writeProject(dir, "id: proj-r\n");
+    ProjectModel project;
+    project.loadFromDirectory(dir.path());
+    ASSERT_TRUE(project.hasProject());
+    auto [fake, manager] = makeManager();
+    QString error;
+    ASSERT_TRUE(
+        manager->store(project, QStringLiteral("API_KEY"), QStringLiteral("first-1"), error));
+    const int readsBefore = fake->reads;
+
+    SecretReveal reveal{*manager};
+    EXPECT_EQ(reveal.state(QStringLiteral("API_KEY")), nullptr);
+    EXPECT_EQ(fake->reads, readsBefore) << "nothing is read until the person asks";
+
+    const auto& shown = reveal.toggle(project, QStringLiteral("API_KEY"));
+    EXPECT_TRUE(shown.shown);
+    EXPECT_EQ(shown.value, QStringLiteral("first-1"));
+    EXPECT_EQ(fake->reads, readsBefore + 1);
+
+    // Hide forgets the value; the next show reads what is stored now.
+    EXPECT_FALSE(reveal.toggle(project, QStringLiteral("API_KEY")).shown);
+    EXPECT_TRUE(reveal.state(QStringLiteral("API_KEY")) == nullptr ||
+                reveal.state(QStringLiteral("API_KEY"))->value.isEmpty());
+    ASSERT_TRUE(
+        manager->store(project, QStringLiteral("API_KEY"), QStringLiteral("second-2"), error));
+    EXPECT_EQ(reveal.toggle(project, QStringLiteral("API_KEY")).value, QStringLiteral("second-2"));
+}
+
+TEST(SecretReveal, closing_hides_every_value) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    writeProject(dir, "id: proj-r\n");
+    ProjectModel project;
+    project.loadFromDirectory(dir.path());
+    auto [fake, manager] = makeManager();
+    QString error;
+    ASSERT_TRUE(
+        manager->store(project, QStringLiteral("API_KEY"), QStringLiteral("value-1"), error));
+    SecretReveal reveal{*manager};
+    ASSERT_TRUE(reveal.toggle(project, QStringLiteral("API_KEY")).shown);
+
+    reveal.hideAll();
+
+    EXPECT_EQ(reveal.state(QStringLiteral("API_KEY")), nullptr);
+}
+
+TEST(SecretReveal, a_missing_value_or_a_failed_read_says_so_in_place) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    writeProject(dir, "id: proj-r\n");
+    ProjectModel project;
+    project.loadFromDirectory(dir.path());
+    auto [fake, manager] = makeManager();
+    SecretReveal reveal{*manager};
+
+    const auto notSet = reveal.toggle(project, QStringLiteral("SIGNING_KEY"));
+    EXPECT_FALSE(notSet.shown);
+    EXPECT_TRUE(notSet.value.isEmpty());
+    EXPECT_TRUE(notSet.message.contains(QStringLiteral("No value is stored")))
+        << notSet.message.toStdString();
+
+    fake->failReads = true;
+    const auto failed = reveal.read(project, QStringLiteral("API_KEY"));
+    EXPECT_FALSE(failed.shown);
+    EXPECT_TRUE(failed.message.contains(QStringLiteral("locked"))) << failed.message.toStdString();
+}
+
+TEST(SecretReveal, a_copy_in_another_folder_claiming_the_id_cannot_reveal) {
+    QTemporaryDir original;
+    QTemporaryDir copy;
+    ASSERT_TRUE(original.isValid());
+    ASSERT_TRUE(copy.isValid());
+    writeProject(original, "id: shared-r\n");
+    writeProject(copy, "id: shared-r\n");
+    ProjectModel atOriginal;
+    ProjectModel atCopy;
+    atOriginal.loadFromDirectory(original.path());
+    atCopy.loadFromDirectory(copy.path());
+    auto [fake, manager] = makeManager();
+    QString error;
+    ASSERT_TRUE(
+        manager->store(atOriginal, QStringLiteral("API_KEY"), QStringLiteral("original-1"), error));
+    const int readsBefore = fake->reads;
+    SecretReveal reveal{*manager};
+
+    const auto refused = reveal.toggle(atCopy, QStringLiteral("API_KEY"));
+
+    EXPECT_FALSE(refused.shown);
+    EXPECT_TRUE(refused.value.isEmpty());
+    EXPECT_FALSE(refused.message.isEmpty());
+    EXPECT_EQ(fake->reads, readsBefore) << "the keychain is not read for a conflicting folder";
+}
+
+TEST(SecretReveal, a_reveal_stores_nothing) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    writeProject(dir, "id: proj-r\n");
+    ProjectModel project;
+    project.loadFromDirectory(dir.path());
+    auto [fake, manager] = makeManager();
+    QString error;
+    ASSERT_TRUE(
+        manager->store(project, QStringLiteral("API_KEY"), QStringLiteral("value-1"), error));
+    const int writesBefore = fake->writes;
+    // History, the trust file and saved examples all live in the isolated config directory.
+    const auto config = ce::configDirectoryForTesting();
+    ASSERT_TRUE(config.has_value());
+    const auto before = filesUnder(*config);
+    const auto projectBefore = filesUnder(dir.path().toStdString());
+
+    SecretReveal reveal{*manager};
+    ASSERT_TRUE(reveal.toggle(project, QStringLiteral("API_KEY")).shown);
+    reveal.hideAll();
+
+    EXPECT_EQ(fake->writes, writesBefore);
+    EXPECT_EQ(filesUnder(*config), before);
+    EXPECT_EQ(filesUnder(dir.path().toStdString()), projectBefore);
+}
 }  // namespace reqloom::desktop::tests
 
 int main(int argc, char** argv) {

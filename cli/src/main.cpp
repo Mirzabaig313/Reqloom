@@ -2,8 +2,10 @@
 #include "commands/ExitCodes.h"
 #include "commands/HostsCommand.h"
 #include "commands/ImportCommand.h"
+#include "commands/InspectCommands.h"
 #include "commands/LintCommand.h"
 #include "commands/RunCommand.h"
+#include "commands/ShowCommand.h"
 
 #include <reqloom/engine/HttpDefaults.h>
 
@@ -34,6 +36,13 @@ void printUsage(std::FILE* stream) {
         "    --response-body-size <size>     Response body per step in JSON output, e.g. 8KiB\n"
         "                                    (default 2KiB, 0 = none, at most 1MiB; masked)\n"
         "    --non-interactive               Never ask to approve a host\n"
+        "    --agent <name>                  Record the run as started by this agent\n"
+        "  reqloom list                     Every actor, resource and operation\n"
+        "  reqloom describe <operation>     One operation: inputs, outputs, dependents\n"
+        "  reqloom plan <operation>         The chain run would execute, without sending\n"
+        "  reqloom show <run> <step>        What a step of an earlier run sent and received\n"
+        "    (list, describe, plan, show take --project, --format text|json; describe and\n"
+        "    plan take --env; show takes --path <jsonpath> and --size <size>)\n"
         "  reqloom hosts [list|approve <host>|revoke <host>|cli-approval off]\n"
         "                                   Hosts the project may send credentials to\n"
         "  reqloom lint [<project-dir>]     Validate a project's schema\n"
@@ -72,6 +81,18 @@ void printUsage(std::FILE* stream) {
     }
     if (verb == QStringLiteral("lint")) {
         return reqloom::cli::lintCommand(args.mid(2));
+    }
+    if (verb == QStringLiteral("list")) {
+        return reqloom::cli::listCommand(args.mid(2));
+    }
+    if (verb == QStringLiteral("describe")) {
+        return reqloom::cli::describeCommand(args.mid(2));
+    }
+    if (verb == QStringLiteral("plan")) {
+        return reqloom::cli::planCommand(args.mid(2));
+    }
+    if (verb == QStringLiteral("show")) {
+        return reqloom::cli::showCommand(args.mid(2));
     }
     if (verb == QStringLiteral("hosts")) {
         return reqloom::cli::hostsCommand(args.mid(2));

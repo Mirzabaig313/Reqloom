@@ -37,6 +37,13 @@ namespace reqloom::engine {
 void setConfigDirectoryForTesting(std::optional<std::filesystem::path> directory);
 [[nodiscard]] std::optional<std::filesystem::path> configDirectoryForTesting();
 
+/// The run-history database of the project in `projectRoot`, shared by the desktop app and the
+/// CLI: `history/history-<sha1 of the canonical folder>.db` in the desktop app's per-user data
+/// directory (`~/Library/Application Support/Reqloom/Reqloom` on macOS), or in the directory
+/// `setConfigDirectoryForTesting` names. Creates nothing; `ExecutionEngine::openHistory` does.
+[[nodiscard]] std::expected<std::filesystem::path, ReqloomError> defaultHistoryDatabasePath(
+    const std::filesystem::path& projectRoot);
+
 /// The file-backed ProjectTrustStore at `defaultProjectTrustStorePath()`. If that path cannot
 /// be resolved, every call reports the error.
 [[nodiscard]] std::unique_ptr<ProjectTrustStore> makeFileProjectTrustStore();

@@ -64,6 +64,48 @@ private:
     return std::format("{}:{}:{}: {}", file, mark.line + 1, mark.column + 1, message);
 }
 
+/// A schema error whose detail starts `file:line:column:`, with the position also in its fields.
+[[nodiscard]] ReqloomError locatedError(ErrorCode code,
+                                        const std::string& file,
+                                        const YAML::Mark& mark,
+                                        std::string_view message) {
+    ReqloomError error{code, ErrorClass::Schema, located(file, mark, message)};
+    error.file = file;
+    if (!mark.is_null()) {
+        error.line = mark.line + 1;
+        error.column = mark.column + 1;
+    }
+    return error;
+}
+
+/// Record the line of each key of `node` (a map) in `source.fieldLines`, one level into maps
+/// (`headers.Authorization`) and lists (`assert[0]`), so an error can point at the field.
+void recordFieldLines(SourceLocation& source, const YAML::Node& node) {
+    if (!node.IsMap()) {
+        return;
+    }
+    for (const auto& kv : node) {
+        if (!kv.first.IsScalar()) {
+            continue;
+        }
+        const auto key = kv.first.Scalar();
+        source.fieldLines[key] = kv.first.Mark().line + 1;
+        if (kv.second.IsMap()) {
+            for (const auto& inner : kv.second) {
+                if (inner.first.IsScalar()) {
+                    source.fieldLines[key + "." + inner.first.Scalar()] =
+                        inner.first.Mark().line + 1;
+                }
+            }
+        } else if (kv.second.IsSequence()) {
+            std::size_t index = 0;
+            for (const auto& item : kv.second) {
+                source.fieldLines[std::format("{}[{}]", key, index++)] = item.Mark().line + 1;
+            }
+        }
+    }
+}
+
 /// Request bodies are converted to JSON by walking the YAML tree, and yaml-cpp re-walks an
 /// aliased node on every use, so the depth cap alone does not bound the work.
 constexpr std::size_t kMaxBodyJsonNodes = 1'000'000;
@@ -73,9 +115,16 @@ struct ParseCtx {
     std::vector<std::string>* warnings{nullptr};
     std::size_t jsonNodesLeft{kMaxBodyJsonNodes};
 
+    std::vector<SourceLocation>* warningSources{nullptr};
+
     void warn(const YAML::Mark& mark, std::string_view message) const {
         if (warnings != nullptr) {
             warnings->push_back(located(file, mark, message));
+        }
+        if (warningSources != nullptr) {
+            warningSources->push_back(
+                mark.is_null() ? SourceLocation{file, 0, 0, {}}
+                               : SourceLocation{file, mark.line + 1, mark.column + 1, {}});
         }
     }
 };
@@ -1002,7 +1051,8 @@ Actor parseActor(ParseCtx& ctx, const std::string& actorId, const YAML::Node& no
                     std::format("actor '{}'", actorId));
     Actor actor;
     actor.id = ActorId{actorId};
-    actor.source = SourceLocation{ctx.file, line};
+    actor.source = SourceLocation{ctx.file, line, 0, {}};
+    recordFieldLines(actor.source, node);
     actor.description = readString(node, "description");
 
     if (const auto auth = mapAt(node, "auth"); present(auth)) {
@@ -1241,7 +1291,8 @@ Operation parseOperation(ParseCtx& ctx,
     }
     warnUnknownKeys(ctx, opNode, kOperationKeys, std::format("operation '{}'", op.id.value));
     op.resource = ResourceId{resourceId};
-    op.source = SourceLocation{ctx.file, key.Mark().line + 1};
+    op.source = SourceLocation{ctx.file, key.Mark().line + 1, key.Mark().column + 1, {}};
+    recordFieldLines(op.source, opNode);
     op.method = readMethod(opNode, HttpMethod::Get);
     op.pathTemplate = readString(opNode, "path");
     if (auto actor = readOptString(opNode, "actor")) {
@@ -1283,7 +1334,7 @@ Resource parseResource(ParseCtx& ctx,
         ctx, node, {"name", "description", "operations"}, std::format("resource '{}'", resourceId));
     Resource resource;
     resource.id = ResourceId{resourceId};
-    resource.source = SourceLocation{ctx.file, line};
+    resource.source = SourceLocation{ctx.file, line, 0, {}};
     resource.description = readString(node, "description");
 
     const auto ops = mapAt(node, "operations");
@@ -1332,8 +1383,7 @@ struct LoadedYaml {
     try {
         return LoadedYaml{YAML::Load(bytes), schemaFileHash(bytes)};
     } catch (const YAML::Exception& e) {
-        return std::unexpected(
-            schemaError(ErrorCode::YamlParse, located(file.string(), e.mark, e.msg)));
+        return std::unexpected(locatedError(ErrorCode::YamlParse, file.string(), e.mark, e.msg));
     }
 }
 
@@ -1459,17 +1509,20 @@ private:
         try {
             std::forward<Body>(body)();
         } catch (const SchemaFault& f) {
-            return schemaError(ErrorCode::SchemaInvalid, located(file, f.mark(), f.what()));
+            return locatedError(ErrorCode::SchemaInvalid, file, f.mark(), f.what());
         } catch (const YAML::Exception& e) {
-            return schemaError(ErrorCode::YamlParse, located(file, e.mark, e.msg));
+            return locatedError(ErrorCode::YamlParse, file, e.mark, e.msg);
         } catch (const fs::filesystem_error& e) {
-            return schemaError(ErrorCode::SchemaInvalid, file + ": " + e.what());
+            auto error = schemaError(ErrorCode::SchemaInvalid, file + ": " + e.what());
+            error.file = file;
+            return error;
         }
         return std::nullopt;
     }
 
     [[nodiscard]] ParseCtx contextFor(const fs::path& file) {
-        return ParseCtx{file.string(), &project_.loadWarnings, kMaxBodyJsonNodes};
+        return ParseCtx{
+            file.string(), &project_.loadWarnings, kMaxBodyJsonNodes, &project_.loadWarningSources};
     }
 
     void readRootSettings(ParseCtx& ctx, const YAML::Node& root);
@@ -1524,7 +1577,8 @@ void ProjectLoader::addEnvironment(ParseCtx& ctx,
                           it->second.line));
     }
     project_.environments[name] = std::move(vars);
-    project_.environmentSources[name] = SourceLocation{ctx.file, at.Mark().line + 1};
+    project_.environmentSources[name] = SourceLocation{ctx.file, at.Mark().line + 1, 0, {}};
+    recordFieldLines(project_.environmentSources[name], at);
 }
 
 void ProjectLoader::loadEnvironmentFile(ParseCtx& ctx,
@@ -1671,6 +1725,13 @@ void ProjectLoader::readRootSettings(ParseCtx& ctx, const YAML::Node& root) {
     }
     // Project-wide default auth, the target of an operation's `type: inherit`.
     project_.defaultAuth = parseInlineAuth(ctx, root);
+    for (const auto& kv : root) {
+        if (kv.first.IsScalar() && kv.first.Scalar() == "auth" && present(kv.second)) {
+            project_.defaultAuthSource =
+                SourceLocation{ctx.file, kv.first.Mark().line + 1, kv.first.Mark().column + 1, {}};
+            recordFieldLines(project_.defaultAuthSource, kv.second);
+        }
+    }
     // latency_slo: { p95_ms: 800 }; negative or missing means unset (0).
     if (const auto slo = mapAt(root, "latency_slo"); present(slo)) {
         warnUnknownKeys(ctx, slo, {"p95_ms"}, "latency_slo");

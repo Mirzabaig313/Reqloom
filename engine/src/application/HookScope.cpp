@@ -207,6 +207,24 @@ OperationCredentialUse operationCredentialUse(const Operation& op,
     return use;
 }
 
+std::set<std::string> actorSecretNames(const Actor& actor,
+                                       const std::map<std::string, std::string>& envVars) {
+    std::vector<std::string_view> texts;
+    appendActorTexts(actor, texts);
+    std::set<std::string> secrets;
+    std::set<std::string> envNames;
+    for (const auto text : texts) {
+        collectScoped(text, "secret", secrets);
+        collectScoped(text, "env", envNames);
+    }
+    for (const auto& name : envNames) {
+        if (const auto it = envVars.find(name); it != envVars.end()) {
+            collectScoped(it->second, "secret", secrets);
+        }
+    }
+    return secrets;
+}
+
 std::set<std::string> hookScriptSecretNames(const std::string_view script) {
     std::set<std::string> secrets;
     collectScriptSecrets(script, secrets);

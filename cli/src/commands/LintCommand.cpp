@@ -6,10 +6,14 @@
 #include "ExitCodes.h"
 #include "PathText.h"
 
+#include "../output/Contract.h"
+#include "../output/JsonWriter.h"
 #include "../output/ReportWriter.h"
+#include "../output/TerminalText.h"
 #include "../output/TextEncoding.h"
 
 #include <reqloom/engine/Factories.h>
+#include <reqloom/engine/ProjectInsight.h>
 #include <reqloom/engine/PublicApi.h>
 #include <reqloom/engine/SecretStore.h>
 
@@ -44,9 +48,6 @@ constexpr std::array kOptions{
 
 constexpr std::array<std::string_view, 1> kMachineFormats{"json"};
 
-/// Version of the lint JSON document, written as its `schema_version`.
-constexpr int kLintSchemaVersion = 1;
-
 void printUsage(std::FILE* stream) {
     std::print(stream,
                "Usage: reqloom lint [<project-dir>] [options]\n"
@@ -55,8 +56,12 @@ void printUsage(std::FILE* stream) {
                "  <project-dir>, --project <path>\n"
                "                     Project directory (default: cwd); give one or the other\n"
                "  --format <fmt>     Output format: text (default), json. JSON is one document\n"
-               "                     on stdout: {{ schema_version, ok, errors: [{{ code, detail,\n"
-               "                     operation }}], warnings: [...] }}\n"
+               "                     on stdout: {{ schema_version, contract_version, command,\n"
+               "                     ok, errors: [{{ code, detail, operation, file, line,\n"
+               "                     column, reference, fix, next_action }}], warnings:\n"
+               "                     [\"...\"], warning_details: [{{ message, file, line,\n"
+               "                     column, reference, fix }}] }}. file is relative to the\n"
+               "                     project; line and column are 1-based, null when unknown\n"
                "Exit codes:\n"
                "  0  the project is valid (warnings do not fail it)\n"
                "  1  the project does not validate\n"
@@ -65,45 +70,135 @@ void printUsage(std::FILE* stream) {
                "  3  the report could not be written to stdout, or an unexpected error\n");
 }
 
+/// Where a finding is, the offending reference and what would satisfy it (FR-15.5); empty or 0
+/// when not known.
+struct Position {
+    std::string file;  ///< As the parser opened it; reported relative to the project.
+    int line{0};
+    int column{0};
+    std::string reference;
+    std::string fix;
+};
+
 struct LintError {
     std::string code;
     std::string detail;
     std::string operation;  ///< empty for a project-level error
+    Position at{};
+};
+
+struct LintWarning {
+    std::string message;
+    Position at{};
 };
 
 struct LintResult {
     std::vector<LintError> errors;
-    std::vector<std::string> warnings;
+    std::vector<LintWarning> warnings;
 };
 
-[[nodiscard]] std::string lintJson(const LintResult& result) {
-    std::string out = std::format("{{\n  \"schema_version\": {},\n  \"ok\": {},\n  \"errors\": [",
-                                  kLintSchemaVersion,
-                                  result.errors.empty() ? "true" : "false");
-    for (std::size_t i = 0; i < result.errors.size(); ++i) {
-        const auto& e = result.errors[i];
-        const auto operation =
-            e.operation.empty() ? std::string{"null"} : "\"" + jsonEscape(e.operation) + "\"";
-        out += std::format("{}\n    {{ \"code\": \"{}\", \"detail\": \"{}\", \"operation\": {} }}",
-                           i == 0 ? "" : ",",
-                           jsonEscape(e.code),
-                           jsonEscape(e.detail),
-                           operation);
+[[nodiscard]] Position positionOf(const ce::ReqloomError& error) {
+    return Position{error.file, error.line, error.column, error.reference, error.fix};
+}
+
+/// `file` relative to the project folder when it is inside it (`resources/order.yaml`).
+[[nodiscard]] std::string relativeFile(const fs::path& projectPath, const std::string& file) {
+    if (file.empty()) {
+        return file;
     }
-    out += result.errors.empty() ? "],\n  \"warnings\": [" : "\n  ],\n  \"warnings\": [";
-    for (std::size_t i = 0; i < result.warnings.size(); ++i) {
-        out += std::format("{}\n    \"{}\"", i == 0 ? "" : ",", jsonEscape(result.warnings[i]));
+    std::error_code ec;
+    const auto relative = fs::relative(pathFromUtf8(file), projectPath, ec);
+    if (ec || relative.empty() || *relative.begin() == "..") {
+        return file;
     }
-    out += result.warnings.empty() ? "]\n}\n" : "\n  ]\n}\n";
-    return out;
+    return relative.generic_string();
+}
+
+void writePosition(JsonWriter& json, const fs::path& projectPath, const Position& at) {
+    json.fieldOrNull("file", relativeFile(projectPath, at.file));
+    json.fieldOrNull("line", at.line > 0 ? std::optional<std::int64_t>{at.line} : std::nullopt);
+    json.fieldOrNull("column",
+                     at.column > 0 ? std::optional<std::int64_t>{at.column} : std::nullopt);
+    json.fieldOrNull("reference", at.reference);
+    json.fieldOrNull("fix", at.fix);
+}
+
+/// One line of advice for an error, from Reqloom's own data (the code and whether a position is
+/// known), never from project text.
+[[nodiscard]] std::string lintNextAction(const LintError& e) {
+    if (e.code == kCodeUsage) {
+        return "Fix the command line; `reqloom lint --help` lists the options.";
+    }
+    if (e.code == kCodeProjectNotFound) {
+        return "Pass the folder that holds reqloom.yaml, as an argument or with --project.";
+    }
+    if (e.at.line > 0) {
+        return "Edit the file at the line given (file, line), doing what fix says, then run "
+               "`reqloom lint` again.";
+    }
+    return "Fix what detail names in the project YAML, then run `reqloom lint` again.";
+}
+
+[[nodiscard]] std::string lintJson(const fs::path& projectPath, const LintResult& result) {
+    JsonWriter json;
+    json.beginObject()
+        .field("schema_version", kSchemaVersion)
+        .field("contract_version", kContractVersion)
+        .field("command", "lint")
+        .field("ok", result.errors.empty());
+    json.key("errors").beginArray();
+    for (const auto& e : result.errors) {
+        json.beginObject().field("code", e.code).field("detail", e.detail);
+        json.fieldOrNull("operation", e.operation);
+        writePosition(json, projectPath, e.at);
+        json.field("next_action", lintNextAction(e));
+        json.endObject();
+    }
+    json.endArray();
+    json.key("warnings").beginArray();
+    for (const auto& w : result.warnings) {
+        json.string(w.message);
+    }
+    json.endArray();
+    json.key("warning_details").beginArray();
+    for (const auto& w : result.warnings) {
+        json.beginObject().field("message", w.message);
+        writePosition(json, projectPath, w.at);
+        json.endObject();
+    }
+    json.endArray();
+    json.endObject();
+    return json.str();
+}
+
+/// The error on stderr, with where it is, the reference and the fix when known.
+/// `headline` is the first line, already formatted (`LINT FAIL [E_…]: detail`).
+void printError(const std::string& headline, const fs::path& projectPath, const LintError& e) {
+    std::println(stderr, "{}", headline);
+    if (e.at.line > 0) {
+        std::println(stderr,
+                     "    at {}:{}{}",
+                     terminalSafe(relativeFile(projectPath, e.at.file)),
+                     e.at.line,
+                     e.at.column > 0 ? std::format(":{}", e.at.column) : std::string{});
+    }
+    if (!e.at.reference.empty()) {
+        std::println(stderr, "    reference: {}", terminalSafe(e.at.reference));
+    }
+    if (!e.at.fix.empty()) {
+        std::println(stderr, "    fix: {}", terminalSafe(e.at.fix));
+    }
 }
 
 /// Prints the JSON document when `json`; returns `exitCode`, or kExitSystem if it was not written.
-[[nodiscard]] int finish(bool json, const LintResult& result, int exitCode) {
+[[nodiscard]] int finish(bool json,
+                         const LintResult& result,
+                         int exitCode,
+                         const fs::path& projectPath = {}) {
     if (!json) {
         return exitCode;
     }
-    if (const auto written = writeReportStream(stdout, lintJson(result)); !written) {
+    if (const auto written = writeReportStream(stdout, lintJson(projectPath, result)); !written) {
         std::println(stderr, "reqloom lint: cannot write the report: {}", written.error());
         return kExitSystem;
     }
@@ -115,8 +210,8 @@ struct LintResult {
                             const std::string& detail,
                             int exitCode,
                             std::string_view prefix = "Error: ") {
-    std::println(stderr, "{}{}", prefix, detail);
-    return finish(json, LintResult{{LintError{std::move(code), detail, {}}}, {}}, exitCode);
+    std::println(stderr, "{}{}", prefix, terminalSafe(detail));
+    return finish(json, LintResult{{LintError{std::move(code), detail, {}, {}}}, {}}, exitCode);
 }
 
 /// Dry-runs every operation so unresolved references and cycles surface without any request.
@@ -130,9 +225,23 @@ void dryRunAll(const ce::Project& project, LintResult& result, std::size_t& tota
             options.dryRun = true;
             auto run = engine.run(project, op.id, ctx, options);
             if (!run) {
-                const auto code = std::string{ce::toCodeString(run.error().code)};
-                std::println(stderr, "  ERROR {}: [{}] {}", op.id.value, code, run.error().detail);
-                result.errors.push_back(LintError{code, run.error().detail, op.id.value});
+                LintError error{std::string{ce::toCodeString(run.error().code)},
+                                run.error().detail,
+                                op.id.value,
+                                positionOf(run.error())};
+                // A chain error without a position points at the operation whose chain failed.
+                if (error.at.file.empty()) {
+                    error.at.file = op.source.file;
+                    error.at.line = op.source.line;
+                    error.at.column = op.source.column;
+                }
+                printError(std::format("  ERROR {}: [{}] {}",
+                                       terminalSafe(op.id.value),
+                                       error.code,
+                                       terminalSafe(error.detail)),
+                           project.rootDir,
+                           error);
+                result.errors.push_back(std::move(error));
             }
         }
     }
@@ -150,27 +259,27 @@ void dryRunAll(const ce::Project& project, LintResult& result, std::size_t& tota
 
 /// A name no environment variable can carry still works from the keychain, so this warns rather
 /// than fails: on CI or in an agent sandbox (no keychain) the secret would have no source at all.
-void appendSecretNameWarnings(const ce::Project& project, std::vector<std::string>& warnings) {
+void appendSecretNameWarnings(const ce::Project& project, std::vector<LintWarning>& warnings) {
     std::map<std::string, std::string> firstByVariable{};
     for (const auto& name : ce::collectSecretReferences(project)) {
         if (const auto variable = ce::secretEnvironmentVariable(name)) {
             const auto [it, inserted] = firstByVariable.try_emplace(*variable, name);
             if (!inserted) {
-                warnings.push_back(std::format(
+                warnings.push_back(LintWarning{std::format(
                     "secrets '{}' and '{}' both map to the environment variable {}; a CLI run "
                     "with it set fails rather than give both the same value. Rename one.",
                     it->second,
                     name,
-                    *variable));
+                    *variable)});
             }
         } else {
-            warnings.push_back(std::format(
+            warnings.push_back(LintWarning{std::format(
                 "secret '{}' cannot be supplied through an environment variable: only names made "
                 "of letters, digits and '_' map to {}<NAME>. Without a keychain (CI, agent "
                 "sandboxes) it has no source; rename it, for example to '{}'.",
                 name,
                 ce::kSecretEnvironmentPrefix,
-                suggestedSecretName(name)));
+                suggestedSecretName(name))});
         }
     }
 }
@@ -187,29 +296,52 @@ void appendSecretNameWarnings(const ce::Project& project, std::vector<std::strin
     LintResult result;
     auto projectResult = ce::parseProject(yamlPath);
     if (!projectResult) {
-        const auto code = std::string{ce::toCodeString(projectResult.error().code)};
-        std::println(stderr, "LINT FAIL [{}]: {}", code, projectResult.error().detail);
-        result.errors.push_back(LintError{code, projectResult.error().detail, {}});
-        return finish(json, result, kExitFailed);
+        const auto& failure = projectResult.error();
+        LintError error{
+            std::string{ce::toCodeString(failure.code)}, failure.detail, {}, positionOf(failure)};
+        printError(std::format("LINT FAIL [{}]: {}", error.code, terminalSafe(error.detail)),
+                   projectPath,
+                   error);
+        result.errors.push_back(std::move(error));
+        return finish(json, result, kExitFailed, projectPath);
     }
     const auto& project = *projectResult;
-    result.warnings = project.loadWarnings;
+    for (std::size_t i = 0; i < project.loadWarnings.size(); ++i) {
+        LintWarning warning{project.loadWarnings[i], {}};
+        if (i < project.loadWarningSources.size()) {
+            const auto& at = project.loadWarningSources[i];
+            warning.at = Position{at.file, at.line, at.column, {}, {}};
+        }
+        result.warnings.push_back(std::move(warning));
+    }
     if (project.id.empty() && !ce::collectSecretReferences(project).empty()) {
-        result.warnings.push_back(std::format(
-            "project uses secrets but has no id, so they cannot be read from the keychain (the "
-            "CLI still reads them from REQLOOM_SECRET_<NAME>). Add `id: {}` to reqloom.yaml.",
-            ce::generateProjectId()));
+        result.warnings.push_back(LintWarning{
+            std::format("project uses secrets but has no id, so they cannot be read from the "
+                        "keychain (the CLI still reads them from REQLOOM_SECRET_<NAME>). Add "
+                        "`id: {}` to reqloom.yaml.",
+                        ce::generateProjectId()),
+            Position{pathToUtf8(yamlPath), 0, 0, {}, {}}});
     }
     appendSecretNameWarnings(project, result.warnings);
+    // A reference nothing extracts loads, but fails the run that reaches it.
+    for (const auto& finding : ce::unproducedReferences(project)) {
+        result.warnings.push_back(LintWarning{
+            finding.line > 0 ? std::format("{}:{}: {}", finding.file, finding.line, finding.detail)
+                             : finding.detail,
+            positionOf(finding)});
+    }
     // Load warnings (unknown keys, imports that matched nothing) never fail the lint.
     for (const auto& warning : result.warnings) {
-        std::println(stderr, "  WARNING: {}", warning);
+        std::println(stderr, "  WARNING: {}", terminalSafe(warning.message));
+        if (!warning.at.fix.empty()) {
+            std::println(stderr, "    fix: {}", terminalSafe(warning.at.fix));
+        }
     }
     std::size_t totalOps = 0;
     dryRunAll(project, result, totalOps);
     if (!result.errors.empty()) {
         std::println(stderr, "\nLINT FAILED — {} error(s).", result.errors.size());
-        return finish(json, result, kExitFailed);
+        return finish(json, result, kExitFailed, projectPath);
     }
     if (!json) {
         std::println("LINT OK — {} actors, {} resources, {} operations. No errors.",
@@ -217,7 +349,7 @@ void appendSecretNameWarnings(const ce::Project& project, std::vector<std::strin
                      project.resources.size(),
                      totalOps);
     }
-    return finish(json, result, kExitSuccess);
+    return finish(json, result, kExitSuccess, projectPath);
 }
 
 /// The project directory and whether the format is JSON, or why the arguments are invalid.

@@ -123,6 +123,18 @@ struct ReqloomError {
     ErrorCode code{ErrorCode::SchemaInvalid};
     ErrorClass cls{ErrorClass::Schema};
     std::string detail;
+
+    // Where a schema error is, and what would fix it (PRD FR-15.5), for `reqloom lint`. Set by the
+    // parser and the load-time validation when known; `detail` already reads on its own.
+
+    /// The schema file as the parser opened it; empty when the error is not tied to a file.
+    std::string file{};
+    int line{0};    ///< 1-based; 0 when unknown.
+    int column{0};  ///< 1-based; 0 when unknown.
+    /// The offending reference or name as written, e.g. `{{order.order_id}}` or `admin`.
+    std::string reference{};
+    /// One sentence saying what would satisfy the check; empty when `detail` already says it.
+    std::string fix{};
 };
 
 }  // namespace reqloom::engine

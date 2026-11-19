@@ -49,6 +49,11 @@ inline constexpr std::size_t kMaxRetainedBodyBytesPerRun = std::size_t{32} * 102
 /// most `limit + kRetentionMarginBytes` bytes (the total size is kept either way).
 void keepResponseBody(StepResult& row, const std::string& body, std::size_t limit);
 
+/// Keep what `req` sends on `row.request` as it is, for the end-of-run pass (method, URL, headers
+/// with credential-named values already replaced, and the body like `keepResponseBody`). Returns
+/// the body bytes kept.
+std::size_t keepRequest(StepResult& row, const HttpRequest& req, std::size_t limit);
+
 /// Register the value of every cookie a response sets (`Set-Cookie`), for agent-facing output.
 void registerSetCookies(const std::vector<std::pair<std::string, std::string>>& headers,
                         SecretRegistry& registry);
@@ -59,7 +64,7 @@ void finalizeStepEvidence(std::vector<StepResult>& steps,
                           const RunContext& ctx,
                           std::size_t bodyLimit);
 
-/// `step` without its response or extracted values, for the run context's own record.
+/// `step` without its response, extracted values or request, for the run context's own record.
 [[nodiscard]] StepResult withoutEvidence(StepResult step);
 
 }  // namespace reqloom::engine

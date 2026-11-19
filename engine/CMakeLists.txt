@@ -38,6 +38,7 @@ add_library(reqloom-engine-infrastructure OBJECT
     src/infrastructure/http/CurlHttpClient.cpp
     src/infrastructure/http/HostKey.cpp
     src/infrastructure/storage/SqliteHistoryStore.cpp
+    src/infrastructure/storage/HistoryLocation.cpp
     src/infrastructure/secrets/KeychainSecretStore.cpp
     src/infrastructure/secrets/FileProjectTrustStore.cpp
     src/infrastructure/schema/YamlSchemaParser.cpp
@@ -103,6 +104,7 @@ add_library(reqloom-engine-application OBJECT
     src/application/SecretEnvironment.cpp
     src/application/StepEvidence.cpp
     src/application/HostGate.cpp
+    src/application/ProjectInsight.cpp
 )
 target_include_directories(reqloom-engine-application
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

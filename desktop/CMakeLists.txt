@@ -87,6 +87,8 @@ qt_add_executable(reqloom-desktop
     src/application/LayoutSettings.h
     src/application/SecretManager.cpp
     src/application/SecretManager.h
+    src/application/SecretReveal.cpp
+    src/application/SecretReveal.h
     src/views/Formatting.cpp
     src/views/Formatting.h
     src/views/HookEditorDialog.cpp

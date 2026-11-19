@@ -328,6 +328,22 @@ Rectangle {
                 readonly property int reflowTitleColumn: (expandable ? 1 : 0) + ((subLabel.length > 0 || hasStepGlyph) ? 1 : 0)
 
                 // Label the revealed payload by what kind of row owns it.
+                // Declared secrets masked in this request or response as `<secret:NAME>` (the
+                // engine names them; the value itself is never stored), each once.
+                readonly property var maskedSecrets: {
+                    if (kind !== "request" && kind !== "response") {
+                        return [];
+                    }
+                    const names = [];
+                    const pattern = /<secret:([^>\s]+)>/g;
+                    let match;
+                    while ((match = pattern.exec(value)) !== null) {
+                        if (names.indexOf(match[1]) < 0) {
+                            names.push(match[1]);
+                        }
+                    }
+                    return names;
+                }
                 readonly property string valueLabel: statusToken === "error" ? qsTr("Failure details") : kind === "request" ? qsTr("Request") : kind === "response" ? qsTr("Response") : kind === "extraction" ? qsTr("Source") : qsTr("Details")
 
                 function activate() {
@@ -930,6 +946,89 @@ Rectangle {
                                     selectedTextColor: DesignTokens.textInverse
                                     font.pixelSize: DesignTokens.fontLabel
                                     font.family: DesignTokens.fontMono
+                                }
+
+                                // Look up a masked secret's value as stored now, on request. The
+                                // value is read from the keychain when asked, shown only here, and
+                                // forgotten when hidden or when the row closes.
+                                Repeater {
+                                    model: row.maskedSecrets
+                                    delegate: ColumnLayout {
+                                        id: secretPeek
+                                        required property string modelData
+                                        property bool shown: false
+                                        property string storedValue: ""
+                                        property string message: ""
+                                        Layout.fillWidth: true
+                                        spacing: 2
+
+                                        function hide() {
+                                            shown = false;
+                                            storedValue = "";
+                                            message = "";
+                                        }
+
+                                        Connections {
+                                            target: row
+                                            function onExpandedChanged() {
+                                                if (!row.expanded) {
+                                                    secretPeek.hide();
+                                                }
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: qsTr("<secret:%1> is the declared secret %1").arg(secretPeek.modelData)
+                                                textFormat: Text.PlainText
+                                                color: DesignTokens.textSecondary
+                                                font.pixelSize: DesignTokens.fontCaption
+                                                elide: Text.ElideRight
+                                            }
+                                            ToolButton {
+                                                id: peekButton
+                                                objectName: "revealStoredSecretButton"
+                                                text: secretPeek.shown ? qsTr("Hide") : qsTr("Show stored value")
+                                                Accessible.name: secretPeek.shown ? qsTr("Hide the stored value of %1").arg(secretPeek.modelData) : qsTr("Show the value of %1 stored now").arg(secretPeek.modelData)
+                                                onClicked: {
+                                                    if (secretPeek.shown) {
+                                                        secretPeek.hide();
+                                                        return;
+                                                    }
+                                                    const result = SecretsController.readStoredValue(secretPeek.modelData);
+                                                    secretPeek.shown = result.shown;
+                                                    secretPeek.storedValue = result.shown ? result.value : "";
+                                                    secretPeek.message = result.message;
+                                                }
+                                                contentItem: Label {
+                                                    text: peekButton.text
+                                                    color: DesignTokens.accent
+                                                    font.pixelSize: DesignTokens.fontCaption
+                                                    font.weight: DesignTokens.weightMedium
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    verticalAlignment: Text.AlignVCenter
+                                                }
+                                                background: Rectangle {
+                                                    radius: DesignTokens.radiusSm
+                                                    color: peekButton.hovered || peekButton.down || peekButton.activeFocus ? DesignTokens.accentMuted : "transparent"
+                                                    border.width: peekButton.activeFocus ? 1 : 0
+                                                    border.color: DesignTokens.accent
+                                                }
+                                            }
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            visible: secretPeek.shown || secretPeek.message !== ""
+                                            text: secretPeek.shown ? qsTr("Stored now (an older run may have sent a different value): %1").arg(secretPeek.storedValue) : secretPeek.message
+                                            textFormat: Text.PlainText
+                                            wrapMode: Text.WrapAnywhere
+                                            color: secretPeek.shown ? DesignTokens.textPrimary : DesignTokens.statusError
+                                            font.pixelSize: DesignTokens.fontCaption
+                                            font.family: DesignTokens.fontMono
+                                        }
+                                    }
                                 }
                             }
                         }

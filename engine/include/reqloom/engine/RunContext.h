@@ -16,6 +16,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace reqloom::engine {
@@ -92,6 +93,21 @@ struct StepResponse {
     bool binary{false};         ///< Not text, so withheld: `body` is empty.
 };
 
+/// What one step row sent, kept for agent-facing output with `RunOptions::recordResponses` (the
+/// last attempt's request). Masked when `run()` returns as the response is: credential-named
+/// headers, query values and body fields by name, and every secret the run learned by value.
+struct StepRequest {
+    std::string method;
+    std::string url;
+    std::vector<std::pair<std::string, std::string>> headers;
+    /// The request body, masked then cut like a response body (`StepResponse`); empty for a
+    /// multipart body, whose parts are not kept.
+    StepResponse body;
+    bool multipart{false};
+    /// False when the request was prepared but never sent: the host check refused it.
+    bool sent{true};
+};
+
 /// One value a step extracted, for agent-facing output: masked, then shortened.
 struct ExtractedValue {
     std::string name;
@@ -140,6 +156,9 @@ struct StepResult {
     /// Values this row extracted, with `RunOptions::recordResponses`, in declaration order (a
     /// list extraction gives `name[0]`, `name[1]`, …). Masked like the body.
     std::vector<ExtractedValue> extracted;
+
+    /// What this row's own request sent, with `RunOptions::recordResponses`; see `StepRequest`.
+    std::optional<StepRequest> request;
 };
 
 struct ExtractionTrace {

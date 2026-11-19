@@ -338,15 +338,92 @@ void registerSentCredentials(const HttpRequest& req, SecretRegistry& registry) {
     }
 }
 
-void keepResponseBody(StepResult& row, const std::string& body, const std::size_t limit) {
-    StepResponse response{};
-    response.totalBytes = body.size();
+namespace {
+
+[[nodiscard]] StepResponse keptBody(const std::string& body, const std::size_t limit) {
+    StepResponse kept{};
+    kept.totalBytes = body.size();
     if (limit > 0) {
         // Enough past the limit for masking to see the fields around the cut; never the lot.
         const auto keep = std::min(limit + kRetentionMarginBytes, kMaxCapturedBodyBytes);
-        response.body = body.size() > keep ? codecs::truncateUtf8(body, keep) : body;
+        kept.body = body.size() > keep ? codecs::truncateUtf8(body, keep) : body;
     }
-    row.response = std::move(response);
+    return kept;
+}
+
+/// `url` with the user name and password of its authority, and every credential-named query
+/// value, replaced by the marker; the rest is value-redacted with `registry`.
+[[nodiscard]] std::string maskedUrl(const std::string& url, const SecretRegistry& registry) {
+    std::string out = registry.redact(url);
+    if (const auto scheme = out.find("://"); scheme != std::string::npos) {
+        const auto authorityEnd = out.find_first_of("/?#", scheme + 3);
+        const auto at =
+            out.rfind('@', authorityEnd == std::string::npos ? out.size() : authorityEnd);
+        if (at != std::string::npos && at > scheme) {
+            out.replace(scheme + 3, at - scheme - 3, kRedactedValueMarker);
+        }
+    }
+    const auto query = out.find('?');
+    if (query == std::string::npos) {
+        return out;
+    }
+    const auto fragment = out.find('#', query);
+    const auto end = fragment == std::string::npos ? out.size() : fragment;
+    std::string rebuilt;
+    std::size_t pos = query + 1;
+    while (pos <= end) {
+        const auto amp = std::min(out.find('&', pos), end);
+        const std::string_view pair{out.data() + pos, amp - pos};
+        const auto eq = pair.find('=');
+        const auto rawName = pair.substr(0, eq);
+        const auto name = codecs::urlDecode(rawName).value_or(std::string{rawName});
+        rebuilt += pos == query + 1 ? "" : "&";
+        if (eq != std::string_view::npos && isCredentialName(name)) {
+            rebuilt += std::string{rawName} + "=" + std::string{kRedactedValueMarker};
+        } else {
+            rebuilt += pair;
+        }
+        pos = amp + 1;
+    }
+    out.replace(query + 1, end - query - 1, rebuilt);
+    return out;
+}
+
+void finalizeRequest(StepRequest& request, const RunContext& ctx, const std::size_t limit) {
+    const auto& registry = ctx.secretRegistry();
+    request.url = maskedUrl(request.url, registry);
+    for (auto& [name, value] : request.headers) {
+        value =
+            isCredentialHeader(name) ? std::string{kRedactedValueMarker} : registry.redact(value);
+    }
+    if (request.body.totalBytes > 0) {
+        finalizeResponse(request.body, ctx, limit);
+    } else {
+        request.body.limitBytes = limit;
+    }
+}
+
+}  // namespace
+
+void keepResponseBody(StepResult& row, const std::string& body, const std::size_t limit) {
+    row.response = keptBody(body, limit);
+}
+
+std::size_t keepRequest(StepResult& row, const HttpRequest& req, const std::size_t limit) {
+    StepRequest kept;
+    kept.method = std::string{codecs::methodToString(req.method)};
+    kept.url = req.url;
+    for (const auto& [name, value] : req.headers) {
+        kept.headers.emplace_back(
+            name, isCredentialHeader(name) ? std::string{kRedactedValueMarker} : value);
+    }
+    kept.multipart = !req.multipart.empty();
+    if (req.body && !kept.multipart) {
+        kept.body = keptBody(*req.body, limit);
+    }
+    const auto bytes = kept.body.body.size();
+    row.request = std::move(kept);
+    return bytes;
 }
 
 void registerSetCookies(const std::vector<std::pair<std::string, std::string>>& headers,
@@ -373,6 +450,9 @@ void finalizeStepEvidence(std::vector<StepResult>& steps,
         if (step.response) {
             finalizeResponse(*step.response, ctx, limit);
         }
+        if (step.request) {
+            finalizeRequest(*step.request, ctx, limit);
+        }
         for (auto& extracted : step.extracted) {
             finalizeExtracted(extracted, registry);
         }
@@ -382,6 +462,7 @@ void finalizeStepEvidence(std::vector<StepResult>& steps,
 StepResult withoutEvidence(StepResult step) {
     step.response.reset();
     step.extracted.clear();
+    step.request.reset();
     return step;
 }
 

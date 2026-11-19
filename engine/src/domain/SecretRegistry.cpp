@@ -176,6 +176,10 @@ bool SecretRegistry::containsAny(std::string_view text) const {
 }
 
 std::string SecretRegistry::redact(std::string_view text) const {
+    return redact(text, kRedactedValueMarker);
+}
+
+std::string SecretRegistry::redact(std::string_view text, std::string_view marker) const {
     const std::shared_lock lock(mutex_);
     if (patterns_.empty() || text.size() < shortestPattern_) {
         return std::string{text};
@@ -210,7 +214,7 @@ std::string SecretRegistry::redact(std::string_view text) const {
         if (!covered[i]) {
             out.push_back(text[i]);
         } else if (i == 0 || !covered[i - 1]) {
-            out.append(kRedactedValueMarker);
+            out.append(marker);
         }
     }
     return out;

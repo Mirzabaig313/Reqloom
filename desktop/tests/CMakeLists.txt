@@ -111,6 +111,7 @@ add_executable(reqloom-desktop-secret-tests
     unit/AuthStepListModelTest.cpp
     unit/TimelineModelTest.cpp
     unit/ExecutionPreviewTest.cpp
+    unit/HistoryPathTest.cpp
     unit/RunControllerContextTest.cpp
     unit/RunControllerLifecycleTest.cpp
     unit/HostApprovalBrokerTest.cpp
@@ -137,6 +138,8 @@ add_executable(reqloom-desktop-secret-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/widgets/LatencyStats.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretManager.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretReveal.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/SecretReveal.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ImportJob.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ImportJob.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/application/ProjectModel.cpp

@@ -102,6 +102,27 @@ std::optional<std::string> keyFor(engine::ProjectTrustStore* trust,
 
 }  // namespace
 
+SecretManager::RevealOutcome SecretManager::reveal(const ProjectModel& project,
+                                                   const QString& name,
+                                                   QString& value,
+                                                   QString& error) const {
+    value.clear();
+    const auto key = keyFor(trust_.get(), project, name, error);
+    if (!key) {
+        return RevealOutcome::Failed;
+    }
+    auto result = store_->read(*key);
+    if (!result) {
+        error = QString::fromStdString(result.error().detail);
+        return RevealOutcome::Failed;
+    }
+    if (!result->has_value()) {
+        return RevealOutcome::NotSet;
+    }
+    value = QString::fromStdString(**result);
+    return RevealOutcome::Revealed;
+}
+
 bool SecretManager::store(const ProjectModel& project,
                           const QString& name,
                           const QString& value,

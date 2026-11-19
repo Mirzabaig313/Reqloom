@@ -484,20 +484,25 @@ void AppController::openProjectHistory(const QString& projectRoot) {
     if (!bootstrapper_) {
         return;
     }
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (base.isEmpty() || projectRoot.isEmpty()) {
+    if (projectRoot.isEmpty()) {
         return;
     }
-    // Hash the canonical path for a stable, filesystem-safe database name that doesn't leak the
-    // path.
-    const QString canonical = QFileInfo(projectRoot).canonicalFilePath();
-    const QString key = canonical.isEmpty() ? projectRoot : canonical;
-    const QString digest = QString::fromLatin1(
-        QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha1).toHex());
-    const QString dir = QDir{base}.filePath(QStringLiteral("history"));
-    QDir{}.mkpath(dir);
-    const QString dbPath = QDir{dir}.filePath(QStringLiteral("history-%1.db").arg(digest));
-    auto opened = bootstrapper_->engine().openHistory(std::filesystem::path{dbPath.toStdString()});
+    // The engine names the file, so the CLI records into the same one (PRD FR-16.3). It is the
+    // same path this function computed before: AppDataLocation/history/history-<sha1>.db.
+    const auto dbPath = engine::defaultHistoryDatabasePath(std::filesystem::path{
+#if defined(_WIN32)
+        projectRoot.toStdWString()
+#else
+        projectRoot.toStdString()
+#endif
+    });
+    if (!dbPath) {
+        emit notify(QStringLiteral("Could not open run history: %1")
+                        .arg(QString::fromStdString(dbPath.error().detail)),
+                    true);
+        return;
+    }
+    auto opened = bootstrapper_->engine().openHistory(*dbPath);
     if (!opened) {
         emit notify(QStringLiteral("Could not open run history: %1")
                         .arg(QString::fromStdString(opened.error().detail)),

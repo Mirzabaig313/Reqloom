@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace reqloom::engine {
@@ -239,6 +240,24 @@ struct Assertion {
 struct SourceLocation {
     std::string file;
     int line{0};
+    /// 1-based column of the key; 0 when unknown.
+    int column{0};
+    /// Line of each field inside the entity, keyed by its YAML path relative to the entity:
+    /// `path`, `headers`, `headers.Authorization`, `assert[0]`, `extract.token`, … Only fields
+    /// present in the file; a lookup falls back to the parent key, then to `line`.
+    std::map<std::string, int> fieldLines{};
+
+    /// The line of `field` (see `fieldLines`), else of its nearest parent key, else `line`.
+    [[nodiscard]] int lineOf(std::string_view field) const {
+        while (!field.empty()) {
+            if (const auto it = fieldLines.find(std::string{field}); it != fieldLines.end()) {
+                return it->second;
+            }
+            const auto cut = field.find_last_of(".[");
+            field = cut == std::string_view::npos ? std::string_view{} : field.substr(0, cut);
+        }
+        return line;
+    }
 };
 
 /// One declared operation.

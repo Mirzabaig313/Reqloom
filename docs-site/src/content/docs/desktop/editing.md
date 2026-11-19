@@ -113,11 +113,19 @@ New actors use the same panel, opened straight in edit mode.
 `{{secret.NAME}}` your project references, each with its keychain status:
 
 - **Set…** stores a value in the OS keychain, entered masked
+- **Show** reads the stored value from the keychain at that moment and displays
+  it under the row, to check it for a typo; **Hide** removes it again, and
+  closing the dialog hides every shown value. If nothing is stored, or the
+  keychain can't be read, the row says so instead
 - **Clear** removes it
 
-Values are **never displayed back** — only whether each is set. The list is derived
-from your schema, so a secret appears here once something references it; you don't
-add names by hand.
+Nothing is read or shown until you press Show. A shown value is not written to
+run history, logs or saved examples, and it can't be selected or copied. Like
+every other secret access, Show is refused when the project's id belongs to
+another folder on this machine (a copied project can't read the original's
+secrets). The command line has no way to read a stored secret back. The list is
+derived from your schema, so a secret appears here once something references
+it; you don't add names by hand.
 
 Secrets are stored under the project's `id:`. When you open a project that has
 no `id:` line, the app adds one to `reqloom.yaml` — a single new line after

@@ -115,9 +115,25 @@ std::string stepNextAction(const ce::StepResult& step, const std::string_view ta
     }
 }
 
-std::string errorNextAction(const std::string_view code) {
+std::string errorNextAction(const std::string_view code, const std::string_view command) {
     if (code == kCodeUsage) {
-        return "Fix the command line; `reqloom run --help` lists the options.";
+        return std::format("Fix the command line; `reqloom {} --help` lists the options.", command);
+    }
+    if (code == kCodeUnknownRun) {
+        return "Name a run id from error.detail, or `last` for the latest recorded run; only "
+               "runs started with `reqloom run` can be shown.";
+    }
+    if (code == kCodeUnknownStep) {
+        return "Name a step by the index in the run's `steps` array (as failed_step.index gives "
+               "it) or by its operation id, as listed in error.detail.";
+    }
+    if (code == kCodeNoHistory) {
+        return "Run the operation with `reqloom run <operation>` first; show reads what that run "
+               "recorded.";
+    }
+    if (code == kCodePathNotFound) {
+        return "The --path matched nothing in the recorded body; drop --path to see the body, or "
+               "correct the JSONPath.";
     }
     if (code == kCodeProjectNotFound) {
         return "Pass --project <dir> naming the folder that holds reqloom.yaml.";

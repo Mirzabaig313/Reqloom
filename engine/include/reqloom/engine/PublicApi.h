@@ -15,6 +15,7 @@
 #include <reqloom/engine/Operation.h>
 #include <reqloom/engine/Predicate.h>
 #include <reqloom/engine/ProjectIdentity.h>
+#include <reqloom/engine/ProjectInsight.h>
 #include <reqloom/engine/ProjectTrustStore.h>
 #include <reqloom/engine/Resource.h>
 #include <reqloom/engine/RunContext.h>

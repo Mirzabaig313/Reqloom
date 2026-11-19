@@ -87,6 +87,11 @@ public:
         return nullptr;
     }
 
+    /// The first visible item named `name` (ListView rows repeat object names).
+    [[nodiscard]] QObject* findVisible(const char* name) const {
+        return findVisibleItem(window_->contentItem(), QString::fromLatin1(name));
+    }
+
     [[nodiscard]] QObject* stub() {
         return engine_.singletonInstance<QObject*>(QStringLiteral("Reqloom"),
                                                    QStringLiteral("SecretsController"));
@@ -119,6 +124,18 @@ public:
     static void settle() { QTest::qWait(400); }
 
 private:
+    static QQuickItem* findVisibleItem(QQuickItem* item, const QString& name) {
+        if (item->objectName() == name && item->isVisible()) {
+            return item;
+        }
+        for (QQuickItem* child : item->childItems()) {
+            if (auto* found = findVisibleItem(child, name)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+
     static QQuickItem* findItem(QQuickItem* item, const QString& name) {
         if (item->objectName() == name) {
             return item;
@@ -248,6 +265,37 @@ TEST(SecretsDialog, folder_texts_break_between_words_not_inside_them) {
         ASSERT_NE(label, nullptr) << name;
         EXPECT_EQ(label->property("wrapMode").toInt(), kWrapAtWordBoundaryOrAnywhere) << name;
     }
+}
+
+}  // namespace reqloom::desktop::tests
+
+namespace reqloom::desktop::tests {
+
+TEST(SecretsDialog, show_reads_on_demand_and_closing_hides_the_value) {
+    SecretsScene scene;
+    ASSERT_TRUE(scene.ok()) << scene.error().toStdString();
+    scene.open();
+    EXPECT_EQ(scene.stub()->property("reads").toInt(), 0) << "opening reads nothing";
+    EXPECT_EQ(scene.findVisible("revealedValue"), nullptr);
+
+    auto* show = scene.findVisible("revealSecretButton");
+    ASSERT_NE(show, nullptr);
+    EXPECT_EQ(show->property("text").toString(), QStringLiteral("Show"));
+    EXPECT_TRUE(show->property("activeFocusOnTab").toBool()) << "keyboard reachable";
+    SecretsScene::click(show);
+
+    EXPECT_EQ(scene.stub()->property("reads").toInt(), 1);
+    auto* value = scene.findVisible("revealedValue");
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(value->property("text").toString(), QStringLiteral("fake-stored-value"));
+    EXPECT_EQ(value->property("textFormat").toInt(), static_cast<int>(Qt::PlainText));
+    EXPECT_EQ(show->property("text").toString(), QStringLiteral("Hide"));
+
+    QMetaObject::invokeMethod(scene.find("dlg"), "close");
+    SecretsScene::settle();
+    EXPECT_TRUE(scene.stub()->property("hidden").toBool());
+    scene.open();
+    EXPECT_EQ(scene.findVisible("revealedValue"), nullptr) << "a value does not outlive the dialog";
 }
 
 }  // namespace reqloom::desktop::tests

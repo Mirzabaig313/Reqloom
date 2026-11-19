@@ -148,9 +148,23 @@ captured.
 
 A captured body is shown and saved in [run history](/desktop/running/#run-history)
 **exactly as received** — an access token in a login or API response is stored
-in clear text in the history file. Headers, URLs, failure messages and extracted
-values stay masked either way. Turn it off when the API returns real
+in clear text in the history file. Turn it off when the API returns real
 credentials, or very large payloads.
+
+Request URLs and request and response headers are always shown, and saved in
+run history and in saved examples, **as sent and received**, so you can see
+what went wrong: `Authorization`, `Cookie` and `Set-Cookie` included, with a
+session token obtained by signing in visible. Two things stay masked: the value
+of a declared secret wherever it appears in a URL or header, shown as
+`<secret:NAME>` (for `{{secret.NAME}}`, directly or through a `!secret`
+environment value; an allowed `$.env` value shows as `<redacted>`), and the
+password in a URL's `user:password@`, shown as `<redacted>`. The secret's value
+is never saved in history. Under the request, **Show stored value** next to
+each `<secret:NAME>` reads that secret from the keychain when you press it and
+shows it until you hide it or close the row. It is the value stored now, which
+may differ from what an older run sent.
+Failure messages and extracted values keep their masking. Runs started from
+the command line are stored masked, as `reqloom run` prints them.
 
 ## Next
 

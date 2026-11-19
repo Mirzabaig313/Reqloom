@@ -201,14 +201,17 @@ std::expected<void, ReqloomError> checkEnvBuiltinAllowed(std::string_view owner,
     if (std::ranges::find(project.allowedEnv, name) != project.allowedEnv.end()) {
         return {};
     }
-    return std::unexpected(ReqloomError{
+    ReqloomError error{
         ErrorCode::RefUndefined,
         ErrorClass::Schema,
         std::format("{} reads $.env.{}, but environment variable {} is not in "
                     "allowed_env in reqloom.yaml; add it to the allowed_env list there",
                     owner,
                     name,
-                    name)});
+                    name)};
+    error.reference = std::format("{{{{$.env.{}}}}}", name);
+    error.fix = std::format("Add {} to the allowed_env list in reqloom.yaml.", name);
+    return std::unexpected(std::move(error));
 }
 
 std::vector<std::string_view> actorTemplates(const Actor& actor) {
@@ -244,8 +247,99 @@ ReqloomError withSource(const SourceLocation& at, ReqloomError error) {
     if (!at.file.empty()) {
         error.detail = at.line > 0 ? std::format("{}:{}: {}", at.file, at.line, error.detail)
                                    : std::format("{}: {}", at.file, error.detail);
+        if (error.file.empty()) {
+            error.file = at.file;
+        }
+        if (error.line == 0) {
+            error.line = at.line;
+        }
     }
     return error;
+}
+
+/// `error` pointing at `field` of the entity defined at `at` (see `SourceLocation::lineOf`). Sets
+/// only the structured position; `withSource` adds the detail prefix once, at the end.
+ReqloomError withField(const SourceLocation& at, std::string_view field, ReqloomError error) {
+    if (error.line == 0 && !at.file.empty()) {
+        error.file = at.file;
+        error.line = at.lineOf(field);
+    }
+    return error;
+}
+
+/// `pointAt` error positioning for a template of the operation at `op` labelled `field`: the
+/// project's default auth for an inherited one, else the operation's field.
+ReqloomError pointAt(const Operation& op,
+                     const Project& project,
+                     std::string_view field,
+                     ReqloomError error) {
+    if (field == kDefaultAuthField) {
+        return withField(project.defaultAuthSource, "", std::move(error));
+    }
+    return withField(op.source, field, std::move(error));
+}
+
+/// Each template an operation's request, auth, assertions and poll are built from, labelled with
+/// the YAML field that holds it (`SourceLocation::fieldLines` keys), in `operationTemplates` order.
+struct LabelledTemplate {
+    std::string field;
+    std::string_view text;
+};
+
+std::vector<LabelledTemplate> labelledTemplates(const Operation& op, const Project& project) {
+    std::vector<LabelledTemplate> out;
+    out.push_back({"path", op.pathTemplate});
+    if (op.bodyTemplate) {
+        out.push_back({"body", *op.bodyTemplate});
+    }
+    for (const auto& [k, v] : op.headers) {
+        out.push_back({"headers." + k, v});
+    }
+    for (const auto& [k, v] : op.queryParams) {
+        out.push_back({"query_params." + k, v});
+    }
+    if (op.bodyForm) {
+        for (const auto& [k, v] : *op.bodyForm) {
+            out.push_back({"body_form." + k, v});
+        }
+    }
+    // Inherited auth lives in reqloom.yaml, not with the operation (`fieldSource`).
+    const bool inherited = op.inlineAuth && op.inlineAuth->type == InlineAuthType::Inherit;
+    for (const auto text : authTemplates(op, project)) {
+        out.push_back({inherited ? std::string{kDefaultAuthField} : std::string{"auth"}, text});
+    }
+    for (std::size_t i = 0; i < op.assertions.size(); ++i) {
+        out.push_back({std::format("assert[{}]", i), op.assertions[i].expr});
+    }
+    for (const auto text : pollTemplates(op)) {
+        out.push_back({"poll_until", text});
+    }
+    return out;
+}
+
+/// The field of `op` whose template refers to `{{scope.field}}`, or "" when none does.
+std::string fieldReferencing(const Operation& op,
+                             const Project& project,
+                             std::string_view scope,
+                             std::string_view field) {
+    for (const auto& labelled : labelledTemplates(op, project)) {
+        for (const auto& ref : scanReferences({labelled.text})) {
+            if (ref.scope == scope && ref.field == field) {
+                return labelled.field;
+            }
+        }
+    }
+    return {};
+}
+
+/// Comma-separated ids of a map's keys, for "known names" hints.
+template <typename Map>
+std::string joinKeys(const Map& map) {
+    std::string out;
+    for (const auto& key : map | std::views::keys) {
+        out += (out.empty() ? "" : ", ") + key.value;
+    }
+    return out.empty() ? std::string{"none"} : out;
 }
 
 /// Actor ids, resource ids and environment names become file names when the project is saved.
@@ -313,28 +407,35 @@ std::expected<void, ReqloomError> checkFakerBuiltinKnown(const OperationId& opId
     if (std::ranges::find(kFakerNames, name) != kFakerNames.end()) {
         return {};
     }
-    return std::unexpected(
-        ReqloomError{ErrorCode::RefUndefined,
-                     ErrorClass::Schema,
-                     std::format("Operation '{}' uses $.faker.{}, which is not a faker generator; "
-                                 "valid names: email, phone",
-                                 opId.value,
-                                 name)});
+    ReqloomError error{
+        ErrorCode::RefUndefined,
+        ErrorClass::Schema,
+        std::format("Operation '{}' uses $.faker.{}, which is not a faker generator; "
+                    "valid names: email, phone",
+                    opId.value,
+                    name)};
+    error.reference = std::format("$.faker.{}", name);
+    error.fix = "Use {{$.faker.email}} or {{$.faker.phone}}.";
+    return std::unexpected(std::move(error));
 }
 
 /// Parse every predicate and regex extraction pattern so a malformed one is a load error.
+/// The error names the field; `field` receives its `SourceLocation::fieldLines` key.
 std::expected<void, ReqloomError> validateOperationExpressions(const OperationId& opId,
-                                                               const Operation& op) {
-    const auto reject = [&](const std::string& field, const ReqloomError& err) {
-        return std::unexpected(
-            ReqloomError{ErrorCode::SchemaInvalid,
-                         ErrorClass::Schema,
-                         std::format("Operation '{}' {}: {}", opId.value, field, err.detail)});
-    };
-    const auto check = [&](const std::string& field,
+                                                               const Operation& op,
+                                                               std::string& field) {
+    const auto reject =
+        [&](const std::string& label, std::string_view expr, const ReqloomError& err) {
+            ReqloomError error{ErrorCode::SchemaInvalid,
+                               ErrorClass::Schema,
+                               std::format("Operation '{}' {}: {}", opId.value, label, err.detail)};
+            error.reference = std::string{expr};
+            return std::unexpected(std::move(error));
+        };
+    const auto check = [&](const std::string& label,
                            std::string_view expr) -> std::expected<void, ReqloomError> {
         if (auto ok = validateTemplatedPredicate(expr); !ok) {
-            return reject(field, ok.error());
+            return reject(label, expr, ok.error());
         }
         return {};
     };
@@ -342,15 +443,18 @@ std::expected<void, ReqloomError> validateOperationExpressions(const OperationId
         const auto& a = op.assertions[i];
         const auto label =
             a.name ? std::format("assert[{}] '{}'", i, *a.name) : std::format("assert[{}]", i);
+        field = std::format("assert[{}]", i);
         if (auto ok = check(label, a.expr); !ok) {
             return ok;
         }
     }
     if (op.pollUntil) {
+        field = "poll_until.success_when";
         if (auto ok = check("poll_until.success_when", op.pollUntil->successWhen); !ok) {
             return ok;
         }
         if (op.pollUntil->failWhen) {
+            field = "poll_until.fail_when";
             if (auto ok = check("poll_until.fail_when", *op.pollUntil->failWhen); !ok) {
                 return ok;
             }
@@ -361,9 +465,12 @@ std::expected<void, ReqloomError> validateOperationExpressions(const OperationId
             continue;
         }
         if (auto ok = validateRegexPattern(ext.sourcePath); !ok) {
-            return reject(std::format("extract '{}' (regex)", ext.variableName), ok.error());
+            field = "extract." + ext.variableName;
+            return reject(
+                std::format("extract '{}' (regex)", ext.variableName), ext.sourcePath, ok.error());
         }
     }
+    field.clear();
     return {};
 }
 
@@ -426,7 +533,7 @@ std::expected<std::vector<OperationId>, ReqloomError> selectProducers(const Oper
         return candidates;
     }
     if (candidates.empty()) {
-        return std::unexpected(ReqloomError{
+        ReqloomError error{
             ErrorCode::RefUndefined,
             ErrorClass::Schema,
             std::format("Operation '{}': no producer for {{{{{}.{}}}}}: every operation that "
@@ -434,7 +541,11 @@ std::expected<std::vector<OperationId>, ReqloomError> selectProducers(const Oper
                         self.value,
                         refRes,
                         refVar,
-                        joinIds(extractors))});
+                        joinIds(extractors))};
+        error.reference = std::format("{{{{{}.{}}}}}", refRes, refVar);
+        error.fix = std::format(
+            "Make one operation of '{}' extract {} without also referring to it.", refRes, refVar);
+        return std::unexpected(std::move(error));
     }
     std::vector<OperationId> named;
     std::ranges::copy_if(candidates, std::back_inserter(named), [&](const OperationId& c) {
@@ -443,7 +554,7 @@ std::expected<std::vector<OperationId>, ReqloomError> selectProducers(const Oper
     if (!named.empty()) {
         return named;
     }
-    return std::unexpected(ReqloomError{
+    ReqloomError error{
         ErrorCode::RefUndefined,
         ErrorClass::Schema,
         std::format("Operation '{}': ambiguous producer for {{{{{}.{}}}}}: candidates {} — "
@@ -451,7 +562,10 @@ std::expected<std::vector<OperationId>, ReqloomError> selectProducers(const Oper
                     self.value,
                     refRes,
                     refVar,
-                    joinIds(candidates))});
+                    joinIds(candidates))};
+    error.reference = std::format("{{{{{}.{}}}}}", refRes, refVar);
+    error.fix = std::format("Add depends_on naming one of: {}.", joinIds(candidates));
+    return std::unexpected(std::move(error));
 }
 
 std::expected<ImplicitDeps, ReqloomError> inferImplicitDepsDetailed(const Operation& op,
@@ -485,22 +599,34 @@ std::expected<ImplicitDeps, ReqloomError> inferImplicitDepsDetailed(const Operat
 std::expected<void, ReqloomError> validateOperationTargets(const OperationId& opId,
                                                            const Operation& op,
                                                            const Project& project) {
-    const auto missing = [&](std::string_view what, const std::string& id) {
-        return std::unexpected(ReqloomError{
+    const auto missing = [&](std::string_view what,
+                             const std::string& id,
+                             std::string_view field,
+                             std::string known) {
+        ReqloomError error{
             ErrorCode::RefUndefined,
             ErrorClass::Schema,
             std::format(
-                "Operation '{}' names {} '{}', which is not defined", opId.value, what, id)});
+                "Operation '{}' names {} '{}', which is not defined", opId.value, what, id)};
+        error.reference = id;
+        error.fix = std::format("Name one of the defined ones: {}.", known);
+        return std::unexpected(withField(op.source, field, std::move(error)));
     };
     if (!op.actor.value.empty() && !project.actors.contains(op.actor)) {
-        return missing("actor", op.actor.value);
+        return missing("actor", op.actor.value, "actor", joinKeys(project.actors));
     }
     if (op.pollUntil && op.pollUntil->actor && !op.pollUntil->actor->value.empty() &&
         !project.actors.contains(*op.pollUntil->actor)) {
-        return missing("poll_until actor", op.pollUntil->actor->value);
+        return missing("poll_until actor",
+                       op.pollUntil->actor->value,
+                       "poll_until.actor",
+                       joinKeys(project.actors));
     }
     if (op.forEach && !project.resources.contains(op.forEach->over)) {
-        return missing("for_each resource", op.forEach->over.value);
+        return missing("for_each resource",
+                       op.forEach->over.value,
+                       "for_each.over",
+                       joinKeys(project.resources));
     }
     return {};
 }
@@ -661,6 +787,66 @@ std::expected<ResolvedPlan, ReqloomError> DependencyResolver::resolvePlan(
     return ResolvedPlan{std::move(sorted), std::move(edges)};
 }
 
+namespace {
+
+/// One cycle among the operations Kahn's sort left (in-degree > 0), in dependency order and
+/// starting at its alphabetically first member. Operations that only depend on a cycle are left
+/// over too; they are peeled off first, so the result names cycle members only.
+std::vector<OperationId> findCycle(const std::map<OperationId, std::vector<OperationId>>& graph,
+                                   const std::map<OperationId, int>& inDegree) {
+    std::set<OperationId> left;
+    for (const auto& [node, degree] : inDegree) {
+        if (degree > 0) {
+            left.insert(node);
+        }
+    }
+    // Peel nodes nothing left depends on: they sit downstream of a cycle, not on one.
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (auto it = left.begin(); it != left.end();) {
+            const bool needed = std::ranges::any_of(left, [&](const OperationId& other) {
+                const auto deps = graph.find(other);
+                return deps != graph.end() &&
+                       std::ranges::find(deps->second, *it) != deps->second.end();
+            });
+            if (needed) {
+                ++it;
+            } else {
+                it = left.erase(it);
+                changed = true;
+            }
+        }
+    }
+    if (left.empty()) {
+        return {};
+    }
+    // Walk dependencies inside what is left until a node repeats: from there on is a cycle.
+    std::vector<OperationId> walk{*left.begin()};
+    while (true) {
+        const auto deps = graph.find(walk.back());
+        std::optional<OperationId> next;
+        if (deps != graph.end()) {
+            for (const auto& dep : deps->second) {
+                if (left.contains(dep)) {
+                    next = dep;
+                    break;
+                }
+            }
+        }
+        if (!next) {
+            return walk;
+        }
+        if (const auto seen = std::ranges::find(walk, *next); seen != walk.end()) {
+            std::vector<OperationId> cycle(seen, walk.end());
+            std::ranges::rotate(cycle, std::ranges::min_element(cycle));
+            return cycle;
+        }
+        walk.push_back(*next);
+    }
+}
+
+}  // namespace
+
 std::expected<void, ReqloomError> DependencyResolver::validate(const Project& project) const {
     if (auto names = validateEntityNames(project); !names) {
         return names;
@@ -695,49 +881,60 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
             auto checked = [&]() -> std::expected<void, ReqloomError> {
                 // A reference whose scope is not a known root can never resolve; `poll_until` may
                 // also use `{{response.X}}`.
-                auto strictTemplates = requestTemplates(op);
-                std::ranges::copy(authTemplates(op, project), std::back_inserter(strictTemplates));
-                std::ranges::copy(assertionTemplates(op), std::back_inserter(strictTemplates));
-                auto refs = scanReferences(strictTemplates);
-                for (auto& ref : scanReferences(pollTemplates(op))) {
-                    if (ref.scope != "response") {
-                        refs.push_back(std::move(ref));
+                for (const auto& labelled : labelledTemplates(op, project)) {
+                    const bool poll = labelled.field == "poll_until";
+                    for (const auto& ref : scanReferences({labelled.text})) {
+                        if (poll && ref.scope == "response") {
+                            continue;
+                        }
+                        if (!isKnownScope(ref.scope)) {
+                            ReqloomError error{
+                                ErrorCode::RefUndefined,
+                                ErrorClass::Schema,
+                                std::format("Operation '{}' references undefined symbol '{}.{}': "
+                                            "no actor, resource, env, or secret named '{}'",
+                                            opId.value,
+                                            ref.scope,
+                                            ref.field,
+                                            ref.scope)};
+                            error.reference = std::format("{{{{{}.{}}}}}", ref.scope, ref.field);
+                            error.fix = std::format(
+                                "Refer to an actor ({}), a resource ({}), env.<key>, "
+                                "secret.<NAME> or a $. built-in.",
+                                joinKeys(project.actors),
+                                joinKeys(project.resources));
+                            return std::unexpected(
+                                pointAt(op, project, labelled.field, std::move(error)));
+                        }
+                        if (auto denied = checkEnvBuiltinAllowed(
+                                std::format("Operation '{}'", opId.value), ref, project);
+                            !denied) {
+                            return std::unexpected(
+                                pointAt(op, project, labelled.field, denied.error()));
+                        }
+                        if (auto unknown = checkFakerBuiltinKnown(opId, ref); !unknown) {
+                            return std::unexpected(
+                                pointAt(op, project, labelled.field, unknown.error()));
+                        }
                     }
                 }
-                for (const auto& ref : refs) {
-                    if (!isKnownScope(ref.scope)) {
-                        return std::unexpected(ReqloomError{
-                            ErrorCode::RefUndefined,
-                            ErrorClass::Schema,
-                            std::format("Operation '{}' references undefined symbol '{}.{}': "
-                                        "no actor, resource, env, or secret named '{}'",
-                                        opId.value,
-                                        ref.scope,
-                                        ref.field,
-                                        ref.scope)});
-                    }
-                    if (auto denied = checkEnvBuiltinAllowed(
-                            std::format("Operation '{}'", opId.value), ref, project);
-                        !denied) {
-                        return denied;
-                    }
-                    if (auto unknown = checkFakerBuiltinKnown(opId, ref); !unknown) {
-                        return unknown;
-                    }
-                }
-                if (auto exprs = validateOperationExpressions(opId, op); !exprs) {
-                    return exprs;
+                std::string expressionField;
+                if (auto exprs = validateOperationExpressions(opId, op, expressionField); !exprs) {
+                    return std::unexpected(withField(op.source, expressionField, exprs.error()));
                 }
                 if (op.failureMessageShow) {
                     if (auto paths = validateFailureMessagePaths(
                             std::format("Operation '{}'", opId.value), *op.failureMessageShow);
                         !paths) {
-                        return paths;
+                        return std::unexpected(
+                            withField(op.source, "failure_message", paths.error()));
                     }
                 }
 
                 std::set<OperationId> allDeps;
-                for (const auto& dep : op.explicitDependencies) {
+                for (std::size_t depIndex = 0; depIndex < op.explicitDependencies.size();
+                     ++depIndex) {
+                    const auto& dep = op.explicitDependencies[depIndex];
                     const auto dotPos = dep.value.find('.');
                     bool exists = false;
                     if (dotPos != std::string::npos) {
@@ -749,13 +946,18 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
                         }
                     }
                     if (!exists) {
-                        return std::unexpected(
-                            ReqloomError{ErrorCode::RefUndefined,
-                                         ErrorClass::Schema,
-                                         std::format("Operation '{}' declares depends_on '{}', "
-                                                     "which is not a defined operation",
-                                                     opId.value,
-                                                     dep.value)});
+                        ReqloomError error{ErrorCode::RefUndefined,
+                                           ErrorClass::Schema,
+                                           std::format("Operation '{}' declares depends_on '{}', "
+                                                       "which is not a defined operation",
+                                                       opId.value,
+                                                       dep.value)};
+                        error.reference = dep.value;
+                        error.fix =
+                            "Name an existing operation as <resource>.<operation>; "
+                            "`reqloom list` shows them.";
+                        return std::unexpected(withField(
+                            op.source, std::format("depends_on[{}]", depIndex), std::move(error)));
                     }
                     allDeps.insert(dep);
                 }
@@ -765,7 +967,17 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
                 }
                 const auto implicit = inferImplicitDepsDetailed(op, opId, project);
                 if (!implicit) {
-                    return std::unexpected(implicit.error());
+                    auto error = implicit.error();
+                    // The reference is `{{resource.field}}`; find the field that holds it.
+                    std::string field;
+                    std::string_view inner{error.reference};
+                    if (inner.starts_with("{{") && inner.ends_with("}}")) {
+                        inner = inner.substr(2, inner.size() - 4);
+                    }
+                    if (const auto ref = parseDotted(inner)) {
+                        field = fieldReferencing(op, project, ref->scope, ref->field);
+                    }
+                    return std::unexpected(pointAt(op, project, field, std::move(error)));
                 }
                 for (const auto& [producer, _] : *implicit) {
                     allDeps.insert(producer);
@@ -813,17 +1025,30 @@ std::expected<void, ReqloomError> DependencyResolver::validate(const Project& pr
     }
 
     if (processed < inDegree.size()) {
+        const auto cycle = findCycle(graph, inDegree);
         std::string cycleOps;
-        for (const auto& [node, degree] : inDegree) {
-            if (degree > 0) {
-                if (!cycleOps.empty()) {
-                    cycleOps += " → ";
+        for (const auto& node : cycle) {
+            cycleOps += (cycleOps.empty() ? "" : " → ") + node.value;
+        }
+        ReqloomError error{
+            ErrorCode::Cycle, ErrorClass::Schema, "Circular dependency detected: " + cycleOps};
+        error.reference = cycleOps;
+        error.fix =
+            "Remove one depends_on or {{resource.field}} reference so the operations can "
+            "run in an order.";
+        // Point at the first operation of the cycle; the detail names them all.
+        if (!cycle.empty()) {
+            const auto& first = cycle.front();
+            const auto dot = first.value.find('.');
+            if (const auto res = project.resources.find(ResourceId{first.value.substr(0, dot)});
+                dot != std::string::npos && res != project.resources.end()) {
+                if (const auto op = res->second.operations.find(first.value.substr(dot + 1));
+                    op != res->second.operations.end()) {
+                    error = withField(op->second.source, "depends_on", std::move(error));
                 }
-                cycleOps += node.value;
             }
         }
-        return std::unexpected(ReqloomError{
-            ErrorCode::Cycle, ErrorClass::Schema, "Circular dependency detected: " + cycleOps});
+        return std::unexpected(std::move(error));
     }
 
     return {};
@@ -843,6 +1068,25 @@ std::expected<void, ReqloomError> checkEntityFileStem(std::string_view kind,
                     "'\\', ':' or NUL)",
                     kind,
                     name)});
+}
+
+std::vector<LabelledReference> operationReferences(const Operation& op, const Project& project) {
+    std::vector<LabelledReference> out;
+    for (const auto& labelled : labelledTemplates(op, project)) {
+        for (auto& ref : scanReferences({labelled.text})) {
+            out.push_back(
+                LabelledReference{labelled.field, std::move(ref.scope), std::move(ref.field)});
+        }
+    }
+    return out;
+}
+
+std::vector<LabelledReference> templateReferences(std::string_view text) {
+    std::vector<LabelledReference> out;
+    for (auto& ref : scanReferences({text})) {
+        out.push_back(LabelledReference{{}, std::move(ref.scope), std::move(ref.field)});
+    }
+    return out;
 }
 
 std::vector<std::string_view> actorReferenceTemplates(const Actor& actor) {

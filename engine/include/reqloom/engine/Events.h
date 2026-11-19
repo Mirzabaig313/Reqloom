@@ -29,12 +29,47 @@ enum class SkipReason : std::uint8_t { SessionValid, ExtractionCached };
 /// it.
 inline constexpr std::string_view kRedactedHeaderValue = "<redacted>";
 
+/// Who started a run (PRD FR-15.8): a person in the app, a person at the command line, or a named
+/// agent. Self-reported by the caller and shown for information only; never used to decide what a
+/// run may do.
+struct RunInitiator {
+    enum class Kind : std::uint8_t { App, Cli, Agent };
+    Kind kind{Kind::App};
+    std::string name;  ///< The agent's name for `Agent`; empty otherwise.
+};
+
+/// Stable name of `kind` in run history and machine output: "app", "cli", "agent".
+[[nodiscard]] constexpr std::string_view runInitiatorKindName(RunInitiator::Kind kind) noexcept {
+    switch (kind) {
+        case RunInitiator::Kind::App:
+            return "app";
+        case RunInitiator::Kind::Cli:
+            return "cli";
+        case RunInitiator::Kind::Agent:
+            return "agent";
+    }
+    return "app";
+}
+
+/// Inverse of `runInitiatorKindName`; `App` for anything else (rows written before FR-15.8).
+[[nodiscard]] constexpr RunInitiator::Kind runInitiatorKindFromName(
+    std::string_view name) noexcept {
+    if (name == "cli") {
+        return RunInitiator::Kind::Cli;
+    }
+    if (name == "agent") {
+        return RunInitiator::Kind::Agent;
+    }
+    return RunInitiator::Kind::App;
+}
+
 struct RunStarted {
     RunId runId;
     OperationId target;
     std::size_t chainSize{};
     std::string envName;
     TimePoint at;
+    RunInitiator initiator{};
 };
 
 struct StepStarted {

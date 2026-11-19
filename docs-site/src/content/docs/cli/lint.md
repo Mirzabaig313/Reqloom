@@ -22,14 +22,49 @@ well.
 ```json
 {
   "schema_version": 1,
-  "ok": true,
-  "errors": [],
-  "warnings": []
+  "contract_version": "1.2",
+  "command": "lint",
+  "ok": false,
+  "errors": [
+    {"code": "E_REF_UNDEFINED", "detail": "./resources/refunds.yaml:23: Operation 'refund.approve' names actor 'amdin', which is not defined", "operation": null, "file": "resources/refunds.yaml", "line": 26, "column": null, "reference": "amdin", "fix": "Name one of the defined ones: admin, customer, vendor.", "next_action": "Edit the file at the line given (file, line), doing what fix says, then run `reqloom lint` again."}
+  ],
+  "warnings": [],
+  "warning_details": []
 }
 ```
 
-Each entry of `errors` is `{ "code", "detail", "operation" }`; `operation` is
-set when the error belongs to one operation's chain.
+Each error carries:
+
+| Field | Meaning |
+| --- | --- |
+| `code`, `detail` | The `E_*` code and the message, as before. `detail` keeps its `file:line` prefix, which names the operation's line |
+| `operation` | Set when the error belongs to one operation's chain |
+| `file` | The schema file, relative to the project folder; `null` when the error is not in a file |
+| `line`, `column` | 1-based; the line of the field that holds the problem (the `actor:` line, the header or `depends_on` item, the `path:` or `body:` key). `null` when unknown |
+| `reference` | The offending reference or name as written: `{{order.owner_id}}`, `amdin`, `order.nope` |
+| `fix` | What would satisfy the check, e.g. the names that do exist |
+| `next_action` | One line of advice for an agent |
+
+`warnings` stays an array of strings; `warning_details` has one object per
+warning, at the same index: `{ message, file, line, column, reference, fix }`.
+
+### How far positions reach
+
+| Problem | file | line | column |
+| --- | --- | --- | --- |
+| YAML syntax, wrong type or enum value, duplicate ids | yes | yes | yes |
+| Unknown scope (`{{ghost.id}}`), `$.env` not in `allowed_env`, unknown `$.faker` | yes | the field's line | — |
+| Unknown actor, `depends_on` target, `for_each` resource | yes | the field's line | — |
+| Ambiguous or missing producer of a value | yes | the field's line | — |
+| Malformed assertion, poll condition or regex | yes | the item's line | — |
+| A cycle | the first operation in it | its `depends_on` line | — |
+| A reference nothing extracts (warning) | yes | the field's line | — |
+| Unknown keys and other load warnings | yes | yes | yes |
+| Secret-name and project-id warnings | `reqloom.yaml` or none | — | — |
+
+A reference inside a multi-line `body:` points at the `body:` line: the body is
+read as one value. Lint stops at the first load error; fix it and run lint again
+to see the next.
 
 ## A clean run
 
@@ -69,6 +104,7 @@ LINT OK — 1 actors, 1 resources, 1 operations. No errors.
 | `project uses secrets but has no id` | Its secrets cannot be read from the keychain (the CLI still reads `REQLOOM_SECRET_<NAME>` variables); the line suggests an id |
 | `secrets '…' and '…' both map to the environment variable …` | Two names differing only in case share one `REQLOOM_SECRET_` variable; a CLI run with it set fails. Rename one |
 | `secret '…' cannot be supplied through an environment variable` | The name has a character other than a letter, digit or `_`, so no [`REQLOOM_SECRET_<NAME>`](/schema/secrets-and-transport/#on-ci-and-in-agent-sandboxes-environment-variables) variable can carry it; on CI it has no source. The line suggests a name |
+| `Operation '…' refers to {{r.x}}, but no operation of 'r' extracts 'x'` | A typo in an extracted value's name, or a missing `extract:`; the run fails when it reaches it. `fix` lists what `r` does extract |
 
 Warnings are printed only by `reqloom lint`, and only when the project loads; a
 load error is printed alone. `reqloom run` and the desktop app don't show them.
@@ -132,7 +168,14 @@ error — a real run would fail:
 
 ```ansi
 LINT FAIL [E_REF_UNDEFINED]: ./reqloom.yaml:10: Operation 'order.get' references undefined symbol 'invoice.invoice_id': no actor, resource, env, or secret named 'invoice'
+    at reqloom.yaml:12
+    reference: {{invoice.invoice_id}}
+    fix: Refer to an actor (admin), a resource (order), env.<key>, secret.<NAME> or a $. built-in.
 ```
+
+The `at`, `reference` and `fix` lines follow every error whose position, reference
+or fix is known; `at` names the line of the field, while the prefix of the
+message keeps the operation's line.
 
 ### Missing dependency
 
@@ -181,11 +224,11 @@ LINT FAILED — 1 error(s).
 Lint validates structure, not correctness against a live API. These gaps are
 worth knowing, because each produces a green lint and a red run.
 
-:::caution[Lint validates the scope, not the field]
-`{{order.missing_var}}` **passes** lint as long as a resource named `order`
-exists. The validator confirms the *scope* is defined; it does not verify that
-some upstream operation actually extracts `missing_var`. A typo in an extracted
-variable name is a run-time `E_VAR_UNRESOLVED`, not a lint error.
+:::caution[A misspelled extracted value is a warning, not an error]
+`{{order.missing_var}}` loads as long as a resource named `order` exists, so lint
+still passes. Lint **warns** when no operation of `order` extracts `missing_var`,
+with the line, the reference and the names that are extracted; the run fails
+with `E_VAR_UNRESOLVED` when it gets there.
 :::
 
 Also invisible to lint:
@@ -203,7 +246,8 @@ Also invisible to lint:
   the step at run time with `E_EXTRACTION_FAILED`.
 - **What a placeholder in a predicate resolves to.** The check confirms the
   scope exists and that the predicate parses with a stand-in value; a field that
-  is never extracted fails at run time with `E_VAR_UNRESOLVED`.
+  is never extracted is a [warning](#warnings) and fails at run time with
+  `E_VAR_UNRESOLVED`.
 - **A missing `imports:` block.** Without it no file is read and there is
   nothing to warn about: lint reports `0 resources` and passes.
 

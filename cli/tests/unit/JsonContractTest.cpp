@@ -94,8 +94,10 @@ constexpr const char* kHostileBody =
 TEST(JsonContract, carries_a_contract_version_beside_the_unchanged_schema_version) {
     const auto doc = render(runWithResponses());
     EXPECT_EQ(doc.value(QStringLiteral("schema_version")).toInt(), 1);
-    EXPECT_EQ(str(doc, "contract_version"), QStringLiteral("1.1"));
-    for (const char* key : {"run_id", "target", "environment", "outcome", "summary", "error"}) {
+    // 1.2 (additive): list, describe, plan and show documents, lint positions, run `recorded`.
+    EXPECT_EQ(str(doc, "contract_version"), QStringLiteral("1.2"));
+    for (const char* key :
+         {"run_id", "target", "environment", "outcome", "summary", "error", "recorded"}) {
         EXPECT_TRUE(doc.contains(QString::fromUtf8(key))) << key;
     }
 }
@@ -200,7 +202,7 @@ TEST(JsonContract, error_document_carries_a_next_action) {
                              "E_SCHEMA_VERSION",
                              "E_SECRET_ACCESS_FAILED"}) {
         const auto doc = renderError(code);
-        EXPECT_EQ(str(doc, "contract_version"), QStringLiteral("1.1")) << code;
+        EXPECT_EQ(str(doc, "contract_version"), QStringLiteral("1.2")) << code;
         const auto error = doc.value(QStringLiteral("error")).toObject();
         EXPECT_EQ(str(error, "code"), QString::fromUtf8(code));
         EXPECT_EQ(str(error, "detail"), QStringLiteral("ERROR-DETAIL-TEXT"));

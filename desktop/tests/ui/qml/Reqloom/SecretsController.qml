@@ -17,10 +17,54 @@ QtObject {
             name: "API_KEY"
             status: "not set"
             detail: ""
+            revealed: false
+            revealedValue: ""
+            revealMessage: ""
+        }
+        ListElement {
+            name: "TOKEN"
+            status: "set"
+            detail: ""
+            revealed: false
+            revealedValue: ""
+            revealMessage: ""
         }
     }
 
+    property int reads: 0
+    property bool hidden: false
+
     function refresh() {
+    }
+
+    // Like SecretsController: the keychain is read only when the person asks.
+    function toggleReveal(name) {
+        const row = secrets.count > 1 && secrets.get(1).name === name ? 1 : 0;
+        if (secrets.get(row).revealed) {
+            secrets.setProperty(row, "revealed", false);
+            secrets.setProperty(row, "revealedValue", "");
+            return;
+        }
+        reads += 1;
+        secrets.setProperty(row, "revealed", true);
+        secrets.setProperty(row, "revealedValue", "fake-stored-value");
+    }
+
+    function readStoredValue(name) {
+        reads += 1;
+        return {
+            "shown": true,
+            "value": "fake-stored-value",
+            "message": ""
+        };
+    }
+
+    function hideRevealed() {
+        hidden = true;
+        for (let i = 0; i < secrets.count; ++i) {
+            secrets.setProperty(i, "revealed", false);
+            secrets.setProperty(i, "revealedValue", "");
+        }
     }
 
     function store(name, value) {

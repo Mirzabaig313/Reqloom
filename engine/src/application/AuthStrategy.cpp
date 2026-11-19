@@ -40,15 +40,11 @@ namespace {
 using namespace codecs;
 using json = nlohmann::json;
 
-[[nodiscard]] std::vector<std::pair<std::string, std::string>> snapshotMaskedRequestHeaders(
+/// The request's headers as sent. The engine's `emit` masks them for the run's surface (by name
+/// and value for an agent run, declared secrets only for a desktop run).
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> snapshotRequestHeaders(
     const HttpRequest& req) {
-    auto masked = maskHeaders(req.headers);
-    std::vector<std::pair<std::string, std::string>> out;
-    out.reserve(masked.size());
-    for (const auto& [k, v] : masked) {
-        out.emplace_back(k, v);
-    }
-    return out;
+    return {req.headers.begin(), req.headers.end()};
 }
 
 [[nodiscard]] std::size_t requestBodySize(const HttpRequest& req) noexcept {
@@ -131,7 +127,7 @@ public:
                                            deps_.stepIndex,
                                            req.method,
                                            req.url,
-                                           snapshotMaskedRequestHeaders(req),
+                                           snapshotRequestHeaders(req),
                                            requestBodySize(req),
                                            std::chrono::system_clock::now(),
                                            deps_.exchange});
@@ -154,7 +150,7 @@ public:
                     ResponseReceived{deps_.runId,
                                      deps_.stepIndex,
                                      response->status,
-                                     maskHeaders(response->headers),
+                                     response->headers,
                                      response->body.size(),
                                      response->elapsed,
                                      std::chrono::system_clock::now(),
@@ -353,7 +349,7 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
                                   deps.stepIndex,
                                   req.method,
                                   req.url,
-                                  snapshotMaskedRequestHeaders(req),
+                                  snapshotRequestHeaders(req),
                                   requestBodySize(req),
                                   std::chrono::system_clock::now(),
                                   deps.exchange});
@@ -376,7 +372,7 @@ std::expected<ActorSession, ReqloomError> executeOAuth2TokenRequest(
         deps.emit(ResponseReceived{deps.runId,
                                    deps.stepIndex,
                                    response->status,
-                                   maskHeaders(response->headers),
+                                   response->headers,
                                    response->body.size(),
                                    response->elapsed,
                                    std::chrono::system_clock::now(),
@@ -1033,7 +1029,7 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
                                   deps.stepIndex,
                                   req.method,
                                   req.url,
-                                  snapshotMaskedRequestHeaders(req),
+                                  snapshotRequestHeaders(req),
                                   requestBodySize(req),
                                   std::chrono::system_clock::now(),
                                   ExchangeKind::SessionRefresh});
@@ -1054,7 +1050,7 @@ std::expected<std::map<std::string, std::string>, ReqloomError> runRefresh(
         deps.emit(ResponseReceived{deps.runId,
                                    deps.stepIndex,
                                    response->status,
-                                   maskHeaders(response->headers),
+                                   response->headers,
                                    response->body.size(),
                                    response->elapsed,
                                    std::chrono::system_clock::now(),

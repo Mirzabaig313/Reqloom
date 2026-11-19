@@ -55,4 +55,24 @@ namespace reqloom::cli {
     return out;
 }
 
+/// Multi-line text Reqloom did not write (an API response, a failure detail that quotes one),
+/// made safe as `terminalSafe` does, with every line after the first starting with `prefix`
+/// (`"    | "`). Printed after Reqloom's own words on the same line, it cannot then forge a line
+/// of Reqloom's output: every line it adds carries the quote marker.
+[[nodiscard]] inline std::string continuedLines(std::string_view text, std::string_view prefix) {
+    std::string out;
+    for (const char c : terminalSafe(text, /*keepNewlines=*/true)) {
+        out.push_back(c);
+        if (c == '\n') {
+            out.append(prefix);
+        }
+    }
+    return out;
+}
+
+/// As `continuedLines`, with the first line prefixed too: a block printed on lines of its own.
+[[nodiscard]] inline std::string quotedLines(std::string_view text, std::string_view prefix) {
+    return std::string{prefix} + continuedLines(text, prefix);
+}
+
 }  // namespace reqloom::cli

@@ -191,7 +191,7 @@ struct Harness {
 
 // ─── Owner decision: the desktop shows what it showed before ─────────────────
 
-TEST(AgentMasking, desktop_run_shows_values_exactly_as_before) {
+TEST(AgentMasking, desktop_run_shows_values_as_sent_and_received) {
     const auto token = fakeToken("fake-desktop-sid-");
     auto h = makeHarness();
     h->http->routes["/sessions"] = respond(201, R"({"data":{"sid":")" + token + R"("}})");
@@ -213,7 +213,8 @@ TEST(AgentMasking, desktop_run_shows_values_exactly_as_before) {
         if (const auto* p = std::get_if<ce::RequestPrepared>(&event)) {
             for (const auto& [name, value] : p->maskedHeaders) {
                 if (name == "Authorization") {
-                    EXPECT_EQ(value, "<redacted>") << "masking by header name stays";
+                    // Owner decision 2026-11-19: the desktop shows the header as sent.
+                    EXPECT_EQ(value, "Bearer " + token);
                     sawMaskedAuthorization = true;
                 }
             }

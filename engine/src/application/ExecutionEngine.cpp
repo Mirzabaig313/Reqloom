@@ -628,6 +628,25 @@ void setQueryParameter(std::string& url, const std::string_view key, const std::
     rewriteQueryParameter(url, encodedKey, encodedValue);
 }
 
+/// `url` with the password of its userinfo (`https://user:pass@host`) replaced by the marker.
+[[nodiscard]] std::string maskUrlPassword(const std::string_view url) {
+    std::string out{url};
+    const auto scheme = out.find("://");
+    if (scheme == std::string::npos) {
+        return out;
+    }
+    const auto authorityEnd = out.find_first_of("/?#", scheme + 3);
+    const auto at = out.rfind('@', authorityEnd == std::string::npos ? out.size() : authorityEnd);
+    if (at == std::string::npos || at < scheme + 3) {
+        return out;
+    }
+    const auto colon = out.find(':', scheme + 3);
+    if (colon != std::string::npos && colon < at) {
+        out.replace(colon + 1, at - colon - 1, kRedactedValueMarker);
+    }
+    return out;
+}
+
 [[nodiscard]] std::string sanitizeEventUrl(const std::string_view url) {
     const std::string redacted = urlEncode(kRedactedValueMarker);
     const auto fragmentStart = url.find('#');
@@ -806,6 +825,20 @@ struct ExecutionEngine::Impl {
     // every event against it.
     const SecretRegistry* activeSecrets{nullptr};
 
+    // The run's declared secret values only: all a desktop run masks in request URLs and headers.
+    // Each `{{secret.NAME}}` (also through `!secret` environment values) is replaced by
+    // `<secret:NAME>`, longest value first, so the app can offer the stored value on request;
+    // allowed `$.env` values, which have no stored value to show, by the plain marker.
+    std::vector<std::pair<std::string, std::unique_ptr<SecretRegistry>>> namedSecrets;
+    std::unique_ptr<SecretRegistry> declaredSecrets;
+
+    [[nodiscard]] std::string maskDeclared(std::string text) const {
+        for (const auto& [name, registry] : namedSecrets) {
+            text = registry->redact(text, "<secret:" + name + ">");
+        }
+        return declaredSecrets != nullptr ? declaredSecrets->redact(text) : text;
+    }
+
     /// The run's host approval check (FR-15.9); every request goes through it. Set for the
     /// duration of `run()`.
     HostGate* gate{nullptr};
@@ -858,10 +891,16 @@ struct ExecutionEngine::Impl {
     /// Ids come from the open history store, unique across processes. Without a store a
     /// process-local counter suffices: the store refuses a RunStarted whose id belongs to a
     /// stored run.
+    // Whether the current run's id came from the history store. A fallback id can belong to a
+    // stored run, so nothing is recorded for the run under it.
+    bool runIdReserved{false};
+
     [[nodiscard]] RunId allocateRunId() {
+        runIdReserved = false;
         if (deps.history) {
             try {
                 if (auto allocated = deps.history->allocateRunId(); allocated) {
+                    runIdReserved = true;
                     return *allocated;
                 }
                 // NOLINTNEXTLINE(bugprone-empty-catch)
@@ -940,6 +979,22 @@ struct ExecutionEngine::Impl {
         }
     }
 
+    // With `recordResponses`, what the row's own request sent (the latest attempt wins).
+    void keepSent(StepResult& row, const HttpRequest& req) {
+        if (recordResponses) {
+            const bool budgetLeft = retainedBodyBytes < kMaxRetainedBodyBytesPerRun;
+            retainedBodyBytes += keepRequest(row, req, budgetLeft ? responseBodyBytes : 0);
+        }
+    }
+
+    // A request the host check refused never left: say so on the kept request.
+    static void markRefused(StepResult& row,
+                            const std::expected<HttpResponse, ReqloomError>& sent) {
+        if (row.request && !sent && sent.error().code == ErrorCode::HostNotApproved) {
+            row.request->sent = false;
+        }
+    }
+
     /// Opt-in body payload for a `ResponseReceived` event: nullopt unless the run opted in, capped
     /// at `kMaxCapturedBodyBytes` UTF-8-safely.
     [[nodiscard]] std::optional<std::string> capturedBody(const std::string& body) const {
@@ -954,14 +1009,41 @@ struct ExecutionEngine::Impl {
 
     void emit(const RunEvent& event) {
         RunEvent safeEvent{event};
-        if (auto* prepared = std::get_if<RequestPrepared>(&safeEvent); prepared != nullptr) {
-            // A prepared URL is display evidence, not replayable: any part may be sourced from
-            // secrets, so all is opaque.
-            prepared->url = sanitizeEventUrl(prepared->url);
-        }
-        // Value redaction of every registered secret in any string field; name-based masking at
-        // emit sites is a second layer.
-        if (activeSecrets != nullptr) {
+        auto* prepared = std::get_if<RequestPrepared>(&safeEvent);
+        auto* received = std::get_if<ResponseReceived>(&safeEvent);
+        if (agentOutput) {
+            // Agent-facing: header values masked by name, the prepared URL opaque (any part may
+            // be sourced from secrets), then every registered secret value below.
+            if (prepared != nullptr) {
+                prepared->url = sanitizeEventUrl(prepared->url);
+                prepared->maskedHeaders = maskHeaders(prepared->maskedHeaders);
+            }
+            if (received != nullptr) {
+                received->headers = maskHeaders(received->headers);
+            }
+            if (activeSecrets != nullptr) {
+                redactEvent(safeEvent, *activeSecrets);
+            }
+        } else if (prepared != nullptr || received != nullptr) {
+            // Desktop (owner decision 2026-11-19): the person sees what was sent and received.
+            // The URL and header values stay real, session tokens and cookies included; only
+            // declared secret values, and a URL's userinfo password, are masked.
+            if (prepared != nullptr) {
+                prepared->url = maskUrlPassword(prepared->url);
+            }
+            if (prepared != nullptr) {
+                prepared->url = maskDeclared(std::move(prepared->url));
+                for (auto& value : prepared->maskedHeaders | std::views::values) {
+                    value = maskDeclared(std::move(value));
+                }
+            }
+            if (received != nullptr) {
+                for (auto& value : received->headers | std::views::values) {
+                    value = maskDeclared(std::move(value));
+                }
+            }
+        } else if (activeSecrets != nullptr) {
+            // Every other event: value redaction of every registered secret, as before.
             redactEvent(safeEvent, *activeSecrets);
         }
         // Persist before fanning out so the event survives a crashing subscriber. Best-effort: a
@@ -1351,7 +1433,7 @@ struct ExecutionEngine::Impl {
                                  stepIndex,
                                  req.method,
                                  req.url,
-                                 headersToVector(maskHeaders(req.headers)),
+                                 headersToVector(req.headers),
                                  requestBodySize(req),
                                  std::chrono::system_clock::now(),
                                  ExchangeKind::PollAttempt});
@@ -1366,7 +1448,7 @@ struct ExecutionEngine::Impl {
             emit(ResponseReceived{runId,
                                   stepIndex,
                                   lastResponse.status,
-                                  maskHeaders(lastResponse.headers),
+                                  lastResponse.headers,
                                   lastResponse.body.size(),
                                   lastResponse.elapsed,
                                   std::chrono::system_clock::now(),
@@ -1395,6 +1477,7 @@ struct ExecutionEngine::Impl {
             attemptRow.pollAttempt = attempt + 1;
             attemptRow.attempts = 1;
             keepResponse(attemptRow, lastResponse, ctx);
+            keepSent(attemptRow, req);
             if (failMatched) {
                 attemptRow.status = StepResult::Status::Failed;
                 attemptRow.error = ErrorCode::PollFailPredicate;
@@ -2175,24 +2258,26 @@ struct ExecutionEngine::Impl {
             if (agentOutput) {
                 registerSentCredentials(req, ctx.secretRegistry());
             }
+            keepSent(result, req);
             emit(RequestPrepared{runId,
                                  stepIndex,
                                  req.method,
                                  req.url,
-                                 headersToVector(maskHeaders(req.headers)),
+                                 headersToVector(req.headers),
                                  requestBodySize(req),
                                  std::chrono::system_clock::now(),
                                  ExchangeKind::Operation});
 
             req.cancel = cancelCheck(runId);
             auto resp = guardedSend(req, project, op, rctx, actorFor(project, op.actor));
+            markRefused(result, resp);
             if (resp) {
                 httpResp = std::move(*resp);
                 keepResponse(result, *httpResp, ctx);
                 emit(ResponseReceived{runId,
                                       stepIndex,
                                       httpResp->status,
-                                      maskHeaders(httpResp->headers),
+                                      httpResp->headers,
                                       httpResp->body.size(),
                                       httpResp->elapsed,
                                       std::chrono::system_clock::now(),
@@ -2309,11 +2394,12 @@ struct ExecutionEngine::Impl {
                     if (agentOutput) {
                         registerSentCredentials(req, ctx.secretRegistry());
                     }
+                    keepSent(result, req);
                     emit(RequestPrepared{runId,
                                          stepIndex,
                                          req.method,
                                          req.url,
-                                         headersToVector(maskHeaders(req.headers)),
+                                         headersToVector(req.headers),
                                          requestBodySize(req),
                                          std::chrono::system_clock::now(),
                                          ExchangeKind::Operation});
@@ -2321,6 +2407,7 @@ struct ExecutionEngine::Impl {
                     req.cancel = cancelCheck(runId);
                     auto retryResp =
                         guardedSend(req, project, op, rctx, actorFor(project, op.actor));
+                    markRefused(result, retryResp);
                     ++attemptCount;
                     result.attempts = attemptCount;
                     if (retryResp) {
@@ -2329,7 +2416,7 @@ struct ExecutionEngine::Impl {
                         emit(ResponseReceived{runId,
                                               stepIndex,
                                               httpResp->status,
-                                              maskHeaders(httpResp->headers),
+                                              httpResp->headers,
                                               httpResp->body.size(),
                                               httpResp->elapsed,
                                               std::chrono::system_clock::now(),
@@ -2751,6 +2838,8 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     impl_->failureExcerptBytes = std::min(options.failureExcerptBytes, kMaxFailureExcerptBytes);
     const auto runStart = std::chrono::steady_clock::now();
     impl_->activeSecrets = &ctx.secretRegistry();
+    impl_->declaredSecrets = std::make_unique<SecretRegistry>();
+    impl_->namedSecrets.clear();
     struct ActiveSecretsReset {
         const SecretRegistry*& slot;
         ~ActiveSecretsReset() { slot = nullptr; }
@@ -2789,7 +2878,8 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     // SecretAccessFailed. Skipped on dry runs: a preview must not trigger a keychain prompt. The
     // run id is announced first: a keychain prompt can block, and cancel() needs a target.
     const auto runId = impl_->allocateRunId();
-    impl_->emit(RunStarted{runId, target, chain.size(), envName, std::chrono::system_clock::now()});
+    impl_->emit(RunStarted{
+        runId, target, chain.size(), envName, std::chrono::system_clock::now(), options.initiator});
     const auto emitRunEnded = [&](const RunOutcome outcome) {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - runStart);
@@ -2880,6 +2970,22 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
     }
 
     registerResolveSecrets(rctx, ctx.secretRegistry());
+    // Desktop request evidence: each declared secret under its own name, longest value first so
+    // a value containing another is replaced whole; `$.env` values (and anything else
+    // registerResolveSecrets covers) under the plain marker after them.
+    {
+        std::vector<std::pair<std::string, std::string>> secrets(rctx.secrets.begin(),
+                                                                 rctx.secrets.end());
+        std::ranges::stable_sort(secrets, [](const auto& a, const auto& b) {
+            return a.second.size() > b.second.size();
+        });
+        for (const auto& [name, value] : secrets) {
+            auto registry = std::make_unique<SecretRegistry>();
+            registry->add(value);
+            impl_->namedSecrets.emplace_back(name, std::move(registry));
+        }
+    }
+    registerResolveSecrets(rctx, *impl_->declaredSecrets);
 
     // Host approval (FR-15.9): from here on every request goes through the gate.
     HostGate::Config gateConfig{};
@@ -3124,6 +3230,28 @@ std::expected<RunResult, ReqloomError> ExecutionEngine::run(const Project& proje
         finalizeStepEvidence(
             result.steps, ctx, options.recordResponses ? options.responseBodyBytes : 0);
     }
+    // The masked rows are what an agent may later read back (`recordedSteps`); stored before
+    // RunEnded so a run that reads as ended has its rows. Best-effort, like every history write.
+    // Events were stored as they happened, masked with the secrets known then. An agent run's
+    // stored events are masked again now, as its rows are (a value a hook made a credential in a
+    // later step included).
+    if (impl_->agentOutput && impl_->deps.history && impl_->runIdReserved) {
+        try {
+            const auto& registry = ctx.secretRegistry();
+            // NOLINTNEXTLINE(bugprone-unused-return-value)
+            (void)impl_->deps.history->rewriteEvents(
+                runId, [&registry](RunEvent& event) { redactEvent(event, registry); });
+            // NOLINTNEXTLINE(bugprone-empty-catch)
+        } catch (...) {
+        }
+    }
+    if (options.recordResponses && impl_->deps.history && impl_->runIdReserved) {
+        try {
+            result.recorded = impl_->deps.history->appendSteps(runId, result.steps).has_value();
+            // NOLINTNEXTLINE(bugprone-empty-catch)
+        } catch (...) {
+        }
+    }
     emitRunEnded(result.outcome);
     return result;
 }
@@ -3164,6 +3292,15 @@ std::expected<void, ReqloomError> ExecutionEngine::openHistory(
     return impl_->deps.history->open(dbPath);
 }
 
+std::expected<void, ReqloomError> ExecutionEngine::openHistoryReadOnly(
+    const std::filesystem::path& dbPath) {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    return impl_->deps.history->openReadOnly(dbPath);
+}
+
 std::expected<std::vector<RunHistoryEntry>, ReqloomError> ExecutionEngine::listRuns(
     std::size_t limit) const {
     if (!impl_->deps.history) {
@@ -3184,9 +3321,20 @@ std::expected<std::vector<RunHistoryEntry>, ReqloomError> ExecutionEngine::listR
                                              std::move(row.endedAt),
                                              std::move(row.outcome),
                                              row.chainSize,
-                                             row.elapsedMs});
+                                             row.elapsedMs,
+                                             std::move(row.initiator),
+                                             row.hasRecordedSteps});
     }
     return entries;
+}
+
+std::expected<std::vector<StepResult>, ReqloomError> ExecutionEngine::recordedSteps(
+    RunId run) const {
+    if (!impl_->deps.history) {
+        return std::unexpected(ReqloomError{
+            ErrorCode::Internal, ErrorClass::Run, "engine built without a history store"});
+    }
+    return impl_->deps.history->stepsFor(run);
 }
 
 std::expected<std::vector<RunEvent>, ReqloomError> ExecutionEngine::historyEvents(RunId run) const {

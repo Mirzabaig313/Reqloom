@@ -126,6 +126,34 @@ using ordered_json = nlohmann::ordered_json;
         }
         return s.size();
     }
+    if (k < s.size() && (s[k] == '{' || s[k] == '[')) {
+        // An object or list under a sensitive key (a body cut before masking, so it no longer
+        // parses): mask to its matching bracket, or to the end of the text when the cut came
+        // first. Brackets inside strings do not count.
+        std::size_t depth = 0;
+        std::size_t at = k;
+        char quote = 0;
+        for (; at < s.size(); ++at) {
+            const char ch = s[at];
+            if (quote != 0) {
+                if (ch == '\\') {
+                    ++at;
+                } else if (ch == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (ch == '"' || ch == '\'') {
+                quote = ch;
+            } else if (ch == '{' || ch == '[') {
+                ++depth;
+            } else if ((ch == '}' || ch == ']') && --depth == 0) {
+                break;
+            }
+        }
+        out.append(kRedactedValueMarker);
+        return at < s.size() ? at + 1 : s.size();
+    }
     std::size_t end = k;
     if (separator == ':') {
         // Header / YAML style: the value runs to the end of the line, so a

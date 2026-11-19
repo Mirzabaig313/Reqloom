@@ -19,5 +19,13 @@ inline constexpr const char* kCodeProjectNotFound = "E_CLI_PROJECT_NOT_FOUND";
 inline constexpr const char* kCodeUnknownOperation = "E_CLI_UNKNOWN_OPERATION";
 inline constexpr const char* kCodeUnknownEnvironment = "E_CLI_UNKNOWN_ENVIRONMENT";
 inline constexpr const char* kCodeInternal = "E_CLI_INTERNAL";
+/// `show`: no recorded run with that id (or no run recorded yet for `last`).
+inline constexpr const char* kCodeUnknownRun = "E_CLI_UNKNOWN_RUN";
+/// `show`: the run has no step with that index or operation id.
+inline constexpr const char* kCodeUnknownStep = "E_CLI_UNKNOWN_STEP";
+/// `show`: the run history for this project cannot be opened, or holds no run.
+inline constexpr const char* kCodeNoHistory = "E_CLI_NO_HISTORY";
+/// `show --path`: the JSONPath selected nothing, or the recorded body cannot be searched.
+inline constexpr const char* kCodePathNotFound = "E_CLI_PATH_NOT_FOUND";
 
 }  // namespace reqloom::cli

@@ -15,7 +15,8 @@ namespace reqloom::cli {
 /// What to do about `step`, a failed row of the run whose target is `target`.
 [[nodiscard]] std::string stepNextAction(const engine::StepResult& step, std::string_view target);
 
-/// What to do about an error document's `code` (a run that ended before its first step).
-[[nodiscard]] std::string errorNextAction(std::string_view code);
+/// What to do about an error document's `code` (a run that ended before its first step, or a
+/// command that could not answer). `command` names the command in the advice.
+[[nodiscard]] std::string errorNextAction(std::string_view code, std::string_view command = "run");
 
 }  // namespace reqloom::cli

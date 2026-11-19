@@ -191,3 +191,93 @@ TEST(LintCommand, missing_id_warning_says_environment_secrets_still_work) {
     EXPECT_TRUE(text.contains(QStringLiteral("keychain"))) << r.out;
     EXPECT_TRUE(text.contains(QStringLiteral("REQLOOM_SECRET_"))) << r.out;
 }
+
+// ─── FR-15.5: errors and warnings say where, what, and what would satisfy it ─────────────────
+
+TEST(LintCommand, json_error_carries_file_line_reference_fix_and_next_action) {
+    const ProjectDir project{
+        "version: 1\n"              // 1
+        "name: P\n"                 // 2
+        "actors:\n"                 // 3
+        "  admin:\n"                // 4
+        "    description: x\n"      // 5
+        "resources:\n"              // 6
+        "  item:\n"                 // 7
+        "    operations:\n"         // 8
+        "      read:\n"             // 9
+        "        method: GET\n"     // 10
+        "        path: /x\n"        // 11
+        "        actor: amdin\n"};  // 12
+    const auto r = lint({project.str(), "--format", "json"});
+    EXPECT_EQ(r.rc, 1);
+    const auto doc = parseJson(r.out);
+    EXPECT_EQ(doc.value(QStringLiteral("contract_version")).toString(), QStringLiteral("1.2"));
+    const auto errors = doc.value(QStringLiteral("errors")).toArray();
+    ASSERT_EQ(errors.size(), 1) << r.out;
+    const auto e = errors.at(0).toObject();
+    EXPECT_EQ(e.value(QStringLiteral("code")).toString(), QStringLiteral("E_REF_UNDEFINED"));
+    EXPECT_EQ(e.value(QStringLiteral("file")).toString(), QStringLiteral("reqloom.yaml")) << r.out;
+    EXPECT_EQ(e.value(QStringLiteral("line")).toInt(), 12) << r.out;
+    EXPECT_EQ(e.value(QStringLiteral("reference")).toString(), QStringLiteral("amdin"));
+    EXPECT_TRUE(e.value(QStringLiteral("fix")).toString().contains(QStringLiteral("admin")));
+    EXPECT_FALSE(e.value(QStringLiteral("next_action")).toString().isEmpty());
+    // The original fields keep their meaning.
+    EXPECT_TRUE(e.value(QStringLiteral("detail")).toString().contains(QStringLiteral("amdin")));
+}
+
+TEST(LintCommand, text_error_names_file_line_reference_and_fix) {
+    const ProjectDir project{
+        "version: 1\nname: P\nresources:\n  item:\n    operations:\n"
+        "      read:\n        method: GET\n        path: /x/{{ghost.id}}\n"};
+    const auto r = lint({project.str()});
+    EXPECT_EQ(r.rc, 1);
+    EXPECT_NE(r.err.find("LINT FAIL [E_REF_UNDEFINED]: "), std::string::npos) << r.err;
+    EXPECT_NE(r.err.find("reqloom.yaml:8"), std::string::npos) << r.err;
+    EXPECT_NE(r.err.find("{{ghost.id}}"), std::string::npos) << r.err;
+    EXPECT_NE(r.err.find("fix:"), std::string::npos) << r.err;
+}
+
+TEST(LintCommand, warns_about_a_reference_no_operation_extracts) {
+    const ProjectDir project{
+        "version: 1\nname: P\nresources:\n  item:\n    operations:\n"
+        "      create:\n        method: POST\n        path: /x\n"
+        "        extract:\n          item_id: $.id\n"
+        "      read:\n        method: GET\n"
+        "        path: /x/{{item.itme_id}}\n"};  // 13
+    const auto r = lint({project.str(), "--format", "json"});
+    EXPECT_EQ(r.rc, 0) << r.err;
+    const auto doc = parseJson(r.out);
+    const auto warnings = doc.value(QStringLiteral("warnings")).toArray();
+    ASSERT_EQ(warnings.size(), 1) << r.out;
+    EXPECT_TRUE(warnings.at(0).toString().contains(QStringLiteral("itme_id"))) << r.out;
+    const auto details = doc.value(QStringLiteral("warning_details")).toArray();
+    ASSERT_EQ(details.size(), 1) << r.out;
+    const auto w = details.at(0).toObject();
+    EXPECT_EQ(w.value(QStringLiteral("file")).toString(), QStringLiteral("reqloom.yaml"));
+    EXPECT_EQ(w.value(QStringLiteral("line")).toInt(), 13);
+    EXPECT_EQ(w.value(QStringLiteral("reference")).toString(), QStringLiteral("{{item.itme_id}}"));
+    EXPECT_TRUE(w.value(QStringLiteral("fix")).toString().contains(QStringLiteral("item_id")));
+}
+
+TEST(LintCommand, warning_details_give_the_position_of_load_warnings) {
+    const ProjectDir project{
+        "version: 1\nname: W\nmystery_key: 1\nresources:\n  item:\n    operations:\n"
+        "      read:\n        method: GET\n        path: /x\n"};
+    const auto r = lint({project.str(), "--format", "json"});
+    const auto details = parseJson(r.out).value(QStringLiteral("warning_details")).toArray();
+    ASSERT_EQ(details.size(), 1) << r.out;
+    const auto w = details.at(0).toObject();
+    EXPECT_EQ(w.value(QStringLiteral("line")).toInt(), 3);
+    EXPECT_EQ(w.value(QStringLiteral("column")).toInt(), 1);
+    EXPECT_TRUE(
+        w.value(QStringLiteral("message")).toString().contains(QStringLiteral("mystery_key")));
+}
+
+TEST(LintCommand, text_output_escapes_terminal_control_characters_from_the_project) {
+    const ProjectDir project{
+        "version: 1\nname: P\nresources:\n  item:\n    operations:\n"
+        "      read:\n        method: GET\n"
+        "        path: \"/x/{{gh\\e[2Kost.id}}\"\n"};
+    const auto r = lint({project.str()});
+    EXPECT_EQ(r.err.find('\x1b'), std::string::npos) << r.err;
+}

@@ -445,15 +445,20 @@ approvals.
 
 The check runs on the request as it is finally sent, so a pre-request hook that
 rewrites the URL, or a `token_url` on another host, is checked like anything
-else. It runs again before every redirect hop. As before, `Authorization` and
-`Cookie` are dropped when a redirect changes host, port or scheme. A hop that
-continues a request carrying a credential keeps that status while it still
-carries anything the project supplied: a body, a header other than `Accept`,
-`Accept-Encoding`, `Accept-Language`, `Cache-Control`, `Connection`,
-`Content-Type`, `Pragma` or `User-Agent` holding an ordinary value, or a value
-from the original query string. Its host must then be allowed and approved, or
-the step fails before the hop is sent. A hop that carries none of that, such as
-a plain `GET` to a download host, is followed.
+else. It runs again before every redirect hop. When the request carried a
+credential and a redirect goes to another scheme, host or port:
+
+- every header the project, an actor or a hook set is dropped, custom
+  credential headers such as `X-Api-Key` included, even when the next host is
+  approved. Only libcurl's own `User-Agent`, `Accept`, `Accept-Encoding` and
+  `Connection` go on, plus `Content-Type` when a 307 or 308 keeps the body;
+- a hop that keeps the body (307, 308), or whose URL repeats a path segment or
+  query value of the original request (compared after percent-decoding; values
+  of 8 characters or more), keeps the credential status: its host must be
+  allowed and approved, or the step fails before the hop is sent;
+- any other hop, such as a plain `GET` to a download host, is followed.
+
+A redirect to the same scheme, host and port keeps every header.
 
 ### Approving a host
 

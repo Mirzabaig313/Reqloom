@@ -17,6 +17,7 @@
 #include <ranges>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace reqloom::engine {
 
@@ -119,72 +120,70 @@ namespace {
     return out;
 }
 
-/// Header names whose value a hop may carry without inheriting the credential status, when the
-/// value also looks like what those headers normally hold (`safeHeaderValue`): content
-/// negotiation and connection handling, set by Reqloom or libcurl or by projects to ordinary
-/// media types. Anything else (a custom header, Authorization) could hold a transformed secret.
-constexpr std::array<std::string_view, 8> kSafeHopHeaders{"accept",
-                                                          "accept-encoding",
-                                                          "accept-language",
-                                                          "cache-control",
-                                                          "connection",
-                                                          "content-type",
-                                                          "pragma",
-                                                          "user-agent"};
+/// Values of an original request shorter than this are not looked for in a redirect URL. Any
+/// secret the registry can recognise (6 bytes or more) is at least 8 characters once base64- or
+/// hex-encoded, while shorter pieces (`api`, `v1`, `en`, a page number) are everyday URL parts
+/// whose echo would turn ordinary download redirects into questions.
+constexpr std::size_t kMinEchoedValue = 8;
 
-/// A short value of media-type or token characters with no long run of letters and digits, so a
-/// hex or base64 encoded secret placed in an allowlisted header still counts as supplied data.
-[[nodiscard]] bool safeHeaderValue(std::string_view value) noexcept {
-    if (value.size() > 128) {
-        return false;
+/// `text` percent-decoded; with `plusIsSpace`, `+` too. Undecodable input is kept as written.
+[[nodiscard]] std::string decoded(std::string_view text, const bool plusIsSpace) {
+    std::string spaced{text};
+    if (plusIsSpace) {
+        std::ranges::replace(spaced, '+', ' ');
     }
-    std::size_t run = 0;
-    for (const char c : value) {
-        const auto u = static_cast<unsigned char>(c);
-        if (std::isalnum(u) != 0) {
-            if (++run >= 16) {
-                return false;
-            }
-            continue;
-        }
-        run = 0;
-        if (std::string_view{" ,;=./+*-_()"}.find(c) == std::string_view::npos) {
-            return false;
-        }
-    }
-    return true;
+    return codecs::urlDecode(spaced).value_or(spaced);
 }
 
-/// Whether a redirect hop still carries something the original request supplied: a header outside
-/// the safe list (or with an unusual value), any body or multipart part, or a value of the
-/// original query string echoed in the hop URL.
-[[nodiscard]] bool carriesSuppliedData(const HttpRequest& hop, std::string_view originalQuery) {
-    for (const auto& [name, value] : hop.headers) {
-        std::string lower{name};
-        std::ranges::transform(lower, lower.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        const bool safe = std::ranges::find(kSafeHopHeaders, lower) != kSafeHopHeaders.end() &&
-                          safeHeaderValue(value);
-        if (!value.empty() && !safe) {
-            return true;
+/// The path segments and query values of `url`, decoded, that are long enough to look for in a
+/// redirect URL (`kMinEchoedValue`).
+[[nodiscard]] std::vector<std::string> echoableValues(std::string_view url) {
+    std::vector<std::string> values;
+    const auto keep = [&values](std::string value) {
+        if (value.size() >= kMinEchoedValue) {
+            values.push_back(std::move(value));
+        }
+    };
+    const auto scheme = url.find("://");
+    auto rest = scheme == std::string_view::npos ? url : url.substr(scheme + 3);
+    rest = rest.substr(0, rest.find('#'));
+    const auto query = rest.find('?');
+    auto path = rest.substr(0, query);
+    const auto slash = path.find('/');
+    path = slash == std::string_view::npos ? std::string_view{} : path.substr(slash);
+    while (!path.empty()) {
+        path.remove_prefix(1);
+        const auto end = path.find('/');
+        keep(decoded(path.substr(0, end), false));
+        path = end == std::string_view::npos ? std::string_view{} : path.substr(end);
+    }
+    if (query != std::string_view::npos) {
+        auto pairs = rest.substr(query + 1);
+        while (!pairs.empty()) {
+            const auto end = pairs.find('&');
+            const auto pair = pairs.substr(0, end);
+            pairs = end == std::string_view::npos ? std::string_view{} : pairs.substr(end + 1);
+            const auto eq = pair.find('=');
+            keep(decoded(eq == std::string_view::npos ? pair : pair.substr(eq + 1), true));
         }
     }
-    if ((hop.body && !hop.body->empty()) || !hop.multipart.empty()) {
-        return true;
-    }
-    while (!originalQuery.empty()) {
-        const auto end = originalQuery.find('&');
-        const auto pair = originalQuery.substr(0, end);
-        originalQuery =
-            end == std::string_view::npos ? std::string_view{} : originalQuery.substr(end + 1);
-        const auto eq = pair.find('=');
-        const auto value = eq == std::string_view::npos ? pair : pair.substr(eq + 1);
-        if (!value.empty() && hop.url.find(value) != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
+    return values;
+}
+
+/// Whether the redirect URL `hopUrl`, decoded, repeats any of `values`.
+[[nodiscard]] bool echoes(std::string_view hopUrl, const std::vector<std::string>& values) {
+    const auto plain = decoded(hopUrl, false);
+    const auto spaced = decoded(hopUrl, true);
+    return std::ranges::any_of(values, [&](const std::string& value) {
+        return plain.find(value) != std::string::npos || spaced.find(value) != std::string::npos;
+    });
+}
+
+/// `scheme://host:port` of `url`, or empty when it cannot be read (then every hop counts as
+/// going elsewhere).
+[[nodiscard]] std::string originOf(std::string_view url) {
+    auto key = hostKeyForUrl(url);
+    return key ? std::move(*key) : std::string{};
 }
 
 }  // namespace
@@ -305,6 +304,21 @@ std::optional<ReqloomError> HostGate::checkActorCandidate(const std::string& hos
         "allowed_hosts; each will still need your approval.");
 }
 
+std::expected<HostGate::PriorApproval, ReqloomError> HostGate::approvedWithoutAsking(
+    const std::string& host) const {
+    if (std::ranges::find(config_.approvedForRun, host) != config_.approvedForRun.end()) {
+        return PriorApproval::ForRun;
+    }
+    if (config_.store == nullptr || config_.project == nullptr) {
+        return PriorApproval::None;
+    }
+    auto approved = config_.store->isApproved(*config_.project, host);
+    if (!approved) {
+        return std::unexpected(approved.error());
+    }
+    return *approved ? PriorApproval::Stored : PriorApproval::None;
+}
+
 std::optional<ReqloomError> HostGate::checkApproval(const std::string& host,
                                                     const HttpRequest& request,
                                                     const std::string& credential) {
@@ -379,21 +393,36 @@ std::optional<ReqloomError> HostGate::admit(HttpRequest& request, const SendPurp
     if (config_.project == nullptr) {
         return refusal("credentials were not sent: no project to check the host against");
     }
-    // A hop keeps the credential status of the request it continues while it still carries
-    // anything the project or a hook supplied (`carriesSuppliedData`): a transformed secret in a
-    // custom header or the body is not recognisable by its bytes, and an open redirect on an
-    // approved host must not carry it elsewhere. A hop carrying none of that (a plain GET after a
-    // 302, once Authorization and Cookie are dropped) is judged by its bytes, so ordinary
-    // download redirects keep working. Either way the actors' limits apply. The callback stays on
-    // the hop request (a copy), so it only checks and never replaces itself while it runs.
+    // Redirect hops after a request that carried a credential (FR-15.9):
+    //   - to another scheme, host or port, every header the project, an actor or a hook set is
+    //     dropped; only libcurl's own defaults (User-Agent, Accept, Accept-Encoding, Connection)
+    //     and, with a body that a 307/308 keeps, Content-Type go on. No header is judged by its
+    //     looks: a transformed secret can sit in any of them;
+    //   - a hop that keeps a body or multipart part, or whose URL repeats (decoded) a path
+    //     segment or query value of the original request, keeps the credential status: its host
+    //     must pass the actors' limits and approval;
+    //   - anything else (a plain GET after a 302) is judged by its bytes, so download redirects
+    //     keep working.
+    // The callback stays on the hop request (a copy), so it never replaces itself while it runs.
     const auto original = credentialIn(request, purpose);
-    request.onRedirect =
-        [this, actors = purpose.actors, original, query = std::string{queryOf(request.url)}](
-            HttpRequest& next) -> std::expected<void, ReqloomError> {
+    request.onRedirect = [this,
+                          actors = purpose.actors,
+                          original,
+                          origin = originOf(request.url),
+                          values = echoableValues(request.url)](
+                             HttpRequest& next) -> std::expected<void, ReqloomError> {
         SendPurpose hop{actors, false, {}};
-        if (original && carriesSuppliedData(next, query)) {
-            hop.carriesCredential = true;
-            hop.reason = *original + " (carried on through a redirect)";
+        if (original) {
+            const bool keepsBody = (next.body && !next.body->empty()) || !next.multipart.empty();
+            if (origin.empty() || originOf(next.url) != origin) {
+                std::erase_if(next.headers, [keepsBody](const auto& header) {
+                    return !(keepsBody && equalsIgnoreCase(header.first, "content-type"));
+                });
+            }
+            if (keepsBody || echoes(next.url, values)) {
+                hop.carriesCredential = true;
+                hop.reason = *original + " (carried on through a redirect)";
+            }
         }
         if (auto refused = check(next, hop)) {
             return std::unexpected(std::move(*refused));
